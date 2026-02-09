@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import TagsClient from "./TagsClient";
 
 type Role = {
   id: string;
@@ -269,6 +270,8 @@ export default function AdminClient() {
             </button>
           </form>
         </section>
+
+        <TagsClient />
 
         <section style={{ marginTop: 40 }}>
           <h2 style={{ marginBottom: 12 }}>Users</h2>

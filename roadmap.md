@@ -49,7 +49,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 1 in progress: inbound/outbound APIs done, Cloudflare worker stub ready, DNS pending.
 - Phase 2 complete: auth + admin panel + seed.
 - Phase 3 complete: mailbox UI + message list.
-- Phase 4 in progress: ticket core complete, web form ticket create API done, UI refinement ongoing.
+- Phase 4 in progress: ticket core complete, web form ticket create API done, UI refinement + tag management ongoing.
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -114,8 +114,10 @@ Status
  - Server-side ticket search + filters added.
  - Ticket activity timeline added.
  - Attachment previews (image/PDF) added.
+ - Lead Admin tag creation UI added.
 Remaining
 - Platform web form UI (client-side).
+ - Tag edit/delete flow.
 Acceptance Criteria
 - Incoming email to `support@6ex.co.za` creates a ticket with requester email.
 - Agent replies from ticket are sent via Resend and logged.
