@@ -119,6 +119,21 @@ async function upsertMacros(client) {
   }
 }
 
+async function ensureSlaConfig(client) {
+  const result = await client.query(
+    "SELECT id FROM sla_configs WHERE is_active = true LIMIT 1"
+  );
+  if (result.rows.length > 0) {
+    return;
+  }
+
+  await client.query(
+    `INSERT INTO sla_configs (first_response_target_minutes, resolution_target_minutes, is_active)
+     VALUES ($1, $2, true)`,
+    [120, 1440]
+  );
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -140,6 +155,7 @@ async function main() {
     await upsertRoles(client);
     await upsertTags(client);
     await upsertMacros(client);
+    await ensureSlaConfig(client);
 
     const roleResult = await client.query(
       "SELECT id FROM roles WHERE name = 'lead_admin' LIMIT 1"

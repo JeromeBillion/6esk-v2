@@ -17,9 +17,21 @@ type User = {
   created_at: string;
 };
 
+type SlaConfig = {
+  firstResponseMinutes: number;
+  resolutionMinutes: number;
+};
+
 export default function AdminClient() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [sla, setSla] = useState<SlaConfig>({
+    firstResponseMinutes: 120,
+    resolutionMinutes: 1440
+  });
+  const [slaStatus, setSlaStatus] = useState<"idle" | "saving" | "saved" | "error">(
+    "idle"
+  );
   const [form, setForm] = useState({
     email: "",
     displayName: "",
@@ -31,9 +43,10 @@ export default function AdminClient() {
   const [signingOut, setSigningOut] = useState(false);
 
   async function loadData() {
-    const [rolesRes, usersRes] = await Promise.all([
+    const [rolesRes, usersRes, slaRes] = await Promise.all([
       fetch("/api/admin/roles"),
-      fetch("/api/admin/users")
+      fetch("/api/admin/users"),
+      fetch("/api/admin/sla")
     ]);
 
     if (rolesRes.ok) {
@@ -47,6 +60,14 @@ export default function AdminClient() {
     if (usersRes.ok) {
       const payload = await usersRes.json();
       setUsers(payload.users ?? []);
+    }
+
+    if (slaRes.ok) {
+      const payload = await slaRes.json();
+      setSla({
+        firstResponseMinutes: payload.firstResponseMinutes ?? 120,
+        resolutionMinutes: payload.resolutionMinutes ?? 1440
+      });
     }
   }
 
@@ -174,6 +195,77 @@ export default function AdminClient() {
               }}
             >
               {loading ? "Creating..." : "Create user"}
+            </button>
+          </form>
+        </section>
+
+        <section style={{ marginTop: 40 }}>
+          <h2 style={{ marginBottom: 12 }}>SLA Targets</h2>
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setSlaStatus("saving");
+              const res = await fetch("/api/admin/sla", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(sla)
+              });
+              if (!res.ok) {
+                setSlaStatus("error");
+                return;
+              }
+              setSlaStatus("saved");
+              setTimeout(() => setSlaStatus("idle"), 2000);
+            }}
+            style={{ display: "grid", gap: 12 }}
+          >
+            <label>
+              First response target (minutes)
+              <input
+                type="number"
+                min={1}
+                value={sla.firstResponseMinutes}
+                onChange={(event) =>
+                  setSla((prev) => ({
+                    ...prev,
+                    firstResponseMinutes: Number(event.target.value)
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Resolution target (minutes)
+              <input
+                type="number"
+                min={1}
+                value={sla.resolutionMinutes}
+                onChange={(event) =>
+                  setSla((prev) => ({
+                    ...prev,
+                    resolutionMinutes: Number(event.target.value)
+                  }))
+                }
+              />
+            </label>
+            {slaStatus === "error" ? (
+              <p style={{ color: "var(--danger)" }}>Failed to save SLA targets.</p>
+            ) : null}
+            {slaStatus === "saved" ? (
+              <p style={{ color: "var(--accent)" }}>SLA targets updated.</p>
+            ) : null}
+            <button
+              type="submit"
+              disabled={slaStatus === "saving"}
+              style={{
+                padding: "12px 16px",
+                borderRadius: 10,
+                border: "none",
+                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                color: "#081018",
+                cursor: "pointer"
+              }}
+            >
+              {slaStatus === "saving" ? "Saving..." : "Save SLA targets"}
             </button>
           </form>
         </section>
