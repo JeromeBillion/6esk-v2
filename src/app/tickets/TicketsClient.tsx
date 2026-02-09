@@ -25,6 +25,25 @@ type Message = {
   sent_at: string | null;
 };
 
+type MessageDetail = {
+  id: string;
+  subject: string | null;
+  from: string;
+  to: string[];
+  direction: "inbound" | "outbound";
+  receivedAt: string | null;
+  sentAt: string | null;
+  text: string | null;
+  html: string | null;
+};
+
+type Attachment = {
+  id: string;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+};
+
 type SessionUser = {
   id: string;
   email: string;
@@ -52,6 +71,10 @@ export default function TicketsClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterTag, setFilterTag] = useState<string>("all");
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [loadingMessage, setLoadingMessage] = useState(false);
 
   async function loadUser() {
     const res = await fetch("/api/auth/me");
@@ -94,6 +117,18 @@ export default function TicketsClient() {
     if (updatedTicket) {
       setTickets((prev) => prev.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket)));
     }
+  }
+
+  async function loadMessageDetail(messageId: string) {
+    setLoadingMessage(true);
+    setActiveMessageId(messageId);
+    const res = await fetch(`/api/messages/${messageId}`);
+    if (res.ok) {
+      const payload = await res.json();
+      setMessageDetail(payload.message);
+      setAttachments(payload.attachments ?? []);
+    }
+    setLoadingMessage(false);
   }
 
   useEffect(() => {
@@ -348,11 +383,16 @@ export default function TicketsClient() {
                     {messages.map((message) => (
                       <article
                         key={message.id}
+                        onClick={() => loadMessageDetail(message.id)}
                         style={{
                           border: "1px solid var(--border)",
                           borderRadius: 10,
                           padding: 12,
-                          background: "rgba(10, 12, 18, 0.6)"
+                          background:
+                            message.id === activeMessageId
+                              ? "rgba(57, 184, 255, 0.15)"
+                              : "rgba(10, 12, 18, 0.6)",
+                          cursor: "pointer"
                         }}
                       >
                         <strong>{message.subject ?? "(no subject)"}</strong>
@@ -362,6 +402,57 @@ export default function TicketsClient() {
                         </p>
                       </article>
                     ))}
+                  </div>
+                  <div style={{ marginTop: 16 }}>
+                    <h4>Message Detail</h4>
+                    {loadingMessage ? <p>Loading...</p> : null}
+                    {!messageDetail ? (
+                      <p>Select a message to view full body.</p>
+                    ) : (
+                      <div style={{ display: "grid", gap: 12 }}>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                          From: {messageDetail.from} · To: {messageDetail.to.join(", ")}
+                        </div>
+                  {messageDetail.html ? (
+                        <div
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                            padding: 12,
+                            background: "rgba(10, 12, 18, 0.6)"
+                          }}
+                          dangerouslySetInnerHTML={{ __html: messageDetail.html }}
+                        />
+                      ) : (
+                        <pre
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                            padding: 12,
+                            background: "rgba(10, 12, 18, 0.6)",
+                            margin: 0
+                          }}
+                        >
+                          {messageDetail.text ?? "No message body available."}
+                        </pre>
+                      )}
+                        {attachments.length ? (
+                          <div style={{ display: "grid", gap: 8 }}>
+                            <strong>Attachments</strong>
+                            {attachments.map((attachment) => (
+                              <a
+                                key={attachment.id}
+                                href={`/api/attachments/${attachment.id}`}
+                                style={{ color: "var(--accent)" }}
+                              >
+                                {attachment.filename}
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 </div>
 

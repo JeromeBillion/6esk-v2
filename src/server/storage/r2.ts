@@ -1,4 +1,5 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import type { Readable } from "stream";
 
 const globalForR2 = globalThis as unknown as { r2Client?: S3Client };
 
@@ -52,4 +53,33 @@ export async function putObject({
   );
 
   return key;
+}
+
+export async function getObjectBuffer(key: string) {
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) {
+    throw new Error("R2_BUCKET is required");
+  }
+
+  const client = getR2Client();
+  const result = await client.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key
+    })
+  );
+
+  const body = result.Body as Readable | undefined;
+  if (!body) {
+    return { buffer: Buffer.alloc(0), contentType: result.ContentType ?? undefined };
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return {
+    buffer: Buffer.concat(chunks),
+    contentType: result.ContentType ?? undefined
+  };
 }
