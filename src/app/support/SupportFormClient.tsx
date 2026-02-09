@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 export default function SupportFormClient() {
   const [form, setForm] = useState({ email: "", subject: "", description: "" });
@@ -36,8 +37,13 @@ export default function SupportFormClient() {
   return (
     <main>
       <div className="container" style={{ maxWidth: 520 }}>
-        <h1>Contact Support</h1>
-        <p>Submit your question and our team will respond by email.</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <BrandMark size={44} />
+          <div>
+            <h1>Contact Support</h1>
+            <p>Submit your question and our team will respond by email.</p>
+          </div>
+        </div>
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
           <label>
             Email

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 import TagsClient from "./TagsClient";
 import AgentIntegrationClient from "./AgentIntegrationClient";
 import SpamRulesClient from "./SpamRulesClient";
@@ -206,9 +207,12 @@ export default function AdminClient() {
     <main>
       <div className="container">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h1>Lead Admin Panel</h1>
-            <p>Create users, assign roles, and provision mailboxes.</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <BrandMark size={40} />
+            <div>
+              <h1>Lead Admin Panel</h1>
+              <p>Create users, assign roles, and provision mailboxes.</p>
+            </div>
           </div>
           <button
             type="button"

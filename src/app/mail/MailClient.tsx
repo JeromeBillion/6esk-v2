@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 type Mailbox = {
   id: string;
@@ -62,9 +63,12 @@ export default function MailClient() {
     <main>
       <div className="container">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h1>Mailboxes</h1>
-            <p>Inbound and outbound emails will appear here once ingested.</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <BrandMark size={40} />
+            <div>
+              <h1>Mailboxes</h1>
+              <p>Inbound and outbound emails will appear here once ingested.</p>
+            </div>
           </div>
           <button
             type="button"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 export default function ResetPasswordClient({ token }: { token?: string }) {
   const [password, setPassword] = useState("");
@@ -44,8 +45,13 @@ export default function ResetPasswordClient({ token }: { token?: string }) {
   return (
     <main>
       <div className="container" style={{ maxWidth: 420 }}>
-        <h1>Reset Password</h1>
-        <p>Enter a new password for your account.</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <BrandMark size={44} />
+          <div>
+            <h1>Reset Password</h1>
+            <p>Enter a new password for your account.</p>
+          </div>
+        </div>
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
           <label>
             New password

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 type Overview = {
   totalTickets: number;
@@ -188,8 +189,13 @@ export default function AnalyticsClient() {
   return (
     <main>
       <div className="container">
-        <h1>Analytics</h1>
-        <p>Track ticket performance and SLA health.</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <BrandMark size={40} />
+          <div>
+            <h1>Analytics</h1>
+            <p>Track ticket performance and SLA health.</p>
+          </div>
+        </div>
 
         <div
           style={{

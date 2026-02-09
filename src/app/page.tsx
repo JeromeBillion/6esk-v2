@@ -1,8 +1,12 @@
+import BrandMark from "@/app/components/BrandMark";
+
 export default function HomePage() {
   return (
     <main>
       <div className="container">
-        <h1>6esk</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+          <BrandMark size={56} priority />
+        </div>
         <p>Foundation and email APIs are ready.</p>
         <p>
           Health check: <code>/api/health</code>

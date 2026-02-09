@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 type Ticket = {
   id: string;
@@ -277,9 +278,12 @@ export default function TicketsClient() {
     <main>
       <div className="container">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h1>Tickets</h1>
-            <p>Platform inbox mapped to tickets.</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <BrandMark size={40} />
+            <div>
+              <h1>Tickets</h1>
+              <p>Platform inbox mapped to tickets.</p>
+            </div>
           </div>
           <button
             type="button"

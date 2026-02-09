@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import BrandMark from "@/app/components/BrandMark";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,8 +35,13 @@ export default function LoginPage() {
   return (
     <main>
       <div className="container">
-        <h1>Sign in to 6esk</h1>
-        <p>Lead Admin creates accounts in the admin panel.</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <BrandMark size={48} priority />
+          <div>
+            <h1>Sign in</h1>
+            <p>Lead Admin creates accounts in the admin panel.</p>
+          </div>
+        </div>
         <form onSubmit={handleSubmit}>
           <div style={{ display: "grid", gap: 12, marginTop: 24 }}>
             <label>
