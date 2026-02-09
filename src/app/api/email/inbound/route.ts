@@ -4,6 +4,12 @@ import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize
 import { getOrCreateMailbox } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
+import {
+  createTicket,
+  recordTicketEvent,
+  reopenTicketIfNeeded,
+  resolveTicketIdForInbound
+} from "@/server/tickets";
 
 function getSupportAddress() {
   const explicit = process.env.SUPPORT_ADDRESS;
@@ -66,6 +72,25 @@ export async function POST(request: Request) {
     }
   }
 
+  let ticketId: string | null = null;
+  if (mailbox.type === "platform") {
+    const references = [data.inReplyTo, ...(data.references ?? [])].filter(
+      (value): value is string => Boolean(value)
+    );
+    ticketId = await resolveTicketIdForInbound(references);
+    if (!ticketId) {
+      ticketId = await createTicket({
+        mailboxId: mailbox.id,
+        requesterEmail: fromEmail,
+        subject: data.subject
+      });
+      await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+    } else {
+      await reopenTicketIfNeeded(ticketId);
+    }
+    await recordTicketEvent({ ticketId, eventType: "message_received" });
+  }
+
   const messageId = randomUUID();
   const receivedAt = data.date ? new Date(data.date) : new Date();
   const previewSource = data.text ?? "";
@@ -73,17 +98,18 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, direction, message_id, thread_id, in_reply_to, references,
+      id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, references,
       from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
       received_at, is_read
     ) VALUES (
-      $1, $2, 'inbound', $3, $4, $5, $6,
-      $7, $8, $9, $10, $11, $12,
-      $13, false
+      $1, $2, $3, 'inbound', $4, $5, $6, $7,
+      $8, $9, $10, $11, $12, $13,
+      $14, false
     )`,
     [
       messageId,
       mailbox.id,
+      ticketId,
       data.messageId,
       data.references?.[0] ?? data.messageId ?? messageId,
       data.inReplyTo ?? null,
