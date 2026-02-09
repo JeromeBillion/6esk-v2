@@ -10,6 +10,9 @@ Required fields
 Optional fields
 - `cc`: string or string[]
 - `bcc`: string or string[]
+- `category`: string
+- `tags`: string[]
+- `metadata`: object
 - `subject`: string
 - `text`: string
 - `html`: string
@@ -29,6 +32,12 @@ Example
 {
   "from": "Customer <customer@example.com>",
   "to": ["support@6ex.co.za"],
+  "category": "payments",
+  "tags": ["payments", "withdrawal"],
+  "metadata": {
+    "userId": "uuid",
+    "kycStatus": "approved"
+  },
   "subject": "Billing issue",
   "text": "Hello, I need help with my invoice.",
   "messageId": "<abc123@example.com>",

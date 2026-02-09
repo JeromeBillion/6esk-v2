@@ -29,6 +29,7 @@ This seeds:
 - Lead Admin user
 - `support@6ex.co.za` platform mailbox
 - `jerome.choma@6ex.co.za` personal mailbox
+- Default support tags and macros
 
 ## Sign In
 

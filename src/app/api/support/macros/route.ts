@@ -1,0 +1,18 @@
+import { getSessionUser } from "@/server/auth/session";
+import { db } from "@/server/db";
+
+export async function GET() {
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const result = await db.query(
+    `SELECT id, title, category, body, is_active
+     FROM macros
+     WHERE is_active = true
+     ORDER BY title`
+  );
+
+  return Response.json({ macros: result.rows });
+}

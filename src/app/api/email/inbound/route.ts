@@ -5,7 +5,9 @@ import { getOrCreateMailbox } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import {
+  addTagsToTicket,
   createTicket,
+  inferTagsFromText,
   recordTicketEvent,
   reopenTicketIfNeeded,
   resolveTicketIdForInbound
@@ -79,12 +81,30 @@ export async function POST(request: Request) {
     );
     ticketId = await resolveTicketIdForInbound(references);
     if (!ticketId) {
+      const inferredTags = data.tags?.length
+        ? data.tags
+        : inferTagsFromText({ subject: data.subject, text: data.text });
+      const category =
+        data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
+      const metadata = (data.metadata as Record<string, unknown> | null) ?? null;
+
       ticketId = await createTicket({
         mailboxId: mailbox.id,
         requesterEmail: fromEmail,
-        subject: data.subject
+        subject: data.subject,
+        category,
+        metadata
       });
       await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+
+      if (inferredTags.length) {
+        await addTagsToTicket(ticketId, inferredTags);
+        await recordTicketEvent({
+          ticketId,
+          eventType: "tags_assigned",
+          data: { tags: inferredTags }
+        });
+      }
     } else {
       await reopenTicketIfNeeded(ticketId);
     }

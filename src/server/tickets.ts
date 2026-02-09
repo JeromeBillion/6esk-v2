@@ -7,6 +7,9 @@ export type TicketRecord = {
   mailbox_id: string | null;
   requester_email: string;
   subject: string | null;
+  category: string | null;
+  metadata: Record<string, unknown> | null;
+  tags?: string[];
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -34,17 +37,21 @@ export async function resolveTicketIdForInbound(references: string[]) {
 export async function createTicket({
   mailboxId,
   requesterEmail,
-  subject
+  subject,
+  category,
+  metadata
 }: {
   mailboxId: string;
   requesterEmail: string;
   subject?: string | null;
+  category?: string | null;
+  metadata?: Record<string, unknown> | null;
 }) {
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tickets (mailbox_id, requester_email, subject)
-     VALUES ($1, $2, $3)
+    `INSERT INTO tickets (mailbox_id, requester_email, subject, category, metadata)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [mailboxId, requesterEmail, subject ?? null]
+    [mailboxId, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
   );
 
   return result.rows[0].id;
@@ -91,21 +98,96 @@ export async function reopenTicketIfNeeded(ticketId: string) {
   }
 }
 
+export async function ensureTags(tagNames: string[]) {
+  const clean = Array.from(new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean)));
+  if (clean.length === 0) {
+    return [];
+  }
+
+  const ids: string[] = [];
+  for (const tag of clean) {
+    const result = await db.query<{ id: string }>(
+      `INSERT INTO tags (name)
+       VALUES ($1)
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [tag]
+    );
+    ids.push(result.rows[0].id);
+  }
+  return ids;
+}
+
+export async function addTagsToTicket(ticketId: string, tagNames: string[]) {
+  const tagIds = await ensureTags(tagNames);
+  for (const tagId of tagIds) {
+    await db.query(
+      `INSERT INTO ticket_tags (ticket_id, tag_id)
+       VALUES ($1, $2)
+       ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+      [ticketId, tagId]
+    );
+  }
+}
+
+export function inferTagsFromText({
+  subject,
+  text
+}: {
+  subject?: string | null;
+  text?: string | null;
+}) {
+  const haystack = `${subject ?? ""} ${text ?? ""}`.toLowerCase();
+  const tags = new Set<string>();
+
+  if (/(kyc|verify|verification|id number|selfie)/.test(haystack)) {
+    tags.add("kyc");
+  }
+  if (/(withdraw|deposit|wallet|payment|payout|bank)/.test(haystack)) {
+    tags.add("payments");
+  }
+  if (/(trade|market|price|liquidity|position|shares|yes|no)/.test(haystack)) {
+    tags.add("markets");
+  }
+  if (/(otp|login|email verification|password|account)/.test(haystack)) {
+    tags.add("account");
+  }
+  if (/(frozen|security|suspicious|hack|fraud)/.test(haystack)) {
+    tags.add("security");
+  }
+
+  if (tags.size === 0) {
+    tags.add("general");
+  }
+
+  return Array.from(tags);
+}
+
 export async function listTicketsForUser(user: SessionUser) {
   if (user.role_name === LEAD_ADMIN_ROLE) {
     const result = await db.query<TicketRecord>(
-      `SELECT id, mailbox_id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at
-       FROM tickets
-       ORDER BY created_at DESC`
+      `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
+              t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+              COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
+       FROM tickets t
+       LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
+       LEFT JOIN tags tag ON tag.id = tt.tag_id
+       GROUP BY t.id
+       ORDER BY t.created_at DESC`
     );
     return result.rows;
   }
 
   const result = await db.query<TicketRecord>(
-    `SELECT id, mailbox_id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at
-     FROM tickets
-     WHERE assigned_user_id = $1
-     ORDER BY created_at DESC`,
+    `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
+            t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
+     FROM tickets t
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
+     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     WHERE t.assigned_user_id = $1
+     GROUP BY t.id
+     ORDER BY t.created_at DESC`,
     [user.id]
   );
   return result.rows;
@@ -113,8 +195,14 @@ export async function listTicketsForUser(user: SessionUser) {
 
 export async function getTicketById(ticketId: string) {
   const result = await db.query<TicketRecord>(
-    `SELECT id, mailbox_id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at
-     FROM tickets WHERE id = $1`,
+    `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
+            t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
+     FROM tickets t
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
+     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     WHERE t.id = $1
+     GROUP BY t.id`,
     [ticketId]
   );
   return result.rows[0] ?? null;

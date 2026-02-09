@@ -11,7 +11,9 @@ import {
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
-  assignedUserId: z.string().uuid().nullable().optional()
+  assignedUserId: z.string().uuid().nullable().optional(),
+  category: z.string().optional(),
+  metadata: z.record(z.unknown()).optional()
 });
 
 export async function GET(
@@ -76,7 +78,7 @@ export async function PATCH(
   }
 
   const fields: string[] = [];
-  const values: Array<string | null> = [];
+  const values: Array<unknown> = [];
   let index = 1;
 
   if (parsed.data.status) {
@@ -92,6 +94,16 @@ export async function PATCH(
   if (assignProvided) {
     fields.push(`assigned_user_id = $${index++}`);
     values.push(parsed.data.assignedUserId ?? null);
+  }
+
+  if (parsed.data.category) {
+    fields.push(`category = $${index++}`);
+    values.push(parsed.data.category);
+  }
+
+  if (parsed.data.metadata) {
+    fields.push(`metadata = $${index++}`);
+    values.push(parsed.data.metadata);
   }
 
   if (fields.length === 0) {

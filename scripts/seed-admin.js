@@ -7,6 +7,61 @@ const ROLE_DEFS = [
   { name: "viewer", description: "Read-only access to assigned mailboxes." }
 ];
 
+const TAG_DEFS = [
+  { name: "payments", description: "Deposits, withdrawals, wallet issues." },
+  { name: "markets", description: "Trading, pricing, liquidity, positions." },
+  { name: "account", description: "Login, OTP, email verification, profile." },
+  { name: "kyc", description: "Identity verification and document checks." },
+  { name: "security", description: "Frozen accounts, fraud, suspicious activity." },
+  { name: "general", description: "General questions or uncategorized." }
+];
+
+const MACRO_DEFS = [
+  {
+    title: "KYC: Missing documents",
+    category: "kyc",
+    body:
+      "Thanks for reaching out. It looks like one or more KYC documents are missing or unreadable. " +
+      "Please re-submit the required documents: SA ID (front/back), selfie holding ID, and proof of address. " +
+      "File types: JPG/PNG/WebP/PDF. Max size 10MB. Let us know once resubmitted."
+  },
+  {
+    title: "Trading: Insufficient balance",
+    category: "markets",
+    body:
+      "This error happens when your available balance is lower than the trade amount. " +
+      "Please deposit funds first, then try again. If you believe this is incorrect, reply with the amount and timestamp."
+  },
+  {
+    title: "Trading: Trade too large",
+    category: "markets",
+    body:
+      "Trades are capped at 5% of market liquidity per trade. Please lower the trade size and try again. " +
+      "If you need help splitting the trade, let us know."
+  },
+  {
+    title: "Wallet: Withdrawals pending",
+    category: "payments",
+    body:
+      "Withdrawal processing can take some time. Please share the withdrawal ID and the time you submitted it. " +
+      "We will check the status and update you."
+  },
+  {
+    title: "Account: OTP not received",
+    category: "account",
+    body:
+      "If you didn’t receive your OTP, please check spam/junk and ensure your inbox is not full. " +
+      "You can request a new OTP after a few minutes. If the issue persists, tell us the time you requested it."
+  },
+  {
+    title: "Security: Account frozen",
+    category: "security",
+    body:
+      "Your account may have been temporarily frozen for security review. " +
+      "Please confirm your registered email and provide any recent activity details so we can investigate."
+  }
+];
+
 function hashPassword(password) {
   const salt = randomBytes(16);
   const derived = scryptSync(password, salt, 64);
@@ -39,6 +94,31 @@ async function upsertRoles(client) {
   }
 }
 
+async function upsertTags(client) {
+  for (const tag of TAG_DEFS) {
+    await client.query(
+      `INSERT INTO tags (name, description)
+       VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description`,
+      [tag.name, tag.description]
+    );
+  }
+}
+
+async function upsertMacros(client) {
+  for (const macro of MACRO_DEFS) {
+    await client.query(
+      `INSERT INTO macros (title, category, body)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (title) DO UPDATE SET
+         category = EXCLUDED.category,
+         body = EXCLUDED.body,
+         updated_at = now()`,
+      [macro.title, macro.category, macro.body]
+    );
+  }
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -58,6 +138,8 @@ async function main() {
 
   try {
     await upsertRoles(client);
+    await upsertTags(client);
+    await upsertMacros(client);
 
     const roleResult = await client.query(
       "SELECT id FROM roles WHERE name = 'lead_admin' LIMIT 1"

@@ -6,6 +6,8 @@ type Ticket = {
   id: string;
   requester_email: string;
   subject: string | null;
+  category?: string | null;
+  tags?: string[];
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -173,6 +175,12 @@ export default function TicketsClient() {
                 <strong>{ticket.subject ?? "(no subject)"}</strong>
                 <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
                 <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
+                {ticket.category ? (
+                  <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>
+                ) : null}
+                {ticket.tags && ticket.tags.length ? (
+                  <div style={{ fontSize: 12 }}>Tags: {ticket.tags.join(", ")}</div>
+                ) : null}
               </button>
             ))}
           </aside>
@@ -185,6 +193,10 @@ export default function TicketsClient() {
                 <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
                   <h2 style={{ margin: 0 }}>{activeTicket.subject ?? "(no subject)"}</h2>
                   <p>Requester: {activeTicket.requester_email}</p>
+                  {activeTicket.category ? <p>Category: {activeTicket.category}</p> : null}
+                  {activeTicket.tags && activeTicket.tags.length ? (
+                    <p>Tags: {activeTicket.tags.join(", ")}</p>
+                  ) : null}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <label>
                       Status
