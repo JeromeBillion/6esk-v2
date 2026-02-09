@@ -76,10 +76,10 @@ Outcome:
 - Replies come back to user by email.
 
 ### Option B (Preferred API): HTTP ticket creation (future)
-Once a 6esk public endpoint exists, the platform will post JSON to a ticket creation endpoint.
+6esk now provides a ticket creation endpoint for platform use.
 
 Proposed endpoint:
-- `POST /api/tickets/create` (to be implemented in 6esk)
+- `POST /api/tickets/create`
 
 Proposed payload:
 ```json
@@ -88,6 +88,8 @@ Proposed payload:
   "subject": "Withdrawal pending",
   "category": "payments",
   "description": "I requested a withdrawal 3 days ago…",
+  "descriptionHtml": "<p>I requested a withdrawal 3 days ago…</p>",
+  "tags": ["payments", "withdrawal"],
   "metadata": {
     "userId": "uuid",
     "kycStatus": "approved",
@@ -95,7 +97,14 @@ Proposed payload:
     "latestWithdrawalId": "uuid",
     "device": "UA string",
     "appVersion": "v1.2.3"
-  }
+  },
+  "attachments": [
+    {
+      "filename": "statement.pdf",
+      "contentType": "application/pdf",
+      "contentBase64": "JVBERi0xLjQKJ..."
+    }
+  ]
 }
 ```
 

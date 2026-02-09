@@ -71,3 +71,23 @@ Optional fields
   - `filename`: string
   - `contentType`: string
   - `contentBase64`: base64-encoded bytes
+
+Ticket Create API (Platform -> 6esk)
+
+Endpoint: `POST /api/tickets/create`
+Optional header: `x-6esk-secret` (matches `INBOUND_SHARED_SECRET`)
+
+Required fields
+- `from`: string
+- `subject`: string
+- `description`: string
+
+Optional fields
+- `descriptionHtml`: string
+- `category`: string
+- `tags`: string[]
+- `metadata`: object
+- `attachments`: array of
+  - `filename`: string
+  - `contentType`: string
+  - `contentBase64`: base64-encoded bytes
