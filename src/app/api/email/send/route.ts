@@ -1,9 +1,12 @@
 import { randomUUID } from "crypto";
 import { outboundEmailSchema } from "@/server/email/schema";
 import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize";
-import { getOrCreateMailbox } from "@/server/email/mailbox";
+import { findMailbox, getOrCreateMailbox } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
+import { getSessionUser } from "@/server/auth/session";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { hasMailboxAccess } from "@/server/messages";
 
 type ResendResponse = {
   id?: string;
@@ -20,6 +23,14 @@ function getSupportAddress() {
 }
 
 export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   let payload: unknown;
   try {
     payload = await request.json();
@@ -46,7 +57,18 @@ export async function POST(request: Request) {
   }
 
   const supportAddress = getSupportAddress();
-  const mailbox = await getOrCreateMailbox(fromEmail, supportAddress);
+  let mailbox = await findMailbox(fromEmail);
+  if (!mailbox) {
+    if (!isLeadAdmin(user)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    mailbox = await getOrCreateMailbox(fromEmail, supportAddress);
+  } else if (!isLeadAdmin(user)) {
+    const allowed = await hasMailboxAccess(user.id, mailbox.id);
+    if (!allowed) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   const resendPayload = {
     from: data.from,

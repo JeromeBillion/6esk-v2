@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { recordAuditLog } from "@/server/audit";
@@ -17,6 +17,9 @@ export async function PATCH(
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { messageId } = await params;

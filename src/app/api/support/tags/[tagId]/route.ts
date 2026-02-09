@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { recordAuditLog } from "@/server/audit";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -61,7 +62,15 @@ export async function PATCH(
     if (result.rows.length === 0) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
-    return Response.json({ tag: result.rows[0] });
+    const updated = result.rows[0];
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "tag_updated",
+      entityType: "tag",
+      entityId: updated.id,
+      data: { name: updated.name }
+    });
+    return Response.json({ tag: updated });
   } catch (error) {
     return Response.json({ error: "Failed to update tag" }, { status: 400 });
   }
@@ -81,5 +90,11 @@ export async function DELETE(
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "tag_deleted",
+    entityType: "tag",
+    entityId: tagId
+  });
   return Response.json({ status: "deleted" });
 }

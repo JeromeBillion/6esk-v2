@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { recordAuditLog } from "@/server/audit";
 
 const tagSchema = z.object({
   name: z.string().min(1),
@@ -42,6 +43,11 @@ export async function POST(request: Request) {
   }
 
   const { name, description } = parsed.data;
+  const existing = await db.query("SELECT id FROM tags WHERE name = $1 LIMIT 1", [
+    name.toLowerCase()
+  ]);
+  const existed = existing.rowCount && existing.rowCount > 0;
+
   const result = await db.query(
     `INSERT INTO tags (name, description)
      VALUES ($1, $2)
@@ -50,5 +56,14 @@ export async function POST(request: Request) {
     [name.toLowerCase(), description ?? null]
   );
 
-  return Response.json({ tag: result.rows[0] });
+  const created = result.rows[0];
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: existed ? "tag_updated" : "tag_created",
+    entityType: "tag",
+    entityId: created.id,
+    data: { name: created.name }
+  });
+
+  return Response.json({ tag: created });
 }

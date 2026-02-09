@@ -1,5 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftStatus } from "@/server/agents/drafts";
 import { sendTicketReply } from "@/server/email/replies";
@@ -12,6 +12,9 @@ export async function POST(
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { ticketId, draftId } = await params;

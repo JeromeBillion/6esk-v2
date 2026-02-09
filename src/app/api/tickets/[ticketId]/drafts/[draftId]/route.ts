@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftContent, updateDraftStatus } from "@/server/agents/drafts";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
@@ -28,6 +28,9 @@ export async function PATCH(
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { ticketId, draftId } = await params;

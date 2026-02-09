@@ -2,6 +2,7 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { recordAuditLog } from "@/server/audit";
 
 const slaSchema = z.object({
   firstResponseMinutes: z.number().int().positive(),
@@ -66,6 +67,16 @@ export async function POST(request: Request) {
   );
 
   const row = result.rows[0];
+
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "sla_updated",
+    entityType: "sla_config",
+    data: {
+      firstResponseMinutes: row.first_response_target_minutes,
+      resolutionMinutes: row.resolution_target_minutes
+    }
+  });
 
   return Response.json({
     firstResponseMinutes: row.first_response_target_minutes,

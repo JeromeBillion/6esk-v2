@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
 
@@ -17,6 +17,9 @@ export async function POST(
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { ticketId } = await params;

@@ -9,6 +9,10 @@ type RateEntry = {
 const store = new Map<string, RateEntry>();
 const ADMIN_LIMIT = 120;
 const AGENT_LIMIT = 600;
+const AUTH_LIMIT = 20;
+const PORTAL_LIMIT = 40;
+const TICKET_CREATE_LIMIT = 60;
+const EMAIL_SEND_LIMIT = 120;
 const WINDOW_MS = 60_000;
 
 function getClientKey(request: NextRequest) {
@@ -47,9 +51,38 @@ function checkRateLimit(key: string, limit: number) {
   return { allowed: true, resetAt: entry.resetAt, remaining: limit - entry.count };
 }
 
+type RateBucket = {
+  key: string;
+  limit: number;
+  type: "admin" | "agent" | "auth" | "portal" | "ticket_create" | "email_send";
+};
+
+function getRateBucket(pathname: string): RateBucket | null {
+  if (pathname.startsWith("/api/admin")) {
+    return { key: "admin", limit: ADMIN_LIMIT, type: "admin" };
+  }
+  if (pathname.startsWith("/api/agent")) {
+    return { key: "agent", limit: AGENT_LIMIT, type: "agent" };
+  }
+  if (pathname === "/api/auth/login") {
+    return { key: "auth_login", limit: AUTH_LIMIT, type: "auth" };
+  }
+  if (pathname === "/api/portal/tickets") {
+    return { key: "portal_ticket", limit: PORTAL_LIMIT, type: "portal" };
+  }
+  if (pathname === "/api/tickets/create") {
+    return { key: "ticket_create", limit: TICKET_CREATE_LIMIT, type: "ticket_create" };
+  }
+  if (pathname === "/api/email/send") {
+    return { key: "email_send", limit: EMAIL_SEND_LIMIT, type: "email_send" };
+  }
+  return null;
+}
+
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  if (!pathname.startsWith("/api/admin") && !pathname.startsWith("/api/agent")) {
+  const bucket = getRateBucket(pathname);
+  if (!bucket) {
     return NextResponse.next();
   }
 
@@ -57,17 +90,16 @@ export function middleware(request: NextRequest) {
   const adminAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
   const agentAllowlist = parseAllowlist(process.env.AGENT_IP_ALLOWLIST);
 
-  if (pathname.startsWith("/api/admin") && !isAllowedIp(ip, adminAllowlist)) {
+  if (bucket.type === "admin" && !isAllowedIp(ip, adminAllowlist)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (pathname.startsWith("/api/agent") && !isAllowedIp(ip, agentAllowlist)) {
+  if (bucket.type === "agent" && !isAllowedIp(ip, agentAllowlist)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const limit = pathname.startsWith("/api/admin") ? ADMIN_LIMIT : AGENT_LIMIT;
-  const key = `${pathname.startsWith("/api/admin") ? "admin" : "agent"}:${ip}`;
-  const result = checkRateLimit(key, limit);
+  const key = `${bucket.key}:${ip}`;
+  const result = checkRateLimit(key, bucket.limit);
 
   if (!result.allowed) {
     const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
@@ -86,5 +118,12 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/admin/:path*", "/api/agent/:path*"]
+  matcher: [
+    "/api/admin/:path*",
+    "/api/agent/:path*",
+    "/api/auth/login",
+    "/api/portal/tickets",
+    "/api/tickets/create",
+    "/api/email/send"
+  ]
 };

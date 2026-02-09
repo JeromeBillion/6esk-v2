@@ -11,6 +11,7 @@ import {
   recordTicketEvent
 } from "@/server/tickets";
 import { getSessionUser } from "@/server/auth/session";
+import { canManageTickets } from "@/server/auth/roles";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 
@@ -48,7 +49,11 @@ export async function POST(request: Request) {
   const provided = request.headers.get("x-6esk-secret");
   const sessionUser = await getSessionUser();
 
-  if (sharedSecret && provided !== sharedSecret && !sessionUser) {
+  if (sessionUser && !canManageTickets(sessionUser)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (!sessionUser && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
