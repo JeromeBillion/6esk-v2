@@ -124,6 +124,8 @@ Deliverables
 Status
 - Analytics API scaffolding added (overview, volume, SLA).
 - Initial analytics UI added (`/analytics`).
+ - Performance reports added (agent, tag, priority).
+ - Date range selector added.
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.

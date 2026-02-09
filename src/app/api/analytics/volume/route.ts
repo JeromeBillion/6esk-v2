@@ -30,9 +30,15 @@ export async function GET(request: Request) {
     [start, end]
   );
 
+  const formatRows = (rows: { day: Date; count: number }[]) =>
+    rows.map((row) => ({
+      day: row.day.toISOString(),
+      count: row.count
+    }));
+
   return Response.json({
     range: { start: start.toISOString(), end: end.toISOString() },
-    created: createdResult.rows,
-    solved: solvedResult.rows
+    created: formatRows(createdResult.rows),
+    solved: formatRows(solvedResult.rows)
   });
 }
