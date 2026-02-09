@@ -163,20 +163,58 @@ export function inferTagsFromText({
   return Array.from(tags);
 }
 
-export async function listTicketsForUser(user: SessionUser) {
-  if (user.role_name === LEAD_ADMIN_ROLE) {
-    const result = await db.query<TicketRecord>(
-      `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
-              t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
-              COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
-       FROM tickets t
-       LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
-       LEFT JOIN tags tag ON tag.id = tt.tag_id
-       GROUP BY t.id
-       ORDER BY t.created_at DESC`
-    );
-    return result.rows;
+export async function listTicketsForUser(
+  user: SessionUser,
+  filters?: {
+    status?: string | null;
+    priority?: string | null;
+    tag?: string | null;
+    search?: string | null;
+    assignedUserId?: string | null;
   }
+) {
+  const values: Array<string> = [];
+  const conditions: string[] = [];
+
+  const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
+  if (!isAdmin) {
+    values.push(user.id);
+    conditions.push(`t.assigned_user_id = $${values.length}`);
+  } else if (filters?.assignedUserId) {
+    values.push(filters.assignedUserId);
+    conditions.push(`t.assigned_user_id = $${values.length}`);
+  }
+
+  if (filters?.status) {
+    values.push(filters.status);
+    conditions.push(`t.status = $${values.length}`);
+  }
+
+  if (filters?.priority) {
+    values.push(filters.priority);
+    conditions.push(`t.priority = $${values.length}`);
+  }
+
+  if (filters?.search) {
+    values.push(`%${filters.search}%`);
+    conditions.push(
+      `(t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length})`
+    );
+  }
+
+  if (filters?.tag) {
+    values.push(filters.tag.toLowerCase());
+    conditions.push(
+      `EXISTS (
+        SELECT 1
+        FROM ticket_tags ttf
+        JOIN tags tagf ON tagf.id = ttf.tag_id
+        WHERE ttf.ticket_id = t.id AND tagf.name = $${values.length}
+      )`
+    );
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
@@ -185,11 +223,12 @@ export async function listTicketsForUser(user: SessionUser) {
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id
-     WHERE t.assigned_user_id = $1
+     ${whereClause}
      GROUP BY t.id
      ORDER BY t.created_at DESC`,
-    [user.id]
+    values
   );
+
   return result.rows;
 }
 

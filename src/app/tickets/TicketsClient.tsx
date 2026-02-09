@@ -71,6 +71,8 @@ export default function TicketsClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterTag, setFilterTag] = useState<string>("all");
+  const [filterQuery, setFilterQuery] = useState<string>("");
+  const [assignedFilter, setAssignedFilter] = useState<string>("all");
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -86,14 +88,28 @@ export default function TicketsClient() {
   }
 
   async function loadTickets() {
-    const res = await fetch("/api/tickets");
+    const params = new URLSearchParams();
+    if (filterStatus !== "all") params.set("status", filterStatus);
+    if (filterPriority !== "all") params.set("priority", filterPriority);
+    if (filterTag !== "all") params.set("tag", filterTag);
+    if (filterQuery.trim()) params.set("q", filterQuery.trim());
+    if (assignedFilter !== "all") params.set("assigned", assignedFilter);
+
+    const res = await fetch(`/api/tickets?${params.toString()}`);
     if (!res.ok) {
       return;
     }
     const payload = await res.json();
     setTickets(payload.tickets ?? []);
     if (payload.tickets?.[0]) {
-      setActiveTicketId(payload.tickets[0].id);
+      setActiveTicketId((current) => {
+        if (current && payload.tickets.some((ticket: Ticket) => ticket.id === current)) {
+          return current;
+        }
+        return payload.tickets[0].id;
+      });
+    } else {
+      setActiveTicketId(null);
     }
   }
 
@@ -133,9 +149,13 @@ export default function TicketsClient() {
 
   useEffect(() => {
     void loadUser();
-    void loadTickets();
     void loadMacros();
   }, []);
+
+  useEffect(() => {
+    void loadTickets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus, filterPriority, filterTag, filterQuery, assignedFilter]);
 
   useEffect(() => {
     if (!activeTicketId) {
@@ -181,19 +201,6 @@ export default function TicketsClient() {
   }
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
-  const filteredTickets = tickets.filter((ticket) => {
-    if (filterStatus !== "all" && ticket.status !== filterStatus) {
-      return false;
-    }
-    if (filterPriority !== "all" && ticket.priority !== filterPriority) {
-      return false;
-    }
-    if (filterTag !== "all" && !(ticket.tags ?? []).includes(filterTag)) {
-      return false;
-    }
-    return true;
-  });
-
   return (
     <main>
       <div className="container">
@@ -225,6 +232,27 @@ export default function TicketsClient() {
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24, marginTop: 24 }}>
           <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
             <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+              <label>
+                Search
+                <input
+                  type="text"
+                  placeholder="Subject or requester"
+                  value={filterQuery}
+                  onChange={(event) => setFilterQuery(event.target.value)}
+                />
+              </label>
+              {user?.role_name === "lead_admin" ? (
+                <label>
+                  Assignment
+                  <select
+                    value={assignedFilter}
+                    onChange={(event) => setAssignedFilter(event.target.value)}
+                  >
+                    <option value="all">All</option>
+                    <option value="mine">My tickets</option>
+                  </select>
+                </label>
+              ) : null}
               <label>
                 Status
                 <select
@@ -267,7 +295,7 @@ export default function TicketsClient() {
                 </select>
               </label>
             </div>
-            {filteredTickets.map((ticket) => (
+            {tickets.map((ticket) => (
               <button
                 key={ticket.id}
                 type="button"

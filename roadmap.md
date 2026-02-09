@@ -108,9 +108,10 @@ Deliverables
 Status
 - Ticket creation from inbound done.
 - Ticket replies via Resend done.
-- Ticket create API for platform done.
-- Internal web form UI added (`/tickets/new`).
+ - Ticket create API for platform done.
+ - Internal web form UI added (`/tickets/new`).
  - Message detail and attachment downloads added.
+ - Server-side ticket search + filters added.
 Remaining
 - Platform web form UI (client-side).
 Acceptance Criteria
