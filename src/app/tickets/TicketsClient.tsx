@@ -44,6 +44,14 @@ type Attachment = {
   size_bytes: number | null;
 };
 
+type TicketEvent = {
+  id: string;
+  event_type: string;
+  actor_user_id: string | null;
+  data: Record<string, unknown> | null;
+  created_at: string;
+};
+
 type SessionUser = {
   id: string;
   email: string;
@@ -77,6 +85,7 @@ export default function TicketsClient() {
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loadingMessage, setLoadingMessage] = useState(false);
+  const [events, setEvents] = useState<TicketEvent[]>([]);
 
   async function loadUser() {
     const res = await fetch("/api/auth/me");
@@ -129,6 +138,7 @@ export default function TicketsClient() {
     }
     const payload = await res.json();
     setMessages(payload.messages ?? []);
+    setEvents(payload.events ?? []);
     const updatedTicket = payload.ticket;
     if (updatedTicket) {
       setTickets((prev) => prev.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket)));
@@ -482,6 +492,28 @@ export default function TicketsClient() {
                       </div>
                     )}
                   </div>
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
+                  <h3>Activity</h3>
+                  {events.length === 0 ? (
+                    <p>No activity yet.</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {events.map((event) => (
+                        <div key={event.id} style={{ fontSize: 13, color: "var(--muted)" }}>
+                          {new Date(event.created_at).toLocaleString()} · {event.event_type}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div

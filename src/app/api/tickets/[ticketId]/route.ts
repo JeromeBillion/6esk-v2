@@ -4,6 +4,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import {
   getTicketById,
+  listTicketEvents,
   listTicketMessages,
   recordTicketEvent
 } from "@/server/tickets";
@@ -37,7 +38,8 @@ export async function GET(
   }
 
   const messages = await listTicketMessages(ticketId);
-  return Response.json({ ticket, messages });
+  const events = await listTicketEvents(ticketId);
+  return Response.json({ ticket, messages, events });
 }
 
 export async function PATCH(

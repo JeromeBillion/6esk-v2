@@ -112,6 +112,7 @@ Status
  - Internal web form UI added (`/tickets/new`).
  - Message detail and attachment downloads added.
  - Server-side ticket search + filters added.
+ - Ticket activity timeline added.
 Remaining
 - Platform web form UI (client-side).
 Acceptance Criteria

@@ -257,3 +257,14 @@ export async function listTicketMessages(ticketId: string) {
   );
   return result.rows;
 }
+
+export async function listTicketEvents(ticketId: string) {
+  const result = await db.query(
+    `SELECT id, event_type, actor_user_id, data, created_at
+     FROM ticket_events
+     WHERE ticket_id = $1
+     ORDER BY created_at ASC`,
+    [ticketId]
+  );
+  return result.rows;
+}
