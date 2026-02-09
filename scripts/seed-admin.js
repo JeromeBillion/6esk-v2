@@ -21,6 +21,13 @@ function getSupportAddress() {
   return domain ? `support@${domain}`.toLowerCase() : null;
 }
 
+function getPrimaryPersonalAddress(adminEmail) {
+  if (process.env.PRIMARY_PERSONAL_ADDRESS) {
+    return process.env.PRIMARY_PERSONAL_ADDRESS.toLowerCase();
+  }
+  return adminEmail.toLowerCase();
+}
+
 async function upsertRoles(client) {
   for (const role of ROLE_DEFS) {
     await client.query(
@@ -75,39 +82,37 @@ async function main() {
 
     const userId = userResult.rows[0].id;
     const userEmail = userResult.rows[0].email;
-
-    await client.query(
-      `INSERT INTO mailboxes (type, address, owner_user_id)
-       VALUES ('personal', $1, $2)
-       ON CONFLICT (address) DO UPDATE SET owner_user_id = EXCLUDED.owner_user_id`,
-      [userEmail, userId]
-    );
-
-    await client.query(
-      `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-       SELECT id, $1, 'owner' FROM mailboxes WHERE address = $2
-       ON CONFLICT (mailbox_id, user_id) DO NOTHING`,
-      [userId, userEmail]
-    );
+    const primaryPersonal = getPrimaryPersonalAddress(userEmail);
 
     const supportAddress = getSupportAddress();
-    if (supportAddress) {
+    const mailboxSeeds = [
+      { address: primaryPersonal, type: "personal" },
+      ...(supportAddress ? [{ address: supportAddress, type: "platform" }] : [])
+    ];
+
+    for (const mailbox of mailboxSeeds) {
+      const ownerUserId = mailbox.address === userEmail ? userId : null;
       await client.query(
-        `INSERT INTO mailboxes (type, address)
-         VALUES ('platform', $1)
-         ON CONFLICT (address) DO NOTHING`,
-        [supportAddress]
+        `INSERT INTO mailboxes (type, address, owner_user_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (address) DO UPDATE SET
+           owner_user_id = COALESCE(mailboxes.owner_user_id, EXCLUDED.owner_user_id)`,
+        [mailbox.type, mailbox.address, ownerUserId]
       );
 
       await client.query(
         `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
          SELECT id, $1, 'owner' FROM mailboxes WHERE address = $2
          ON CONFLICT (mailbox_id, user_id) DO NOTHING`,
-        [userId, supportAddress]
+        [userId, mailbox.address]
       );
     }
 
-    console.log("Seeded lead admin and mailboxes.");
+    console.log(
+      `Seeded lead admin and mailboxes: ${mailboxSeeds
+        .map((mailbox) => mailbox.address)
+        .join(", ")}`
+    );
   } finally {
     await client.end();
   }

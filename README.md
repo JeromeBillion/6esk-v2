@@ -25,6 +25,11 @@ npm run db:migrate
 node scripts/seed-admin.js
 ```
 
+This seeds:
+- Lead Admin user
+- `support@6ex.co.za` platform mailbox
+- `jerome.choma@6ex.co.za` personal mailbox
+
 ## Sign In
 
 Visit `http://localhost:3000/login` and use the Lead Admin credentials.
