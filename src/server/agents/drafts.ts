@@ -15,6 +15,24 @@ export type AgentDraft = {
 
 export type DraftStatus = "pending" | "used" | "dismissed";
 
+export async function getDraftById({
+  draftId,
+  ticketId
+}: {
+  draftId: string;
+  ticketId: string;
+}) {
+  const result = await db.query<AgentDraft>(
+    `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
+            status, created_at, updated_at
+     FROM agent_drafts
+     WHERE id = $1 AND ticket_id = $2
+     LIMIT 1`,
+    [draftId, ticketId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function listDraftsForTicket(ticketId: string) {
   const result = await db.query<AgentDraft>(
     `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
@@ -72,10 +90,37 @@ export async function updateDraftStatus({
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET status = $1, updated_at = now()
-     WHERE id = $2 AND ticket_id = $3
+     WHERE id = $2 AND ticket_id = $3 AND status = 'pending'
      RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, status, created_at, updated_at`,
     [status, draftId, ticketId]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function updateDraftContent({
+  draftId,
+  ticketId,
+  subject,
+  bodyText,
+  bodyHtml
+}: {
+  draftId: string;
+  ticketId: string;
+  subject: string | null;
+  bodyText: string | null;
+  bodyHtml: string | null;
+}) {
+  const result = await db.query<AgentDraft>(
+    `UPDATE agent_drafts
+     SET subject = $1,
+         body_text = $2,
+         body_html = $3,
+         updated_at = now()
+     WHERE id = $4 AND ticket_id = $5 AND status = 'pending'
+     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
+               confidence, status, created_at, updated_at`,
+    [subject, bodyText, bodyHtml, draftId, ticketId]
   );
   return result.rows[0] ?? null;
 }

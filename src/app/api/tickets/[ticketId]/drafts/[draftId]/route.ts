@@ -2,12 +2,24 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
-import { updateDraftStatus } from "@/server/agents/drafts";
+import { getDraftById, updateDraftContent, updateDraftStatus } from "@/server/agents/drafts";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 
-const updateSchema = z.object({
-  status: z.enum(["used", "dismissed"])
-});
+const updateSchema = z
+  .object({
+    status: z.enum(["used", "dismissed"]).optional(),
+    subject: z.string().nullable().optional(),
+    bodyText: z.string().nullable().optional(),
+    bodyHtml: z.string().nullable().optional()
+  })
+  .refine(
+    (data) =>
+      data.status !== undefined ||
+      data.subject !== undefined ||
+      data.bodyText !== undefined ||
+      data.bodyHtml !== undefined,
+    { message: "No updates provided" }
+  );
 
 export async function PATCH(
   request: Request,
@@ -41,29 +53,73 @@ export async function PATCH(
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const updated = await updateDraftStatus({
-    draftId,
-    ticketId,
-    status: parsed.data.status
-  });
+  let updated = null;
 
-  if (!updated) {
-    return Response.json({ error: "Not found" }, { status: 404 });
+  const hasContentUpdate =
+    parsed.data.subject !== undefined ||
+    parsed.data.bodyText !== undefined ||
+    parsed.data.bodyHtml !== undefined;
+
+  if (hasContentUpdate) {
+    const existing = await getDraftById({ draftId, ticketId });
+    if (!existing) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const updatedContent = await updateDraftContent({
+      draftId,
+      ticketId,
+      subject: parsed.data.subject !== undefined ? parsed.data.subject : existing.subject,
+      bodyText: parsed.data.bodyText !== undefined ? parsed.data.bodyText : existing.body_text,
+      bodyHtml: parsed.data.bodyHtml !== undefined ? parsed.data.bodyHtml : existing.body_html
+    });
+
+    if (!updatedContent) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    updated = updatedContent;
+    await recordTicketEvent({
+      ticketId,
+      eventType: "ai_draft_updated",
+      actorUserId: user.id,
+      data: { draftId }
+    });
+    await recordAuditLog({
+      actorUserId: user.id,
+      action: "ai_draft_updated",
+      entityType: "agent_draft",
+      entityId: draftId,
+      data: { ticketId }
+    });
   }
 
-  const eventType = parsed.data.status === "used" ? "ai_draft_used" : "ai_draft_dismissed";
-  await recordTicketEvent({
-    ticketId,
-    eventType,
-    actorUserId: user.id
-  });
-  await recordAuditLog({
-    actorUserId: user.id,
-    action: eventType,
-    entityType: "agent_draft",
-    entityId: draftId,
-    data: { ticketId }
-  });
+  if (parsed.data.status) {
+    const updatedStatus = await updateDraftStatus({
+      draftId,
+      ticketId,
+      status: parsed.data.status
+    });
+
+    if (!updatedStatus) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    updated = updatedStatus;
+    const eventType = parsed.data.status === "used" ? "ai_draft_used" : "ai_draft_dismissed";
+    await recordTicketEvent({
+      ticketId,
+      eventType,
+      actorUserId: user.id
+    });
+    await recordAuditLog({
+      actorUserId: user.id,
+      action: eventType,
+      entityType: "agent_draft",
+      entityId: draftId,
+      data: { ticketId }
+    });
+  }
 
   return Response.json({ status: "updated", draft: updated });
 }

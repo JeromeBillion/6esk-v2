@@ -87,6 +87,10 @@ export default function TicketsClient() {
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
+  const [sendingDraftId, setSendingDraftId] = useState<string | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
@@ -207,8 +211,12 @@ export default function TicketsClient() {
     if (!activeTicketId) {
       setMessages([]);
       setDrafts([]);
+      setEditingDraftId(null);
+      setDraftEdits({});
       return;
     }
+    setEditingDraftId(null);
+    setDraftEdits({});
     void loadTicketDetail(activeTicketId);
   }, [activeTicketId]);
 
@@ -247,19 +255,46 @@ export default function TicketsClient() {
     setSending(false);
   }
 
-  async function sendDraft(ticketId: string, draft: Draft) {
-    if (!draft.body_text && !draft.body_html) return;
-    setSending(true);
-    const res = await fetch(`/api/tickets/${ticketId}/replies`, {
-      method: "POST",
+  async function saveDraftEdit(ticketId: string, draftId: string) {
+    const text = draftEdits[draftId] ?? "";
+    if (!text.trim()) {
+      return false;
+    }
+
+    setSavingDraftId(draftId);
+    const res = await fetch(`/api/tickets/${ticketId}/drafts/${draftId}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: draft.body_text ?? undefined, html: draft.body_html ?? undefined })
+      body: JSON.stringify({ bodyText: text, bodyHtml: null })
     });
     if (res.ok) {
-      await updateDraftStatus(ticketId, draft.id, "used");
       await loadTicketDetail(ticketId);
     }
-    setSending(false);
+    setSavingDraftId(null);
+    return res.ok;
+  }
+
+  async function sendDraft(ticketId: string, draft: Draft) {
+    const editText = editingDraftId === draft.id ? draftEdits[draft.id] ?? "" : "";
+    if (!draft.body_text && !draft.body_html && !editText.trim()) return;
+    setSendingDraftId(draft.id);
+
+    if (editingDraftId === draft.id) {
+      const saved = await saveDraftEdit(ticketId, draft.id);
+      if (!saved) {
+        setSendingDraftId(null);
+        return;
+      }
+    }
+
+    const res = await fetch(`/api/tickets/${ticketId}/drafts/${draft.id}/send`, {
+      method: "POST"
+    });
+    if (res.ok) {
+      setEditingDraftId(null);
+      await loadTicketDetail(ticketId);
+    }
+    setSendingDraftId(null);
   }
 
   async function updateDraftStatus(ticketId: string, draftId: string, status: "used" | "dismissed") {
@@ -658,99 +693,182 @@ export default function TicketsClient() {
                       Draft-only by default. Auto-send is controlled in the admin panel.
                     </p>
                     <div style={{ display: "grid", gap: 12 }}>
-                      {drafts.map((draft) => (
-                        <div
-                          key={draft.id}
-                          style={{
-                            border: "1px solid var(--border)",
-                            borderRadius: 10,
-                            padding: 12,
-                            background: "rgba(10, 12, 18, 0.6)"
-                          }}
-                        >
-                          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-                            {new Date(draft.created_at).toLocaleString()}
-                            {draft.confidence !== null && draft.confidence !== undefined
-                              ? ` · ${(draft.confidence * 100).toFixed(0)}% confidence`
-                              : ""}
-                          </div>
-                          {draft.body_html ? (
+                      {drafts.map((draft) => {
+                        const isEditing = editingDraftId === draft.id;
+                        const draftText = draftEdits[draft.id] ?? getDraftPlainText(draft);
+
+                        return (
+                          <div
+                            key={draft.id}
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                              padding: 12,
+                              background: "rgba(10, 12, 18, 0.6)"
+                            }}
+                          >
+                            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+                              {new Date(draft.created_at).toLocaleString()}
+                              {draft.confidence !== null && draft.confidence !== undefined
+                                ? ` · ${(draft.confidence * 100).toFixed(0)}% confidence`
+                                : ""}
+                            </div>
+                            {isEditing ? (
+                              <textarea
+                                rows={6}
+                                value={draftText}
+                                onChange={(event) =>
+                                  setDraftEdits((prev) => ({
+                                    ...prev,
+                                    [draft.id]: event.target.value
+                                  }))
+                                }
+                                style={{
+                                  width: "100%",
+                                  padding: 10,
+                                  borderRadius: 8,
+                                  border: "1px solid var(--border)",
+                                  background: "var(--surface-2)",
+                                  color: "var(--text)"
+                                }}
+                              />
+                            ) : draft.body_html ? (
+                              <div
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 12,
+                                  background: "rgba(10, 12, 18, 0.6)"
+                                }}
+                                dangerouslySetInnerHTML={{ __html: draft.body_html }}
+                              />
+                            ) : (
+                              <pre
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 12,
+                                  background: "rgba(10, 12, 18, 0.6)",
+                                  margin: 0
+                                }}
+                              >
+                                {draft.body_text ?? "No draft body provided."}
+                              </pre>
+                            )}
                             <div
                               style={{
-                                border: "1px solid var(--border)",
-                                borderRadius: 10,
-                                padding: 12,
-                                background: "rgba(10, 12, 18, 0.6)"
-                              }}
-                              dangerouslySetInnerHTML={{ __html: draft.body_html }}
-                            />
-                          ) : (
-                            <pre
-                              style={{
-                                whiteSpace: "pre-wrap",
-                                border: "1px solid var(--border)",
-                                borderRadius: 10,
-                                padding: 12,
-                                background: "rgba(10, 12, 18, 0.6)",
-                                margin: 0
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 8,
+                                marginTop: 10
                               }}
                             >
-                              {draft.body_text ?? "No draft body provided."}
-                            </pre>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const text = getDraftPlainText(draft);
-                              if (!text) return;
-                              setReplyText(text);
-                            }}
-                            style={{
-                              marginTop: 10,
-                              padding: "8px 12px",
-                              borderRadius: 8,
-                              border: "1px solid var(--border)",
-                              background: "var(--surface-2)",
-                              color: "var(--text)",
-                              cursor: "pointer"
-                            }}
-                          >
-                            Insert into reply
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => sendDraft(activeTicket.id, draft)}
-                            style={{
-                              marginTop: 10,
-                              marginLeft: 8,
-                              padding: "8px 12px",
-                              borderRadius: 8,
-                              border: "1px solid var(--border)",
-                              background: "var(--surface-2)",
-                              color: "var(--text)",
-                              cursor: "pointer"
-                            }}
-                          >
-                            Approve & send
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateDraftStatus(activeTicket.id, draft.id, "dismissed")}
-                            style={{
-                              marginTop: 10,
-                              marginLeft: 8,
-                              padding: "8px 12px",
-                              borderRadius: 8,
-                              border: "1px solid var(--border)",
-                              background: "transparent",
-                              color: "var(--muted)",
-                              cursor: "pointer"
-                            }}
-                          >
-                            Dismiss
-                          </button>
-                        </div>
-                      ))}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!draftText.trim()) return;
+                                  setReplyText(draftText);
+                                }}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--border)",
+                                  background: "var(--surface-2)",
+                                  color: "var(--text)",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                Insert into reply
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => sendDraft(activeTicket.id, draft)}
+                                disabled={sendingDraftId === draft.id}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--border)",
+                                  background: "var(--surface-2)",
+                                  color: "var(--text)",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                {sendingDraftId === draft.id ? "Sending..." : "Approve & send"}
+                              </button>
+                              {!isEditing ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingDraftId(draft.id);
+                                    setDraftEdits((prev) => ({
+                                      ...prev,
+                                      [draft.id]: prev[draft.id] ?? getDraftPlainText(draft)
+                                    }));
+                                  }}
+                                  style={{
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid var(--border)",
+                                    background: "transparent",
+                                    color: "var(--muted)",
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  Edit draft
+                                </button>
+                              ) : null}
+                              {isEditing ? (
+                                <button
+                                  type="button"
+                                  onClick={() => saveDraftEdit(activeTicket.id, draft.id)}
+                                  disabled={savingDraftId === draft.id}
+                                  style={{
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid var(--border)",
+                                    background: "var(--surface-2)",
+                                    color: "var(--text)",
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  {savingDraftId === draft.id ? "Saving..." : "Save draft"}
+                                </button>
+                              ) : null}
+                              {isEditing ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingDraftId(null)}
+                                  style={{
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid var(--border)",
+                                    background: "transparent",
+                                    color: "var(--muted)",
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => updateDraftStatus(activeTicket.id, draft.id, "dismissed")}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--border)",
+                                  background: "transparent",
+                                  color: "var(--muted)",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}

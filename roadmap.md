@@ -159,6 +159,7 @@ Status
 - Draft panel added in tickets UI.
 - Draft accept/dismiss actions added.
 - Draft approve/send actions added.
+- Draft edit + approve/send flow completed.
 - Working hours + escalation policy config added (JSON policy).
 - Audit log UI added in Admin panel.
 Acceptance Criteria
