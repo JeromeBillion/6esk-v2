@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
 import { hasMailboxScope } from "@/server/agents/scopes";
+import { isAutoSendAllowed } from "@/server/agents/policy";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { sendTicketReply } from "@/server/email/replies";
@@ -103,6 +104,11 @@ export async function POST(request: Request) {
       case "send_reply": {
         if (integration.policy_mode !== "auto_send") {
           results.push({ type: action.type, status: "blocked", detail: "Auto-send disabled" });
+          break;
+        }
+
+        if (!isAutoSendAllowed(integration)) {
+          results.push({ type: action.type, status: "blocked", detail: "Outside working hours" });
           break;
         }
         try {

@@ -12,6 +12,7 @@ export default function TagsClient() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [form, setForm] = useState({ name: "", description: "" });
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   async function loadTags() {
     const res = await fetch("/api/support/tags");
@@ -27,11 +28,14 @@ export default function TagsClient() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("saving");
-    const res = await fetch("/api/support/tags", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form)
-    });
+    const res = await fetch(
+      editingId ? `/api/support/tags/${editingId}` : "/api/support/tags",
+      {
+        method: editingId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form)
+      }
+    );
 
     if (!res.ok) {
       setStatus("error");
@@ -39,8 +43,26 @@ export default function TagsClient() {
     }
 
     setForm({ name: "", description: "" });
+    setEditingId(null);
     setStatus("idle");
     await loadTags();
+  }
+
+  function startEdit(tag: Tag) {
+    setForm({ name: tag.name, description: tag.description ?? "" });
+    setEditingId(tag.id);
+  }
+
+  function cancelEdit() {
+    setForm({ name: "", description: "" });
+    setEditingId(null);
+  }
+
+  async function deleteTag(tagId: string) {
+    const res = await fetch(`/api/support/tags/${tagId}`, { method: "DELETE" });
+    if (res.ok) {
+      await loadTags();
+    }
   }
 
   return (
@@ -81,8 +103,28 @@ export default function TagsClient() {
             cursor: "pointer"
           }}
         >
-          {status === "saving" ? "Saving..." : "Add tag"}
+          {status === "saving"
+            ? "Saving..."
+            : editingId
+              ? "Update tag"
+              : "Add tag"}
         </button>
+        {editingId ? (
+          <button
+            type="button"
+            onClick={cancelEdit}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text)",
+              cursor: "pointer"
+            }}
+          >
+            Cancel
+          </button>
+        ) : null}
       </form>
 
       <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
@@ -98,6 +140,36 @@ export default function TagsClient() {
           >
             <strong>{tag.name}</strong>
             {tag.description ? <p>{tag.description}</p> : null}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={() => startEdit(tag)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer"
+                }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteTag(tag.id)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer"
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>

@@ -14,6 +14,7 @@ export type AgentIntegration = {
   policy_mode: AgentPolicyMode;
   scopes: Record<string, unknown>;
   capabilities: Record<string, unknown>;
+  policy: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -28,12 +29,13 @@ type AgentIntegrationInput = {
   policyMode?: AgentPolicyMode;
   scopes?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  policy?: Record<string, unknown>;
 };
 
 export async function listAgentIntegrations() {
   const result = await db.query<AgentIntegration>(
     `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
-            policy_mode, scopes, capabilities, created_at, updated_at
+            policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      ORDER BY created_at DESC`
   );
@@ -43,7 +45,7 @@ export async function listAgentIntegrations() {
 export async function getAgentIntegrationById(id: string) {
   const result = await db.query<AgentIntegration>(
     `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
-            policy_mode, scopes, capabilities, created_at, updated_at
+            policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      WHERE id = $1`,
     [id]
@@ -54,7 +56,7 @@ export async function getAgentIntegrationById(id: string) {
 export async function getActiveAgentIntegration() {
   const result = await db.query<AgentIntegration>(
     `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
-            policy_mode, scopes, capabilities, created_at, updated_at
+            policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      WHERE status = 'active'
      ORDER BY created_at DESC
@@ -69,13 +71,13 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
   const result = await db.query<AgentIntegration>(
     `INSERT INTO agent_integrations (
       name, provider, base_url, auth_type, shared_secret,
-      status, policy_mode, scopes, capabilities
+      status, policy_mode, scopes, capabilities, policy
     ) VALUES (
       $1, $2, $3, $4, $5,
-      $6, $7, $8, $9
+      $6, $7, $8, $9, $10
     )
     RETURNING id, name, provider, base_url, auth_type, shared_secret, status,
-              policy_mode, scopes, capabilities, created_at, updated_at`,
+              policy_mode, scopes, capabilities, policy, created_at, updated_at`,
     [
       input.name,
       input.provider ?? "elizaos",
@@ -85,7 +87,8 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
       input.status ?? "active",
       input.policyMode ?? "draft_only",
       input.scopes ?? fallbackScopes,
-      input.capabilities ?? {}
+      input.capabilities ?? {},
+      input.policy ?? {}
     ]
   );
   return result.rows[0];
@@ -144,6 +147,11 @@ export async function updateAgentIntegration(
     values.push(updates.capabilities);
   }
 
+  if (updates.policy) {
+    fields.push(`policy = $${index++}`);
+    values.push(updates.policy);
+  }
+
   if (fields.length === 0) {
     return getAgentIntegrationById(id);
   }
@@ -156,7 +164,7 @@ export async function updateAgentIntegration(
      SET ${fields.join(", ")}
      WHERE id = $${index}
      RETURNING id, name, provider, base_url, auth_type, shared_secret, status,
-               policy_mode, scopes, capabilities, created_at, updated_at`,
+               policy_mode, scopes, capabilities, policy, created_at, updated_at`,
     values
   );
 

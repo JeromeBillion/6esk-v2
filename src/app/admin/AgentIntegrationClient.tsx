@@ -9,6 +9,7 @@ type AgentIntegration = {
   shared_secret: string;
   status: "active" | "paused";
   policy_mode: "draft_only" | "auto_send";
+  policy?: Record<string, unknown>;
 };
 
 export default function AgentIntegrationClient() {
@@ -18,7 +19,8 @@ export default function AgentIntegrationClient() {
     baseUrl: "",
     sharedSecret: "",
     status: "active" as "active" | "paused",
-    policyMode: "draft_only" as "draft_only" | "auto_send"
+    policyMode: "draft_only" as "draft_only" | "auto_send",
+    policyJson: "{\n  \"working_hours\": {\n    \"timezone\": \"Africa/Johannesburg\",\n    \"days\": [1,2,3,4,5],\n    \"start\": \"08:00\",\n    \"end\": \"18:00\"\n  },\n  \"escalation\": {\n    \"out_of_hours\": \"draft_only\",\n    \"tag\": \"urgent\"\n  }\n}"
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +48,8 @@ export default function AgentIntegrationClient() {
         baseUrl: primary.base_url,
         sharedSecret: primary.shared_secret,
         status: primary.status,
-        policyMode: primary.policy_mode
+        policyMode: primary.policy_mode,
+        policyJson: JSON.stringify(primary.policy ?? {}, null, 2)
       });
     }
   }
@@ -61,12 +64,24 @@ export default function AgentIntegrationClient() {
     setError(null);
     setSaved(false);
 
+    let policy: Record<string, unknown> | undefined;
+    if (form.policyJson.trim()) {
+      try {
+        policy = JSON.parse(form.policyJson);
+      } catch (error) {
+        setError("Policy JSON is invalid.");
+        setLoading(false);
+        return;
+      }
+    }
+
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       sharedSecret: form.sharedSecret,
       status: form.status,
-      policyMode: form.policyMode
+      policyMode: form.policyMode,
+      policy
     };
 
     const res = await fetch(agent ? `/api/admin/agents/${agent.id}` : "/api/admin/agents", {
@@ -160,6 +175,17 @@ export default function AgentIntegrationClient() {
             <option value="draft_only">Draft only (recommended)</option>
             <option value="auto_send">Auto-send</option>
           </select>
+        </label>
+        <label>
+          Policy JSON (working hours + escalation)
+          <textarea
+            rows={8}
+            value={form.policyJson}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, policyJson: event.target.value }))
+            }
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--border)" }}
+          />
         </label>
         <label>
           Status

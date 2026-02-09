@@ -15,6 +15,7 @@ type User = {
   email: string;
   display_name: string;
   role_name?: string | null;
+  role_id?: string | null;
   is_active: boolean;
   created_at: string;
 };
@@ -22,6 +23,17 @@ type User = {
 type SlaConfig = {
   firstResponseMinutes: number;
   resolutionMinutes: number;
+};
+
+type AuditLog = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  data: Record<string, unknown> | null;
+  created_at: string;
+  actor_name?: string | null;
+  actor_email?: string | null;
 };
 
 export default function AdminClient() {
@@ -43,12 +55,17 @@ export default function AdminClient() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [resetLinks, setResetLinks] = useState<Record<string, string>>({});
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [resettingUserId, setResettingUserId] = useState<string | null>(null);
 
   async function loadData() {
-    const [rolesRes, usersRes, slaRes] = await Promise.all([
+    const [rolesRes, usersRes, slaRes, logsRes] = await Promise.all([
       fetch("/api/admin/roles"),
       fetch("/api/admin/users"),
-      fetch("/api/admin/sla")
+      fetch("/api/admin/sla"),
+      fetch("/api/admin/audit-logs?limit=50")
     ]);
 
     if (rolesRes.ok) {
@@ -70,6 +87,11 @@ export default function AdminClient() {
         firstResponseMinutes: payload.firstResponseMinutes ?? 120,
         resolutionMinutes: payload.resolutionMinutes ?? 1440
       });
+    }
+
+    if (logsRes.ok) {
+      const payload = await logsRes.json();
+      setAuditLogs(payload.logs ?? []);
     }
   }
 
@@ -99,6 +121,27 @@ export default function AdminClient() {
     setForm((prev) => ({ ...prev, email: "", displayName: "", password: "" }));
     await loadData();
     setLoading(false);
+  }
+
+  async function updateUser(userId: string, updates: { roleId?: string; isActive?: boolean }) {
+    setUpdatingUserId(userId);
+    await fetch(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
+    });
+    await loadData();
+    setUpdatingUserId(null);
+  }
+
+  async function resetPassword(userId: string) {
+    setResettingUserId(userId);
+    const res = await fetch(`/api/admin/users/${userId}/password-reset`, { method: "POST" });
+    if (res.ok) {
+      const payload = await res.json();
+      setResetLinks((prev) => ({ ...prev, [userId]: payload.resetLink }));
+    }
+    setResettingUserId(null);
   }
 
   return (
@@ -291,11 +334,95 @@ export default function AdminClient() {
               >
                 <strong>{user.display_name}</strong>
                 <p>{user.email}</p>
-                <p>Role: {user.role_name ?? "unassigned"}</p>
-                <p>Status: {user.is_active ? "Active" : "Inactive"}</p>
+                <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                  <label>
+                    Role
+                    <select
+                      value={user.role_id ?? ""}
+                      onChange={(event) => updateUser(user.id, { roleId: event.target.value })}
+                      style={{ marginLeft: 8, padding: "6px 8px" }}
+                    >
+                      {roles.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Status
+                    <select
+                      value={user.is_active ? "active" : "inactive"}
+                      onChange={(event) =>
+                        updateUser(user.id, { isActive: event.target.value === "active" })
+                      }
+                      style={{ marginLeft: 8, padding: "6px 8px" }}
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => resetPassword(user.id)}
+                    disabled={resettingUserId === user.id}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                      color: "var(--text)",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {resettingUserId === user.id ? "Generating..." : "Reset password"}
+                  </button>
+                  {updatingUserId === user.id ? (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Saving...</span>
+                  ) : null}
+                </div>
+                {resetLinks[user.id] ? (
+                  <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+                    Reset link: <span style={{ color: "var(--text)" }}>{resetLinks[user.id]}</span>
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>
+        </section>
+
+        <section style={{ marginTop: 40 }}>
+          <h2 style={{ marginBottom: 12 }}>Audit Log</h2>
+          {auditLogs.length === 0 ? (
+            <p>No audit entries yet.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {auditLogs.map((log) => (
+                <div
+                  key={log.id}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(10, 12, 18, 0.6)",
+                    fontSize: 13
+                  }}
+                >
+                  <div style={{ color: "var(--muted)" }}>
+                    {new Date(log.created_at).toLocaleString()}
+                  </div>
+                  <div>
+                    <strong>{log.action}</strong> · {log.entity_type}
+                  </div>
+                  <div style={{ color: "var(--muted)" }}>
+                    {log.actor_name ?? log.actor_email ?? "System"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </main>

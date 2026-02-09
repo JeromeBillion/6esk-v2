@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { hashPassword } from "@/server/auth/password";
+import { recordAuditLog } from "@/server/audit";
 
 const createUserSchema = z.object({
   email: z.string().email(),
@@ -47,6 +48,12 @@ export async function POST(request: Request) {
   }
 
   const { email, displayName, password, roleId } = parsed.data;
+  const emailLower = email.toLowerCase();
+  const existing = await db.query(
+    "SELECT id, role_id FROM users WHERE email = $1 LIMIT 1",
+    [emailLower]
+  );
+  const existingUser = existing.rows[0] ?? null;
   const passwordHash = hashPassword(password);
 
   const result = await db.query(
@@ -57,7 +64,7 @@ export async function POST(request: Request) {
        password_hash = EXCLUDED.password_hash,
        role_id = EXCLUDED.role_id
      RETURNING id, email, display_name, role_id`,
-    [email.toLowerCase(), displayName, passwordHash, roleId]
+    [emailLower, displayName, passwordHash, roleId]
   );
 
   const created = result.rows[0];
@@ -75,6 +82,25 @@ export async function POST(request: Request) {
      ON CONFLICT (mailbox_id, user_id) DO NOTHING`,
     [created.id, created.email]
   );
+
+  if (existingUser) {
+    const roleChanged = existingUser.role_id !== created.role_id;
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: roleChanged ? "user_role_updated" : "user_updated",
+      entityType: "user",
+      entityId: created.id,
+      data: { email: created.email, roleId: created.role_id }
+    });
+  } else {
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "user_created",
+      entityType: "user",
+      entityId: created.id,
+      data: { email: created.email, roleId: created.role_id }
+    });
+  }
 
   return Response.json({ status: "created", user: created });
 }

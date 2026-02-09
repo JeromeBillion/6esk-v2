@@ -15,7 +15,8 @@ const updateSchema = z.object({
   status: z.enum(["active", "paused"]).optional(),
   policyMode: z.enum(["draft_only", "auto_send"]).optional(),
   scopes: z.record(z.unknown()).optional(),
-  capabilities: z.record(z.unknown()).optional()
+  capabilities: z.record(z.unknown()).optional(),
+  policy: z.record(z.unknown()).optional()
 });
 
 export async function GET(

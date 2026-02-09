@@ -233,6 +233,21 @@ export default function TicketsClient() {
     setSending(false);
   }
 
+  async function sendDraft(ticketId: string, draft: Draft) {
+    if (!draft.body_text && !draft.body_html) return;
+    setSending(true);
+    const res = await fetch(`/api/tickets/${ticketId}/replies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: draft.body_text ?? undefined, html: draft.body_html ?? undefined })
+    });
+    if (res.ok) {
+      await updateDraftStatus(ticketId, draft.id, "used");
+      await loadTicketDetail(ticketId);
+    }
+    setSending(false);
+  }
+
   async function updateDraftStatus(ticketId: string, draftId: string, status: "used" | "dismissed") {
     const res = await fetch(`/api/tickets/${ticketId}/drafts/${draftId}`, {
       method: "PATCH",
@@ -653,7 +668,6 @@ export default function TicketsClient() {
                               const text = getDraftPlainText(draft);
                               if (!text) return;
                               setReplyText(text);
-                              void updateDraftStatus(activeTicket.id, draft.id, "used");
                             }}
                             style={{
                               marginTop: 10,
@@ -666,6 +680,22 @@ export default function TicketsClient() {
                             }}
                           >
                             Insert into reply
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => sendDraft(activeTicket.id, draft)}
+                            style={{
+                              marginTop: 10,
+                              marginLeft: 8,
+                              padding: "8px 12px",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                              background: "var(--surface-2)",
+                              color: "var(--text)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Approve & send
                           </button>
                           <button
                             type="button"

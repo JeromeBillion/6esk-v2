@@ -49,9 +49,9 @@ These are the “performance reports” referenced in the PRD.
 **Progress Update (2026-02-09)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
 - Phase 1 in progress: inbound/outbound APIs done, Cloudflare worker stub ready, DNS pending.
-- Phase 2 complete: auth + admin panel + seed.
+- Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
 - Phase 3 complete: mailbox UI + message list.
-- Phase 4 in progress: ticket core complete, web form ticket create API done, UI refinement + tag management ongoing.
+- Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 
 **Phase 0 — Repo & Foundations**
@@ -118,9 +118,8 @@ Status
  - Ticket activity timeline added.
  - Attachment previews (image/PDF) added.
  - Lead Admin tag creation UI added.
-Remaining
-- Platform web form UI (client-side).
- - Tag edit/delete flow.
+- Platform web form UI added (`/support`).
+- Tag edit/delete flow added.
 Acceptance Criteria
 - Incoming email to `support@6ex.co.za` creates a ticket with requester email.
 - Agent replies from ticket are sent via Resend and logged.
@@ -158,6 +157,9 @@ Status
 - Actions API added (drafts + auto-send gate).
 - Draft panel added in tickets UI.
 - Draft accept/dismiss actions added.
+- Draft approve/send actions added.
+- Working hours + escalation policy config added (JSON policy).
+- Audit log UI added in Admin panel.
 Acceptance Criteria
 - Agent receives `ticket.message.created` events within 60 seconds.
 - Agent can fetch context via scoped APIs and post a draft reply.
@@ -179,6 +181,8 @@ Acceptance Criteria
 - Storage growth: R2 lifecycle policies after MVP.
 
 **Immediate Next Steps**
-1. Align on exact data model for mailboxes and ticket linkage.
-2. Set up domain DNS for Resend + Cloudflare Email Routing.
-3. Stand up the ingestion endpoints and verify end‑to‑end email flow.
+1. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
+2. Finish ticketing UI gaps (platform web form client UI + tag edit/delete).
+3. Add admin password reset + basic audit log UI for user/role changes.
+4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
+5. Start Phase 7 hardening: inbound idempotency + retry/backfill plan.
