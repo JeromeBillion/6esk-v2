@@ -109,8 +109,9 @@ Status
 - Ticket creation from inbound done.
 - Ticket replies via Resend done.
 - Ticket create API for platform done.
+ - Internal web form UI added (`/tickets/new`).
 Remaining
-- Web form UI on platform.
+- Platform web form UI (client-side).
 Acceptance Criteria
 - Incoming email to `support@6ex.co.za` creates a ticket with requester email.
 - Agent replies from ticket are sent via Resend and logged.

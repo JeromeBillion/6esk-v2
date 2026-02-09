@@ -31,6 +31,13 @@ type SessionUser = {
   role_name?: string | null;
 };
 
+type Macro = {
+  id: string;
+  title: string;
+  body: string;
+  category?: string | null;
+};
+
 const STATUS_OPTIONS = ["new", "open", "pending", "solved", "closed"];
 
 export default function TicketsClient() {
@@ -40,6 +47,8 @@ export default function TicketsClient() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [macros, setMacros] = useState<Macro[]>([]);
+  const [selectedMacro, setSelectedMacro] = useState<string>("");
 
   async function loadUser() {
     const res = await fetch("/api/auth/me");
@@ -62,6 +71,15 @@ export default function TicketsClient() {
     }
   }
 
+  async function loadMacros() {
+    const res = await fetch("/api/support/macros");
+    if (!res.ok) {
+      return;
+    }
+    const payload = await res.json();
+    setMacros(payload.macros ?? []);
+  }
+
   async function loadTicketDetail(ticketId: string) {
     const res = await fetch(`/api/tickets/${ticketId}`);
     if (!res.ok) {
@@ -78,6 +96,7 @@ export default function TicketsClient() {
   useEffect(() => {
     void loadUser();
     void loadTickets();
+    void loadMacros();
   }, []);
 
   useEffect(() => {
@@ -297,6 +316,40 @@ export default function TicketsClient() {
                   }}
                 >
                   <h3>Reply</h3>
+                  {macros.length ? (
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <select
+                        value={selectedMacro}
+                        onChange={(event) => setSelectedMacro(event.target.value)}
+                        style={{ maxWidth: 280 }}
+                      >
+                        <option value="">Insert macro...</option>
+                        {macros.map((macro) => (
+                          <option key={macro.id} value={macro.id}>
+                            {macro.title}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const macro = macros.find((item) => item.id === selectedMacro);
+                          if (!macro) return;
+                          setReplyText((prev) => (prev ? `${prev}\n\n${macro.body}` : macro.body));
+                        }}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "var(--surface-2)",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        Insert
+                      </button>
+                    </div>
+                  ) : null}
                   <textarea
                     value={replyText}
                     onChange={(event) => setReplyText(event.target.value)}

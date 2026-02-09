@@ -10,6 +10,7 @@ import {
   inferTagsFromText,
   recordTicketEvent
 } from "@/server/tickets";
+import { getSessionUser } from "@/server/auth/session";
 
 const createTicketSchema = z.object({
   from: z.string().email(),
@@ -42,11 +43,11 @@ function getSupportAddress() {
 
 export async function POST(request: Request) {
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
-  if (sharedSecret) {
-    const provided = request.headers.get("x-6esk-secret");
-    if (provided !== sharedSecret) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  const provided = request.headers.get("x-6esk-secret");
+  const sessionUser = await getSessionUser();
+
+  if (sharedSecret && provided !== sharedSecret && !sessionUser) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: unknown;
