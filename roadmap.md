@@ -113,6 +113,7 @@ Status
  - Message detail and attachment downloads added.
  - Server-side ticket search + filters added.
  - Ticket activity timeline added.
+ - Attachment previews (image/PDF) added.
 Remaining
 - Platform web form UI (client-side).
 Acceptance Criteria

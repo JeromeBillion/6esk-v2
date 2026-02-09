@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 
 type Ticket = {
@@ -476,17 +477,58 @@ export default function TicketsClient() {
                         </pre>
                       )}
                         {attachments.length ? (
-                          <div style={{ display: "grid", gap: 8 }}>
+                          <div style={{ display: "grid", gap: 12 }}>
                             <strong>Attachments</strong>
-                            {attachments.map((attachment) => (
-                              <a
-                                key={attachment.id}
-                                href={`/api/attachments/${attachment.id}`}
-                                style={{ color: "var(--accent)" }}
-                              >
-                                {attachment.filename}
-                              </a>
-                            ))}
+                            {attachments.map((attachment) => {
+                              const isImage = attachment.content_type?.startsWith("image/");
+                              const isPdf = attachment.content_type === "application/pdf";
+                              const url = `/api/attachments/${attachment.id}`;
+                              return (
+                                <div
+                                  key={attachment.id}
+                                  style={{
+                                    border: "1px solid var(--border)",
+                                    borderRadius: 10,
+                                    padding: 10,
+                                    background: "rgba(10, 12, 18, 0.6)"
+                                  }}
+                                >
+                                  <a href={url} style={{ color: "var(--accent)" }}>
+                                    {attachment.filename}
+                                  </a>
+                                  {isImage ? (
+                                    <div style={{ marginTop: 8 }}>
+                                      <Image
+                                        src={url}
+                                        alt={attachment.filename}
+                                        width={800}
+                                        height={600}
+                                        unoptimized
+                                        style={{
+                                          display: "block",
+                                          maxWidth: "100%",
+                                          height: "auto",
+                                          borderRadius: 8
+                                        }}
+                                      />
+                                    </div>
+                                  ) : null}
+                                  {isPdf ? (
+                                    <iframe
+                                      title={attachment.filename}
+                                      src={url}
+                                      style={{
+                                        width: "100%",
+                                        height: 320,
+                                        marginTop: 8,
+                                        border: "none",
+                                        borderRadius: 8
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : null}
                       </div>
