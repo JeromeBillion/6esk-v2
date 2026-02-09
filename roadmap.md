@@ -1,0 +1,129 @@
+6esk MVP Roadmap
+
+**Product Summary**
+6esk is a lightweight helpdesk with a built‑in, two‑way email system. The MVP is a fast, analytics‑first support platform for a single org (6ex Support), with email as the primary channel and a clean operator workflow for tickets and personal mail.
+
+**Non‑Negotiables**
+- Two‑way email is core and top priority (inbound + outbound + storage).
+- Auth is required. No signup. Lead Admin creates accounts and roles in an admin panel.
+- Mailboxes:
+- Platform mailbox: `support@6ex.co.za` for CRM tickets.
+- Personal mailbox: `name@6ex.co.za` for direct partner/vendor/investor/staff email.
+- All org addresses must be provisionable inside 6esk, no manual mailbox creation.
+
+**Scope Definition (MVP)**
+- Ticketing: email + web form inbound, ticket lifecycle, assignment, replies.
+- Analytics: core dashboard + SLA‑lite metrics.
+- Admin: user creation, role assignment, mailbox access controls.
+- Single org: no multi‑tenant organizations.
+
+**Key Decisions**
+- Hosting: start on Railway for speed; revisit cost optimization after MVP.
+- Backend: Node.js + REST API.
+- Frontend: Next.js (app router) for speed and single deployment.
+- Database: Postgres.
+- Email outbound: Resend API.
+- Email inbound: Cloudflare Email Routing + Worker (catch‑all) -> backend webhook.
+- Storage: Cloudflare R2 for raw emails and attachments.
+- Auth: email/password, server‑side sessions (HTTP‑only cookies).
+
+**Architecture Overview**
+- Inbound flow: Cloudflare Email Routing -> Worker -> `/api/email/inbound` -> Postgres + R2.
+- Outbound flow: UI -> `/api/email/send` -> Resend -> store copy in Postgres + R2.
+- Ticket linkage: `support@6ex.co.za` inbound automatically creates tickets.
+- Personal mailbox: `name@6ex.co.za` inbound lands in personal mailbox, not tickets.
+- Address provisioning: catch‑all routing + internal user table controls visibility and access.
+
+**Performance Reports (MVP Spec)**
+These are the “performance reports” referenced in the PRD.
+- Agent workload: tickets assigned, open, solved, and backlog by agent.
+- Responsiveness: avg first response time, avg resolution time by agent and by tag.
+- SLA‑lite: % meeting first response target, % meeting resolution target, breaches.
+- Volume trends: created vs solved over time, and delta (backlog growth).
+- Quality proxy: reopen rate and CSAT (if enabled).
+- Report scope: global, by date range, by agent, by tag, by priority.
+
+**Roadmap Phases**
+
+**Phase 0 — Repo & Foundations**
+Deliverables
+- Project skeleton (Next.js + API routes or separate API service).
+- Postgres schema for users, roles, tickets, replies, mailboxes, messages, attachments.
+- R2 bucket setup and SDK wiring.
+- Environment/config management with Railway variables.
+Acceptance Criteria
+- App boots locally and on Railway.
+- DB migrations run cleanly.
+- R2 read/write verified with a test object.
+
+**Phase 1 — Email Infrastructure (Priority 0)**
+Deliverables
+- Resend domain verified with SPF/DKIM.
+- Cloudflare Email Routing enabled for `6ex.co.za` catch‑all.
+- Worker parses inbound MIME and forwards to `/api/email/inbound`.
+- Inbound handler stores raw email + attachments in R2 and metadata in Postgres.
+- Outbound handler sends via Resend and stores a sent copy in R2/Postgres.
+Acceptance Criteria
+- Email to `support@6ex.co.za` appears in database within 60 seconds.
+- Email to `jerome.choma@6ex.co.za` appears in personal mailbox.
+- Reply from 6esk delivers to Gmail/Outlook inbox (not spam).
+- Attachments render and download correctly.
+
+**Phase 2 — Auth + Admin Panel**
+Deliverables
+- Sign‑in with email/password.
+- Lead Admin role can create users, set roles, and assign mailbox access.
+- User list, role list, and basic audit log (create user, role change).
+- Password reset for admin‑created users.
+Acceptance Criteria
+- Only admin can create users.
+- Users can sign in and see authorized mailboxes only.
+
+**Phase 3 — Mailbox UI (Personal + Platform)**
+Deliverables
+- Unified mailbox UI with filters for Platform vs Personal.
+- Message list + detail view.
+- Reply/forward actions.
+- Threading by `Message‑ID` and `In‑Reply‑To` headers where available.
+Acceptance Criteria
+- Support mailbox reads/writes work end‑to‑end.
+- Personal mailbox reads/writes work end‑to‑end.
+
+**Phase 4 — Ticketing Core**
+Deliverables
+- Ticket creation from platform mailbox inbound.
+- Ticket statuses: New, Open, Pending, Solved, Closed.
+- Manual assignment and notes.
+- Web form ticket creation.
+Acceptance Criteria
+- Incoming email to `support@6ex.co.za` creates a ticket with requester email.
+- Agent replies from ticket are sent via Resend and logged.
+
+**Phase 5 — Analytics & Reports**
+Deliverables
+- Dashboard metrics (global and per‑agent).
+- Volume charts and SLA‑lite analytics.
+- Performance reports section (spec above).
+Acceptance Criteria
+- Metrics match definitions in PRD for any date range.
+- Reports can be filtered by agent, tag, priority.
+
+**Phase 6 — Hardening & QA**
+Deliverables
+- Inbound retry and idempotency keys for email ingestion.
+- Backfill jobs to reprocess failed inbound payloads.
+- Basic spam handling (manual flagging, whitelist/blacklist).
+- Security pass (RBAC, rate limiting, audit log coverage).
+Acceptance Criteria
+- System handles duplicate inbound webhook safely.
+- Failures are recoverable without data loss.
+
+**Risks & Mitigations**
+- Email provider lock‑in: keep inbound/outbound adapters thin and standardized.
+- Catch‑all spam noise: basic spam tagging and mailbox rules in Phase 6.
+- Storage growth: R2 lifecycle policies after MVP.
+
+**Immediate Next Steps**
+1. Align on exact data model for mailboxes and ticket linkage.
+2. Set up domain DNS for Resend + Cloudflare Email Routing.
+3. Stand up the ingestion endpoints and verify end‑to‑end email flow.
