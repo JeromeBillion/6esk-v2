@@ -97,8 +97,9 @@ export default function AdminClient() {
             style={{
               padding: "10px 14px",
               borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
               cursor: "pointer",
               height: 40
             }}
@@ -119,7 +120,6 @@ export default function AdminClient() {
                   setForm((prev) => ({ ...prev, email: event.target.value }))
                 }
                 required
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               />
             </label>
             <label>
@@ -131,7 +131,6 @@ export default function AdminClient() {
                   setForm((prev) => ({ ...prev, displayName: event.target.value }))
                 }
                 required
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               />
             </label>
             <label>
@@ -144,7 +143,6 @@ export default function AdminClient() {
                 }
                 required
                 minLength={8}
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               />
             </label>
             <label>
@@ -154,7 +152,6 @@ export default function AdminClient() {
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, roleId: event.target.value }))
                 }
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               >
                 {roles.map((role) => (
                   <option key={role.id} value={role.id}>
@@ -163,7 +160,7 @@ export default function AdminClient() {
                 ))}
               </select>
             </label>
-            {error ? <p style={{ color: "#c0392b" }}>{error}</p> : null}
+            {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
             <button
               type="submit"
               disabled={loading}
@@ -171,8 +168,8 @@ export default function AdminClient() {
                 padding: "12px 16px",
                 borderRadius: 10,
                 border: "none",
-                background: "#1a1a1a",
-                color: "#fff",
+                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                color: "#081018",
                 cursor: "pointer"
               }}
             >
@@ -188,9 +185,10 @@ export default function AdminClient() {
               <div
                 key={user.id}
                 style={{
-                  border: "1px solid #eee",
+                  border: "1px solid var(--border)",
                   borderRadius: 12,
-                  padding: 12
+                  padding: 12,
+                  background: "rgba(10, 12, 18, 0.6)"
                 }}
               >
                 <strong>{user.display_name}</strong>

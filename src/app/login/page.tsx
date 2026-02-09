@@ -45,7 +45,6 @@ export default function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 required
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               />
             </label>
             <label>
@@ -55,10 +54,9 @@ export default function LoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 required
-                style={{ width: "100%", padding: 10, marginTop: 6 }}
               />
             </label>
-            {error ? <p style={{ color: "#c0392b" }}>{error}</p> : null}
+            {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
             <button
               type="submit"
               disabled={loading}
@@ -66,8 +64,8 @@ export default function LoginPage() {
                 padding: "12px 16px",
                 borderRadius: 10,
                 border: "none",
-                background: "#1a1a1a",
-                color: "#fff",
+                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                color: "#081018",
                 cursor: "pointer"
               }}
             >

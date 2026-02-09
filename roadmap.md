@@ -6,9 +6,8 @@
 **Non‑Negotiables**
 - Two‑way email is core and top priority (inbound + outbound + storage).
 - Auth is required. No signup. Lead Admin creates accounts and roles in an admin panel.
-- Mailboxes:
-- Platform mailbox: `support@6ex.co.za` for CRM tickets.
-- Personal mailbox: `name@6ex.co.za` for direct partner/vendor/investor/staff email.
+- Mailboxes: platform mailbox `support@6ex.co.za` for CRM tickets.
+- Mailboxes: personal mailbox `name@6ex.co.za` for direct partner/vendor/investor/staff email.
 - All org addresses must be provisionable inside 6esk, no manual mailbox creation.
 
 **Scope Definition (MVP)**
@@ -45,6 +44,13 @@ These are the “performance reports” referenced in the PRD.
 
 **Roadmap Phases**
 
+**Progress Update (2026-02-09)**
+- Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
+- Phase 1 in progress: inbound/outbound APIs done, Cloudflare worker stub ready, DNS pending.
+- Phase 2 complete: auth + admin panel + seed.
+- Phase 3 complete: mailbox UI + message list.
+- Phase 4 in progress: ticket core complete, web form ticket create API done, UI refinement ongoing.
+
 **Phase 0 — Repo & Foundations**
 Deliverables
 - Project skeleton (Next.js + API routes or separate API service).
@@ -63,6 +69,10 @@ Deliverables
 - Worker parses inbound MIME and forwards to `/api/email/inbound`.
 - Inbound handler stores raw email + attachments in R2 and metadata in Postgres.
 - Outbound handler sends via Resend and stores a sent copy in R2/Postgres.
+Status
+- API handlers complete.
+- Cloudflare worker stub complete.
+- DNS + Resend verification pending.
 Acceptance Criteria
 - Email to `support@6ex.co.za` appears in database within 60 seconds.
 - Email to `jerome.choma@6ex.co.za` appears in personal mailbox.
@@ -95,6 +105,12 @@ Deliverables
 - Ticket statuses: New, Open, Pending, Solved, Closed.
 - Manual assignment and notes.
 - Web form ticket creation.
+Status
+- Ticket creation from inbound done.
+- Ticket replies via Resend done.
+- Ticket create API for platform done.
+Remaining
+- Web form UI on platform.
 Acceptance Criteria
 - Incoming email to `support@6ex.co.za` creates a ticket with requester email.
 - Agent replies from ticket are sent via Resend and logged.

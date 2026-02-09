@@ -142,8 +142,9 @@ export default function TicketsClient() {
             style={{
               padding: "10px 14px",
               borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
               cursor: "pointer",
               height: 40
             }}
@@ -153,7 +154,7 @@ export default function TicketsClient() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24, marginTop: 24 }}>
-          <aside style={{ borderRight: "1px solid #eee", paddingRight: 16 }}>
+          <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
             {tickets.map((ticket) => (
               <button
                 key={ticket.id}
@@ -166,9 +167,10 @@ export default function TicketsClient() {
                   padding: "10px 12px",
                   marginBottom: 8,
                   borderRadius: 10,
-                  border: "1px solid #eee",
-                  background: ticket.id === activeTicketId ? "#1a1a1a" : "#fff",
-                  color: ticket.id === activeTicketId ? "#fff" : "#1a1a1a",
+                  border: "1px solid var(--border)",
+                  background:
+                    ticket.id === activeTicketId ? "var(--accent-strong)" : "var(--surface-2)",
+                  color: ticket.id === activeTicketId ? "#081018" : "var(--text)",
                   cursor: "pointer"
                 }}
               >
@@ -190,7 +192,14 @@ export default function TicketsClient() {
               <p>Select a ticket to view details.</p>
             ) : (
               <div style={{ display: "grid", gap: 16 }}>
-                <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
                   <h2 style={{ margin: 0 }}>{activeTicket.subject ?? "(no subject)"}</h2>
                   <p>Requester: {activeTicket.requester_email}</p>
                   {activeTicket.category ? <p>Category: {activeTicket.category}</p> : null}
@@ -237,8 +246,9 @@ export default function TicketsClient() {
                         style={{
                           padding: "6px 10px",
                           borderRadius: 8,
-                          border: "1px solid #ddd",
-                          background: "#fff",
+                          border: "1px solid var(--border)",
+                          background: "var(--surface-2)",
+                          color: "var(--text)",
                           cursor: "pointer"
                         }}
                       >
@@ -248,21 +258,29 @@ export default function TicketsClient() {
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
                   <h3>Conversation</h3>
                   <div style={{ display: "grid", gap: 12 }}>
                     {messages.map((message) => (
                       <article
                         key={message.id}
                         style={{
-                          border: "1px solid #f0f0f0",
+                          border: "1px solid var(--border)",
                           borderRadius: 10,
-                          padding: 12
+                          padding: 12,
+                          background: "rgba(10, 12, 18, 0.6)"
                         }}
                       >
                         <strong>{message.subject ?? "(no subject)"}</strong>
                         <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
-                        <p style={{ fontSize: 12, color: "#555" }}>
+                        <p style={{ fontSize: 12, color: "var(--muted)" }}>
                           {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
                         </p>
                       </article>
@@ -270,13 +288,20 @@ export default function TicketsClient() {
                   </div>
                 </div>
 
-                <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
                   <h3>Reply</h3>
                   <textarea
                     value={replyText}
                     onChange={(event) => setReplyText(event.target.value)}
                     rows={5}
-                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--border)" }}
                   />
                   <button
                     type="button"
@@ -287,8 +312,8 @@ export default function TicketsClient() {
                       padding: "10px 14px",
                       borderRadius: 10,
                       border: "none",
-                      background: "#1a1a1a",
-                      color: "#fff",
+                      background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                      color: "#081018",
                       cursor: "pointer"
                     }}
                   >

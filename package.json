@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "sanity": "npm run build",
     "start": "next start",
     "lint": "next lint",
+    "test": "node -e \"console.log('No automated tests configured yet.')\"",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed-admin.js"
   },

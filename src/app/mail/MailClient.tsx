@@ -77,8 +77,9 @@ export default function MailClient() {
             style={{
               padding: "10px 14px",
               borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
               cursor: "pointer",
               height: 40
             }}
@@ -88,7 +89,7 @@ export default function MailClient() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 24 }}>
-          <aside style={{ borderRight: "1px solid #eee", paddingRight: 16 }}>
+          <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
             {mailboxes.map((mailbox) => (
               <button
                 key={mailbox.id}
@@ -101,9 +102,10 @@ export default function MailClient() {
                   padding: "10px 12px",
                   marginBottom: 8,
                   borderRadius: 10,
-                  border: "1px solid #eee",
-                  background: mailbox.id === activeMailbox ? "#1a1a1a" : "#fff",
-                  color: mailbox.id === activeMailbox ? "#fff" : "#1a1a1a",
+                  border: "1px solid var(--border)",
+                  background:
+                    mailbox.id === activeMailbox ? "var(--accent-strong)" : "var(--surface-2)",
+                  color: mailbox.id === activeMailbox ? "#081018" : "var(--text)",
                   cursor: "pointer"
                 }}
               >
@@ -121,9 +123,10 @@ export default function MailClient() {
                 <article
                   key={message.id}
                   style={{
-                    border: "1px solid #eee",
+                    border: "1px solid var(--border)",
                     borderRadius: 12,
-                    padding: 12
+                    padding: 12,
+                    background: "rgba(10, 12, 18, 0.6)"
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -133,7 +136,7 @@ export default function MailClient() {
                     </span>
                   </div>
                   <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
-                  <p style={{ fontSize: 12, color: "#555" }}>
+                  <p style={{ fontSize: 12, color: "var(--muted)" }}>
                     {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
                   </p>
                 </article>
