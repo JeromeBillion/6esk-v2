@@ -176,6 +176,9 @@ Status
 - Spam rules + manual spam flagging added.
 - Rate limiting middleware added for admin/agent endpoints.
 - Backfill retry script added (`npm run retry:inbound`).
+- Admin spam review + inbound failure monitoring added.
+- Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
+- Optional IP allowlists for admin/agent endpoints added.
 Acceptance Criteria
 - System handles duplicate inbound webhook safely.
 - Failures are recoverable without data loss.

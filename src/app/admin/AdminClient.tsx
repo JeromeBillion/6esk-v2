@@ -37,6 +37,24 @@ type AuditLog = {
   actor_email?: string | null;
 };
 
+type SpamMessage = {
+  id: string;
+  subject: string | null;
+  from_email: string;
+  received_at: string | null;
+  spam_reason: string | null;
+  mailbox_address: string;
+};
+
+type InboundFailure = {
+  id: string;
+  idempotency_key: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+};
+
 export default function AdminClient() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -60,13 +78,18 @@ export default function AdminClient() {
   const [resetLinks, setResetLinks] = useState<Record<string, string>>({});
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
+  const [spamMessages, setSpamMessages] = useState<SpamMessage[]>([]);
+  const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
+  const [retryingInbound, setRetryingInbound] = useState(false);
 
   async function loadData() {
-    const [rolesRes, usersRes, slaRes, logsRes] = await Promise.all([
+    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes] = await Promise.all([
       fetch("/api/admin/roles"),
       fetch("/api/admin/users"),
       fetch("/api/admin/sla"),
-      fetch("/api/admin/audit-logs?limit=50")
+      fetch("/api/admin/audit-logs?limit=50"),
+      fetch("/api/admin/spam-messages?limit=50"),
+      fetch("/api/admin/inbound/failed?limit=50")
     ]);
 
     if (rolesRes.ok) {
@@ -93,6 +116,16 @@ export default function AdminClient() {
     if (logsRes.ok) {
       const payload = await logsRes.json();
       setAuditLogs(payload.logs ?? []);
+    }
+
+    if (spamRes.ok) {
+      const payload = await spamRes.json();
+      setSpamMessages(payload.messages ?? []);
+    }
+
+    if (inboundRes.ok) {
+      const payload = await inboundRes.json();
+      setInboundFailures(payload.events ?? []);
     }
   }
 
@@ -143,6 +176,22 @@ export default function AdminClient() {
       setResetLinks((prev) => ({ ...prev, [userId]: payload.resetLink }));
     }
     setResettingUserId(null);
+  }
+
+  async function retryInbound() {
+    setRetryingInbound(true);
+    await fetch("/api/admin/inbound/retry?limit=25", { method: "POST" });
+    await loadData();
+    setRetryingInbound(false);
+  }
+
+  async function unspamMessage(messageId: string) {
+    await fetch(`/api/messages/${messageId}/spam`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isSpam: false, reason: null })
+    });
+    await loadData();
   }
 
   return (
@@ -394,6 +443,97 @@ export default function AdminClient() {
               </div>
             ))}
           </div>
+        </section>
+
+        <section style={{ marginTop: 40 }}>
+          <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
+          <button
+            type="button"
+            onClick={retryInbound}
+            disabled={retryingInbound}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              cursor: "pointer",
+              marginBottom: 12
+            }}
+          >
+            {retryingInbound ? "Retrying..." : "Retry failed inbound"}
+          </button>
+          {inboundFailures.length === 0 ? (
+            <p>No failed inbound events.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {inboundFailures.map((event) => (
+                <div
+                  key={event.id}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(10, 12, 18, 0.6)",
+                    fontSize: 13
+                  }}
+                >
+                  <div style={{ color: "var(--muted)" }}>
+                    Attempts: {event.attempt_count} · Next:{" "}
+                    {event.next_attempt_at ? new Date(event.next_attempt_at).toLocaleString() : "—"}
+                  </div>
+                  <div style={{ color: "var(--muted)" }}>{event.last_error ?? "Unknown error"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section style={{ marginTop: 40 }}>
+          <h2 style={{ marginBottom: 12 }}>Spam Review</h2>
+          {spamMessages.length === 0 ? (
+            <p>No spam messages flagged.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {spamMessages.map((message) => (
+                <div
+                  key={message.id}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(10, 12, 18, 0.6)",
+                    fontSize: 13
+                  }}
+                >
+                  <div style={{ color: "var(--muted)" }}>
+                    {message.mailbox_address} · {message.received_at ?? "—"}
+                  </div>
+                  <div>
+                    <strong>{message.subject ?? "(no subject)"}</strong>
+                  </div>
+                  <div style={{ color: "var(--muted)" }}>
+                    From: {message.from_email} · Reason: {message.spam_reason ?? "manual"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => unspamMessage(message.id)}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                      color: "var(--text)",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Not spam
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section style={{ marginTop: 40 }}>

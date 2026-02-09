@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { getPlatformMailbox } from "@/server/mailboxes";
+import { decryptSecret, encryptSecret } from "@/server/agents/secret";
 
 export type AgentPolicyMode = "draft_only" | "auto_send";
 
@@ -39,7 +40,10 @@ export async function listAgentIntegrations() {
      FROM agent_integrations
      ORDER BY created_at DESC`
   );
-  return result.rows;
+  return result.rows.map((row) => ({
+    ...row,
+    shared_secret: decryptSecret(row.shared_secret)
+  }));
 }
 
 export async function getAgentIntegrationById(id: string) {
@@ -50,7 +54,11 @@ export async function getAgentIntegrationById(id: string) {
      WHERE id = $1`,
     [id]
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }
 
 export async function getActiveAgentIntegration() {
@@ -62,12 +70,17 @@ export async function getActiveAgentIntegration() {
      ORDER BY created_at DESC
      LIMIT 1`
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }
 
 export async function createAgentIntegration(input: AgentIntegrationInput) {
   const platformMailbox = await getPlatformMailbox();
   const fallbackScopes = platformMailbox ? { mailbox_ids: [platformMailbox.id] } : {};
+  const storedSecret = encryptSecret(input.sharedSecret);
   const result = await db.query<AgentIntegration>(
     `INSERT INTO agent_integrations (
       name, provider, base_url, auth_type, shared_secret,
@@ -83,7 +96,7 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
       input.provider ?? "elizaos",
       input.baseUrl,
       input.authType ?? "hmac",
-      input.sharedSecret,
+      storedSecret,
       input.status ?? "active",
       input.policyMode ?? "draft_only",
       input.scopes ?? fallbackScopes,
@@ -91,7 +104,8 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
       input.policy ?? {}
     ]
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }
 
 export async function updateAgentIntegration(
@@ -124,7 +138,7 @@ export async function updateAgentIntegration(
 
   if (updates.sharedSecret) {
     fields.push(`shared_secret = $${index++}`);
-    values.push(updates.sharedSecret);
+    values.push(encryptSecret(updates.sharedSecret));
   }
 
   if (updates.status) {
@@ -168,5 +182,9 @@ export async function updateAgentIntegration(
     values
   );
 
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }

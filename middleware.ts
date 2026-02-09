@@ -17,6 +17,20 @@ function getClientKey(request: NextRequest) {
   return ip;
 }
 
+function parseAllowlist(value?: string | null) {
+  if (!value) return null;
+  const list = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return list.length ? list : null;
+}
+
+function isAllowedIp(ip: string, allowlist: string[] | null) {
+  if (!allowlist) return true;
+  return allowlist.includes(ip);
+}
+
 function checkRateLimit(key: string, limit: number) {
   const now = Date.now();
   const entry = store.get(key);
@@ -39,8 +53,20 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const ip = getClientKey(request);
+  const adminAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
+  const agentAllowlist = parseAllowlist(process.env.AGENT_IP_ALLOWLIST);
+
+  if (pathname.startsWith("/api/admin") && !isAllowedIp(ip, adminAllowlist)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (pathname.startsWith("/api/agent") && !isAllowedIp(ip, agentAllowlist)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const limit = pathname.startsWith("/api/admin") ? ADMIN_LIMIT : AGENT_LIMIT;
-  const key = `${pathname.startsWith("/api/admin") ? "admin" : "agent"}:${getClientKey(request)}`;
+  const key = `${pathname.startsWith("/api/admin") ? "admin" : "agent"}:${ip}`;
   const result = checkRateLimit(key, limit);
 
   if (!result.allowed) {
