@@ -104,3 +104,12 @@ Production inbound test (after DNS + routing):
 1. Send an email to `support@6ex.co.za`.
 2. Confirm a ticket appears in `/tickets` within 60 seconds.
 3. Reply from 6esk and confirm it lands in your inbox.
+
+## 7) Optional Backfill Job (Retries)
+Add a scheduled job to retry failed inbound events:
+
+```powershell
+npm run retry:inbound
+```
+
+Use Railway cron or any scheduler to run every 5–15 minutes.

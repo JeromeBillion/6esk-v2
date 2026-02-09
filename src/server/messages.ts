@@ -9,6 +9,8 @@ export type MessageRecord = {
   to_emails: string[];
   direction: "inbound" | "outbound";
   origin: "human" | "ai";
+  is_spam: boolean;
+  spam_reason: string | null;
   received_at: Date | null;
   sent_at: Date | null;
   r2_key_text: string | null;
@@ -19,7 +21,7 @@ export type MessageRecord = {
 export async function getMessageById(messageId: string) {
   const result = await db.query<MessageRecord>(
     `SELECT id, mailbox_id, ticket_id, subject, from_email, to_emails, direction,
-            origin, received_at, sent_at, r2_key_text, r2_key_html, ai_meta
+            origin, is_spam, spam_reason, received_at, sent_at, r2_key_text, r2_key_html, ai_meta
      FROM messages
      WHERE id = $1`,
     [messageId]

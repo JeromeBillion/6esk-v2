@@ -34,6 +34,8 @@ type MessageDetail = {
   to: string[];
   direction: "inbound" | "outbound";
   origin: "human" | "ai";
+  isSpam: boolean;
+  spamReason?: string | null;
   receivedAt: string | null;
   sentAt: string | null;
   text: string | null;
@@ -177,6 +179,17 @@ export default function TicketsClient() {
       setAttachments(payload.attachments ?? []);
     }
     setLoadingMessage(false);
+  }
+
+  async function toggleSpam(messageId: string, isSpam: boolean) {
+    const res = await fetch(`/api/messages/${messageId}/spam`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isSpam, reason: isSpam ? "manual_flag" : null })
+    });
+    if (res.ok) {
+      await loadMessageDetail(messageId);
+    }
   }
 
   useEffect(() => {
@@ -501,6 +514,25 @@ export default function TicketsClient() {
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
                           From: {messageDetail.from} · To: {messageDetail.to.join(", ")} ·
                           {messageDetail.origin === "ai" ? " AI" : " Human"}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                            Spam: {messageDetail.isSpam ? "Yes" : "No"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleSpam(messageDetail.id, !messageDetail.isSpam)}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                              background: "var(--surface-2)",
+                              color: "var(--text)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            {messageDetail.isSpam ? "Not spam" : "Mark spam"}
+                          </button>
                         </div>
                   {messageDetail.html ? (
                         <div

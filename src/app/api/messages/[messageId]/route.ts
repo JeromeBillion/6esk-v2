@@ -63,6 +63,8 @@ export async function GET(
       to: message.to_emails,
       direction: message.direction,
       origin: message.origin,
+      isSpam: message.is_spam,
+      spamReason: message.spam_reason,
       receivedAt: message.received_at,
       sentAt: message.sent_at,
       text,

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import TagsClient from "./TagsClient";
 import AgentIntegrationClient from "./AgentIntegrationClient";
+import SpamRulesClient from "./SpamRulesClient";
 
 type Role = {
   id: string;
@@ -316,6 +317,8 @@ export default function AdminClient() {
         </section>
 
         <TagsClient />
+
+        <SpamRulesClient />
 
         <AgentIntegrationClient />
 

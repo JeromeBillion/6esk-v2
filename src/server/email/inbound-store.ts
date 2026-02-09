@@ -15,6 +15,7 @@ import {
 } from "@/server/tickets";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { evaluateSpam } from "@/server/email/spam";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -41,6 +42,12 @@ export async function storeInboundEmail(data: InboundEmail) {
   const primaryRecipient = toList[0];
   const mailbox = await getOrCreateMailbox(primaryRecipient, supportAddress);
 
+  const spamDecision = await evaluateSpam({
+    fromEmail,
+    subject: data.subject,
+    text: data.text
+  });
+
   if (data.messageId) {
     const existing = await db.query(
       "SELECT id, ticket_id FROM messages WHERE message_id = $1 AND mailbox_id = $2 LIMIT 1",
@@ -58,7 +65,7 @@ export async function storeInboundEmail(data: InboundEmail) {
 
   let ticketId: string | null = null;
   let createdNewTicket = false;
-  if (mailbox.type === "platform") {
+  if (mailbox.type === "platform" && !spamDecision.isSpam) {
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
     );
@@ -104,11 +111,11 @@ export async function storeInboundEmail(data: InboundEmail) {
     `INSERT INTO messages (
       id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, references,
       from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
-      received_at, is_read
+      received_at, is_read, is_spam, spam_reason
     ) VALUES (
       $1, $2, $3, 'inbound', $4, $5, $6, $7,
       $8, $9, $10, $11, $12, $13,
-      $14, false
+      $14, false, $15, $16
     )`,
     [
       messageId,
@@ -124,7 +131,9 @@ export async function storeInboundEmail(data: InboundEmail) {
       bccList,
       data.subject ?? null,
       previewText || null,
-      receivedAt
+      receivedAt,
+      spamDecision.isSpam,
+      spamDecision.reason
     ]
   );
 
@@ -200,7 +209,7 @@ export async function storeInboundEmail(data: InboundEmail) {
     [rawKey, textKey, htmlKey, sizeBytes || null, messageId]
   );
 
-  if (mailbox.type === "platform" && ticketId) {
+  if (mailbox.type === "platform" && ticketId && !spamDecision.isSpam) {
     const threadId = data.references?.[0] ?? data.messageId ?? messageId;
     const messageEvent = buildAgentEvent({
       eventType: "ticket.message.created",

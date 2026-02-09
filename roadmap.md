@@ -173,6 +173,9 @@ Deliverables
 - Security pass (RBAC, rate limiting, audit log coverage).
 Status
 - Inbound idempotency tracking + retry endpoint added.
+- Spam rules + manual spam flagging added.
+- Rate limiting middleware added for admin/agent endpoints.
+- Backfill retry script added (`npm run retry:inbound`).
 Acceptance Criteria
 - System handles duplicate inbound webhook safely.
 - Failures are recoverable without data loss.
