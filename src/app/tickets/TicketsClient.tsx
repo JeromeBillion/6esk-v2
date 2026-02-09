@@ -233,6 +233,17 @@ export default function TicketsClient() {
     setSending(false);
   }
 
+  async function updateDraftStatus(ticketId: string, draftId: string, status: "used" | "dismissed") {
+    const res = await fetch(`/api/tickets/${ticketId}/drafts/${draftId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status })
+    });
+    if (res.ok) {
+      await loadTicketDetail(ticketId);
+    }
+  }
+
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
   return (
     <main>
@@ -642,6 +653,7 @@ export default function TicketsClient() {
                               const text = getDraftPlainText(draft);
                               if (!text) return;
                               setReplyText(text);
+                              void updateDraftStatus(activeTicket.id, draft.id, "used");
                             }}
                             style={{
                               marginTop: 10,
@@ -654,6 +666,22 @@ export default function TicketsClient() {
                             }}
                           >
                             Insert into reply
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateDraftStatus(activeTicket.id, draft.id, "dismissed")}
+                            style={{
+                              marginTop: 10,
+                              marginLeft: 8,
+                              padding: "8px 12px",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                              background: "transparent",
+                              color: "var(--muted)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Dismiss
                           </button>
                         </div>
                       ))}

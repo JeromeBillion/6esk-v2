@@ -157,6 +157,7 @@ Status
 - Agent context APIs added.
 - Actions API added (drafts + auto-send gate).
 - Draft panel added in tickets UI.
+- Draft accept/dismiss actions added.
 Acceptance Criteria
 - Agent receives `ticket.message.created` events within 60 seconds.
 - Agent can fetch context via scoped APIs and post a draft reply.

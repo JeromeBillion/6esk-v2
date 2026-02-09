@@ -13,6 +13,8 @@ export type AgentDraft = {
   updated_at: string;
 };
 
+export type DraftStatus = "pending" | "used" | "dismissed";
+
 export async function listDraftsForTicket(ticketId: string) {
   const result = await db.query<AgentDraft>(
     `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
@@ -56,4 +58,24 @@ export async function createDraft({
     ]
   );
   return result.rows[0];
+}
+
+export async function updateDraftStatus({
+  draftId,
+  ticketId,
+  status
+}: {
+  draftId: string;
+  ticketId: string;
+  status: DraftStatus;
+}) {
+  const result = await db.query<AgentDraft>(
+    `UPDATE agent_drafts
+     SET status = $1, updated_at = now()
+     WHERE id = $2 AND ticket_id = $3
+     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
+               confidence, status, created_at, updated_at`,
+    [status, draftId, ticketId]
+  );
+  return result.rows[0] ?? null;
 }
