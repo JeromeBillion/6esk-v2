@@ -106,6 +106,19 @@ export async function PATCH(
     values.push(parsed.data.metadata);
   }
 
+  if (parsed.data.status && parsed.data.status !== ticket.status) {
+    if (parsed.data.status === "solved") {
+      fields.push(`solved_at = now()`);
+    }
+    if (parsed.data.status === "closed") {
+      fields.push(`closed_at = now()`);
+    }
+    if (parsed.data.status === "open" || parsed.data.status === "pending") {
+      fields.push(`solved_at = NULL`);
+      fields.push(`closed_at = NULL`);
+    }
+  }
+
   if (fields.length === 0) {
     return Response.json({ ticket });
   }

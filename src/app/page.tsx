@@ -8,7 +8,8 @@ export default function HomePage() {
           Health check: <code>/api/health</code>
         </p>
         <p>
-          Continue to <code>/login</code>, <code>/mail</code>, or <code>/tickets</code>.
+          Continue to <code>/login</code>, <code>/mail</code>, <code>/tickets</code>, or{" "}
+          <code>/analytics</code>.
         </p>
       </div>
     </main>

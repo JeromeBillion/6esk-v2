@@ -121,6 +121,9 @@ Deliverables
 - Dashboard metrics (global and per‑agent).
 - Volume charts and SLA‑lite analytics.
 - Performance reports section (spec above).
+Status
+- Analytics API scaffolding added (overview, volume, SLA).
+- Initial analytics UI added (`/analytics`).
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.
