@@ -249,7 +249,7 @@ export async function getTicketById(ticketId: string) {
 
 export async function listTicketMessages(ticketId: string) {
   const result = await db.query(
-    `SELECT id, direction, from_email, to_emails, subject, preview_text, received_at, sent_at
+    `SELECT id, direction, origin, from_email, to_emails, subject, preview_text, received_at, sent_at
      FROM messages
      WHERE ticket_id = $1
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC`,

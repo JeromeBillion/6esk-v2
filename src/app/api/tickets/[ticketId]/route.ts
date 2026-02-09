@@ -8,6 +8,9 @@ import {
   listTicketMessages,
   recordTicketEvent
 } from "@/server/tickets";
+import { buildAgentEvent } from "@/server/agents/events";
+import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { listDraftsForTicket } from "@/server/agents/drafts";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -39,7 +42,8 @@ export async function GET(
 
   const messages = await listTicketMessages(ticketId);
   const events = await listTicketEvents(ticketId);
-  return Response.json({ ticket, messages, events });
+  const drafts = await listDraftsForTicket(ticketId);
+  return Response.json({ ticket, messages, events, drafts });
 }
 
 export async function PATCH(
@@ -145,6 +149,16 @@ export async function PATCH(
       actorUserId: user.id,
       data: { from: ticket.status, to: parsed.data.status }
     });
+
+    const statusEvent = buildAgentEvent({
+      eventType: "ticket.status.changed",
+      ticketId,
+      mailboxId: ticket.mailbox_id,
+      actorUserId: user.id,
+      excerpt: `Status changed from ${ticket.status} to ${parsed.data.status}`
+    });
+    await enqueueAgentEvent({ eventType: "ticket.status.changed", payload: statusEvent });
+    void deliverPendingAgentEvents().catch(() => {});
   }
 
   if (parsed.data.priority && parsed.data.priority !== ticket.priority) {

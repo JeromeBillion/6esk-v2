@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import TagsClient from "./TagsClient";
+import AgentIntegrationClient from "./AgentIntegrationClient";
 
 type Role = {
   id: string;
@@ -272,6 +273,8 @@ export default function AdminClient() {
         </section>
 
         <TagsClient />
+
+        <AgentIntegrationClient />
 
         <section style={{ marginTop: 40 }}>
           <h2 style={{ marginBottom: 12 }}>Users</h2>

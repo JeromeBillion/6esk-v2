@@ -19,6 +19,7 @@ type Ticket = {
 type Message = {
   id: string;
   direction: "inbound" | "outbound";
+  origin: "human" | "ai";
   from_email: string;
   subject: string | null;
   preview_text: string | null;
@@ -32,10 +33,20 @@ type MessageDetail = {
   from: string;
   to: string[];
   direction: "inbound" | "outbound";
+  origin: "human" | "ai";
   receivedAt: string | null;
   sentAt: string | null;
   text: string | null;
   html: string | null;
+};
+
+type Draft = {
+  id: string;
+  subject: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  confidence: number | null;
+  created_at: string;
 };
 
 type Attachment = {
@@ -72,6 +83,7 @@ export default function TicketsClient() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
@@ -87,6 +99,14 @@ export default function TicketsClient() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loadingMessage, setLoadingMessage] = useState(false);
   const [events, setEvents] = useState<TicketEvent[]>([]);
+
+  function getDraftPlainText(draft: Draft) {
+    if (draft.body_text) return draft.body_text;
+    if (draft.body_html) {
+      return draft.body_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
+    return "";
+  }
 
   async function loadUser() {
     const res = await fetch("/api/auth/me");
@@ -139,6 +159,7 @@ export default function TicketsClient() {
     }
     const payload = await res.json();
     setMessages(payload.messages ?? []);
+    setDrafts(payload.drafts ?? []);
     setEvents(payload.events ?? []);
     const updatedTicket = payload.ticket;
     if (updatedTicket) {
@@ -171,6 +192,7 @@ export default function TicketsClient() {
   useEffect(() => {
     if (!activeTicketId) {
       setMessages([]);
+      setDrafts([]);
       return;
     }
     void loadTicketDetail(activeTicketId);
@@ -437,7 +459,8 @@ export default function TicketsClient() {
                         <strong>{message.subject ?? "(no subject)"}</strong>
                         <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
                         <p style={{ fontSize: 12, color: "var(--muted)" }}>
-                          {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
+                          {message.direction === "inbound" ? "From" : "To"}: {message.from_email} ·
+                          {message.origin === "ai" ? " AI" : " Human"}
                         </p>
                       </article>
                     ))}
@@ -450,7 +473,8 @@ export default function TicketsClient() {
                     ) : (
                       <div style={{ display: "grid", gap: 12 }}>
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                          From: {messageDetail.from} · To: {messageDetail.to.join(", ")}
+                          From: {messageDetail.from} · To: {messageDetail.to.join(", ")} ·
+                          {messageDetail.origin === "ai" ? " AI" : " Human"}
                         </div>
                   {messageDetail.html ? (
                         <div
@@ -557,6 +581,85 @@ export default function TicketsClient() {
                     </div>
                   )}
                 </div>
+
+                {drafts.length ? (
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 16,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <h3>AI Drafts</h3>
+                    <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                      Draft-only by default. Auto-send is controlled in the admin panel.
+                    </p>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {drafts.map((draft) => (
+                        <div
+                          key={draft.id}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                            padding: 12,
+                            background: "rgba(10, 12, 18, 0.6)"
+                          }}
+                        >
+                          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+                            {new Date(draft.created_at).toLocaleString()}
+                            {draft.confidence !== null && draft.confidence !== undefined
+                              ? ` · ${(draft.confidence * 100).toFixed(0)}% confidence`
+                              : ""}
+                          </div>
+                          {draft.body_html ? (
+                            <div
+                              style={{
+                                border: "1px solid var(--border)",
+                                borderRadius: 10,
+                                padding: 12,
+                                background: "rgba(10, 12, 18, 0.6)"
+                              }}
+                              dangerouslySetInnerHTML={{ __html: draft.body_html }}
+                            />
+                          ) : (
+                            <pre
+                              style={{
+                                whiteSpace: "pre-wrap",
+                                border: "1px solid var(--border)",
+                                borderRadius: 10,
+                                padding: 12,
+                                background: "rgba(10, 12, 18, 0.6)",
+                                margin: 0
+                              }}
+                            >
+                              {draft.body_text ?? "No draft body provided."}
+                            </pre>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const text = getDraftPlainText(draft);
+                              if (!text) return;
+                              setReplyText(text);
+                            }}
+                            style={{
+                              marginTop: 10,
+                              padding: "8px 12px",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                              background: "var(--surface-2)",
+                              color: "var(--text)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Insert into reply
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div
                   style={{

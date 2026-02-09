@@ -1,7 +1,7 @@
 6esk MVP Roadmap
 
 **Product Summary**
-6esk is a lightweight helpdesk with a built‑in, two‑way email system. The MVP is a fast, analytics‑first support platform for a single org (6ex Support), with email as the primary channel and a clean operator workflow for tickets and personal mail.
+6esk is a lightweight helpdesk with a built‑in, two‑way email system. The MVP is a fast, analytics‑first support platform for a single org (6ex Support), with email as the primary channel and a clean operator workflow for tickets and personal mail. 6esk also exposes AI‑ready integration points so an external ElizaOS agent can draft replies without embedding AI logic in this repo.
 
 **Non‑Negotiables**
 - Two‑way email is core and top priority (inbound + outbound + storage).
@@ -25,6 +25,7 @@
 - Email inbound: Cloudflare Email Routing + Worker (catch‑all) -> backend webhook.
 - Storage: Cloudflare R2 for raw emails and attachments.
 - Auth: email/password, server‑side sessions (HTTP‑only cookies).
+- AI integration: external ElizaOS runtime via signed webhooks; 6esk remains system of record.
 
 **Architecture Overview**
 - Inbound flow: Cloudflare Email Routing -> Worker -> `/api/email/inbound` -> Postgres + R2.
@@ -32,6 +33,7 @@
 - Ticket linkage: `support@6ex.co.za` inbound automatically creates tickets.
 - Personal mailbox: `name@6ex.co.za` inbound lands in personal mailbox, not tickets.
 - Address provisioning: catch‑all routing + internal user table controls visibility and access.
+- AI agent flow: transactional outbox emits ticket/email events -> delivery worker -> ElizaOS webhook -> agent fetches context via scoped APIs -> agent posts back actions (draft reply, tags, priority).
 
 **Performance Reports (MVP Spec)**
 These are the “performance reports” referenced in the PRD.
@@ -50,6 +52,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 2 complete: auth + admin panel + seed.
 - Phase 3 complete: mailbox UI + message list.
 - Phase 4 in progress: ticket core complete, web form ticket create API done, UI refinement + tag management ongoing.
+- Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -138,7 +141,28 @@ Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.
 
-**Phase 6 — Hardening & QA**
+**Phase 6 — AI Agent Integration (ElizaOS)**
+Deliverables
+- Agent registry (AgentIntegration) with provider, base URL, auth type, shared secret, scopes, policy tier.
+- Event outbox + delivery worker with retries and pause.
+- Signed webhook delivery (HMAC + timestamp).
+- Agent context APIs (`/agent/v1/tickets`, `/agent/v1/messages`, `/agent/v1/threads`).
+- Agent actions API (`/agent/v1/actions`) for draft_reply, tags, priority, assignment.
+- UI to onboard agent and configure scopes, tiers, working hours.
+- Draft panel in ticket UI with insert/edit/send workflow.
+- Audit log for all AI actions; message origin `human | ai`.
+Status
+- Agent registry + admin UI added.
+- Outbox + delivery endpoint added.
+- Agent context APIs added.
+- Actions API added (drafts + auto-send gate).
+- Draft panel added in tickets UI.
+Acceptance Criteria
+- Agent receives `ticket.message.created` events within 60 seconds.
+- Agent can fetch context via scoped APIs and post a draft reply.
+- Drafts are visible to agents and must be manually sent unless tier allows auto-send.
+
+**Phase 7 — Hardening & QA**
 Deliverables
 - Inbound retry and idempotency keys for email ingestion.
 - Backfill jobs to reprocess failed inbound payloads.

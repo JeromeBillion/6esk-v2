@@ -29,3 +29,14 @@ export async function listMailboxesForUser(user: SessionUser) {
 
   return result.rows;
 }
+
+export async function getPlatformMailbox() {
+  const result = await db.query<MailboxSummary>(
+    `SELECT id, address, type
+     FROM mailboxes
+     WHERE type = 'platform'
+     ORDER BY created_at ASC
+     LIMIT 1`
+  );
+  return result.rows[0] ?? null;
+}

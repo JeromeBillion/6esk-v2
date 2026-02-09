@@ -8,16 +8,18 @@ export type MessageRecord = {
   from_email: string;
   to_emails: string[];
   direction: "inbound" | "outbound";
+  origin: "human" | "ai";
   received_at: Date | null;
   sent_at: Date | null;
   r2_key_text: string | null;
   r2_key_html: string | null;
+  ai_meta?: Record<string, unknown> | null;
 };
 
 export async function getMessageById(messageId: string) {
   const result = await db.query<MessageRecord>(
     `SELECT id, mailbox_id, ticket_id, subject, from_email, to_emails, direction,
-            received_at, sent_at, r2_key_text, r2_key_html
+            origin, received_at, sent_at, r2_key_text, r2_key_html, ai_meta
      FROM messages
      WHERE id = $1`,
     [messageId]

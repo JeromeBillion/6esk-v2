@@ -12,6 +12,8 @@ import {
   reopenTicketIfNeeded,
   resolveTicketIdForInbound
 } from "@/server/tickets";
+import { buildAgentEvent } from "@/server/agents/events";
+import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 
 function getSupportAddress() {
   const explicit = process.env.SUPPORT_ADDRESS;
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
   }
 
   let ticketId: string | null = null;
+  let createdNewTicket = false;
   if (mailbox.type === "platform") {
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
@@ -95,6 +98,7 @@ export async function POST(request: Request) {
         category,
         metadata
       });
+      createdNewTicket = true;
       await recordTicketEvent({ ticketId, eventType: "ticket_created" });
 
       if (inferredTags.length) {
@@ -215,6 +219,32 @@ export async function POST(request: Request) {
      WHERE id = $5`,
     [rawKey, textKey, htmlKey, sizeBytes || null, messageId]
   );
+
+  if (mailbox.type === "platform" && ticketId) {
+    const threadId = data.references?.[0] ?? data.messageId ?? messageId;
+    const messageEvent = buildAgentEvent({
+      eventType: "ticket.message.created",
+      ticketId,
+      messageId,
+      mailboxId: mailbox.id,
+      excerpt: previewText,
+      threadId
+    });
+    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+
+    if (createdNewTicket) {
+      const ticketEvent = buildAgentEvent({
+        eventType: "ticket.created",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: previewText,
+        threadId
+      });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+    }
+
+    void deliverPendingAgentEvents().catch(() => {});
+  }
 
   return Response.json({ status: "stored", id: messageId, mailboxId: mailbox.id });
 }

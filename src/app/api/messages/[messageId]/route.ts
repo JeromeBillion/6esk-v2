@@ -62,10 +62,12 @@ export async function GET(
       from: message.from_email,
       to: message.to_emails,
       direction: message.direction,
+      origin: message.origin,
       receivedAt: message.received_at,
       sentAt: message.sent_at,
       text,
-      html
+      html,
+      aiMeta: message.ai_meta ?? null
     },
     attachments
   });

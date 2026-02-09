@@ -11,6 +11,8 @@ import {
   recordTicketEvent
 } from "@/server/tickets";
 import { getSessionUser } from "@/server/auth/session";
+import { buildAgentEvent } from "@/server/agents/events";
+import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 
 const createTicketSchema = z.object({
   from: z.string().email(),
@@ -185,6 +187,27 @@ export async function POST(request: Request) {
   );
 
   await recordTicketEvent({ ticketId, eventType: "message_received" });
+
+  const threadId = messageId;
+  const messageEvent = buildAgentEvent({
+    eventType: "ticket.message.created",
+    ticketId,
+    messageId,
+    mailboxId: mailbox.id,
+    excerpt: previewText,
+    threadId
+  });
+  const ticketEvent = buildAgentEvent({
+    eventType: "ticket.created",
+    ticketId,
+    mailboxId: mailbox.id,
+    excerpt: previewText,
+    threadId
+  });
+
+  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+  void deliverPendingAgentEvents().catch(() => {});
 
   return Response.json({ status: "created", ticketId, messageId });
 }
