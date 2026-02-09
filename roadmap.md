@@ -48,7 +48,7 @@ These are the “performance reports” referenced in the PRD.
 
 **Progress Update (2026-02-09)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
-- Phase 1 in progress: inbound/outbound APIs done, Cloudflare worker stub ready, DNS pending.
+- Phase 1 dev-ready, awaiting DNS verification.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
 - Phase 3 complete: mailbox UI + message list.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
@@ -75,7 +75,7 @@ Deliverables
 Status
 - API handlers complete.
 - Cloudflare worker stub complete.
-- DNS + Resend verification pending.
+- Dev-ready, awaiting DNS + Resend verification.
 Acceptance Criteria
 - Email to `support@6ex.co.za` appears in database within 60 seconds.
 - Email to `jerome.choma@6ex.co.za` appears in personal mailbox.
@@ -171,6 +171,8 @@ Deliverables
 - Backfill jobs to reprocess failed inbound payloads.
 - Basic spam handling (manual flagging, whitelist/blacklist).
 - Security pass (RBAC, rate limiting, audit log coverage).
+Status
+- Inbound idempotency tracking + retry endpoint added.
 Acceptance Criteria
 - System handles duplicate inbound webhook safely.
 - Failures are recoverable without data loss.
