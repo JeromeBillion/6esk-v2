@@ -43,6 +43,11 @@ type PerformanceRow = {
   avg_resolution_seconds: number | null;
 };
 
+type AgentOption = {
+  id: string;
+  label: string;
+};
+
 const toHuman = (seconds: number) => {
   if (!seconds || Number.isNaN(seconds)) {
     return "—";
@@ -63,6 +68,44 @@ export default function AnalyticsClient() {
   const [performanceAgent, setPerformanceAgent] = useState<PerformanceRow[]>([]);
   const [performanceTag, setPerformanceTag] = useState<PerformanceRow[]>([]);
   const [performancePriority, setPerformancePriority] = useState<PerformanceRow[]>([]);
+  const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [tagFilter, setTagFilter] = useState<string>("all");
+  const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
+
+  const exportCsv = (rows: PerformanceRow[], filename: string) => {
+    const headers = [
+      "label",
+      "total",
+      "open",
+      "solved",
+      "avg_first_response_seconds",
+      "avg_resolution_seconds"
+    ];
+    const lines = [
+      headers.join(","),
+      ...rows.map((row) =>
+        [
+          `"${row.label.replace(/\"/g, '""')}"`,
+          row.total,
+          row.open,
+          row.solved,
+          row.avg_first_response_seconds ?? "",
+          row.avg_resolution_seconds ?? ""
+        ].join(",")
+      )
+    ];
+
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const [startDate, setStartDate] = useState(() => {
     const end = new Date();
@@ -83,13 +126,20 @@ export default function AnalyticsClient() {
     }).toString();
 
     async function load() {
+      const filterParams = new URLSearchParams({
+        ...(agentFilter !== "all" ? { agentId: agentFilter } : {}),
+        ...(tagFilter !== "all" ? { tag: tagFilter } : {}),
+        ...(priorityFilter !== "all" ? { priority: priorityFilter } : {})
+      });
+      const filterQuery = filterParams.toString();
+
       const [overviewRes, slaRes, volumeRes, agentRes, tagRes, priorityRes] = await Promise.all([
         fetch(`/api/analytics/overview?${params}`),
         fetch(`/api/analytics/sla?${params}`),
         fetch(`/api/analytics/volume?${params}`),
-        fetch(`/api/analytics/performance?${params}&groupBy=agent`),
-        fetch(`/api/analytics/performance?${params}&groupBy=tag`),
-        fetch(`/api/analytics/performance?${params}&groupBy=priority`)
+        fetch(`/api/analytics/performance?${params}&groupBy=agent&${filterQuery}`),
+        fetch(`/api/analytics/performance?${params}&groupBy=tag&${filterQuery}`),
+        fetch(`/api/analytics/performance?${params}&groupBy=priority&${filterQuery}`)
       ]);
 
       if (overviewRes.ok) {
@@ -113,6 +163,12 @@ export default function AnalyticsClient() {
       if (agentRes.ok) {
         const payload = await agentRes.json();
         setPerformanceAgent(payload.rows ?? []);
+        setAgentOptions(
+          (payload.rows ?? []).map((row: PerformanceRow) => ({
+            id: row.key,
+            label: row.label
+          }))
+        );
       }
 
       if (tagRes.ok) {
@@ -127,7 +183,7 @@ export default function AnalyticsClient() {
     }
 
     void load();
-  }, [range]);
+  }, [range, agentFilter, tagFilter, priorityFilter]);
 
   return (
     <main>
@@ -159,6 +215,45 @@ export default function AnalyticsClient() {
               value={range.end}
               onChange={(event) => setEndDate(event.target.value)}
             />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            Agent
+            <select
+              value={agentFilter}
+              onChange={(event) => setAgentFilter(event.target.value)}
+            >
+              <option value="all">All</option>
+              {agentOptions.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            Tag
+            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+              <option value="all">All</option>
+              {performanceTag.map((tag) => (
+                <option key={tag.key} value={tag.key}>
+                  {tag.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            Priority
+            <select
+              value={priorityFilter}
+              onChange={(event) => setPriorityFilter(event.target.value)}
+            >
+              <option value="all">All</option>
+              {performancePriority.map((priority) => (
+                <option key={priority.key} value={priority.key}>
+                  {priority.label}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 
@@ -267,7 +362,24 @@ export default function AnalyticsClient() {
               background: "rgba(10, 12, 18, 0.6)"
             }}
           >
-            <h2>Performance by Agent</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <h2>Performance by Agent</h2>
+              <button
+                type="button"
+                onClick={() => exportCsv(performanceAgent, "performance-by-agent.csv")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  height: 32
+                }}
+              >
+                Export CSV
+              </button>
+            </div>
             {performanceAgent.length === 0 ? (
               <p>No data yet.</p>
             ) : (
@@ -294,7 +406,24 @@ export default function AnalyticsClient() {
               background: "rgba(10, 12, 18, 0.6)"
             }}
           >
-            <h2>Performance by Tag</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <h2>Performance by Tag</h2>
+              <button
+                type="button"
+                onClick={() => exportCsv(performanceTag, "performance-by-tag.csv")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  height: 32
+                }}
+              >
+                Export CSV
+              </button>
+            </div>
             {performanceTag.length === 0 ? (
               <p>No data yet.</p>
             ) : (
@@ -321,7 +450,24 @@ export default function AnalyticsClient() {
               background: "rgba(10, 12, 18, 0.6)"
             }}
           >
-            <h2>Performance by Priority</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <h2>Performance by Priority</h2>
+              <button
+                type="button"
+                onClick={() => exportCsv(performancePriority, "performance-by-priority.csv")}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  height: 32
+                }}
+              >
+                Export CSV
+              </button>
+            </div>
             {performancePriority.length === 0 ? (
               <p>No data yet.</p>
             ) : (

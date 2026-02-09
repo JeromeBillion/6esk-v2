@@ -126,7 +126,8 @@ Status
 - Initial analytics UI added (`/analytics`).
 - Performance reports added (agent, tag, priority).
 - Date range selector added.
- - SLA admin controls added.
+- SLA admin controls added.
+ - Analytics filters and CSV export added.
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.

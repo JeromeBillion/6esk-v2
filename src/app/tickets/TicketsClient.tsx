@@ -49,6 +49,9 @@ export default function TicketsClient() {
   const [sending, setSending] = useState(false);
   const [macros, setMacros] = useState<Macro[]>([]);
   const [selectedMacro, setSelectedMacro] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterPriority, setFilterPriority] = useState<string>("all");
+  const [filterTag, setFilterTag] = useState<string>("all");
 
   async function loadUser() {
     const res = await fetch("/api/auth/me");
@@ -143,6 +146,18 @@ export default function TicketsClient() {
   }
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
+  const filteredTickets = tickets.filter((ticket) => {
+    if (filterStatus !== "all" && ticket.status !== filterStatus) {
+      return false;
+    }
+    if (filterPriority !== "all" && ticket.priority !== filterPriority) {
+      return false;
+    }
+    if (filterTag !== "all" && !(ticket.tags ?? []).includes(filterTag)) {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <main>
@@ -174,7 +189,50 @@ export default function TicketsClient() {
 
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24, marginTop: 24 }}>
           <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
-            {tickets.map((ticket) => (
+            <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+              <label>
+                Status
+                <select
+                  value={filterStatus}
+                  onChange={(event) => setFilterStatus(event.target.value)}
+                >
+                  <option value="all">All</option>
+                  {STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Priority
+                <select
+                  value={filterPriority}
+                  onChange={(event) => setFilterPriority(event.target.value)}
+                >
+                  <option value="all">All</option>
+                  {["low", "normal", "high", "urgent"].map((priority) => (
+                    <option key={priority} value={priority}>
+                      {priority}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Tag
+                <select value={filterTag} onChange={(event) => setFilterTag(event.target.value)}>
+                  <option value="all">All</option>
+                  {Array.from(
+                    new Set(tickets.flatMap((ticket) => ticket.tags ?? []))
+                  ).map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {filteredTickets.map((ticket) => (
               <button
                 key={ticket.id}
                 type="button"
