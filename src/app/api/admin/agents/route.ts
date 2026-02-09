@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { recordAuditLog } from "@/server/audit";
 import {
   createAgentIntegration,
   listAgentIntegrations
@@ -48,5 +49,12 @@ export async function POST(request: Request) {
   }
 
   const agent = await createAgentIntegration(parsed.data);
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "agent_integration_created",
+    entityType: "agent_integration",
+    entityId: agent.id,
+    data: { name: agent.name, baseUrl: agent.base_url, status: agent.status }
+  });
   return Response.json({ status: "created", agent });
 }

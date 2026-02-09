@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { recordAuditLog } from "@/server/audit";
 
 const updateSchema = z.object({
   isActive: z.boolean().optional(),
@@ -62,6 +63,14 @@ export async function PATCH(
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "spam_rule_updated",
+    entityType: "spam_rule",
+    entityId: result.rows[0].id,
+    data: { isActive: result.rows[0].is_active }
+  });
+
   return Response.json({ rule: result.rows[0] });
 }
 
@@ -79,5 +88,11 @@ export async function DELETE(
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "spam_rule_deleted",
+    entityType: "spam_rule",
+    entityId: result.rows[0].id
+  });
   return Response.json({ status: "deleted" });
 }

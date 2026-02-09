@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { recordAuditLog } from "@/server/audit";
 
 const createSchema = z.object({
   ruleType: z.enum(["allow", "block"]),
@@ -47,6 +48,14 @@ export async function POST(request: Request) {
      RETURNING id, rule_type, scope, pattern, is_active, created_at`,
     [parsed.data.ruleType, parsed.data.scope, parsed.data.pattern.toLowerCase()]
   );
+
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "spam_rule_created",
+    entityType: "spam_rule",
+    entityId: result.rows[0].id,
+    data: { ruleType: parsed.data.ruleType, scope: parsed.data.scope }
+  });
 
   return Response.json({ rule: result.rows[0] });
 }

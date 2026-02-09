@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { recordAuditLog } from "@/server/audit";
 import {
   getAgentIntegrationById,
   updateAgentIntegration
@@ -63,6 +64,14 @@ export async function PATCH(
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "agent_integration_updated",
+    entityType: "agent_integration",
+    entityId: agent.id,
+    data: { name: agent.name, status: agent.status }
+  });
 
   return Response.json({ status: "updated", agent });
 }

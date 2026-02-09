@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { retryFailedInboundEvents } from "@/server/email/inbound-retry";
+import { recordAuditLog } from "@/server/audit";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -16,5 +17,11 @@ export async function POST(request: Request) {
   const limit = Math.min(Math.max(Number(limitParam ?? 10) || 10, 1), 50);
 
   const result = await retryFailedInboundEvents(limit);
+  await recordAuditLog({
+    actorUserId: user?.id ?? null,
+    action: "inbound_retry_triggered",
+    entityType: "inbound_events",
+    data: { limit }
+  });
   return Response.json({ status: "ok", ...result });
 }
