@@ -113,3 +113,12 @@ npm run retry:inbound
 ```
 
 Use Railway cron or any scheduler to run every 5–15 minutes.
+
+## 8) Optional Alerts (External Logging)
+Set a webhook URL (Slack or similar) in `INBOUND_ALERT_WEBHOOK`, then schedule:
+
+```powershell
+npm run alert:inbound
+```
+
+Recommended schedule: every 10 minutes.

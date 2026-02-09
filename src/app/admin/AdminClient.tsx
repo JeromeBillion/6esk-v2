@@ -81,6 +81,7 @@ export default function AdminClient() {
   const [spamMessages, setSpamMessages] = useState<SpamMessage[]>([]);
   const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
   const [retryingInbound, setRetryingInbound] = useState(false);
+  const [checkingAlerts, setCheckingAlerts] = useState(false);
 
   async function loadData() {
     const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes] = await Promise.all([
@@ -183,6 +184,13 @@ export default function AdminClient() {
     await fetch("/api/admin/inbound/retry?limit=25", { method: "POST" });
     await loadData();
     setRetryingInbound(false);
+  }
+
+  async function checkInboundAlerts() {
+    setCheckingAlerts(true);
+    await fetch("/api/admin/inbound/alerts", { method: "POST" });
+    await loadData();
+    setCheckingAlerts(false);
   }
 
   async function unspamMessage(messageId: string) {
@@ -462,6 +470,22 @@ export default function AdminClient() {
             }}
           >
             {retryingInbound ? "Retrying..." : "Retry failed inbound"}
+          </button>
+          <button
+            type="button"
+            onClick={checkInboundAlerts}
+            disabled={checkingAlerts}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text)",
+              cursor: "pointer",
+              marginLeft: 8
+            }}
+          >
+            {checkingAlerts ? "Checking..." : "Send alert check"}
           </button>
           {inboundFailures.length === 0 ? (
             <p>No failed inbound events.</p>

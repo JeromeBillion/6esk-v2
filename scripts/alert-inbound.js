@@ -7,7 +7,7 @@ if (!INBOUND_SHARED_SECRET || !APP_URL) {
 
 async function main() {
   const baseUrl = APP_URL.replace(/\/+$/, "");
-  const url = `${baseUrl}/api/admin/inbound/retry?limit=25`;
+  const url = `${baseUrl}/api/admin/inbound/alerts`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -21,19 +21,7 @@ async function main() {
   }
 
   const payload = await response.json();
-  console.log("Inbound retry result:", payload);
-
-  const alertUrl = `${baseUrl}/api/admin/inbound/alerts`;
-  const alertRes = await fetch(alertUrl, {
-    method: "POST",
-    headers: {
-      "x-6esk-secret": INBOUND_SHARED_SECRET
-    }
-  });
-  if (alertRes.ok) {
-    const alertPayload = await alertRes.json();
-    console.log("Inbound alert result:", alertPayload);
-  }
+  console.log("Inbound alert result:", payload);
 }
 
 main().catch((error) => {

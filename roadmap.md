@@ -53,6 +53,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 3 complete: mailbox UI + message list.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
+- Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -177,6 +178,7 @@ Status
 - Rate limiting middleware added for admin/agent endpoints.
 - Backfill retry script added (`npm run retry:inbound`).
 - Admin spam review + inbound failure monitoring added.
+- Inbound failure alerting (webhook + cron script) added.
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
 Acceptance Criteria
