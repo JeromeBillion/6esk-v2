@@ -19,6 +19,16 @@ Copy `.env.example` to `.env` and fill in the values.
 npm run db:migrate
 ```
 
+## Seed Lead Admin
+
+```bash
+node scripts/seed-admin.js
+```
+
+## Sign In
+
+Visit `http://localhost:3000/login` and use the Lead Admin credentials.
+
 ## Health Check
 
 Visit `http://localhost:3000/api/health`.

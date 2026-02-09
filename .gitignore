@@ -8,6 +8,7 @@
 # env
 .env
 .env.*
+!.env.example
 
 # logs
 npm-debug.log*
@@ -16,3 +17,6 @@ yarn-error.log*
 
 # misc
 .DS_Store
+
+# cloudflare
+.wrangler

@@ -3,9 +3,12 @@ export default function HomePage() {
     <main>
       <div className="container">
         <h1>6esk</h1>
-        <p>Phase 0 foundation is in place.</p>
+        <p>Foundation and email APIs are ready.</p>
         <p>
           Health check: <code>/api/health</code>
+        </p>
+        <p>
+          Continue to <code>/login</code> or <code>/mail</code>.
         </p>
       </div>
     </main>
