@@ -109,7 +109,7 @@ export async function storeInboundEmail(data: InboundEmail) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, references,
+      id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
       from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
       received_at, is_read, is_spam, spam_reason
     ) VALUES (

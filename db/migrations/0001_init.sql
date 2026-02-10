@@ -49,7 +49,7 @@ CREATE TABLE messages (
   message_id text,
   thread_id text,
   in_reply_to text,
-  references text[],
+  reference_ids text[],
   from_email text NOT NULL,
   to_emails text[] NOT NULL DEFAULT '{}',
   cc_emails text[] NOT NULL DEFAULT '{}',
