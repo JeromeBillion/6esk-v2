@@ -176,6 +176,26 @@ button {
   gap: 12px;
 }
 
+.app-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.app-action:hover {
+  background: rgba(57, 184, 255, 0.12);
+  border-color: rgba(57, 184, 255, 0.3);
+}
+
 .app-signout {
   padding: 10px 14px;
   border-radius: 10px;
@@ -211,6 +231,56 @@ button {
   border-radius: 12px;
   padding: 16px;
   background: rgba(10, 12, 18, 0.6);
+}
+
+.tickets-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.tickets-sidebar {
+  display: grid;
+  gap: 16px;
+}
+
+.tickets-filters {
+  display: grid;
+  gap: 12px;
+}
+
+.ticket-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.ticket-card.active {
+  background: rgba(139, 215, 255, 0.25);
+  border-color: rgba(139, 215, 255, 0.4);
+  color: var(--text);
+}
+
+.ticket-empty {
+  display: grid;
+  gap: 8px;
+}
+
+.tickets-detail {
+  min-width: 0;
+}
+
+.tickets-detail-stack {
+  display: grid;
+  gap: 16px;
 }
 
 .admin-layout {
@@ -408,6 +478,10 @@ button {
   }
 
   .mail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .tickets-layout {
     grid-template-columns: 1fr;
   }
 }

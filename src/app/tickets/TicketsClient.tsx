@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AppShell from "@/app/components/AppShell";
 
 type Ticket = {
@@ -94,6 +94,7 @@ export default function TicketsClient() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const replyRef = useRef<HTMLTextAreaElement | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);
   const [selectedMacro, setSelectedMacro] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
@@ -208,6 +209,46 @@ export default function TicketsClient() {
   }, [filterStatus, filterPriority, filterTag, filterQuery, assignedFilter]);
 
   useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName;
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
+          return;
+        }
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      if (tickets.length === 0) {
+        return;
+      }
+
+      const currentIndex = tickets.findIndex((ticket) => ticket.id === activeTicketId);
+
+      if (event.key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        const nextIndex = currentIndex < tickets.length - 1 ? currentIndex + 1 : 0;
+        setActiveTicketId(tickets[nextIndex].id);
+      }
+
+      if (event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const nextIndex = currentIndex > 0 ? currentIndex - 1 : tickets.length - 1;
+        setActiveTicketId(tickets[nextIndex].id);
+      }
+
+      if (event.key === "r") {
+        event.preventDefault();
+        replyRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [tickets, activeTicketId]);
+
+  useEffect(() => {
     if (!activeTicketId) {
       setMessages([]);
       setDrafts([]);
@@ -310,11 +351,19 @@ export default function TicketsClient() {
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
   return (
-    <AppShell title="Tickets" subtitle="Platform inbox mapped to tickets.">
+    <AppShell
+      title="Tickets"
+      subtitle="Platform inbox mapped to tickets."
+      actions={
+        <a href="/tickets/new" className="app-action">
+          New ticket
+        </a>
+      }
+    >
       <div className="app-content">
-        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24 }}>
-          <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
-            <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+        <div className="tickets-layout">
+          <aside className="panel tickets-sidebar">
+            <div className="tickets-filters">
               <label>
                 Search
                 <input
@@ -377,44 +426,48 @@ export default function TicketsClient() {
                   ))}
                 </select>
               </label>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                Shortcuts: <code>j</code>/<code>k</code> to move · <code>r</code> to reply
+              </div>
             </div>
-            {tickets.map((ticket) => (
-              <button
-                key={ticket.id}
-                type="button"
-                onClick={() => setActiveTicketId(ticket.id)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  marginBottom: 8,
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background:
-                    ticket.id === activeTicketId ? "var(--accent-strong)" : "var(--surface-2)",
-                  color: ticket.id === activeTicketId ? "#081018" : "var(--text)",
-                  cursor: "pointer"
-                }}
-              >
-                <strong>{ticket.subject ?? "(no subject)"}</strong>
-                <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
-                <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
-                {ticket.category ? (
-                  <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>
-                ) : null}
-                {ticket.tags && ticket.tags.length ? (
-                  <div style={{ fontSize: 12 }}>Tags: {ticket.tags.join(", ")}</div>
-                ) : null}
-              </button>
-            ))}
+            {tickets.length === 0 ? (
+              <div className="ticket-empty">
+                <h3>No tickets yet</h3>
+                <p>Send an email to support or create a ticket manually.</p>
+                <a href="/tickets/new" className="app-action">
+                  Create ticket
+                </a>
+              </div>
+            ) : (
+              tickets.map((ticket) => (
+                <button
+                  key={ticket.id}
+                  type="button"
+                  onClick={() => setActiveTicketId(ticket.id)}
+                  className={`ticket-card${ticket.id === activeTicketId ? " active" : ""}`}
+                >
+                  <strong>{ticket.subject ?? "(no subject)"}</strong>
+                  <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
+                  <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
+                  {ticket.category ? (
+                    <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>
+                  ) : null}
+                  {ticket.tags && ticket.tags.length ? (
+                    <div style={{ fontSize: 12 }}>Tags: {ticket.tags.join(", ")}</div>
+                  ) : null}
+                </button>
+              ))
+            )}
           </aside>
 
-          <section>
+          <section className="tickets-detail">
             {!activeTicket ? (
-              <p>Select a ticket to view details.</p>
+              <div className="panel ticket-empty">
+                <h3>Select a ticket</h3>
+                <p>Choose a ticket on the left to see conversation, drafts, and activity.</p>
+              </div>
             ) : (
-              <div style={{ display: "grid", gap: 16 }}>
+              <div className="tickets-detail-stack">
                 <div
                   style={{
                     border: "1px solid var(--border)",
@@ -889,6 +942,7 @@ export default function TicketsClient() {
                     </div>
                   ) : null}
                   <textarea
+                    ref={replyRef}
                     value={replyText}
                     onChange={(event) => setReplyText(event.target.value)}
                     rows={5}
