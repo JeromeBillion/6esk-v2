@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import BrandMark from "@/app/components/BrandMark";
 
 type Mailbox = {
@@ -19,6 +19,9 @@ type Message = {
   received_at: string | null;
   sent_at: string | null;
   is_read: boolean;
+  thread_id: string | null;
+  message_id: string | null;
+  created_at: string;
 };
 
 type MessageDetail = {
@@ -50,6 +53,7 @@ export default function MailClient() {
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loadingMessage, setLoadingMessage] = useState(false);
+  const [threadsExpanded, setThreadsExpanded] = useState<Record<string, boolean>>({});
   const [composeMode, setComposeMode] = useState<"reply" | "forward" | null>(null);
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
@@ -125,6 +129,43 @@ export default function MailClient() {
     setComposeError(null);
   }
 
+  function getMessageTimestamp(message: Message) {
+    const value = message.received_at ?? message.sent_at ?? message.created_at;
+    return value ? new Date(value).getTime() : 0;
+  }
+
+  const threadGroups = useMemo(() => {
+    const map = new Map<string, Message[]>();
+    for (const message of messages) {
+      const key = message.thread_id ?? message.id;
+      const group = map.get(key);
+      if (group) {
+        group.push(message);
+      } else {
+        map.set(key, [message]);
+      }
+    }
+
+    const groups = Array.from(map.entries()).map(([threadId, threadMessages]) => {
+      const sortedByRecent = [...threadMessages].sort(
+        (a, b) => getMessageTimestamp(b) - getMessageTimestamp(a)
+      );
+      const sortedByOldest = [...threadMessages].sort(
+        (a, b) => getMessageTimestamp(a) - getMessageTimestamp(b)
+      );
+      return {
+        id: threadId,
+        messages: sortedByOldest,
+        latest: sortedByRecent[0],
+        count: threadMessages.length,
+        lastActivity: getMessageTimestamp(sortedByRecent[0])
+      };
+    });
+
+    groups.sort((a, b) => b.lastActivity - a.lastActivity);
+    return groups;
+  }, [messages]);
+
   useEffect(() => {
     async function loadMessages() {
       if (!activeMailbox) {
@@ -132,6 +173,7 @@ export default function MailClient() {
         setActiveMessageId(null);
         setMessageDetail(null);
         setAttachments([]);
+        setThreadsExpanded({});
         resetComposer();
         return;
       }
@@ -144,15 +186,19 @@ export default function MailClient() {
       setActiveMessageId(null);
       setMessageDetail(null);
       setAttachments([]);
+      setThreadsExpanded({});
       resetComposer();
     }
 
     void loadMessages();
   }, [activeMailbox]);
 
-  async function loadMessageDetail(messageId: string) {
+  async function loadMessageDetail(messageId: string, threadId?: string | null) {
     setLoadingMessage(true);
     setActiveMessageId(messageId);
+    if (threadId) {
+      setThreadsExpanded((prev) => ({ ...prev, [threadId]: true }));
+    }
     const res = await fetch(`/api/messages/${messageId}`);
     if (res.ok) {
       const payload = await res.json();
@@ -281,36 +327,99 @@ export default function MailClient() {
 
           <section style={{ display: "grid", gap: 16 }}>
             <div style={{ display: "grid", gap: 12 }}>
-              {messages.length === 0 ? (
+              {threadGroups.length === 0 ? (
                 <p>No messages yet.</p>
               ) : (
-                messages.map((message) => (
-                  <article
-                    key={message.id}
-                    onClick={() => loadMessageDetail(message.id)}
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background:
-                        message.id === activeMessageId
-                          ? "rgba(57, 184, 255, 0.15)"
-                          : "rgba(10, 12, 18, 0.6)",
-                      cursor: "pointer"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <strong>{message.subject ?? "(no subject)"}</strong>
-                      <span style={{ fontSize: 12 }}>
-                        {message.received_at ?? message.sent_at ?? ""}
-                      </span>
+                threadGroups.map((thread) => {
+                  const latest = thread.latest;
+                  const timestamp = latest.received_at ?? latest.sent_at ?? latest.created_at ?? "";
+                  const expanded = threadsExpanded[thread.id] ?? false;
+
+                  return (
+                    <div
+                      key={thread.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setThreadsExpanded((prev) => ({
+                            ...prev,
+                            [thread.id]: !expanded
+                          }))
+                        }
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          width: "100%",
+                          background: "transparent",
+                          border: "none",
+                          color: "inherit",
+                          cursor: "pointer",
+                          padding: 0,
+                          textAlign: "left"
+                        }}
+                      >
+                        <div>
+                          <strong>{latest.subject ?? "(no subject)"}</strong>
+                          <p style={{ marginTop: 6 }}>{latest.preview_text ?? ""}</p>
+                          <p style={{ fontSize: 12, color: "var(--muted)" }}>
+                            {latest.direction === "inbound" ? "From" : "To"}: {latest.from_email}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}>
+                          <div>{timestamp}</div>
+                          <div>{thread.count} msg</div>
+                          <div>{expanded ? "Collapse" : "Expand"}</div>
+                        </div>
+                      </button>
+
+                      {expanded ? (
+                        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                          {thread.messages.map((message) => {
+                            const detailTimestamp =
+                              message.received_at ?? message.sent_at ?? message.created_at ?? "";
+                            return (
+                              <button
+                                key={message.id}
+                                type="button"
+                                onClick={() => loadMessageDetail(message.id, thread.id)}
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 10,
+                                  background:
+                                    message.id === activeMessageId
+                                      ? "rgba(57, 184, 255, 0.15)"
+                                      : "rgba(10, 12, 18, 0.6)",
+                                  color: "inherit",
+                                  textAlign: "left",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <strong>{message.subject ?? "(no subject)"}</strong>
+                                  <span style={{ fontSize: 12 }}>{detailTimestamp}</span>
+                                </div>
+                                <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
+                                <p style={{ fontSize: 12, color: "var(--muted)" }}>
+                                  {message.direction === "inbound" ? "From" : "To"}:{" "}
+                                  {message.from_email}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
-                    <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
-                    <p style={{ fontSize: 12, color: "var(--muted)" }}>
-                      {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
-                    </p>
-                  </article>
-                ))
+                  );
+                })
               )}
             </div>
 

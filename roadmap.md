@@ -52,6 +52,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
 - Phase 3 complete: mailbox UI + message list.
  - Mailbox message detail + reply/forward composer added.
+ - Mailbox threading by `thread_id` with collapsible threads added.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.

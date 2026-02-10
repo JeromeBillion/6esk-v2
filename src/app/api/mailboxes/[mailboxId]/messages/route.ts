@@ -19,11 +19,12 @@ export async function GET(
   }
 
   const result = await db.query(
-    `SELECT id, direction, from_email, subject, preview_text, received_at, sent_at, is_read
+    `SELECT id, direction, from_email, subject, preview_text, received_at, sent_at, is_read,
+            thread_id, message_id, created_at
      FROM messages
      WHERE mailbox_id = $1
      ORDER BY COALESCE(received_at, sent_at, created_at) DESC
-     LIMIT 50`,
+     LIMIT 200`,
     [mailboxId]
   );
 
