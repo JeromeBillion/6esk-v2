@@ -202,11 +202,13 @@ Deliverables
 - UI to view and reply to WhatsApp threads inside 6esk.
 - Admin UI to configure WhatsApp credentials, number, templates, and status.
 - Audit log coverage for WhatsApp sends and configuration changes.
+- AI parity: WhatsApp messages flow through the agent outbox + context APIs, and AI drafts/auto-send honor WhatsApp policy gates.
 Acceptance Criteria
 - Inbound WhatsApp message creates/updates a ticket within 60 seconds.
 - Replies from 6esk are delivered to WhatsApp and stored in the thread.
 - Messages outside the 24h window use approved templates.
 - Status updates (sent/delivered/read) are captured.
+- When AI integration is enabled, WhatsApp threads appear in agent context and AI drafts/auto-send follow policy + template rules.
 
 **WhatsApp Channel Plan**
 Goal
@@ -225,8 +227,11 @@ Dependencies
 
 Data Model Changes
 - Add WhatsApp account table (phone number, provider, access token, WABA ID, status).
+- Decision: extend existing `messages` table with a `channel` enum + WhatsApp metadata
+  columns/JSONB (no separate WhatsApp message table) to keep tickets, analytics, and AI
+  flows unified.
 - Extend messages with channel metadata: `channel = whatsapp`, `external_message_id`,
-  `conversation_id`, `wa_contact`, `wa_status`, `wa_timestamp`.
+  `conversation_id`, `wa_contact`, `wa_status`, `wa_timestamp`, `provider`.
 - Optional contact table for WhatsApp identities (name, phone, last_seen).
 
 Backend APIs
@@ -234,6 +239,23 @@ Backend APIs
 - `POST /api/whatsapp/send` to send messages or templates.
 - Idempotency keys for inbound events.
 - Rate limiting for inbound + send endpoints.
+- Agent actions payload (for WhatsApp):
+  ```json
+  {
+    "type": "send_reply",
+    "ticketId": "uuid",
+    "channel": "whatsapp",
+    "text": "…",
+    "template": {
+      "name": "order_update",
+      "language": "en_US",
+      "components": [{ "type": "body", "parameters": ["12345"] }]
+    },
+    "metadata": { "forceTemplate": false }
+  }
+  ```
+  Rules: if outside 24h window and no template is provided, reject + create draft /
+  request_human_review. When inside 24h, plain text is allowed.
 
 Ticketing & Threading
 - Each WhatsApp conversation maps to a ticket (platform mailbox).
@@ -251,17 +273,49 @@ Operational & Compliance
 - Template approval workflow for outbound messages outside window.
 - Audit logs for WhatsApp sends + settings changes.
 
+AI Parity (Venus / Agent Integration)
+- Extend message storage to be channel-aware (add `channel` enum + WhatsApp metadata like `external_message_id`, `conversation_id`, `wa_contact`, `wa_status`, `wa_timestamp`).
+- Emit agent outbox events for WhatsApp inbound/outbound with channel metadata and conversation references.
+- Update agent context APIs to return channel fields, delivery status, and pointers for WhatsApp content/attachments.
+- Extend agent actions to support WhatsApp replies (channel + template payloads) with 24h window enforcement.
+- Auto-send is only allowed when policy allows and WhatsApp window/template rules pass; otherwise create draft + request human review.
+- Audit log records AI-origin WhatsApp actions the same way as email (origin `ai`, `ai_meta`).
+
 Milestones
 1) Provider setup + webhook verification.
 2) Inbound message ingestion + ticket creation.
 3) Outbound send + template gating.
 4) UI rendering + composer.
 5) Status callbacks + analytics hooks.
+6) AI parity: agent events + context + actions for WhatsApp with policy gates.
 
 **Risks & Mitigations**
 - Email provider lock‑in: keep inbound/outbound adapters thin and standardized.
 - Catch‑all spam noise: basic spam tagging and mailbox rules in Phase 6.
 - Storage growth: R2 lifecycle policies after MVP.
+
+**UI/UX Plan (Functional CRM First)**
+Principles
+1. Design for the support agent’s job-to-be-done, not aesthetics.
+2. Consistent layout and navigation across all pages.
+3. Accessibility is required: contrast, keyboard nav, focus states, error states.
+4. Mobile-first responsiveness, with touch targets >= 44x44.
+5. Clear loading, empty, and error states for every async screen.
+
+Scope of Improvements
+1. App shell: persistent sidebar + header with unified navigation for Tickets, Mail, Analytics, Admin, and Settings.
+2. Landing behavior: `/` redirects to `/tickets` for signed-in users and `/login` for guests; remove the route index landing.
+3. Navigation wiring: “Platform” routes to `/tickets`, “Mail” to `/mail`, “Analytics” to `/analytics`, “Admin” to `/admin`.
+4. Tickets UI: split view list/detail, status/priority filters, assignment controls, clear empty states, and fast keyboard navigation.
+5. Mail UI: thread list + detail, consistent message actions, attachments preview, and mailbox switcher aligned with tickets.
+6. Design system: tokenized colors/typography/spacing, reusable components, dark mode coverage.
+7. Feedback states: toasts, alerts, skeletons, and error recovery actions.
+
+Acceptance Criteria
+1. After login, “Platform” always opens `/tickets` and the app shell persists across pages.
+2. No dead-end pages; every menu item routes to a functional screen.
+3. All primary flows are usable with keyboard-only navigation.
+4. Empty states guide the user with clear next actions.
 
 **Immediate Next Steps**
 1. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
@@ -270,3 +324,5 @@ Milestones
 4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
 5. Start Phase 7 hardening: inbound idempotency + retry/backfill plan.
 6. Stand up WhatsApp Business account and confirm provider choice.
+7. Define WhatsApp AI parity spec (data model + agent events/actions + policy gates).
+8. Implement the UI/UX plan above (app shell, routing, tickets/mail workflows, design system).
