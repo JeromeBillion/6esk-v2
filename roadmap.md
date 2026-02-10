@@ -223,6 +223,7 @@ Status
 - Inbound webhook now ingests WhatsApp payloads and creates tickets/messages.
 - Ticket replies route WhatsApp responses through the outbound queue.
 - Ticket UI shows WhatsApp channel badges + delivery status.
+- 24h window enforcement added with template-required flow in Support UI.
 
 **WhatsApp Channel Plan**
 Goal

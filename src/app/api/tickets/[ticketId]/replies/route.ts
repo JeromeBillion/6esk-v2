@@ -7,7 +7,15 @@ import { sendTicketReply } from "@/server/email/replies";
 const replySchema = z.object({
   text: z.string().optional().nullable(),
   html: z.string().optional().nullable(),
-  subject: z.string().optional().nullable()
+  subject: z.string().optional().nullable(),
+  template: z
+    .object({
+      name: z.string(),
+      language: z.string(),
+      components: z.array(z.record(z.unknown())).optional()
+    })
+    .optional()
+    .nullable()
 });
 
 export async function POST(
@@ -45,8 +53,8 @@ export async function POST(
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const { text, html, subject } = parsed.data;
-  if (!text && !html) {
+  const { text, html, subject, template } = parsed.data;
+  if (!text && !html && !template) {
     return Response.json({ error: "Reply body required" }, { status: 400 });
   }
 
@@ -56,6 +64,7 @@ export async function POST(
       text,
       html,
       subject,
+      template: template ?? null,
       actorUserId: user.id,
       origin: "human"
     });

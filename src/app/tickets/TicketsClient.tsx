@@ -130,6 +130,10 @@ export default function TicketsClient() {
   const [loadingMessage, setLoadingMessage] = useState(false);
   const [events, setEvents] = useState<TicketEvent[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [waTemplateName, setWaTemplateName] = useState("");
+  const [waTemplateLanguage, setWaTemplateLanguage] = useState("en_US");
+  const [waTemplateParams, setWaTemplateParams] = useState("");
 
   function getDraftPlainText(draft: Draft) {
     if (draft.body_text) return draft.body_text;
@@ -307,16 +311,57 @@ export default function TicketsClient() {
   }
 
   async function sendReply(ticketId: string) {
-    if (!replyText.trim()) return;
+    setReplyError(null);
+    const trimmedText = replyText.trim();
+    const shouldBuildTemplate =
+      ticketChannel === "whatsapp" && waTemplateName.trim() && waTemplateLanguage.trim();
+    let template: { name: string; language: string; components?: Array<Record<string, unknown>> } | null =
+      null;
+
+    if (shouldBuildTemplate) {
+      const params = waTemplateParams
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      template = {
+        name: waTemplateName.trim(),
+        language: waTemplateLanguage.trim(),
+        components: params.length
+          ? [
+              {
+                type: "body",
+                parameters: params.map((param) => ({ type: "text", text: param }))
+              }
+            ]
+          : undefined
+      };
+    }
+
+    if (!trimmedText && !template) {
+      setReplyError(
+        ticketChannel === "whatsapp"
+          ? "Add a reply or provide a template."
+          : "Reply body required."
+      );
+      return;
+    }
     setSending(true);
     const res = await fetch(`/api/tickets/${ticketId}/replies`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: replyText })
+      body: JSON.stringify({
+        text: trimmedText || null,
+        template
+      })
     });
     if (res.ok) {
       setReplyText("");
+      setWaTemplateName("");
+      setWaTemplateParams("");
       await loadTicketDetail(ticketId);
+    } else {
+      const payload = await res.json().catch(() => ({}));
+      setReplyError(payload.error ?? "Failed to send reply");
     }
     setSending(false);
   }
@@ -378,6 +423,24 @@ export default function TicketsClient() {
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
     ? "whatsapp"
     : "email";
+  const whatsappWindow = (() => {
+    if (ticketChannel !== "whatsapp") {
+      return null;
+    }
+    const inboundTimes = messages
+      .filter((message) => message.channel === "whatsapp" && message.direction === "inbound")
+      .map((message) => (message.received_at ? Date.parse(message.received_at) : NaN))
+      .filter((value) => !Number.isNaN(value));
+    if (inboundTimes.length === 0) {
+      return { isOpen: false, minutesRemaining: 0 };
+    }
+    const lastInbound = Math.max(...inboundTimes);
+    const expires = lastInbound + 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const isOpen = now <= expires;
+    const minutesRemaining = isOpen ? Math.max(0, Math.ceil((expires - now) / 60000)) : 0;
+    return { isOpen, minutesRemaining };
+  })();
   return (
     <AppShell
       title="Tickets"
@@ -996,6 +1059,14 @@ export default function TicketsClient() {
                       Replies send through the connected WhatsApp Business number.
                     </p>
                   ) : null}
+                  {ticketChannel === "whatsapp" && whatsappWindow ? (
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      24h window:{" "}
+                      {whatsappWindow.isOpen
+                        ? `Open (${whatsappWindow.minutesRemaining}m left)`
+                        : "Closed (template required)"}
+                    </div>
+                  ) : null}
                   {macros.length ? (
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <select
@@ -1037,6 +1108,38 @@ export default function TicketsClient() {
                     rows={5}
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--border)" }}
                   />
+                  {ticketChannel === "whatsapp" && whatsappWindow && !whatsappWindow.isOpen ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <label>
+                        Template name
+                        <input
+                          type="text"
+                          value={waTemplateName}
+                          onChange={(event) => setWaTemplateName(event.target.value)}
+                          placeholder="order_update"
+                        />
+                      </label>
+                      <label>
+                        Template language
+                        <input
+                          type="text"
+                          value={waTemplateLanguage}
+                          onChange={(event) => setWaTemplateLanguage(event.target.value)}
+                          placeholder="en_US"
+                        />
+                      </label>
+                      <label>
+                        Template params (comma-separated)
+                        <input
+                          type="text"
+                          value={waTemplateParams}
+                          onChange={(event) => setWaTemplateParams(event.target.value)}
+                          placeholder="orderId, deliveryDate"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  {replyError ? <p style={{ color: "var(--danger)" }}>{replyError}</p> : null}
                   <button
                     type="button"
                     onClick={() => sendReply(activeTicket.id)}

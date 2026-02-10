@@ -6,7 +6,7 @@ import { getTicketById, recordTicketEvent } from "@/server/tickets";
 type SendWhatsAppArgs = {
   ticketId?: string | null;
   to: string;
-  text: string;
+  text?: string | null;
   template?: Record<string, unknown> | null;
   actorUserId?: string | null;
   origin?: "human" | "ai";
@@ -49,7 +49,7 @@ export async function queueWhatsAppSend({
 
   const payload = {
     to: contact,
-    text,
+    text: text ?? null,
     template: template ?? null,
     ticketId: ticketId ?? null,
     provider: account.provider
@@ -73,7 +73,12 @@ export async function queueWhatsAppSend({
   const from = account.phone_number ? `whatsapp:${account.phone_number}` : "whatsapp:unknown";
   const messageId = randomUUID();
   const sentAt = new Date();
-  const previewText = text.replace(/\s+/g, " ").trim().slice(0, 200);
+  const bodyText =
+    text ??
+    (template
+      ? `Template: ${template.name ?? "unknown"} (${template.language ?? "default"})`
+      : "");
+  const previewText = bodyText.replace(/\s+/g, " ").trim().slice(0, 200);
 
   await db.query(
     `INSERT INTO messages (
@@ -109,7 +114,7 @@ export async function queueWhatsAppSend({
 
   const textKey = await putObject({
     key: `messages/${messageId}/body.txt`,
-    body: text,
+    body: bodyText || "[whatsapp template]",
     contentType: "text/plain; charset=utf-8"
   });
 
@@ -117,7 +122,7 @@ export async function queueWhatsAppSend({
     `UPDATE messages
      SET r2_key_text = $1, size_bytes = $2
      WHERE id = $3`,
-    [textKey, Buffer.byteLength(text), messageId]
+    [textKey, Buffer.byteLength(bodyText || ""), messageId]
   );
 
   await recordTicketEvent({

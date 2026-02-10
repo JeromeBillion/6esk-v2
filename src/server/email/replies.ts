@@ -3,12 +3,14 @@ import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
+import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 
 type SendReplyArgs = {
   ticketId: string;
   text?: string | null;
   html?: string | null;
   subject?: string | null;
+  template?: Record<string, unknown> | null;
   actorUserId?: string | null;
   origin?: "human" | "ai";
   aiMeta?: Record<string, unknown> | null;
@@ -33,6 +35,7 @@ export async function sendTicketReply({
   text,
   html,
   subject,
+  template,
   actorUserId,
   origin = "human",
   aiMeta
@@ -57,14 +60,20 @@ export async function sendTicketReply({
       (html
         ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
         : "");
-    if (!body.trim()) {
+    const cleanBody = body.trim() ? body : null;
+    const windowStatus = await getWhatsAppWindowStatus(ticketId);
+    if (!windowStatus.isOpen && !template) {
+      throw new Error("WhatsApp 24h window closed. Template required.");
+    }
+    if (!cleanBody && !template) {
       throw new Error("Reply body required");
     }
 
     const result = await queueWhatsAppSend({
       ticketId,
       to: contact,
-      text: body,
+      text: cleanBody,
+      template: template ?? null,
       actorUserId: actorUserId ?? null,
       origin,
       aiMeta: aiMeta ?? null
