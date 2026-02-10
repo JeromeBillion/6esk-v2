@@ -8,7 +8,11 @@ type Tag = {
   description?: string | null;
 };
 
-export default function TagsClient() {
+type TagsClientProps = {
+  compact?: boolean;
+};
+
+export default function TagsClient({ compact = false }: TagsClientProps) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [form, setForm] = useState({ name: "", description: "" });
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
@@ -66,7 +70,7 @@ export default function TagsClient() {
   }
 
   return (
-    <section style={{ marginTop: 40 }}>
+    <section style={{ marginTop: compact ? 0 : 40 }}>
       <h2 style={{ marginBottom: 12 }}>Tags</h2>
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <label>

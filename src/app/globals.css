@@ -205,6 +205,47 @@ button {
   background: rgba(10, 12, 18, 0.6);
 }
 
+.admin-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.admin-nav {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.admin-nav-button {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.admin-nav-button:hover {
+  background: rgba(57, 184, 255, 0.08);
+  border-color: rgba(57, 184, 255, 0.2);
+}
+
+.admin-nav-button.active {
+  background: rgba(57, 184, 255, 0.16);
+  border-color: rgba(57, 184, 255, 0.4);
+  color: #e7f7ff;
+}
+
+.admin-panel {
+  display: grid;
+  gap: 24px;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -229,5 +270,9 @@ button {
   .app-header-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .admin-layout {
+    grid-template-columns: 1fr;
   }
 }

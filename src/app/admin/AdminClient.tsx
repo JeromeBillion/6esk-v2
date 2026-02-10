@@ -56,9 +56,22 @@ type InboundFailure = {
   created_at: string;
 };
 
+const ADMIN_SECTIONS = [
+  { key: "users", label: "Users" },
+  { key: "create-user", label: "Create User" },
+  { key: "sla", label: "SLA Targets" },
+  { key: "tags", label: "Tags" },
+  { key: "spam-rules", label: "Spam Rules" },
+  { key: "agent", label: "AI Agent" },
+  { key: "inbound", label: "Inbound Failures" },
+  { key: "spam-review", label: "Spam Review" },
+  { key: "audit-log", label: "Audit Log" }
+];
+
 export default function AdminClient() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [activeSection, setActiveSection] = useState<string>("users");
   const [sla, setSla] = useState<SlaConfig>({
     firstResponseMinutes: 120,
     resolutionMinutes: 1440
@@ -204,366 +217,411 @@ export default function AdminClient() {
 
   return (
     <AppShell title="Lead Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
-      <div className="app-content">
-        <section>
-          <h2 style={{ marginBottom: 12 }}>Create User</h2>
-          <form onSubmit={handleCreate} style={{ display: "grid", gap: 12 }}>
-            <label>
-              Email
-              <input
-                type="email"
-                value={form.email}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, email: event.target.value }))
-                }
-                required
-              />
-            </label>
-            <label>
-              Display name
-              <input
-                type="text"
-                value={form.displayName}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, displayName: event.target.value }))
-                }
-                required
-              />
-            </label>
-            <label>
-              Temporary password
-              <input
-                type="password"
-                value={form.password}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, password: event.target.value }))
-                }
-                required
-                minLength={8}
-              />
-            </label>
-            <label>
-              Role
-              <select
-                value={form.roleId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, roleId: event.target.value }))
-                }
+      <div className="app-content admin-layout">
+        <div className="panel admin-nav">
+          {ADMIN_SECTIONS.map((section) => (
+            <button
+              key={section.key}
+              type="button"
+              onClick={() => setActiveSection(section.key)}
+              className={`admin-nav-button${activeSection === section.key ? " active" : ""}`}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="admin-panel">
+          {activeSection === "create-user" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Create User</h2>
+              <form onSubmit={handleCreate} style={{ display: "grid", gap: 12 }}>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, email: event.target.value }))
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Display name
+                  <input
+                    type="text"
+                    value={form.displayName}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, displayName: event.target.value }))
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Temporary password
+                  <input
+                    type="password"
+                    value={form.password}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, password: event.target.value }))
+                    }
+                    required
+                    minLength={8}
+                  />
+                </label>
+                <label>
+                  Role
+                  <select
+                    value={form.roleId}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, roleId: event.target.value }))
+                    }
+                  >
+                    {roles.map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                    color: "#081018",
+                    cursor: "pointer"
+                  }}
+                >
+                  {loading ? "Creating..." : "Create user"}
+                </button>
+              </form>
+            </section>
+          ) : null}
+
+          {activeSection === "sla" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>SLA Targets</h2>
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  setSlaStatus("saving");
+                  const res = await fetch("/api/admin/sla", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(sla)
+                  });
+                  if (!res.ok) {
+                    setSlaStatus("error");
+                    return;
+                  }
+                  setSlaStatus("saved");
+                  setTimeout(() => setSlaStatus("idle"), 2000);
+                }}
+                style={{ display: "grid", gap: 12 }}
               >
-                {roles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.name}
-                  </option>
+                <label>
+                  First response target (minutes)
+                  <input
+                    type="number"
+                    min={1}
+                    value={sla.firstResponseMinutes}
+                    onChange={(event) =>
+                      setSla((prev) => ({
+                        ...prev,
+                        firstResponseMinutes: Number(event.target.value)
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Resolution target (minutes)
+                  <input
+                    type="number"
+                    min={1}
+                    value={sla.resolutionMinutes}
+                    onChange={(event) =>
+                      setSla((prev) => ({
+                        ...prev,
+                        resolutionMinutes: Number(event.target.value)
+                      }))
+                    }
+                  />
+                </label>
+                {slaStatus === "error" ? (
+                  <p style={{ color: "var(--danger)" }}>Failed to save SLA targets.</p>
+                ) : null}
+                {slaStatus === "saved" ? (
+                  <p style={{ color: "var(--accent)" }}>SLA targets updated.</p>
+                ) : null}
+                <button
+                  type="submit"
+                  disabled={slaStatus === "saving"}
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                    color: "#081018",
+                    cursor: "pointer"
+                  }}
+                >
+                  {slaStatus === "saving" ? "Saving..." : "Save SLA targets"}
+                </button>
+              </form>
+            </section>
+          ) : null}
+
+          {activeSection === "tags" ? (
+            <div className="panel">
+              <TagsClient compact />
+            </div>
+          ) : null}
+
+          {activeSection === "spam-rules" ? (
+            <div className="panel">
+              <SpamRulesClient compact />
+            </div>
+          ) : null}
+
+          {activeSection === "agent" ? (
+            <div className="panel">
+              <AgentIntegrationClient compact />
+            </div>
+          ) : null}
+
+          {activeSection === "users" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Users</h2>
+              <div style={{ display: "grid", gap: 12 }}>
+                {users.map((user) => (
+                  <div
+                    key={user.id}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <strong>{user.display_name}</strong>
+                    <p>{user.email}</p>
+                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                      <label>
+                        Role
+                        <select
+                          value={user.role_id ?? ""}
+                          onChange={(event) =>
+                            updateUser(user.id, { roleId: event.target.value })
+                          }
+                          style={{ marginLeft: 8, padding: "6px 8px" }}
+                        >
+                          {roles.map((role) => (
+                            <option key={role.id} value={role.id}>
+                              {role.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Status
+                        <select
+                          value={user.is_active ? "active" : "inactive"}
+                          onChange={(event) =>
+                            updateUser(user.id, { isActive: event.target.value === "active" })
+                          }
+                          style={{ marginLeft: 8, padding: "6px 8px" }}
+                        >
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => resetPassword(user.id)}
+                        disabled={resettingUserId === user.id}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "var(--surface-2)",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {resettingUserId === user.id ? "Generating..." : "Reset password"}
+                      </button>
+                      {updatingUserId === user.id ? (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>Saving...</span>
+                      ) : null}
+                    </div>
+                    {resetLinks[user.id] ? (
+                      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+                        Reset link: <span style={{ color: "var(--text)" }}>{resetLinks[user.id]}</span>
+                      </p>
+                    ) : null}
+                  </div>
                 ))}
-              </select>
-            </label>
-            {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: "12px 16px",
-                borderRadius: 10,
-                border: "none",
-                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-                color: "#081018",
-                cursor: "pointer"
-              }}
-            >
-              {loading ? "Creating..." : "Create user"}
-            </button>
-          </form>
-        </section>
+              </div>
+            </section>
+          ) : null}
 
-        <section>
-          <h2 style={{ marginBottom: 12 }}>SLA Targets</h2>
-          <form
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setSlaStatus("saving");
-              const res = await fetch("/api/admin/sla", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(sla)
-              });
-              if (!res.ok) {
-                setSlaStatus("error");
-                return;
-              }
-              setSlaStatus("saved");
-              setTimeout(() => setSlaStatus("idle"), 2000);
-            }}
-            style={{ display: "grid", gap: 12 }}
-          >
-            <label>
-              First response target (minutes)
-              <input
-                type="number"
-                min={1}
-                value={sla.firstResponseMinutes}
-                onChange={(event) =>
-                  setSla((prev) => ({
-                    ...prev,
-                    firstResponseMinutes: Number(event.target.value)
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Resolution target (minutes)
-              <input
-                type="number"
-                min={1}
-                value={sla.resolutionMinutes}
-                onChange={(event) =>
-                  setSla((prev) => ({
-                    ...prev,
-                    resolutionMinutes: Number(event.target.value)
-                  }))
-                }
-              />
-            </label>
-            {slaStatus === "error" ? (
-              <p style={{ color: "var(--danger)" }}>Failed to save SLA targets.</p>
-            ) : null}
-            {slaStatus === "saved" ? (
-              <p style={{ color: "var(--accent)" }}>SLA targets updated.</p>
-            ) : null}
-            <button
-              type="submit"
-              disabled={slaStatus === "saving"}
-              style={{
-                padding: "12px 16px",
-                borderRadius: 10,
-                border: "none",
-                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-                color: "#081018",
-                cursor: "pointer"
-              }}
-            >
-              {slaStatus === "saving" ? "Saving..." : "Save SLA targets"}
-            </button>
-          </form>
-        </section>
-
-        <TagsClient />
-
-        <SpamRulesClient />
-
-        <AgentIntegrationClient />
-
-        <section>
-          <h2 style={{ marginBottom: 12 }}>Users</h2>
-          <div style={{ display: "grid", gap: 12 }}>
-            {users.map((user) => (
-              <div
-                key={user.id}
+          {activeSection === "inbound" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
+              <button
+                type="button"
+                onClick={retryInbound}
+                disabled={retryingInbound}
                 style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
                   border: "1px solid var(--border)",
-                  borderRadius: 12,
-                  padding: 12,
-                  background: "rgba(10, 12, 18, 0.6)"
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  marginBottom: 12
                 }}
               >
-                <strong>{user.display_name}</strong>
-                <p>{user.email}</p>
-                <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                  <label>
-                    Role
-                    <select
-                      value={user.role_id ?? ""}
-                      onChange={(event) => updateUser(user.id, { roleId: event.target.value })}
-                      style={{ marginLeft: 8, padding: "6px 8px" }}
+                {retryingInbound ? "Retrying..." : "Retry failed inbound"}
+              </button>
+              <button
+                type="button"
+                onClick={checkInboundAlerts}
+                disabled={checkingAlerts}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  marginLeft: 8
+                }}
+              >
+                {checkingAlerts ? "Checking..." : "Send alert check"}
+              </button>
+              {inboundFailures.length === 0 ? (
+                <p>No failed inbound events.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {inboundFailures.map((event) => (
+                    <div
+                      key={event.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)",
+                        fontSize: 13
+                      }}
                     >
-                      {roles.map((role) => (
-                        <option key={role.id} value={role.id}>
-                          {role.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Status
-                    <select
-                      value={user.is_active ? "active" : "inactive"}
-                      onChange={(event) =>
-                        updateUser(user.id, { isActive: event.target.value === "active" })
-                      }
-                      style={{ marginLeft: 8, padding: "6px 8px" }}
+                      <div style={{ color: "var(--muted)" }}>
+                        Attempts: {event.attempt_count} · Next:{" "}
+                        {event.next_attempt_at
+                          ? new Date(event.next_attempt_at).toLocaleString()
+                          : "—"}
+                      </div>
+                      <div style={{ color: "var(--muted)" }}>
+                        {event.last_error ?? "Unknown error"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {activeSection === "spam-review" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Spam Review</h2>
+              {spamMessages.length === 0 ? (
+                <p>No spam messages flagged.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {spamMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)",
+                        fontSize: 13
+                      }}
                     >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
-                  </label>
+                      <div style={{ color: "var(--muted)" }}>
+                        {message.mailbox_address} · {message.received_at ?? "—"}
+                      </div>
+                      <div>
+                        <strong>{message.subject ?? "(no subject)"}</strong>
+                      </div>
+                      <div style={{ color: "var(--muted)" }}>
+                        From: {message.from_email} · Reason: {message.spam_reason ?? "manual"}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => unspamMessage(message.id)}
+                        style={{
+                          marginTop: 8,
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "var(--surface-2)",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        Not spam
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => resetPassword(user.id)}
-                    disabled={resettingUserId === user.id}
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      border: "1px solid var(--border)",
-                      background: "var(--surface-2)",
-                      color: "var(--text)",
-                      cursor: "pointer"
-                    }}
-                  >
-                    {resettingUserId === user.id ? "Generating..." : "Reset password"}
-                  </button>
-                  {updatingUserId === user.id ? (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Saving...</span>
-                  ) : null}
-                </div>
-                {resetLinks[user.id] ? (
-                  <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-                    Reset link: <span style={{ color: "var(--text)" }}>{resetLinks[user.id]}</span>
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </section>
+              )}
+            </section>
+          ) : null}
 
-        <section>
-          <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
-          <button
-            type="button"
-            onClick={retryInbound}
-            disabled={retryingInbound}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              color: "var(--text)",
-              cursor: "pointer",
-              marginBottom: 12
-            }}
-          >
-            {retryingInbound ? "Retrying..." : "Retry failed inbound"}
-          </button>
-          <button
-            type="button"
-            onClick={checkInboundAlerts}
-            disabled={checkingAlerts}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--text)",
-              cursor: "pointer",
-              marginLeft: 8
-            }}
-          >
-            {checkingAlerts ? "Checking..." : "Send alert check"}
-          </button>
-          {inboundFailures.length === 0 ? (
-            <p>No failed inbound events.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {inboundFailures.map((event) => (
-                <div
-                  key={event.id}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "rgba(10, 12, 18, 0.6)",
-                    fontSize: 13
-                  }}
-                >
-                  <div style={{ color: "var(--muted)" }}>
-                    Attempts: {event.attempt_count} · Next:{" "}
-                    {event.next_attempt_at ? new Date(event.next_attempt_at).toLocaleString() : "—"}
-                  </div>
-                  <div style={{ color: "var(--muted)" }}>{event.last_error ?? "Unknown error"}</div>
+          {activeSection === "audit-log" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Audit Log</h2>
+              {auditLogs.length === 0 ? (
+                <p>No audit entries yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {auditLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)",
+                        fontSize: 13
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)" }}>
+                        {new Date(log.created_at).toLocaleString()}
+                      </div>
+                      <div>
+                        <strong>{log.action}</strong> · {log.entity_type}
+                      </div>
+                      <div style={{ color: "var(--muted)" }}>
+                        {log.actor_name ?? log.actor_email ?? "System"}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <h2 style={{ marginBottom: 12 }}>Spam Review</h2>
-          {spamMessages.length === 0 ? (
-            <p>No spam messages flagged.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {spamMessages.map((message) => (
-                <div
-                  key={message.id}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "rgba(10, 12, 18, 0.6)",
-                    fontSize: 13
-                  }}
-                >
-                  <div style={{ color: "var(--muted)" }}>
-                    {message.mailbox_address} · {message.received_at ?? "—"}
-                  </div>
-                  <div>
-                    <strong>{message.subject ?? "(no subject)"}</strong>
-                  </div>
-                  <div style={{ color: "var(--muted)" }}>
-                    From: {message.from_email} · Reason: {message.spam_reason ?? "manual"}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => unspamMessage(message.id)}
-                    style={{
-                      marginTop: 8,
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      border: "1px solid var(--border)",
-                      background: "var(--surface-2)",
-                      color: "var(--text)",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Not spam
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <h2 style={{ marginBottom: 12 }}>Audit Log</h2>
-          {auditLogs.length === 0 ? (
-            <p>No audit entries yet.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {auditLogs.map((log) => (
-                <div
-                  key={log.id}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "rgba(10, 12, 18, 0.6)",
-                    fontSize: 13
-                  }}
-                >
-                  <div style={{ color: "var(--muted)" }}>
-                    {new Date(log.created_at).toLocaleString()}
-                  </div>
-                  <div>
-                    <strong>{log.action}</strong> · {log.entity_type}
-                  </div>
-                  <div style={{ color: "var(--muted)" }}>
-                    {log.actor_name ?? log.actor_email ?? "System"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+              )}
+            </section>
+          ) : null}
+        </div>
       </div>
     </AppShell>
   );

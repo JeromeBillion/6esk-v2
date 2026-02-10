@@ -11,7 +11,11 @@ type SpamRule = {
   created_at: string;
 };
 
-export default function SpamRulesClient() {
+type SpamRulesClientProps = {
+  compact?: boolean;
+};
+
+export default function SpamRulesClient({ compact = false }: SpamRulesClientProps) {
   const [rules, setRules] = useState<SpamRule[]>([]);
   const [form, setForm] = useState({
     ruleType: "block" as "allow" | "block",
@@ -63,7 +67,7 @@ export default function SpamRulesClient() {
   }
 
   return (
-    <section style={{ marginTop: 40 }}>
+    <section style={{ marginTop: compact ? 0 : 40 }}>
       <h2 style={{ marginBottom: 12 }}>Spam Rules</h2>
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <label>

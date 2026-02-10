@@ -12,7 +12,11 @@ type AgentIntegration = {
   policy?: Record<string, unknown>;
 };
 
-export default function AgentIntegrationClient() {
+type AgentIntegrationClientProps = {
+  compact?: boolean;
+};
+
+export default function AgentIntegrationClient({ compact = false }: AgentIntegrationClientProps) {
   const [agent, setAgent] = useState<AgentIntegration | null>(null);
   const [form, setForm] = useState({
     name: "6esk AI Agent",
@@ -108,7 +112,7 @@ export default function AgentIntegrationClient() {
     : "";
 
   return (
-    <section style={{ marginTop: 40 }}>
+    <section style={{ marginTop: compact ? 0 : 40 }}>
       <h2 style={{ marginBottom: 12 }}>AI Agent Integration</h2>
       <p style={{ marginBottom: 12 }}>
         Connect your ElizaOS runtime. Default mode is draft-only. Toggle auto-send if you want

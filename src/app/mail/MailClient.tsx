@@ -69,10 +69,10 @@ export default function MailClient() {
         return;
       }
       const payload = await res.json();
-      setMailboxes(payload.mailboxes ?? []);
-      if (payload.mailboxes?.[0]) {
-        setActiveMailbox(payload.mailboxes[0].id);
-      }
+      const list = payload.mailboxes ?? [];
+      setMailboxes(list);
+      const personal = list.find((item: Mailbox) => item.type === "personal") ?? null;
+      setActiveMailbox(personal?.id ?? null);
     }
 
     void loadMailboxes();
@@ -264,36 +264,20 @@ export default function MailClient() {
     }
   }
 
-  return (
-    <AppShell title="Mailboxes" subtitle="Inbound and outbound emails will appear here once ingested.">
-      <div className="app-content">
-        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 24 }}>
-          <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
-            {mailboxes.map((mailbox) => (
-              <button
-                key={mailbox.id}
-                type="button"
-                onClick={() => setActiveMailbox(mailbox.id)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  marginBottom: 8,
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background:
-                    mailbox.id === activeMailbox ? "var(--accent-strong)" : "var(--surface-2)",
-                  color: mailbox.id === activeMailbox ? "#081018" : "var(--text)",
-                  cursor: "pointer"
-                }}
-              >
-                <strong>{mailbox.type === "platform" ? "Platform" : "Personal"}</strong>
-                <div style={{ fontSize: 12 }}>{mailbox.address}</div>
-              </button>
-            ))}
-          </aside>
+  const activeMailboxRecord = mailboxes.find((item) => item.id === activeMailbox) ?? null;
 
+  return (
+    <AppShell
+      title="Personal Mail"
+      subtitle={activeMailboxRecord ? activeMailboxRecord.address : "No personal mailbox assigned."}
+    >
+      <div className="app-content">
+        {!activeMailboxRecord ? (
+          <div className="panel">
+            <h2>No personal mailbox yet</h2>
+            <p>Ask a Lead Admin to provision your personal mailbox address.</p>
+          </div>
+        ) : (
           <section style={{ display: "grid", gap: 16 }}>
             <div style={{ display: "grid", gap: 12 }}>
               {threadGroups.length === 0 ? (
@@ -563,7 +547,8 @@ export default function MailClient() {
                             padding: "10px 14px",
                             borderRadius: 10,
                             border: "none",
-                            background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                            background:
+                              "linear-gradient(135deg, var(--accent-strong), var(--accent))",
                             color: "#081018",
                             cursor: "pointer"
                           }}
@@ -591,7 +576,7 @@ export default function MailClient() {
               )}
             </div>
           </section>
-        </div>
+        )}
       </div>
     </AppShell>
   );
