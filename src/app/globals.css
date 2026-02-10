@@ -110,16 +110,6 @@ button {
   gap: 12px;
 }
 
-.app-brand-title {
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.app-brand-sub {
-  font-size: 12px;
-  color: var(--muted);
-}
-
 .app-nav {
   display: grid;
   gap: 8px;

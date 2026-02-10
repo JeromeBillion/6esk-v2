@@ -40,10 +40,6 @@ export default function AppShell({ title, subtitle, actions, children }: AppShel
       <aside className="app-sidebar">
         <div className="app-brand">
           <BrandMark size={36} />
-          <div>
-            <div className="app-brand-title">6esk</div>
-            <div className="app-brand-sub">Support console</div>
-          </div>
         </div>
         <nav className="app-nav">
           {NAV_ITEMS.map((item) => (
