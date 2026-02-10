@@ -216,7 +216,7 @@ export default function AdminClient() {
   }
 
   return (
-    <AppShell title="Lead Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
+    <AppShell title="Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
       <div className="app-content admin-layout">
         <div className="panel admin-nav">
           {ADMIN_SECTIONS.map((section) => (
