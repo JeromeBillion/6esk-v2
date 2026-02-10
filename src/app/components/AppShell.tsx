@@ -39,7 +39,7 @@ export default function AppShell({ title, subtitle, actions, children }: AppShel
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="app-brand">
-          <BrandMark size={90} />
+          <BrandMark size={68} />
         </div>
         <nav className="app-nav">
           {NAV_ITEMS.map((item) => (
@@ -52,6 +52,16 @@ export default function AppShell({ title, subtitle, actions, children }: AppShel
             </Link>
           ))}
         </nav>
+        <div className="app-sidebar-footer">
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="app-signout app-signout-sidebar"
+          >
+            {signingOut ? "Signing out..." : "Sign out"}
+          </button>
+        </div>
       </aside>
       <div className="app-body">
         <header className="app-header">
@@ -59,17 +69,7 @@ export default function AppShell({ title, subtitle, actions, children }: AppShel
             <h1>{title}</h1>
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
-          <div className="app-header-actions">
-            {actions}
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              className="app-signout"
-            >
-              {signingOut ? "Signing out..." : "Sign out"}
-            </button>
-          </div>
+          <div className="app-header-actions">{actions}</div>
         </header>
         <div className="app-main">{children}</div>
       </div>
