@@ -3,6 +3,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TYPE mailbox_type AS ENUM ('platform', 'personal');
 CREATE TYPE mailbox_access AS ENUM ('owner', 'member', 'viewer');
 CREATE TYPE message_direction AS ENUM ('inbound', 'outbound');
+CREATE TYPE message_channel AS ENUM ('email', 'whatsapp');
 CREATE TYPE ticket_status AS ENUM ('new', 'open', 'pending', 'solved', 'closed');
 CREATE TYPE ticket_priority AS ENUM ('low', 'normal', 'high', 'urgent');
 CREATE TYPE csat_rating AS ENUM ('satisfied', 'unsatisfied');
@@ -46,8 +47,15 @@ CREATE TABLE messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   mailbox_id uuid REFERENCES mailboxes(id) ON DELETE CASCADE,
   direction message_direction NOT NULL,
+  channel message_channel NOT NULL DEFAULT 'email',
   message_id text,
   thread_id text,
+  external_message_id text,
+  conversation_id text,
+  wa_contact text,
+  wa_status text,
+  wa_timestamp timestamptz,
+  provider text,
   in_reply_to text,
   reference_ids text[],
   from_email text NOT NULL,
@@ -152,6 +160,27 @@ CREATE TABLE audit_logs (
   entity_type text NOT NULL,
   entity_id uuid,
   data jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE whatsapp_accounts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider text NOT NULL DEFAULT 'meta',
+  phone_number text NOT NULL,
+  waba_id text,
+  access_token text,
+  verify_token text,
+  status text NOT NULL DEFAULT 'inactive',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE whatsapp_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  direction text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'received',
+  last_error text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 

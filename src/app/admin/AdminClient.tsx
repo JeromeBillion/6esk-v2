@@ -5,6 +5,7 @@ import AppShell from "@/app/components/AppShell";
 import TagsClient from "./TagsClient";
 import AgentIntegrationClient from "./AgentIntegrationClient";
 import SpamRulesClient from "./SpamRulesClient";
+import WhatsAppClient from "./WhatsAppClient";
 
 type Role = {
   id: string;
@@ -63,6 +64,7 @@ const ADMIN_SECTIONS = [
   { key: "tags", label: "Tags" },
   { key: "spam-rules", label: "Spam Rules" },
   { key: "agent", label: "AI Agent" },
+  { key: "whatsapp", label: "WhatsApp" },
   { key: "inbound", label: "Inbound Failures" },
   { key: "spam-review", label: "Spam Review" },
   { key: "audit-log", label: "Audit Log" }
@@ -422,6 +424,12 @@ export default function AdminClient() {
           {activeSection === "agent" ? (
             <div className="panel">
               <AgentIntegrationClient compact />
+            </div>
+          ) : null}
+
+          {activeSection === "whatsapp" ? (
+            <div className="panel">
+              <WhatsAppClient compact />
             </div>
           ) : null}
 

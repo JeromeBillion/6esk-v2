@@ -65,7 +65,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
-- Phase 8 planned: WhatsApp Business channel.
+- Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -216,6 +216,11 @@ Acceptance Criteria
 - Messages outside the 24h window use approved templates.
 - Status updates (sent/delivered/read) are captured.
 - When AI integration is enabled, WhatsApp threads appear in agent context and AI drafts/auto-send follow policy + template rules.
+Status
+- Schema additions for WhatsApp channel and event queue added.
+- Admin UI to configure WhatsApp credentials + status added.
+- Inbound webhook verification + event capture stub added.
+- Outbound send queue stub added.
 
 **WhatsApp Channel Plan**
 Goal
