@@ -63,6 +63,8 @@ CREATE TABLE messages (
   received_at timestamptz,
   sent_at timestamptz,
   is_read boolean NOT NULL DEFAULT false,
+  is_starred boolean NOT NULL DEFAULT false,
+  is_pinned boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 

@@ -58,6 +58,7 @@ These are the “performance reports” referenced in the PRD.
 - UI shell + routing baseline started (sidebar/header, `/` -> `/tickets`, unified nav).
 - Mail tab now opens personal inbox by default (no mailbox selector).
 - Admin panel reorganized into section list with single-panel focus.
+- Mail enhancements: folder sidebar, compose actions, search/filters, pin/star flags, attachments.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.

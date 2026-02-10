@@ -19,11 +19,12 @@ export async function GET(
   }
 
   const result = await db.query(
-    `SELECT id, direction, from_email, subject, preview_text, received_at, sent_at, is_read,
-            thread_id, message_id, created_at
-     FROM messages
-     WHERE mailbox_id = $1
-     ORDER BY COALESCE(received_at, sent_at, created_at) DESC
+    `SELECT m.id, m.direction, m.from_email, m.subject, m.preview_text, m.received_at, m.sent_at,
+            m.is_read, m.is_starred, m.is_pinned, m.thread_id, m.message_id, m.created_at,
+            EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments
+     FROM messages m
+     WHERE m.mailbox_id = $1
+     ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
      LIMIT 200`,
     [mailboxId]
   );

@@ -19,6 +19,9 @@ type Message = {
   received_at: string | null;
   sent_at: string | null;
   is_read: boolean;
+  is_starred: boolean;
+  is_pinned: boolean;
+  has_attachments: boolean;
   thread_id: string | null;
   message_id: string | null;
   created_at: string;
@@ -31,6 +34,8 @@ type MessageDetail = {
   to: string[];
   direction: "inbound" | "outbound";
   origin: "human" | "ai";
+  isStarred?: boolean;
+  isPinned?: boolean;
   receivedAt: string | null;
   sentAt: string | null;
   text: string | null;
@@ -44,6 +49,14 @@ type Attachment = {
   size_bytes: number | null;
 };
 
+type ComposeAttachment = {
+  id: string;
+  filename: string;
+  contentType: string | null;
+  size: number;
+  contentBase64: string;
+};
+
 type Folder = "inbox" | "starred" | "sent" | "drafts";
 
 export default function MailClient() {
@@ -51,6 +64,9 @@ export default function MailClient() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeMailbox, setActiveMailbox] = useState<string | null>(null);
   const [folder, setFolder] = useState<Folder>("inbox");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterUnread, setFilterUnread] = useState(false);
+  const [filterHasAttachments, setFilterHasAttachments] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -60,6 +76,7 @@ export default function MailClient() {
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
+  const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
   const [composeStatus, setComposeStatus] = useState<"idle" | "sending" | "sent" | "error">(
     "idle"
   );
@@ -102,6 +119,7 @@ export default function MailClient() {
     setComposeTo("");
     setComposeSubject("");
     setComposeBody("");
+    setComposeAttachments([]);
     setComposeStatus("idle");
     setComposeError(null);
   }
@@ -111,6 +129,7 @@ export default function MailClient() {
     setComposeTo("");
     setComposeSubject("");
     setComposeBody("");
+    setComposeAttachments([]);
     setComposeStatus("idle");
     setComposeError(null);
     setActiveMessageId(null);
@@ -151,17 +170,94 @@ export default function MailClient() {
     setComposeError(null);
   }
 
+  function formatBytes(size: number) {
+    if (!size) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let value = size;
+    let index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+      value /= 1024;
+      index += 1;
+    }
+    return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+  }
+
+  function fileToBase64(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const [, base64] = result.split(",");
+        resolve(base64 ?? "");
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+
+    const maxSize = 10 * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > maxSize) {
+        setComposeError("Attachments must be 10MB or smaller.");
+        continue;
+      }
+      const contentBase64 = await fileToBase64(file);
+      setComposeAttachments((prev) => [
+        ...prev,
+        {
+          id:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          filename: file.name,
+          contentType: file.type || null,
+          size: file.size,
+          contentBase64
+        }
+      ]);
+    }
+
+    event.target.value = "";
+  }
+
+  function removeAttachment(id: string) {
+    setComposeAttachments((prev) => prev.filter((item) => item.id !== id));
+  }
+
   function getMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at ?? message.created_at;
     return value ? new Date(value).getTime() : 0;
   }
 
   const threadGroups = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
     const filteredMessages = messages.filter((message) => {
-      if (folder === "inbox") return message.direction === "inbound";
-      if (folder === "sent") return message.direction === "outbound";
-      if (folder === "starred") return false;
-      if (folder === "drafts") return false;
+      const matchesFolder =
+        folder === "inbox"
+          ? message.direction === "inbound"
+          : folder === "sent"
+            ? message.direction === "outbound"
+            : folder === "starred"
+              ? message.is_starred
+              : folder === "drafts"
+                ? false
+                : true;
+
+      if (!matchesFolder) return false;
+      if (filterUnread && message.is_read) return false;
+      if (filterHasAttachments && !message.has_attachments) return false;
+
+      if (normalizedQuery) {
+        const haystack = `${message.subject ?? ""} ${message.preview_text ?? ""} ${message.from_email ?? ""}`.toLowerCase();
+        if (!haystack.includes(normalizedQuery)) {
+          return false;
+        }
+      }
+
       return true;
     });
 
@@ -183,18 +279,30 @@ export default function MailClient() {
       const sortedByOldest = [...threadMessages].sort(
         (a, b) => getMessageTimestamp(a) - getMessageTimestamp(b)
       );
+      const isPinned = threadMessages.some((item) => item.is_pinned);
+      const isStarred = threadMessages.some((item) => item.is_starred);
+      const hasAttachments = threadMessages.some((item) => item.has_attachments);
+
       return {
         id: threadId,
         messages: sortedByOldest,
         latest: sortedByRecent[0],
         count: threadMessages.length,
-        lastActivity: getMessageTimestamp(sortedByRecent[0])
+        lastActivity: getMessageTimestamp(sortedByRecent[0]),
+        isPinned,
+        isStarred,
+        hasAttachments
       };
     });
 
-    groups.sort((a, b) => b.lastActivity - a.lastActivity);
+    groups.sort((a, b) => {
+      if (a.isPinned !== b.isPinned) {
+        return a.isPinned ? -1 : 1;
+      }
+      return b.lastActivity - a.lastActivity;
+    });
     return groups;
-  }, [messages, folder]);
+  }, [messages, folder, searchQuery, filterUnread, filterHasAttachments]);
 
   useEffect(() => {
     async function loadMessages() {
@@ -239,6 +347,42 @@ export default function MailClient() {
     setLoadingMessage(false);
   }
 
+  async function updateMessageFlags(messageId: string, updates: { isStarred?: boolean; isPinned?: boolean }) {
+    const res = await fetch(`/api/messages/${messageId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
+    });
+    if (!res.ok) {
+      return;
+    }
+    const payload = await res.json();
+    const updatedIds: string[] = payload.updatedIds ?? [messageId];
+
+    setMessages((prev) =>
+      prev.map((message) =>
+        updatedIds.includes(message.id)
+          ? {
+              ...message,
+              ...(updates.isStarred !== undefined ? { is_starred: updates.isStarred } : {}),
+              ...(updates.isPinned !== undefined ? { is_pinned: updates.isPinned } : {})
+            }
+          : message
+      )
+    );
+
+    setMessageDetail((prev) => {
+      if (!prev || !updatedIds.includes(prev.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ...(updates.isStarred !== undefined ? { isStarred: updates.isStarred } : {}),
+        ...(updates.isPinned !== undefined ? { isPinned: updates.isPinned } : {})
+      };
+    });
+  }
+
   async function sendEmail() {
     if (!activeMailbox) return;
     const mailbox = mailboxes.find((item) => item.id === activeMailbox);
@@ -274,7 +418,12 @@ export default function MailClient() {
         from: mailbox.address,
         to: toList,
         subject: composeSubject,
-        text: composeBody
+        text: composeBody,
+        attachments: composeAttachments.map((attachment) => ({
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          contentBase64: attachment.contentBase64
+        }))
       })
     });
 
@@ -290,6 +439,7 @@ export default function MailClient() {
     setComposeBody("");
     setComposeTo("");
     setComposeSubject("");
+    setComposeAttachments([]);
     if (activeMessageId) {
       await loadMessageDetail(activeMessageId);
     }
@@ -299,7 +449,7 @@ export default function MailClient() {
   const inboxCount = messages.filter((message) => message.direction === "inbound").length;
   const sentCount = messages.filter((message) => message.direction === "outbound").length;
   const draftsCount = 0;
-  const starredCount = 0;
+  const starredCount = messages.filter((message) => message.is_starred).length;
 
   const folderLabel =
     folder === "inbox"
@@ -466,6 +616,33 @@ export default function MailClient() {
                     </p>
                   </div>
                 </div>
+                <div className="mail-filters">
+                  <label className="mail-search">
+                    <span>Search</span>
+                    <input
+                      type="text"
+                      placeholder="Subject, sender, or preview..."
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                    />
+                  </label>
+                  <div className="mail-filter-buttons">
+                    <button
+                      type="button"
+                      onClick={() => setFilterUnread((prev) => !prev)}
+                      className={`mail-filter-button${filterUnread ? " active" : ""}`}
+                    >
+                      Unread
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterHasAttachments((prev) => !prev)}
+                      className={`mail-filter-button${filterHasAttachments ? " active" : ""}`}
+                    >
+                      Has attachments
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div style={{ display: "grid", gap: 12 }}>
@@ -518,6 +695,28 @@ export default function MailClient() {
                           <div style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}>
                             <div>{timestamp}</div>
                             <div>{thread.count} msg</div>
+                            <div className="mail-thread-actions">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void updateMessageFlags(latest.id, { isPinned: !thread.isPinned });
+                                }}
+                                className={`mail-thread-action${thread.isPinned ? " active" : ""}`}
+                              >
+                                Pin
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void updateMessageFlags(latest.id, { isStarred: !thread.isStarred });
+                                }}
+                                className={`mail-thread-action${thread.isStarred ? " active" : ""}`}
+                              >
+                                Star
+                              </button>
+                            </div>
                             <div>{expanded ? "Collapse" : "Expand"}</div>
                           </div>
                         </button>
@@ -695,6 +894,46 @@ export default function MailClient() {
                       >
                         Forward
                       </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateMessageFlags(messageDetail.id, {
+                            isStarred: !messageDetail.isStarred
+                          })
+                        }
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: messageDetail.isStarred
+                            ? "rgba(139, 215, 255, 0.25)"
+                            : "transparent",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {messageDetail.isStarred ? "Starred" : "Star"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateMessageFlags(messageDetail.id, {
+                            isPinned: !messageDetail.isPinned
+                          })
+                        }
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: messageDetail.isPinned
+                            ? "rgba(139, 215, 255, 0.25)"
+                            : "transparent",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {messageDetail.isPinned ? "Pinned" : "Pin"}
+                      </button>
                     </div>
                   </div>
                 ) : null}
@@ -727,6 +966,50 @@ export default function MailClient() {
                         onChange={(event) => setComposeBody(event.target.value)}
                       />
                     </label>
+                    <label>
+                      Attachments
+                      <input type="file" multiple onChange={handleAttachmentChange} />
+                    </label>
+                    {composeAttachments.length ? (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {composeAttachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 12,
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                              padding: "8px 10px",
+                              background: "rgba(10, 12, 18, 0.6)"
+                            }}
+                          >
+                            <div style={{ fontSize: 13 }}>
+                              <strong>{attachment.filename}</strong>
+                              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                                {formatBytes(attachment.size)}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeAttachment(attachment.id)}
+                              style={{
+                                padding: "6px 10px",
+                                borderRadius: 8,
+                                border: "1px solid var(--border)",
+                                background: "transparent",
+                                color: "var(--muted)",
+                                cursor: "pointer"
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     {composeError ? <p style={{ color: "var(--danger)" }}>{composeError}</p> : null}
                     {composeStatus === "sent" ? (
                       <p style={{ color: "var(--accent)" }}>Message sent.</p>
