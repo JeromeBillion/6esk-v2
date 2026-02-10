@@ -11,6 +11,7 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { listDraftsForTicket } from "@/server/agents/drafts";
+import { listAuditLogsForTicket } from "@/server/audit";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -43,7 +44,8 @@ export async function GET(
   const messages = await listTicketMessages(ticketId);
   const events = await listTicketEvents(ticketId);
   const drafts = await listDraftsForTicket(ticketId);
-  return Response.json({ ticket, messages, events, drafts });
+  const auditLogs = await listAuditLogsForTicket(ticketId, 50);
+  return Response.json({ ticket, messages, events, drafts, auditLogs });
 }
 
 export async function PATCH(

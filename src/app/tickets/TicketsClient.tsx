@@ -49,6 +49,7 @@ type Draft = {
   body_text: string | null;
   body_html: string | null;
   confidence: number | null;
+  status?: string;
   created_at: string;
 };
 
@@ -65,6 +66,17 @@ type TicketEvent = {
   actor_user_id: string | null;
   data: Record<string, unknown> | null;
   created_at: string;
+};
+
+type AuditLog = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  data: Record<string, unknown> | null;
+  created_at: string;
+  actor_name?: string | null;
+  actor_email?: string | null;
 };
 
 type SessionUser = {
@@ -107,6 +119,7 @@ export default function TicketsClient() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loadingMessage, setLoadingMessage] = useState(false);
   const [events, setEvents] = useState<TicketEvent[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   function getDraftPlainText(draft: Draft) {
     if (draft.body_text) return draft.body_text;
@@ -169,6 +182,7 @@ export default function TicketsClient() {
     setMessages(payload.messages ?? []);
     setDrafts(payload.drafts ?? []);
     setEvents(payload.events ?? []);
+    setAuditLogs(payload.auditLogs ?? []);
     const updatedTicket = payload.ticket;
     if (updatedTicket) {
       setTickets((prev) => prev.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket)));
@@ -252,6 +266,7 @@ export default function TicketsClient() {
     if (!activeTicketId) {
       setMessages([]);
       setDrafts([]);
+      setAuditLogs([]);
       setEditingDraftId(null);
       setDraftEdits({});
       return;
@@ -704,6 +719,29 @@ export default function TicketsClient() {
                   )}
                 </div>
 
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
+                  <h3>Audit Trail</h3>
+                  {auditLogs.length === 0 ? (
+                    <p>No audit entries yet.</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {auditLogs.map((log) => (
+                        <div key={log.id} style={{ fontSize: 13, color: "var(--muted)" }}>
+                          {new Date(log.created_at).toLocaleString()} · {log.action} ·{" "}
+                          {log.actor_name ?? log.actor_email ?? "System"}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {drafts.length ? (
                   <div
                     style={{
@@ -734,6 +772,7 @@ export default function TicketsClient() {
                           >
                             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
                               {new Date(draft.created_at).toLocaleString()}
+                              {draft.status ? ` · ${draft.status}` : ""}
                               {draft.confidence !== null && draft.confidence !== undefined
                                 ? ` · ${(draft.confidence * 100).toFixed(0)}% confidence`
                                 : ""}

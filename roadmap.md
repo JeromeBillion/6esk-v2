@@ -61,6 +61,7 @@ These are the “performance reports” referenced in the PRD.
 - Mail enhancements: folder sidebar, compose actions, search/filters, pin/star flags, attachments.
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Admin polish: section counts, user search, role badges.
+- AI workflow polish: ticket-level audit trail surfaced alongside drafts.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
