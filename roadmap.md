@@ -9,9 +9,10 @@
 - Mailboxes: platform mailbox `support@6ex.co.za` for CRM tickets.
 - Mailboxes: personal mailbox `name@6ex.co.za` for direct partner/vendor/investor/staff email.
 - All org addresses must be provisionable inside 6esk, no manual mailbox creation.
+- WhatsApp Business chat must be supported for inbound and outbound support.
 
 **Scope Definition (MVP)**
-- Ticketing: email + web form inbound, ticket lifecycle, assignment, replies.
+- Ticketing: email + web form + WhatsApp inbound, ticket lifecycle, assignment, replies.
 - Analytics: core dashboard + SLA‑lite metrics.
 - Admin: user creation, role assignment, mailbox access controls.
 - Single org: no multi‑tenant organizations.
@@ -34,6 +35,7 @@
 - Personal mailbox: `name@6ex.co.za` inbound lands in personal mailbox, not tickets.
 - Address provisioning: catch‑all routing + internal user table controls visibility and access.
 - AI agent flow: transactional outbox emits ticket/email events -> delivery worker -> ElizaOS webhook -> agent fetches context via scoped APIs -> agent posts back actions (draft reply, tags, priority).
+- WhatsApp flow: WhatsApp Business Platform (Cloud API or provider) -> webhook -> `/api/whatsapp/inbound` -> Postgres -> UI; outbound via `/api/whatsapp/send`.
 
 **Performance Reports (MVP Spec)**
 These are the “performance reports” referenced in the PRD.
@@ -56,6 +58,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
+- Phase 8 planned: WhatsApp Business channel.
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -190,6 +193,71 @@ Acceptance Criteria
 - System handles duplicate inbound webhook safely.
 - Failures are recoverable without data loss.
 
+**Phase 8 — WhatsApp Channel (New Requirement)**
+Deliverables
+- WhatsApp Business account connection (Cloud API or provider).
+- Inbound webhook to receive messages and delivery/read statuses.
+- Outbound WhatsApp send with template enforcement for out-of-window messages.
+- Ticket linkage and threading for WhatsApp conversations.
+- UI to view and reply to WhatsApp threads inside 6esk.
+- Admin UI to configure WhatsApp credentials, number, templates, and status.
+- Audit log coverage for WhatsApp sends and configuration changes.
+Acceptance Criteria
+- Inbound WhatsApp message creates/updates a ticket within 60 seconds.
+- Replies from 6esk are delivered to WhatsApp and stored in the thread.
+- Messages outside the 24h window use approved templates.
+- Status updates (sent/delivered/read) are captured.
+
+**WhatsApp Channel Plan**
+Goal
+- Add a first-class WhatsApp support channel without breaking email-first workflow.
+
+Provider Decision
+- Recommended: Meta WhatsApp Cloud API (lowest cost, full control).
+- Alternative: Twilio/MessageBird if you prefer managed setup.
+- Build provider adapter layer so the UI and data model stay provider-agnostic.
+
+Dependencies
+- Meta Business Manager + WhatsApp Business Account (WABA).
+- Verified phone number for WhatsApp.
+- HTTPS endpoint for webhooks.
+- App secret for webhook verification.
+
+Data Model Changes
+- Add WhatsApp account table (phone number, provider, access token, WABA ID, status).
+- Extend messages with channel metadata: `channel = whatsapp`, `external_message_id`,
+  `conversation_id`, `wa_contact`, `wa_status`, `wa_timestamp`.
+- Optional contact table for WhatsApp identities (name, phone, last_seen).
+
+Backend APIs
+- `POST /api/whatsapp/inbound` for incoming messages + status callbacks.
+- `POST /api/whatsapp/send` to send messages or templates.
+- Idempotency keys for inbound events.
+- Rate limiting for inbound + send endpoints.
+
+Ticketing & Threading
+- Each WhatsApp conversation maps to a ticket (platform mailbox).
+- New inbound creates ticket, subsequent inbound appends to the same ticket.
+- Thread ID stored as WhatsApp conversation ID.
+
+UI/UX
+- Channel badges (Email / WhatsApp) on tickets and messages.
+- Message detail view renders WhatsApp bubbles and delivery status.
+- Composer supports text + attachments; template chooser when required.
+- Admin panel: connect number, manage templates, view connection status.
+
+Operational & Compliance
+- Enforce 24-hour customer care window.
+- Template approval workflow for outbound messages outside window.
+- Audit logs for WhatsApp sends + settings changes.
+
+Milestones
+1) Provider setup + webhook verification.
+2) Inbound message ingestion + ticket creation.
+3) Outbound send + template gating.
+4) UI rendering + composer.
+5) Status callbacks + analytics hooks.
+
 **Risks & Mitigations**
 - Email provider lock‑in: keep inbound/outbound adapters thin and standardized.
 - Catch‑all spam noise: basic spam tagging and mailbox rules in Phase 6.
@@ -201,3 +269,4 @@ Acceptance Criteria
 3. Add admin password reset + basic audit log UI for user/role changes.
 4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
 5. Start Phase 7 hardening: inbound idempotency + retry/backfill plan.
+6. Stand up WhatsApp Business account and confirm provider choice.
