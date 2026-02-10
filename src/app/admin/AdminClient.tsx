@@ -72,6 +72,7 @@ export default function AdminClient() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [activeSection, setActiveSection] = useState<string>("users");
+  const [userQuery, setUserQuery] = useState("");
   const [sla, setSla] = useState<SlaConfig>({
     firstResponseMinutes: 120,
     resolutionMinutes: 1440
@@ -215,20 +216,49 @@ export default function AdminClient() {
     await loadData();
   }
 
+  const roleNameById = new Map(roles.map((role) => [role.id, role.name]));
+  const normalizedUserQuery = userQuery.trim().toLowerCase();
+  const filteredUsers = normalizedUserQuery
+    ? users.filter((user) =>
+        `${user.display_name} ${user.email}`.toLowerCase().includes(normalizedUserQuery)
+      )
+    : users;
+
+  function getSectionCount(key: string) {
+    switch (key) {
+      case "users":
+        return users.length;
+      case "spam-review":
+        return spamMessages.length;
+      case "inbound":
+        return inboundFailures.length;
+      case "audit-log":
+        return auditLogs.length;
+      default:
+        return null;
+    }
+  }
+
   return (
     <AppShell title="Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
       <div className="app-content admin-layout">
         <div className="panel admin-nav">
-          {ADMIN_SECTIONS.map((section) => (
-            <button
-              key={section.key}
-              type="button"
-              onClick={() => setActiveSection(section.key)}
-              className={`admin-nav-button${activeSection === section.key ? " active" : ""}`}
-            >
-              {section.label}
-            </button>
-          ))}
+          {ADMIN_SECTIONS.map((section) => {
+            const count = getSectionCount(section.key);
+            return (
+              <button
+                key={section.key}
+                type="button"
+                onClick={() => setActiveSection(section.key)}
+                className={`admin-nav-button${activeSection === section.key ? " active" : ""}`}
+              >
+                <span>{section.label}</span>
+                {typeof count === "number" ? (
+                  <span className="admin-nav-count">{count}</span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
 
         <div className="admin-panel">
@@ -398,19 +428,38 @@ export default function AdminClient() {
           {activeSection === "users" ? (
             <section className="panel">
               <h2 style={{ marginBottom: 12 }}>Users</h2>
+              <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                <input
+                  type="text"
+                  placeholder="Search name or email..."
+                  value={userQuery}
+                  onChange={(event) => setUserQuery(event.target.value)}
+                />
+              </div>
               <div style={{ display: "grid", gap: 12 }}>
-                {users.map((user) => (
-                  <div
-                    key={user.id}
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <strong>{user.display_name}</strong>
-                    <p>{user.email}</p>
+                {filteredUsers.length === 0 ? (
+                  <p>No users match your search.</p>
+                ) : (
+                  filteredUsers.map((user) => {
+                    const roleLabel = (
+                      user.role_name ?? roleNameById.get(user.role_id ?? "") ?? "unknown"
+                    ).toLowerCase();
+                    const safeRole = roleLabel.replace(/[^a-z0-9_-]/g, "");
+                    return (
+                      <div
+                        key={user.id}
+                        style={{
+                          border: "1px solid var(--border)",
+                          borderRadius: 12,
+                          padding: 12,
+                          background: "rgba(10, 12, 18, 0.6)"
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <strong>{user.display_name}</strong>
+                          <span className={`role-badge role-${safeRole}`}>{roleLabel}</span>
+                        </div>
+                        <p>{user.email}</p>
                     <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
                       <label>
                         Role
@@ -467,8 +516,10 @@ export default function AdminClient() {
                         Reset link: <span style={{ color: "var(--text)" }}>{resetLinks[user.id]}</span>
                       </p>
                     ) : null}
-                  </div>
-                ))}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </section>
           ) : null}

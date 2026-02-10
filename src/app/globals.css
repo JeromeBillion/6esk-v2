@@ -306,6 +306,10 @@ button {
   color: var(--text);
   cursor: pointer;
   min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .admin-nav-button:hover {
@@ -319,9 +323,44 @@ button {
   color: #e7f7ff;
 }
 
+.admin-nav-count {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(139, 215, 255, 0.2);
+  color: var(--text);
+}
+
 .admin-panel {
   display: grid;
   gap: 24px;
+}
+
+.role-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.role-lead_admin {
+  background: rgba(139, 215, 255, 0.25);
+  border-color: rgba(139, 215, 255, 0.4);
+  color: var(--text);
+}
+
+.role-agent {
+  background: rgba(72, 187, 120, 0.2);
+  border-color: rgba(72, 187, 120, 0.4);
+  color: #d3f9e3;
+}
+
+.role-viewer {
+  background: rgba(255, 199, 102, 0.2);
+  border-color: rgba(255, 199, 102, 0.4);
+  color: #ffe6b3;
 }
 
 .mail-layout {
