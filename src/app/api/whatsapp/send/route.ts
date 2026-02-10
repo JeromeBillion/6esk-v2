@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { queueWhatsAppSend } from "@/server/whatsapp/send";
 
 const payloadSchema = z.object({
+  ticketId: z.string().uuid().optional().nullable(),
   to: z.string().min(3),
   text: z.string().optional(),
   template: z
@@ -37,25 +38,29 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const accountResult = await db.query(
-    `SELECT id, status FROM whatsapp_accounts ORDER BY created_at DESC LIMIT 1`
-  );
-  const account = accountResult.rows[0];
-  if (!account || account.status !== "active") {
-    return Response.json({ error: "WhatsApp account not configured" }, { status: 409 });
+  if (!parsed.data.text && !parsed.data.template) {
+    return Response.json({ error: "Message body required" }, { status: 400 });
   }
 
-  await db.query(
-    `INSERT INTO whatsapp_events (direction, payload, status)
-     VALUES ($1, $2, $3)`,
-    ["outbound", parsed.data, "queued"]
-  );
+  try {
+    await queueWhatsAppSend({
+      ticketId: parsed.data.ticketId ?? null,
+      to: parsed.data.to,
+      text: parsed.data.text ?? "[template message queued]",
+      template: parsed.data.template ?? null,
+      actorUserId: user.id,
+      origin: "human"
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to queue WhatsApp message";
+    return Response.json({ error: message }, { status: 409 });
+  }
 
   await recordAuditLog({
     actorUserId: user.id,
     action: "whatsapp_send_queued",
     entityType: "whatsapp",
-    data: { to: parsed.data.to }
+    data: { to: parsed.data.to, ticketId: parsed.data.ticketId ?? null }
   });
 
   return Response.json({ status: "queued" });

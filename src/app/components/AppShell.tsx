@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import BrandMark from "@/app/components/BrandMark";
 
 const NAV_ITEMS = [
-  { label: "Platform", href: "/tickets" },
+  { label: "Support", href: "/tickets" },
   { label: "Mail", href: "/mail" },
   { label: "Analytics", href: "/analytics" },
   { label: "Admin", href: "/admin" }

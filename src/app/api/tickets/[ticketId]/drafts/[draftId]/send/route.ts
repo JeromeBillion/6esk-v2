@@ -83,6 +83,6 @@ export async function POST(
     return Response.json({ status: "sent", messageId: result.messageId, draft: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to send reply";
-    return Response.json({ error: "Resend request failed", details: message }, { status: 502 });
+    return Response.json({ error: "Failed to send reply", details: message }, { status: 502 });
   }
 }

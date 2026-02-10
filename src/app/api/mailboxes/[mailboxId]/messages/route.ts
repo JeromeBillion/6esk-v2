@@ -19,7 +19,7 @@ export async function GET(
   }
 
   const result = await db.query(
-    `SELECT m.id, m.direction, m.from_email, m.subject, m.preview_text, m.received_at, m.sent_at,
+    `SELECT m.id, m.direction, m.channel, m.from_email, m.subject, m.preview_text, m.received_at, m.sent_at,
             m.is_read, m.is_starred, m.is_pinned, m.thread_id, m.message_id, m.created_at,
             EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments
      FROM messages m

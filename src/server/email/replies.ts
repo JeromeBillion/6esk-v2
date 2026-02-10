@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
+import { queueWhatsAppSend } from "@/server/whatsapp/send";
 
 type SendReplyArgs = {
   ticketId: string;
@@ -41,8 +42,34 @@ export async function sendTicketReply({
     throw new Error("Ticket not found");
   }
 
+  const isWhatsAppTicket =
+    ticket.requester_email?.startsWith("whatsapp:") ||
+    (ticket.metadata && (ticket.metadata as Record<string, unknown>).channel === "whatsapp");
+
   if (!text && !html) {
     throw new Error("Reply body required");
+  }
+
+  if (isWhatsAppTicket) {
+    const contact = ticket.requester_email?.replace(/^whatsapp:/, "") ?? "";
+    const body =
+      text ??
+      (html
+        ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        : "");
+    if (!body.trim()) {
+      throw new Error("Reply body required");
+    }
+
+    const result = await queueWhatsAppSend({
+      ticketId,
+      to: contact,
+      text: body,
+      actorUserId: actorUserId ?? null,
+      origin,
+      aiMeta: aiMeta ?? null
+    });
+    return { messageId: result.messageId ?? null };
   }
 
   const from = getSupportAddress();

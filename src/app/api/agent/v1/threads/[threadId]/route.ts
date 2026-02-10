@@ -33,8 +33,9 @@ export async function GET(
   }
 
   const result = await db.query(
-    `SELECT id, direction, origin, from_email, to_emails, subject,
-            received_at, sent_at, r2_key_text, r2_key_html
+    `SELECT id, direction, channel, origin, from_email, to_emails, subject,
+            received_at, sent_at, r2_key_text, r2_key_html,
+            wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE thread_id = $1
      ${mailboxFilter}
@@ -61,12 +62,18 @@ export async function GET(
       return {
         id: row.id,
         direction: row.direction,
+        channel: row.channel,
         origin: row.origin,
         from: row.from_email,
         to: row.to_emails,
         subject: row.subject,
         receivedAt: row.received_at,
         sentAt: row.sent_at,
+        waStatus: row.wa_status ?? null,
+        waTimestamp: row.wa_timestamp ?? null,
+        waContact: row.wa_contact ?? null,
+        conversationId: row.conversation_id ?? null,
+        provider: row.provider ?? null,
         text,
         html
       };

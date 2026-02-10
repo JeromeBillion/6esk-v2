@@ -20,12 +20,17 @@ type Ticket = {
 type Message = {
   id: string;
   direction: "inbound" | "outbound";
+  channel: "email" | "whatsapp";
   origin: "human" | "ai";
   from_email: string;
   subject: string | null;
   preview_text: string | null;
   received_at: string | null;
   sent_at: string | null;
+  wa_status?: string | null;
+  wa_timestamp?: string | null;
+  wa_contact?: string | null;
+  conversation_id?: string | null;
 };
 
 type MessageDetail = {
@@ -34,11 +39,16 @@ type MessageDetail = {
   from: string;
   to: string[];
   direction: "inbound" | "outbound";
+  channel: "email" | "whatsapp";
   origin: "human" | "ai";
   isSpam: boolean;
   spamReason?: string | null;
   receivedAt: string | null;
   sentAt: string | null;
+  waStatus?: string | null;
+  waTimestamp?: string | null;
+  waContact?: string | null;
+  conversationId?: string | null;
   text: string | null;
   html: string | null;
 };
@@ -365,10 +375,13 @@ export default function TicketsClient() {
   }
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
+  const ticketChannel = messages.some((message) => message.channel === "whatsapp")
+    ? "whatsapp"
+    : "email";
   return (
     <AppShell
       title="Tickets"
-      subtitle="Platform inbox mapped to tickets."
+      subtitle="Support inbox mapped to tickets."
       actions={
         <a href="/tickets/new" className="app-action">
           New ticket
@@ -492,7 +505,12 @@ export default function TicketsClient() {
                   }}
                 >
                   <h2 style={{ margin: 0 }}>{activeTicket.subject ?? "(no subject)"}</h2>
-                  <p>Requester: {activeTicket.requester_email}</p>
+                  <p>
+                    Requester:{" "}
+                    {activeTicket.requester_email.startsWith("whatsapp:")
+                      ? `WhatsApp ${activeTicket.requester_email.replace(/^whatsapp:/, "")}`
+                      : activeTicket.requester_email}
+                  </p>
                   {activeTicket.category ? <p>Category: {activeTicket.category}</p> : null}
                   {activeTicket.tags && activeTicket.tags.length ? (
                     <p>Tags: {activeTicket.tags.join(", ")}</p>
@@ -576,11 +594,31 @@ export default function TicketsClient() {
                       >
                         <strong>{message.subject ?? "(no subject)"}</strong>
                         <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
-                        <p style={{ fontSize: 12, color: "var(--muted)" }}>
-                          {message.direction === "inbound" ? "From" : "To"}: {message.from_email} ·
-                          {message.origin === "ai" ? " AI" : " Human"}
-                        </p>
-                      </article>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+                            <span style={{ color: "var(--muted)" }}>
+                              {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
+                            </span>
+                            <span
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 999,
+                                background:
+                                  message.channel === "whatsapp"
+                                    ? "rgba(82, 210, 113, 0.2)"
+                                    : "rgba(139, 215, 255, 0.2)",
+                                color: message.channel === "whatsapp" ? "#7ff5a2" : "var(--text)"
+                              }}
+                            >
+                              {message.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                            </span>
+                            <span style={{ color: "var(--muted)" }}>
+                              {message.origin === "ai" ? "AI" : "Human"}
+                            </span>
+                            {message.channel === "whatsapp" && message.wa_status ? (
+                              <span style={{ color: "var(--muted)" }}>{message.wa_status}</span>
+                            ) : null}
+                          </div>
+                        </article>
                     ))}
                   </div>
                   <div style={{ marginTop: 16 }}>
@@ -592,8 +630,15 @@ export default function TicketsClient() {
                       <div style={{ display: "grid", gap: 12 }}>
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
                           From: {messageDetail.from} · To: {messageDetail.to.join(", ")} ·
-                          {messageDetail.origin === "ai" ? " AI" : " Human"}
+                          {messageDetail.origin === "ai" ? " AI" : " Human"} ·
+                          {messageDetail.channel === "whatsapp" ? " WhatsApp" : " Email"}
                         </div>
+                        {messageDetail.channel === "whatsapp" ? (
+                          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                            Status: {messageDetail.waStatus ?? "—"} · Contact:{" "}
+                            {messageDetail.waContact ?? messageDetail.from}
+                          </div>
+                        ) : null}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>
                             Spam: {messageDetail.isSpam ? "Yes" : "No"}
@@ -945,7 +990,12 @@ export default function TicketsClient() {
                     background: "rgba(10, 12, 18, 0.6)"
                   }}
                 >
-                  <h3>Reply</h3>
+                  <h3>{ticketChannel === "whatsapp" ? "WhatsApp Reply" : "Reply"}</h3>
+                  {ticketChannel === "whatsapp" ? (
+                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: -6 }}>
+                      Replies send through the connected WhatsApp Business number.
+                    </p>
+                  ) : null}
                   {macros.length ? (
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <select
@@ -1001,7 +1051,11 @@ export default function TicketsClient() {
                       cursor: "pointer"
                     }}
                   >
-                    {sending ? "Sending..." : "Send reply"}
+                    {sending
+                      ? "Sending..."
+                      : ticketChannel === "whatsapp"
+                        ? "Send WhatsApp reply"
+                        : "Send reply"}
                   </button>
                 </div>
               </div>

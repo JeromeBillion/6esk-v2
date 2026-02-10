@@ -62,6 +62,7 @@ These are the “performance reports” referenced in the PRD.
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Admin polish: section counts, user search, role badges.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
+- Sidebar renamed from “Platform” to “Support.”
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
@@ -219,8 +220,9 @@ Acceptance Criteria
 Status
 - Schema additions for WhatsApp channel and event queue added.
 - Admin UI to configure WhatsApp credentials + status added.
-- Inbound webhook verification + event capture stub added.
-- Outbound send queue stub added.
+- Inbound webhook now ingests WhatsApp payloads and creates tickets/messages.
+- Ticket replies route WhatsApp responses through the outbound queue.
+- Ticket UI shows WhatsApp channel badges + delivery status.
 
 **WhatsApp Channel Plan**
 Goal

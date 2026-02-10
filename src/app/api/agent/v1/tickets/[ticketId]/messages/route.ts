@@ -32,8 +32,9 @@ export async function GET(
   const limit = Math.min(Math.max(Number(limitParam ?? 50) || 50, 1), 200);
 
   const result = await db.query(
-    `SELECT id, direction, origin, from_email, to_emails, subject,
-            received_at, sent_at, r2_key_text, r2_key_html
+    `SELECT id, direction, channel, origin, from_email, to_emails, subject,
+            received_at, sent_at, r2_key_text, r2_key_html,
+            wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE ticket_id = $1
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC
@@ -59,12 +60,18 @@ export async function GET(
       return {
         id: row.id,
         direction: row.direction,
+        channel: row.channel,
         origin: row.origin,
         from: row.from_email,
         to: row.to_emails,
         subject: row.subject,
         receivedAt: row.received_at,
         sentAt: row.sent_at,
+        waStatus: row.wa_status ?? null,
+        waTimestamp: row.wa_timestamp ?? null,
+        waContact: row.wa_contact ?? null,
+        conversationId: row.conversation_id ?? null,
+        provider: row.provider ?? null,
         text,
         html
       };
