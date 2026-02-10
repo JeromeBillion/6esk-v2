@@ -55,6 +55,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 3 complete: mailbox UI + message list.
  - Mailbox message detail + reply/forward composer added.
  - Mailbox threading by `thread_id` with collapsible threads added.
+- UI shell + routing baseline started (sidebar/header, `/` -> `/tickets`, unified nav).
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
@@ -215,7 +216,7 @@ Goal
 - Add a first-class WhatsApp support channel without breaking email-first workflow.
 
 Provider Decision
-- Recommended: Meta WhatsApp Cloud API (lowest cost, full control).
+- Decision: Meta WhatsApp Cloud API (direct) — low cost, highest control, requires integration work.
 - Alternative: Twilio/MessageBird if you prefer managed setup.
 - Build provider adapter layer so the UI and data model stay provider-agnostic.
 

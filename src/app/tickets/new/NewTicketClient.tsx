@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import AppShell from "@/app/components/AppShell";
 
 const CATEGORY_OPTIONS = ["payments", "markets", "account", "kyc", "security", "general"];
 
@@ -52,17 +52,9 @@ export default function NewTicketClient() {
   }
 
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-          <BrandMark size={40} />
-          <div>
-            <h1>Create Ticket</h1>
-            <p>Use this form to log a support request manually.</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16, marginTop: 24 }}>
+    <AppShell title="Create Ticket" subtitle="Use this form to log a support request manually.">
+      <div className="app-content">
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
           <label>
             From (requester email)
             <input
@@ -133,6 +125,6 @@ export default function NewTicketClient() {
           </button>
         </form>
       </div>
-    </main>
+    </AppShell>
   );
 }

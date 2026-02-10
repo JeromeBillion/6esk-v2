@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import AppShell from "@/app/components/AppShell";
 
 type Overview = {
   totalTickets: number;
@@ -187,16 +187,8 @@ export default function AnalyticsClient() {
   }, [range, agentFilter, tagFilter, priorityFilter]);
 
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-          <BrandMark size={40} />
-          <div>
-            <h1>Analytics</h1>
-            <p>Track ticket performance and SLA health.</p>
-          </div>
-        </div>
-
+    <AppShell title="Analytics" subtitle="Track ticket performance and SLA health.">
+      <div className="app-content">
         <div
           style={{
             display: "flex",
@@ -493,6 +485,6 @@ export default function AnalyticsClient() {
           </div>
         </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

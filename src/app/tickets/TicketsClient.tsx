@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import AppShell from "@/app/components/AppShell";
 
 type Ticket = {
   id: string;
@@ -310,37 +310,9 @@ export default function TicketsClient() {
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <BrandMark size={40} />
-            <div>
-              <h1>Tickets</h1>
-              <p>Platform inbox mapped to tickets.</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.href = "/login";
-            }}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              color: "var(--text)",
-              cursor: "pointer",
-              height: 40
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24, marginTop: 24 }}>
+    <AppShell title="Tickets" subtitle="Platform inbox mapped to tickets.">
+      <div className="app-content">
+        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 24 }}>
           <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
             <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
               <label>
@@ -944,6 +916,6 @@ export default function TicketsClient() {
           </section>
         </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

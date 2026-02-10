@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import AppShell from "@/app/components/AppShell";
 
 type Mailbox = {
   id: string;
@@ -48,7 +48,6 @@ export default function MailClient() {
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeMailbox, setActiveMailbox] = useState<string | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -266,38 +265,8 @@ export default function MailClient() {
   }
 
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <BrandMark size={40} />
-            <div>
-              <h1>Mailboxes</h1>
-              <p>Inbound and outbound emails will appear here once ingested.</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={signingOut}
-            onClick={async () => {
-              setSigningOut(true);
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.href = "/login";
-            }}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              color: "var(--text)",
-              cursor: "pointer",
-              height: 40
-            }}
-          >
-            {signingOut ? "Signing out..." : "Sign out"}
-          </button>
-        </div>
-
+    <AppShell title="Mailboxes" subtitle="Inbound and outbound emails will appear here once ingested.">
+      <div className="app-content">
         <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 24 }}>
           <aside style={{ borderRight: "1px solid var(--border)", paddingRight: 16 }}>
             {mailboxes.map((mailbox) => (
@@ -624,6 +593,6 @@ export default function MailClient() {
           </section>
         </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import AppShell from "@/app/components/AppShell";
 import TagsClient from "./TagsClient";
 import AgentIntegrationClient from "./AgentIntegrationClient";
 import SpamRulesClient from "./SpamRulesClient";
@@ -74,7 +74,6 @@ export default function AdminClient() {
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [resetLinks, setResetLinks] = useState<Record<string, string>>({});
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
@@ -204,39 +203,9 @@ export default function AdminClient() {
   }
 
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <BrandMark size={40} />
-            <div>
-              <h1>Lead Admin Panel</h1>
-              <p>Create users, assign roles, and provision mailboxes.</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={signingOut}
-            onClick={async () => {
-              setSigningOut(true);
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.href = "/login";
-            }}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              color: "var(--text)",
-              cursor: "pointer",
-              height: 40
-            }}
-          >
-            {signingOut ? "Signing out..." : "Sign out"}
-          </button>
-        </div>
-
-        <section style={{ marginTop: 32 }}>
+    <AppShell title="Lead Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
+      <div className="app-content">
+        <section>
           <h2 style={{ marginBottom: 12 }}>Create User</h2>
           <form onSubmit={handleCreate} style={{ display: "grid", gap: 12 }}>
             <label>
@@ -306,7 +275,7 @@ export default function AdminClient() {
           </form>
         </section>
 
-        <section style={{ marginTop: 40 }}>
+        <section>
           <h2 style={{ marginBottom: 12 }}>SLA Targets</h2>
           <form
             onSubmit={async (event) => {
@@ -383,7 +352,7 @@ export default function AdminClient() {
 
         <AgentIntegrationClient />
 
-        <section style={{ marginTop: 40 }}>
+        <section>
           <h2 style={{ marginBottom: 12 }}>Users</h2>
           <div style={{ display: "grid", gap: 12 }}>
             {users.map((user) => (
@@ -457,7 +426,7 @@ export default function AdminClient() {
           </div>
         </section>
 
-        <section style={{ marginTop: 40 }}>
+        <section>
           <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
           <button
             type="button"
@@ -517,7 +486,7 @@ export default function AdminClient() {
           )}
         </section>
 
-        <section style={{ marginTop: 40 }}>
+        <section>
           <h2 style={{ marginBottom: 12 }}>Spam Review</h2>
           {spamMessages.length === 0 ? (
             <p>No spam messages flagged.</p>
@@ -564,7 +533,7 @@ export default function AdminClient() {
           )}
         </section>
 
-        <section style={{ marginTop: 40 }}>
+        <section>
           <h2 style={{ marginBottom: 12 }}>Audit Log</h2>
           {auditLogs.length === 0 ? (
             <p>No audit entries yet.</p>
@@ -596,6 +565,6 @@ export default function AdminClient() {
           )}
         </section>
       </div>
-    </main>
+    </AppShell>
   );
 }
