@@ -181,7 +181,10 @@ CREATE TABLE whatsapp_events (
   payload jsonb NOT NULL,
   status text NOT NULL DEFAULT 'received',
   last_error text,
-  created_at timestamptz NOT NULL DEFAULT now()
+  attempt_count integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_mailbox_memberships_user_id ON mailbox_memberships(user_id);
@@ -195,3 +198,4 @@ CREATE INDEX idx_tickets_status ON tickets(status);
 CREATE INDEX idx_tickets_assigned_user_id ON tickets(assigned_user_id);
 CREATE INDEX idx_ticket_events_ticket_id ON ticket_events(ticket_id);
 CREATE INDEX idx_replies_ticket_id ON replies(ticket_id);
+CREATE INDEX idx_whatsapp_events_status_next_attempt ON whatsapp_events(status, next_attempt_at);

@@ -224,6 +224,7 @@ Status
 - Ticket replies route WhatsApp responses through the outbound queue.
 - Ticket UI shows WhatsApp channel badges + delivery status.
 - 24h window enforcement added with template-required flow in Support UI.
+- WhatsApp outbox processor added with retry/backoff + admin trigger script.
 
 **WhatsApp Channel Plan**
 Goal

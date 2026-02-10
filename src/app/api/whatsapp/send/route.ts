@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
+import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 
 const payloadSchema = z.object({
   ticketId: z.string().uuid().optional().nullable(),
@@ -40,6 +41,16 @@ export async function POST(request: Request) {
 
   if (!parsed.data.text && !parsed.data.template) {
     return Response.json({ error: "Message body required" }, { status: 400 });
+  }
+
+  if (parsed.data.ticketId) {
+    const windowStatus = await getWhatsAppWindowStatus(parsed.data.ticketId);
+    if (!windowStatus.isOpen && !parsed.data.template) {
+      return Response.json(
+        { error: "WhatsApp 24h window closed. Template required." },
+        { status: 409 }
+      );
+    }
   }
 
   try {

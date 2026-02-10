@@ -29,6 +29,8 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendingOutbox, setSendingOutbox] = useState(false);
+  const [outboxResult, setOutboxResult] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -89,6 +91,21 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
     setLoading(false);
   }
 
+  async function runOutbox() {
+    setSendingOutbox(true);
+    setOutboxResult(null);
+    const res = await fetch("/api/admin/whatsapp/outbox?limit=25", { method: "POST" });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setOutboxResult(payload.error ?? "Failed to run outbox");
+      setSendingOutbox(false);
+      return;
+    }
+    const payload = await res.json();
+    setOutboxResult(`Delivered ${payload.delivered ?? 0}, skipped ${payload.skipped ?? 0}`);
+    setSendingOutbox(false);
+  }
+
   const webhookUrl =
     typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/inbound` : "";
 
@@ -111,7 +128,7 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
           </select>
         </label>
         <label>
-          Phone number
+          {form.provider === "meta" ? "Phone number ID" : "Phone number"}
           <input
             type="text"
             value={form.phoneNumber}
@@ -120,6 +137,11 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
             }
             required
           />
+          {form.provider === "meta" ? (
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              Meta Cloud API requires the Phone Number ID (not the E.164 phone).
+            </span>
+          ) : null}
         </label>
         <label>
           WABA ID
@@ -208,6 +230,26 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
           {loading ? "Saving..." : "Save WhatsApp settings"}
         </button>
       </form>
+      <div style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          onClick={runOutbox}
+          disabled={sendingOutbox}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid var(--border)",
+            background: "var(--surface-2)",
+            color: "var(--text)",
+            cursor: "pointer"
+          }}
+        >
+          {sendingOutbox ? "Sending..." : "Process outbound queue"}
+        </button>
+        {outboxResult ? (
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>{outboxResult}</p>
+        ) : null}
+      </div>
     </section>
   );
 }
