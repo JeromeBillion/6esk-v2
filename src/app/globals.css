@@ -486,6 +486,57 @@ button {
   color: var(--text);
 }
 
+.whatsapp-thread {
+  display: grid;
+  gap: 10px;
+}
+
+.whatsapp-bubble {
+  max-width: 70%;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(16, 20, 28, 0.85);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.whatsapp-bubble.inbound {
+  justify-self: start;
+  border-bottom-left-radius: 6px;
+  background: rgba(139, 215, 255, 0.12);
+}
+
+.whatsapp-bubble.outbound {
+  justify-self: end;
+  border-bottom-right-radius: 6px;
+  background: rgba(82, 210, 113, 0.18);
+}
+
+.whatsapp-bubble.active {
+  border-color: rgba(139, 215, 255, 0.5);
+  box-shadow: 0 0 0 1px rgba(139, 215, 255, 0.2);
+}
+
+.whatsapp-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.whatsapp-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.whatsapp-status {
+  text-transform: capitalize;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

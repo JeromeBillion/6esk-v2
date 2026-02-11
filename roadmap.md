@@ -225,6 +225,7 @@ Status
 - Ticket UI shows WhatsApp channel badges + delivery status.
 - 24h window enforcement added with template-required flow in Support UI.
 - WhatsApp outbox processor added with retry/backoff + admin trigger script.
+- WhatsApp bubble view added to Support ticket conversations.
 
 **WhatsApp Channel Plan**
 Goal

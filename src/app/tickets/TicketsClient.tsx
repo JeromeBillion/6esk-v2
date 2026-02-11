@@ -135,6 +135,11 @@ export default function TicketsClient() {
   const [waTemplateLanguage, setWaTemplateLanguage] = useState("en_US");
   const [waTemplateParams, setWaTemplateParams] = useState("");
 
+  function formatMessageTimestamp(message: Message) {
+    const value = message.received_at ?? message.sent_at;
+    return value ? new Date(value).toLocaleString() : "—";
+  }
+
   function getDraftPlainText(draft: Draft) {
     if (draft.body_text) return draft.body_text;
     if (draft.body_html) {
@@ -638,25 +643,58 @@ export default function TicketsClient() {
                     background: "rgba(10, 12, 18, 0.6)"
                   }}
                 >
-                  <h3>Conversation</h3>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {messages.map((message) => (
-                      <article
-                        key={message.id}
-                        onClick={() => loadMessageDetail(message.id)}
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 10,
-                          padding: 12,
-                          background:
-                            message.id === activeMessageId
-                              ? "rgba(57, 184, 255, 0.15)"
-                              : "rgba(10, 12, 18, 0.6)",
-                          cursor: "pointer"
-                        }}
-                      >
-                        <strong>{message.subject ?? "(no subject)"}</strong>
-                        <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
+                  <h3>{ticketChannel === "whatsapp" ? "WhatsApp Thread" : "Conversation"}</h3>
+                  {ticketChannel === "whatsapp" ? (
+                    <div className="whatsapp-thread">
+                      {messages.length === 0 ? (
+                        <p>No WhatsApp messages yet.</p>
+                      ) : (
+                        messages.map((message) => {
+                          const isOutbound = message.direction === "outbound";
+                          return (
+                            <button
+                              key={message.id}
+                              type="button"
+                              onClick={() => loadMessageDetail(message.id)}
+                              className={`whatsapp-bubble ${isOutbound ? "outbound" : "inbound"}${
+                                message.id === activeMessageId ? " active" : ""
+                              }`}
+                            >
+                              <div className="whatsapp-text">
+                                {message.preview_text ?? "(no message body)"}
+                              </div>
+                              <div className="whatsapp-meta">
+                                <span>{formatMessageTimestamp(message)}</span>
+                                {isOutbound ? (
+                                  <span className="whatsapp-status">
+                                    {message.wa_status ?? "queued"}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {messages.map((message) => (
+                        <article
+                          key={message.id}
+                          onClick={() => loadMessageDetail(message.id)}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                            padding: 12,
+                            background:
+                              message.id === activeMessageId
+                                ? "rgba(57, 184, 255, 0.15)"
+                                : "rgba(10, 12, 18, 0.6)",
+                            cursor: "pointer"
+                          }}
+                        >
+                          <strong>{message.subject ?? "(no subject)"}</strong>
+                          <p style={{ marginTop: 6 }}>{message.preview_text ?? ""}</p>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
                             <span style={{ color: "var(--muted)" }}>
                               {message.direction === "inbound" ? "From" : "To"}: {message.from_email}
@@ -682,8 +720,9 @@ export default function TicketsClient() {
                             ) : null}
                           </div>
                         </article>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ marginTop: 16 }}>
                     <h4>Message Detail</h4>
                     {loadingMessage ? <p>Loading...</p> : null}
