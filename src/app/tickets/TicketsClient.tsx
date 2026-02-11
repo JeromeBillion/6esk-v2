@@ -113,6 +113,13 @@ type WhatsAppTemplate = {
 };
 
 const STATUS_OPTIONS = ["new", "open", "pending", "solved", "closed"];
+const WHATSAPP_STATUS_STEPS = ["queued", "sent", "delivered", "read"] as const;
+const WHATSAPP_STATUS_INDEX: Record<string, number> = {
+  queued: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3
+};
 
 export default function TicketsClient() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -150,6 +157,19 @@ export default function TicketsClient() {
   function formatMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at;
     return value ? new Date(value).toLocaleString() : "—";
+  }
+
+  function getTemplateParamCount(template?: WhatsAppTemplate | null) {
+    if (!template?.components) return null;
+    let count = 0;
+    for (const component of template.components) {
+      if (!component || typeof component !== "object") continue;
+      const params = (component as Record<string, unknown>).parameters;
+      if (Array.isArray(params)) {
+        count += params.length;
+      }
+    }
+    return count || null;
   }
 
   function getDraftPlainText(draft: Draft) {
@@ -345,7 +365,8 @@ export default function TicketsClient() {
   async function sendReply(ticketId: string) {
     setReplyError(null);
     const trimmedText = replyText.trim();
-    const selectedTemplate = whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
+    const selectedTemplate =
+      whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
     const templateName = selectedTemplate?.name ?? waTemplateName.trim();
     const templateLanguage = selectedTemplate?.language ?? waTemplateLanguage.trim();
     const shouldBuildTemplate =
@@ -357,6 +378,11 @@ export default function TicketsClient() {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+      const requiredParams = getTemplateParamCount(selectedTemplate);
+      if (requiredParams && params.length < requiredParams) {
+        setReplyError(`Template requires at least ${requiredParams} parameter(s).`);
+        return;
+      }
       const storedComponents = selectedTemplate?.components ?? null;
       template = {
         name: templateName,
@@ -370,6 +396,11 @@ export default function TicketsClient() {
             ]
           : storedComponents ?? undefined
       };
+    }
+
+    if (ticketChannel === "whatsapp" && whatsappWindow && !whatsappWindow.isOpen && !template) {
+      setReplyError("WhatsApp 24h window is closed. Select a template.");
+      return;
     }
 
     if (!trimmedText && !template) {
@@ -460,6 +491,9 @@ export default function TicketsClient() {
     ? "whatsapp"
     : "email";
   const activeTemplates = whatsappTemplates.filter((template) => template.status === "active");
+  const selectedTemplate =
+    whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
+  const selectedTemplateParamCount = getTemplateParamCount(selectedTemplate);
   const whatsappWindow = (() => {
     if (ticketChannel !== "whatsapp") {
       return null;
@@ -768,9 +802,39 @@ export default function TicketsClient() {
                           {messageDetail.channel === "whatsapp" ? " WhatsApp" : " Email"}
                         </div>
                         {messageDetail.channel === "whatsapp" ? (
-                          <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                            Status: {messageDetail.waStatus ?? "—"} · Contact:{" "}
-                            {messageDetail.waContact ?? messageDetail.from}
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                              Status: {messageDetail.waStatus ?? "—"} · Contact:{" "}
+                              {messageDetail.waContact ?? messageDetail.from}
+                            </div>
+                            {messageDetail.direction === "outbound" ? (
+                              <div className="wa-status-track">
+                                {WHATSAPP_STATUS_STEPS.map((step) => {
+                                  const status = (messageDetail.waStatus ?? "queued").toLowerCase();
+                                  const isFailed = status === "failed";
+                                  const isActive =
+                                    !isFailed &&
+                                    (WHATSAPP_STATUS_INDEX[status] ?? 0) >=
+                                      WHATSAPP_STATUS_INDEX[step];
+                                  return (
+                                    <span
+                                      key={step}
+                                      className={`wa-status-step${isActive ? " active" : ""}${
+                                        isFailed ? " failed" : ""
+                                      }`}
+                                    >
+                                      {step}
+                                    </span>
+                                  );
+                                })}
+                                <span className="wa-status-timestamp">
+                                  Updated:{" "}
+                                  {messageDetail.waTimestamp
+                                    ? new Date(messageDetail.waTimestamp).toLocaleString()
+                                    : "—"}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1218,6 +1282,11 @@ export default function TicketsClient() {
                             onChange={(event) => setWaTemplateParams(event.target.value)}
                             placeholder="orderId, deliveryDate"
                           />
+                          {selectedTemplateParamCount ? (
+                            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                              Requires at least {selectedTemplateParamCount} parameter(s).
+                            </span>
+                          ) : null}
                         </label>
                       ) : null}
                     </div>

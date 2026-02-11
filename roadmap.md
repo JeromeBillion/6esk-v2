@@ -227,6 +227,7 @@ Status
 - WhatsApp outbox processor added with retry/backoff + admin trigger script.
 - WhatsApp bubble view added to Support ticket conversations.
 - WhatsApp template registry (admin) + Support template picker added.
+- WhatsApp template parameter validation + status timeline added.
 
 **WhatsApp Channel Plan**
 Goal

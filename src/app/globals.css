@@ -537,6 +537,39 @@ button {
   text-transform: capitalize;
 }
 
+.wa-status-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wa-status-step {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.wa-status-step.active {
+  background: rgba(82, 210, 113, 0.2);
+  border-color: rgba(82, 210, 113, 0.4);
+  color: #7ff5a2;
+}
+
+.wa-status-step.failed {
+  background: rgba(255, 122, 122, 0.2);
+  border-color: rgba(255, 122, 122, 0.4);
+  color: #ffb3b3;
+}
+
+.wa-status-timestamp {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
