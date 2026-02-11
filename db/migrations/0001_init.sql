@@ -187,6 +187,19 @@ CREATE TABLE whatsapp_events (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE whatsapp_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider text NOT NULL DEFAULT 'meta',
+  name text NOT NULL,
+  language text NOT NULL DEFAULT 'en_US',
+  category text,
+  status text NOT NULL DEFAULT 'active',
+  components jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (provider, name, language)
+);
+
 CREATE INDEX idx_mailbox_memberships_user_id ON mailbox_memberships(user_id);
 CREATE INDEX idx_messages_mailbox_id ON messages(mailbox_id);
 CREATE INDEX idx_messages_thread_id ON messages(thread_id);
@@ -199,3 +212,4 @@ CREATE INDEX idx_tickets_assigned_user_id ON tickets(assigned_user_id);
 CREATE INDEX idx_ticket_events_ticket_id ON ticket_events(ticket_id);
 CREATE INDEX idx_replies_ticket_id ON replies(ticket_id);
 CREATE INDEX idx_whatsapp_events_status_next_attempt ON whatsapp_events(status, next_attempt_at);
+CREATE INDEX idx_whatsapp_templates_status ON whatsapp_templates(status);

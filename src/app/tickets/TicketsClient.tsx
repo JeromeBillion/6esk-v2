@@ -102,6 +102,16 @@ type Macro = {
   category?: string | null;
 };
 
+type WhatsAppTemplate = {
+  id: string;
+  provider: string;
+  name: string;
+  language: string;
+  category?: string | null;
+  status: string;
+  components?: Array<Record<string, unknown>> | null;
+};
+
 const STATUS_OPTIONS = ["new", "open", "pending", "solved", "closed"];
 
 export default function TicketsClient() {
@@ -134,6 +144,8 @@ export default function TicketsClient() {
   const [waTemplateName, setWaTemplateName] = useState("");
   const [waTemplateLanguage, setWaTemplateLanguage] = useState("en_US");
   const [waTemplateParams, setWaTemplateParams] = useState("");
+  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   function formatMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at;
@@ -190,6 +202,15 @@ export default function TicketsClient() {
     }
     const payload = await res.json();
     setMacros(payload.macros ?? []);
+  }
+
+  async function loadWhatsAppTemplates() {
+    const res = await fetch("/api/whatsapp/templates");
+    if (!res.ok) {
+      return;
+    }
+    const payload = await res.json();
+    setWhatsappTemplates(payload.templates ?? []);
   }
 
   async function loadTicketDetail(ticketId: string) {
@@ -295,6 +316,12 @@ export default function TicketsClient() {
     void loadTicketDetail(activeTicketId);
   }, [activeTicketId]);
 
+  useEffect(() => {
+    if (messages.some((message) => message.channel === "whatsapp")) {
+      void loadWhatsAppTemplates();
+    }
+  }, [messages, activeTicketId]);
+
   async function updateTicket(ticketId: string, updates: Partial<Ticket> & { assigned_user_id?: string | null }) {
     const payload: Record<string, unknown> = {};
     if (updates.status) payload.status = updates.status;
@@ -318,19 +345,22 @@ export default function TicketsClient() {
   async function sendReply(ticketId: string) {
     setReplyError(null);
     const trimmedText = replyText.trim();
+    const selectedTemplate = whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
+    const templateName = selectedTemplate?.name ?? waTemplateName.trim();
+    const templateLanguage = selectedTemplate?.language ?? waTemplateLanguage.trim();
     const shouldBuildTemplate =
-      ticketChannel === "whatsapp" && waTemplateName.trim() && waTemplateLanguage.trim();
-    let template: { name: string; language: string; components?: Array<Record<string, unknown>> } | null =
-      null;
+      ticketChannel === "whatsapp" && templateName && templateLanguage;
+    let template: { name: string; language: string; components?: Array<Record<string, unknown>> } | null = null;
 
     if (shouldBuildTemplate) {
       const params = waTemplateParams
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+      const storedComponents = selectedTemplate?.components ?? null;
       template = {
-        name: waTemplateName.trim(),
-        language: waTemplateLanguage.trim(),
+        name: templateName,
+        language: templateLanguage,
         components: params.length
           ? [
               {
@@ -338,7 +368,7 @@ export default function TicketsClient() {
                 parameters: params.map((param) => ({ type: "text", text: param }))
               }
             ]
-          : undefined
+          : storedComponents ?? undefined
       };
     }
 
@@ -363,6 +393,7 @@ export default function TicketsClient() {
       setReplyText("");
       setWaTemplateName("");
       setWaTemplateParams("");
+      setSelectedTemplateId("");
       await loadTicketDetail(ticketId);
     } else {
       const payload = await res.json().catch(() => ({}));
@@ -428,6 +459,7 @@ export default function TicketsClient() {
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
     ? "whatsapp"
     : "email";
+  const activeTemplates = whatsappTemplates.filter((template) => template.status === "active");
   const whatsappWindow = (() => {
     if (ticketChannel !== "whatsapp") {
       return null;
@@ -1147,35 +1179,47 @@ export default function TicketsClient() {
                     rows={5}
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--border)" }}
                   />
-                  {ticketChannel === "whatsapp" && whatsappWindow && !whatsappWindow.isOpen ? (
+                  {ticketChannel === "whatsapp" ? (
                     <div style={{ display: "grid", gap: 8 }}>
                       <label>
-                        Template name
-                        <input
-                          type="text"
-                          value={waTemplateName}
-                          onChange={(event) => setWaTemplateName(event.target.value)}
-                          placeholder="order_update"
-                        />
+                        Template
+                        <select
+                          value={selectedTemplateId}
+                          onChange={(event) => {
+                            const selectedId = event.target.value;
+                            setSelectedTemplateId(selectedId);
+                            if (!selectedId) {
+                              setWaTemplateName("");
+                              setWaTemplateLanguage("en_US");
+                              setWaTemplateParams("");
+                              return;
+                            }
+                            const template = whatsappTemplates.find((item) => item.id === selectedId);
+                            if (template) {
+                              setWaTemplateName(template.name);
+                              setWaTemplateLanguage(template.language);
+                            }
+                          }}
+                        >
+                          <option value="">No template</option>
+                          {activeTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name} ({template.language})
+                            </option>
+                          ))}
+                        </select>
                       </label>
-                      <label>
-                        Template language
-                        <input
-                          type="text"
-                          value={waTemplateLanguage}
-                          onChange={(event) => setWaTemplateLanguage(event.target.value)}
-                          placeholder="en_US"
-                        />
-                      </label>
-                      <label>
-                        Template params (comma-separated)
-                        <input
-                          type="text"
-                          value={waTemplateParams}
-                          onChange={(event) => setWaTemplateParams(event.target.value)}
-                          placeholder="orderId, deliveryDate"
-                        />
-                      </label>
+                      {selectedTemplateId || (whatsappWindow && !whatsappWindow.isOpen) ? (
+                        <label>
+                          Template params (comma-separated)
+                          <input
+                            type="text"
+                            value={waTemplateParams}
+                            onChange={(event) => setWaTemplateParams(event.target.value)}
+                            placeholder="orderId, deliveryDate"
+                          />
+                        </label>
+                      ) : null}
                     </div>
                   ) : null}
                   {replyError ? <p style={{ color: "var(--danger)" }}>{replyError}</p> : null}

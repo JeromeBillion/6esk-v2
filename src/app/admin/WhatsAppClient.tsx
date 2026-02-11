@@ -12,6 +12,16 @@ type WhatsAppAccount = {
   status: "active" | "paused" | "inactive";
 };
 
+type WhatsAppTemplate = {
+  id: string;
+  provider: string;
+  name: string;
+  language: string;
+  category?: string | null;
+  status: "active" | "paused";
+  components?: Array<Record<string, unknown>> | null;
+};
+
 type WhatsAppClientProps = {
   compact?: boolean;
 };
@@ -31,6 +41,16 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
   const [error, setError] = useState<string | null>(null);
   const [sendingOutbox, setSendingOutbox] = useState(false);
   const [outboxResult, setOutboxResult] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    language: "en_US",
+    category: "",
+    status: "active" as "active" | "paused",
+    componentsJson: ""
+  });
+  const [templateEditingId, setTemplateEditingId] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -50,7 +70,15 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
       }
     }
 
+    async function loadTemplates() {
+      const res = await fetch("/api/admin/whatsapp/templates");
+      if (!res.ok) return;
+      const payload = await res.json();
+      setTemplates(payload.templates ?? []);
+    }
+
     void load();
+    void loadTemplates();
   }, []);
 
   function generateVerifyToken() {
@@ -104,6 +132,97 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
     const payload = await res.json();
     setOutboxResult(`Delivered ${payload.delivered ?? 0}, skipped ${payload.skipped ?? 0}`);
     setSendingOutbox(false);
+  }
+
+  function resetTemplateForm() {
+    setTemplateForm({
+      name: "",
+      language: "en_US",
+      category: "",
+      status: "active",
+      componentsJson: ""
+    });
+    setTemplateEditingId(null);
+    setTemplateError(null);
+  }
+
+  function startTemplateEdit(template: WhatsAppTemplate) {
+    setTemplateForm({
+      name: template.name,
+      language: template.language,
+      category: template.category ?? "",
+      status: template.status,
+      componentsJson: template.components ? JSON.stringify(template.components, null, 2) : ""
+    });
+    setTemplateEditingId(template.id);
+    setTemplateError(null);
+  }
+
+  async function handleTemplateSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setTemplateError(null);
+
+    let components: Array<Record<string, unknown>> | null = null;
+    if (templateForm.componentsJson.trim()) {
+      try {
+        const parsed = JSON.parse(templateForm.componentsJson);
+        components = Array.isArray(parsed) ? parsed : null;
+      } catch (error) {
+        setTemplateError("Components JSON is invalid.");
+        return;
+      }
+    }
+
+    const payload = {
+      provider: form.provider ?? "meta",
+      name: templateForm.name.trim(),
+      language: templateForm.language.trim() || "en_US",
+      category: templateForm.category.trim() || null,
+      status: templateForm.status,
+      components
+    };
+
+    if (!payload.name) {
+      setTemplateError("Template name is required.");
+      return;
+    }
+
+    const res = await fetch(
+      templateEditingId
+        ? `/api/admin/whatsapp/templates/${templateEditingId}`
+        : "/api/admin/whatsapp/templates",
+      {
+        method: templateEditingId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (!res.ok) {
+      const responsePayload = await res.json().catch(() => ({}));
+      setTemplateError(responsePayload.error ?? "Failed to save template.");
+      return;
+    }
+
+    const refresh = await fetch("/api/admin/whatsapp/templates");
+    if (refresh.ok) {
+      const data = await refresh.json();
+      setTemplates(data.templates ?? []);
+    }
+    resetTemplateForm();
+  }
+
+  async function deleteTemplate(templateId: string) {
+    const res = await fetch(`/api/admin/whatsapp/templates/${templateId}`, {
+      method: "DELETE"
+    });
+    if (res.ok) {
+      const refresh = await fetch("/api/admin/whatsapp/templates");
+      if (refresh.ok) {
+        const data = await refresh.json();
+        setTemplates(data.templates ?? []);
+      }
+    }
   }
 
   const webhookUrl =
@@ -249,6 +368,157 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
         {outboxResult ? (
           <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>{outboxResult}</p>
         ) : null}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <h3 style={{ marginBottom: 12 }}>Templates</h3>
+        <form onSubmit={handleTemplateSubmit} style={{ display: "grid", gap: 12 }}>
+          <label>
+            Template name
+            <input
+              type="text"
+              value={templateForm.name}
+              onChange={(event) =>
+                setTemplateForm((prev) => ({ ...prev, name: event.target.value }))
+              }
+              required
+            />
+          </label>
+          <label>
+            Language
+            <input
+              type="text"
+              value={templateForm.language}
+              onChange={(event) =>
+                setTemplateForm((prev) => ({ ...prev, language: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Category
+            <input
+              type="text"
+              value={templateForm.category}
+              onChange={(event) =>
+                setTemplateForm((prev) => ({ ...prev, category: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Status
+            <select
+              value={templateForm.status}
+              onChange={(event) =>
+                setTemplateForm((prev) => ({
+                  ...prev,
+                  status: event.target.value as "active" | "paused"
+                }))
+              }
+            >
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+            </select>
+          </label>
+          <label>
+            Components JSON (optional)
+            <textarea
+              rows={4}
+              value={templateForm.componentsJson}
+              onChange={(event) =>
+                setTemplateForm((prev) => ({ ...prev, componentsJson: event.target.value }))
+              }
+              placeholder='[{"type":"body","parameters":[{"type":"text","text":"{{1}}"}]}]'
+            />
+          </label>
+          {templateError ? <p style={{ color: "var(--danger)" }}>{templateError}</p> : null}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="submit"
+              style={{
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
+                color: "#081018",
+                cursor: "pointer"
+              }}
+            >
+              {templateEditingId ? "Update template" : "Add template"}
+            </button>
+            {templateEditingId ? (
+              <button
+                type="button"
+                onClick={resetTemplateForm}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text)",
+                  cursor: "pointer"
+                }}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
+          {templates.length === 0 ? (
+            <p style={{ color: "var(--muted)" }}>No templates saved yet.</p>
+          ) : (
+            templates.map((template) => (
+              <div
+                key={template.id}
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: 10,
+                  background: "rgba(10, 12, 18, 0.6)"
+                }}
+              >
+                <strong>
+                  {template.name} · {template.language}
+                </strong>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  {template.category ? `Category: ${template.category} · ` : ""}
+                  Status: {template.status}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => startTemplateEdit(template)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                      color: "var(--text)",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteTemplate(template.id)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "transparent",
+                      color: "var(--muted)",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </section>
   );
