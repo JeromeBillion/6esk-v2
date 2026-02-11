@@ -281,6 +281,18 @@ button {
   margin-bottom: 8px;
 }
 
+.tickets-sidebar[data-density="compact"] .ticket-card {
+  padding: 6px 10px;
+}
+
+.tickets-sidebar[data-density="compact"] .ticket-card-row {
+  margin-bottom: 6px;
+}
+
+.tickets-sidebar[data-density="compact"] .ticket-card strong {
+  font-size: 13px;
+}
+
 .ticket-card-checkbox {
   margin-top: 6px;
   width: 16px;

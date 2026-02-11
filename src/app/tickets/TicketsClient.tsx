@@ -151,6 +151,8 @@ export default function TicketsClient() {
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [macroQuery, setMacroQuery] = useState("");
+  const [ticketDensity, setTicketDensity] = useState<"comfortable" | "compact">("comfortable");
+  const [lastSelectedTicketId, setLastSelectedTicketId] = useState<string | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -477,6 +479,35 @@ export default function TicketsClient() {
     await loadTickets();
   }
 
+  function handleTicketSelection(ticketId: string, checked: boolean, shiftKey: boolean) {
+    if (shiftKey && lastSelectedTicketId) {
+      const ids = tickets.map((ticket) => ticket.id);
+      const startIndex = ids.indexOf(lastSelectedTicketId);
+      const endIndex = ids.indexOf(ticketId);
+      if (startIndex !== -1 && endIndex !== -1) {
+        const [start, end] =
+          startIndex <= endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+        const range = ids.slice(start, end + 1);
+        setSelectedTicketIds((prev) => {
+          const next = new Set(prev);
+          if (checked) {
+            range.forEach((id) => next.add(id));
+          } else {
+            range.forEach((id) => next.delete(id));
+          }
+          return Array.from(next);
+        });
+        setLastSelectedTicketId(ticketId);
+        return;
+      }
+    }
+
+    setSelectedTicketIds((prev) =>
+      checked ? [...new Set([...prev, ticketId])] : prev.filter((id) => id !== ticketId)
+    );
+    setLastSelectedTicketId(ticketId);
+  }
+
   async function sendReply(ticketId: string) {
     setReplyError(null);
     const trimmedText = replyText.trim();
@@ -703,7 +734,7 @@ export default function TicketsClient() {
     >
       <div className="app-content">
         <div className="tickets-layout">
-          <aside className="panel tickets-sidebar">
+          <aside className="panel tickets-sidebar" data-density={ticketDensity}>
             <div className="tickets-filters">
               <label>
                 Search
@@ -767,8 +798,21 @@ export default function TicketsClient() {
                   ))}
                 </select>
               </label>
+              <label>
+                Density
+                <select
+                  value={ticketDensity}
+                  onChange={(event) =>
+                    setTicketDensity(event.target.value as "comfortable" | "compact")
+                  }
+                >
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
+                </select>
+              </label>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                Shortcuts: <code>j</code>/<code>k</code> to move · <code>r</code> to reply
+                Shortcuts: <code>j</code>/<code>k</code> to move · <code>r</code> to reply ·{" "}
+                <code>shift</code> + click to range select
               </div>
             </div>
             <div className="tickets-bulk-bar">
@@ -928,13 +972,13 @@ export default function TicketsClient() {
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={(event) => {
-                        setSelectedTicketIds((prev) =>
-                          event.target.checked
-                            ? [...new Set([...prev, ticket.id])]
-                            : prev.filter((id) => id !== ticket.id)
-                        );
-                      }}
+                      onChange={(event) =>
+                        handleTicketSelection(
+                          ticket.id,
+                          event.target.checked,
+                          event.nativeEvent instanceof MouseEvent ? event.nativeEvent.shiftKey : false
+                        )
+                      }
                       className="ticket-card-checkbox"
                       aria-label="Select ticket"
                     />
