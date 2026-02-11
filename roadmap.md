@@ -72,6 +72,19 @@ These are the “performance reports” referenced in the PRD.
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 - Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
 
+**Roadmap Status (as of 2026-02-09)**
+| Phase | Status |
+| --- | --- |
+| 0 Foundation | Complete |
+| 1 Email (DNS) | Dev-ready, awaiting DNS verification |
+| 2 Tickets & Replies | Complete |
+| 3 Threading | Complete |
+| 4 Tags/Macros | Complete |
+| 5 Analytics | Complete |
+| 6 AI Agent | In progress |
+| 7 Hardening | In progress |
+| 8 WhatsApp | In progress |
+
 **Phase 0 — Repo & Foundations**
 Deliverables
 - Project skeleton (Next.js + API routes or separate API service).
