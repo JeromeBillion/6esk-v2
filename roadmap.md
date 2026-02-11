@@ -199,6 +199,7 @@ Status
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
 - Viewer role restricted from ticket mutations + outbound send; SLA/tag changes now audited.
+- Admin security panel shows encryption status + IP allowlist configuration guidance.
 Acceptance Criteria
 - System handles duplicate inbound webhook safely.
 - Failures are recoverable without data loss.

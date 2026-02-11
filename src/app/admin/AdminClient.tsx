@@ -57,6 +57,25 @@ type InboundFailure = {
   created_at: string;
 };
 
+type SecurityStatus = {
+  adminAllowlist: string[];
+  agentAllowlist: string[];
+  agentSecretKeyConfigured: boolean;
+  inboundSecretConfigured: boolean;
+  clientIp?: string | null;
+  agentIntegrationStats: {
+    total: number;
+    encrypted: number;
+    unencrypted: number;
+  };
+  whatsappTokenStats: {
+    total: number;
+    encrypted: number;
+    unencrypted: number;
+    missing: number;
+  };
+};
+
 const ADMIN_SECTIONS = [
   { key: "users", label: "Users" },
   { key: "create-user", label: "Create User" },
@@ -65,6 +84,7 @@ const ADMIN_SECTIONS = [
   { key: "spam-rules", label: "Spam Rules" },
   { key: "agent", label: "AI Agent" },
   { key: "whatsapp", label: "WhatsApp" },
+  { key: "security", label: "Security" },
   { key: "inbound", label: "Inbound Failures" },
   { key: "spam-review", label: "Spam Review" },
   { key: "audit-log", label: "Audit Log" }
@@ -98,15 +118,18 @@ export default function AdminClient() {
   const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
   const [retryingInbound, setRetryingInbound] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
+  const [security, setSecurity] = useState<SecurityStatus | null>(null);
+  const [securityError, setSecurityError] = useState<string | null>(null);
 
   async function loadData() {
-    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes] = await Promise.all([
+    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes, securityRes] = await Promise.all([
       fetch("/api/admin/roles"),
       fetch("/api/admin/users"),
       fetch("/api/admin/sla"),
       fetch("/api/admin/audit-logs?limit=50"),
       fetch("/api/admin/spam-messages?limit=50"),
-      fetch("/api/admin/inbound/failed?limit=50")
+      fetch("/api/admin/inbound/failed?limit=50"),
+      fetch("/api/admin/security")
     ]);
 
     if (rolesRes.ok) {
@@ -143,6 +166,14 @@ export default function AdminClient() {
     if (inboundRes.ok) {
       const payload = await inboundRes.json();
       setInboundFailures(payload.events ?? []);
+    }
+
+    if (securityRes.ok) {
+      const payload = await securityRes.json();
+      setSecurity(payload);
+      setSecurityError(null);
+    } else {
+      setSecurityError("Failed to load security status.");
     }
   }
 
@@ -225,6 +256,15 @@ export default function AdminClient() {
         `${user.display_name} ${user.email}`.toLowerCase().includes(normalizedUserQuery)
       )
     : users;
+
+  const adminAllowlist = security?.adminAllowlist ?? [];
+  const agentAllowlist = security?.agentAllowlist ?? [];
+  const encryptionEnabled = security?.agentSecretKeyConfigured ?? false;
+  const inboundSecretEnabled = security?.inboundSecretConfigured ?? false;
+  const allowlistSnippet = [
+    `ADMIN_IP_ALLOWLIST=${adminAllowlist.length ? adminAllowlist.join(",") : "1.2.3.4,5.6.7.8"}`,
+    `AGENT_IP_ALLOWLIST=${agentAllowlist.length ? agentAllowlist.join(",") : "1.2.3.4,5.6.7.8"}`
+  ].join("\n");
 
   function getSectionCount(key: string) {
     switch (key) {
@@ -431,6 +471,118 @@ export default function AdminClient() {
             <div className="panel">
               <WhatsAppClient compact />
             </div>
+          ) : null}
+
+          {activeSection === "security" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Security</h2>
+              <p style={{ color: "var(--muted)" }}>
+                Runtime controls are configured via environment variables. This view shows current
+                status and recommendations.
+              </p>
+              {securityError ? <p style={{ color: "var(--danger)" }}>{securityError}</p> : null}
+              {!security ? (
+                <p>Loading security status...</p>
+              ) : (
+                <div style={{ display: "grid", gap: 16 }}>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <h3 style={{ marginTop: 0 }}>Secrets at Rest</h3>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      AGENT_SECRET_KEY: {encryptionEnabled ? "Configured" : "Missing"}
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      Agent integrations encrypted: {security.agentIntegrationStats.encrypted}/
+                      {security.agentIntegrationStats.total}
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      WhatsApp access tokens encrypted: {security.whatsappTokenStats.encrypted}/
+                      {security.whatsappTokenStats.total}
+                      {security.whatsappTokenStats.missing
+                        ? ` · Missing: ${security.whatsappTokenStats.missing}`
+                        : ""}
+                    </div>
+                    {!encryptionEnabled ? (
+                      <p style={{ color: "var(--danger)", fontSize: 12 }}>
+                        Set AGENT_SECRET_KEY to encrypt agent secrets and WhatsApp tokens at rest.
+                      </p>
+                    ) : null}
+                    {encryptionEnabled &&
+                    (security.agentIntegrationStats.unencrypted > 0 ||
+                      security.whatsappTokenStats.unencrypted > 0) ? (
+                      <p style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Some secrets were saved before encryption. Re-save them in Admin to encrypt.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <h3 style={{ marginTop: 0 }}>Inbound Security</h3>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      INBOUND_SHARED_SECRET: {inboundSecretEnabled ? "Configured" : "Missing"}
+                    </div>
+                    {!inboundSecretEnabled ? (
+                      <p style={{ color: "var(--danger)", fontSize: 12 }}>
+                        Set INBOUND_SHARED_SECRET to protect inbound webhooks and retries.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <h3 style={{ marginTop: 0 }}>IP Allowlists</h3>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      Admin allowlist:{" "}
+                      {adminAllowlist.length ? adminAllowlist.join(", ") : "None (open)"}
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      Agent allowlist:{" "}
+                      {agentAllowlist.length ? agentAllowlist.join(", ") : "None (open)"}
+                    </div>
+                    {security.clientIp ? (
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                        Your current IP: {security.clientIp}
+                      </div>
+                    ) : null}
+                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+                      Update allowlists in `.env` and restart the app:
+                    </p>
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: 10,
+                        borderRadius: 10,
+                        border: "1px solid var(--border)",
+                        background: "rgba(10, 12, 18, 0.7)",
+                        fontSize: 12,
+                        whiteSpace: "pre-wrap"
+                      }}
+                    >
+                      {allowlistSnippet}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </section>
           ) : null}
 
           {activeSection === "users" ? (
