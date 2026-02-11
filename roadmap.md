@@ -229,6 +229,9 @@ Status
 - WhatsApp template registry (admin) + Support template picker added.
 - WhatsApp template parameter validation + status timeline added.
 - WhatsApp payload preview + status history log + auto-refresh polling added.
+- WhatsApp bubble status iconography (queued/sent/delivered/read/failed) added.
+- WhatsApp template parameter preview chips added in Support reply panel.
+- WhatsApp resend flow added for failed outbound messages (API + UI action).
 
 **WhatsApp Channel Plan**
 Goal

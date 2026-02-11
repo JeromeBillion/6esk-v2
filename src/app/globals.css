@@ -534,7 +534,39 @@ button {
 }
 
 .whatsapp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   text-transform: capitalize;
+}
+
+.whatsapp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  display: inline-block;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+}
+
+.whatsapp-status-dot.status-queued {
+  background: #9aa4b2;
+}
+
+.whatsapp-status-dot.status-sent {
+  background: #8bd7ff;
+}
+
+.whatsapp-status-dot.status-delivered {
+  background: #7ff5a2;
+}
+
+.whatsapp-status-dot.status-read {
+  background: #39b8ff;
+}
+
+.whatsapp-status-dot.status-failed {
+  background: #ff7a7a;
 }
 
 .wa-status-track {
@@ -573,6 +605,53 @@ button {
 .wa-status-history {
   display: grid;
   gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.wa-preview-meta {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wa-preview-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wa-preview-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(16, 20, 28, 0.7);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.wa-preview-param.missing {
+  border-color: rgba(255, 122, 122, 0.6);
+  color: #ffb3b3;
+}
+
+.wa-preview-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(139, 215, 255, 0.25);
+  color: var(--text);
+  font-size: 10px;
+}
+
+.wa-preview-empty {
   font-size: 11px;
   color: var(--muted);
 }

@@ -154,6 +154,8 @@ export default function TicketsClient() {
   const [waTemplateParams, setWaTemplateParams] = useState("");
   const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsAppTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   function formatMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at;
@@ -443,6 +445,25 @@ export default function TicketsClient() {
     setSending(false);
   }
 
+  async function resendWhatsApp(messageId: string) {
+    setResendError(null);
+    setResendingMessageId(messageId);
+    const res = await fetch(`/api/messages/${messageId}/whatsapp-resend`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setResendError(payload.error ?? "Failed to resend WhatsApp message");
+      setResendingMessageId(null);
+      return;
+    }
+    await loadMessageDetail(messageId);
+    if (activeTicketId) {
+      await loadTicketDetail(activeTicketId);
+    }
+    setResendingMessageId(null);
+  }
+
   async function saveDraftEdit(ticketId: string, draftId: string) {
     const text = draftEdits[draftId] ?? "";
     if (!text.trim()) {
@@ -508,6 +529,24 @@ export default function TicketsClient() {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+  const missingTemplateParams = selectedTemplateParamCount
+    ? Math.max(0, selectedTemplateParamCount - templateParamList.length)
+    : 0;
+  const templateParamPreview = (() => {
+    if (!selectedTemplate) {
+      return [];
+    }
+    const requiredCount = selectedTemplateParamCount ?? templateParamList.length;
+    const totalCount = Math.max(requiredCount, templateParamList.length);
+    if (totalCount === 0) {
+      return [];
+    }
+    return Array.from({ length: totalCount }, (_value, index) => {
+      const value = templateParamList[index] ?? "";
+      const isMissing = !value && index < requiredCount;
+      return { index: index + 1, value, isMissing };
+    });
+  })();
   const whatsappPreviewPayload =
     ticketChannel === "whatsapp"
       ? selectedTemplate
@@ -747,6 +786,8 @@ export default function TicketsClient() {
                       ) : (
                         messages.map((message) => {
                           const isOutbound = message.direction === "outbound";
+                          const statusLabel = (message.wa_status ?? "queued").toLowerCase();
+                          const statusClass = `status-${statusLabel}`;
                           return (
                             <button
                               key={message.id}
@@ -763,6 +804,7 @@ export default function TicketsClient() {
                                 <span>{formatMessageTimestamp(message)}</span>
                                 {isOutbound ? (
                                   <span className="whatsapp-status">
+                                    <span className={`whatsapp-status-dot ${statusClass}`} />
                                     {message.wa_status ?? "queued"}
                                   </span>
                                 ) : null}
@@ -843,6 +885,7 @@ export default function TicketsClient() {
                                 events.length > 0
                                   ? events[events.length - 1].occurred_at
                                   : messageDetail.waTimestamp ?? null;
+                              const isFailed = (latestStatus ?? "").toLowerCase() === "failed";
                               return (
                                 <>
                                   <div style={{ fontSize: 12, color: "var(--muted)" }}>
@@ -875,6 +918,32 @@ export default function TicketsClient() {
                                           ? new Date(latestTimestamp).toLocaleString()
                                           : "—"}
                                       </span>
+                                    </div>
+                                  ) : null}
+                                  {isFailed ? (
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => resendWhatsApp(messageDetail.id)}
+                                        disabled={resendingMessageId === messageDetail.id}
+                                        style={{
+                                          padding: "6px 10px",
+                                          borderRadius: 8,
+                                          border: "1px solid var(--border)",
+                                          background: "var(--surface-2)",
+                                          color: "var(--text)",
+                                          cursor: "pointer"
+                                        }}
+                                      >
+                                        {resendingMessageId === messageDetail.id
+                                          ? "Resending..."
+                                          : "Resend failed"}
+                                      </button>
+                                      {resendError ? (
+                                        <span style={{ fontSize: 12, color: "var(--danger)" }}>
+                                          {resendError}
+                                        </span>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                   {events.length ? (
@@ -1351,6 +1420,29 @@ export default function TicketsClient() {
                   {whatsappPreviewPayload ? (
                     <div style={{ display: "grid", gap: 6 }}>
                       <strong style={{ fontSize: 12 }}>WhatsApp Payload Preview</strong>
+                      {selectedTemplate ? (
+                        <div className="wa-preview-meta">
+                          <div>
+                            Template {selectedTemplate.name} ({selectedTemplate.language})
+                            {missingTemplateParams ? ` · Missing ${missingTemplateParams}` : ""}
+                          </div>
+                          <div className="wa-preview-params">
+                            {templateParamPreview.length ? (
+                              templateParamPreview.map((param) => (
+                                <div
+                                  key={`param-${param.index}`}
+                                  className={`wa-preview-param${param.isMissing ? " missing" : ""}`}
+                                >
+                                  <span className="wa-preview-index">#{param.index}</span>
+                                  <span>{param.value || "missing"}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="wa-preview-empty">No template parameters.</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                       <pre className="wa-preview">
                         {JSON.stringify(whatsappPreviewPayload, null, 2)}
                       </pre>
