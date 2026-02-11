@@ -75,7 +75,10 @@ export default function MailClient() {
   const [composeMode, setComposeMode] = useState<"reply" | "forward" | "new" | null>(null);
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
-  const [composeBody, setComposeBody] = useState("");
+  const [composeBodyText, setComposeBodyText] = useState("");
+  const [composeBodyHtml, setComposeBodyHtml] = useState("");
+  const [composeFormat, setComposeFormat] = useState<"plain" | "html">("plain");
+  const [composePreview, setComposePreview] = useState(false);
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
   const [composeStatus, setComposeStatus] = useState<"idle" | "sending" | "sent" | "error">(
     "idle"
@@ -114,11 +117,18 @@ export default function MailClient() {
     return "";
   }
 
+  function htmlToText(value: string) {
+    return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+
   function resetComposer() {
     setComposeMode(null);
     setComposeTo("");
     setComposeSubject("");
-    setComposeBody("");
+    setComposeBodyText("");
+    setComposeBodyHtml("");
+    setComposeFormat("plain");
+    setComposePreview(false);
     setComposeAttachments([]);
     setComposeStatus("idle");
     setComposeError(null);
@@ -128,7 +138,10 @@ export default function MailClient() {
     setComposeMode("new");
     setComposeTo("");
     setComposeSubject("");
-    setComposeBody("");
+    setComposeBodyText("");
+    setComposeBodyHtml("");
+    setComposeFormat("plain");
+    setComposePreview(false);
     setComposeAttachments([]);
     setComposeStatus("idle");
     setComposeError(null);
@@ -145,7 +158,10 @@ export default function MailClient() {
     setComposeMode("reply");
     setComposeTo(to);
     setComposeSubject(replySubject || "Re:");
-    setComposeBody("");
+    setComposeBodyText("");
+    setComposeBodyHtml("");
+    setComposeFormat("plain");
+    setComposePreview(false);
     setComposeStatus("idle");
     setComposeError(null);
   }
@@ -165,7 +181,10 @@ export default function MailClient() {
     setComposeMode("forward");
     setComposeTo("");
     setComposeSubject(forwardSubject || "Fwd:");
-    setComposeBody(quoted ? `${header}\n${quoted}` : header);
+    setComposeBodyText(quoted ? `${header}\n${quoted}` : header);
+    setComposeBodyHtml("");
+    setComposeFormat("plain");
+    setComposePreview(false);
     setComposeStatus("idle");
     setComposeError(null);
   }
@@ -403,7 +422,11 @@ export default function MailClient() {
       setComposeStatus("error");
       return;
     }
-    if (!composeBody.trim()) {
+    const usingHtml = composeFormat === "html";
+    const htmlBody = usingHtml ? composeBodyHtml.trim() : "";
+    const textBody = usingHtml ? htmlToText(htmlBody) : composeBodyText.trim();
+
+    if (!textBody && !htmlBody) {
       setComposeError("Message body required.");
       setComposeStatus("error");
       return;
@@ -418,7 +441,8 @@ export default function MailClient() {
         from: mailbox.address,
         to: toList,
         subject: composeSubject,
-        text: composeBody,
+        text: textBody || null,
+        html: usingHtml ? htmlBody || null : null,
         attachments: composeAttachments.map((attachment) => ({
           filename: attachment.filename,
           contentType: attachment.contentType,
@@ -436,7 +460,10 @@ export default function MailClient() {
 
     setComposeStatus("sent");
     setComposeMode(null);
-    setComposeBody("");
+    setComposeBodyText("");
+    setComposeBodyHtml("");
+    setComposeFormat("plain");
+    setComposePreview(false);
     setComposeTo("");
     setComposeSubject("");
     setComposeAttachments([]);
@@ -958,13 +985,72 @@ export default function MailClient() {
                         onChange={(event) => setComposeSubject(event.target.value)}
                       />
                     </label>
+                    <div className="mail-compose-toolbar">
+                      <div className="mail-compose-tabs">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setComposeFormat("plain");
+                            setComposePreview(false);
+                          }}
+                          className={`mail-compose-tab${composeFormat === "plain" ? " active" : ""}`}
+                        >
+                          Plain text
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setComposeFormat("html");
+                            setComposePreview(false);
+                          }}
+                          className={`mail-compose-tab${composeFormat === "html" ? " active" : ""}`}
+                        >
+                          HTML
+                        </button>
+                      </div>
+                      {composeFormat === "html" ? (
+                        <button
+                          type="button"
+                          onClick={() => setComposePreview((prev) => !prev)}
+                          className={`mail-compose-tab${composePreview ? " active" : ""}`}
+                        >
+                          {composePreview ? "Edit" : "Preview"}
+                        </button>
+                      ) : null}
+                    </div>
                     <label>
                       Message
-                      <textarea
-                        rows={6}
-                        value={composeBody}
-                        onChange={(event) => setComposeBody(event.target.value)}
-                      />
+                      {composeFormat === "plain" ? (
+                        <textarea
+                          rows={6}
+                          value={composeBodyText}
+                          onChange={(event) => setComposeBodyText(event.target.value)}
+                          placeholder="Write your message..."
+                        />
+                      ) : composePreview ? (
+                        <div className="mail-compose-preview">
+                          {composeBodyHtml.trim() ? (
+                            <div dangerouslySetInnerHTML={{ __html: composeBodyHtml }} />
+                          ) : (
+                            <span className="mail-compose-preview-empty">
+                              No HTML content yet.
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <textarea
+                          rows={6}
+                          value={composeBodyHtml}
+                          onChange={(event) => setComposeBodyHtml(event.target.value)}
+                          placeholder="<p>Hello</p>"
+                          className="mail-compose-html"
+                        />
+                      )}
+                      {composeFormat === "html" ? (
+                        <span className="mail-compose-hint">
+                          HTML mode sends both HTML and a plain-text fallback.
+                        </span>
+                      ) : null}
                     </label>
                     <label>
                       Attachments
