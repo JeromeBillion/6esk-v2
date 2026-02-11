@@ -143,6 +143,12 @@ export default function TicketsClient() {
   const [filterTag, setFilterTag] = useState<string>("all");
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [assignedFilter, setAssignedFilter] = useState<string>("all");
+  const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState<string>("");
+  const [bulkPriority, setBulkPriority] = useState<string>("");
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [macroQuery, setMacroQuery] = useState("");
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -315,6 +321,12 @@ export default function TicketsClient() {
   }, [filterStatus, filterPriority, filterTag, filterQuery, assignedFilter]);
 
   useEffect(() => {
+    if (selectedTicketIds.length === 0) return;
+    const validIds = new Set(tickets.map((ticket) => ticket.id));
+    setSelectedTicketIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [tickets, selectedTicketIds.length]);
+
+  useEffect(() => {
     function handleKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target) {
@@ -401,6 +413,26 @@ export default function TicketsClient() {
       const data = await res.json();
       setTickets((prev) => prev.map((ticket) => (ticket.id === ticketId ? data.ticket : ticket)));
     }
+    return res.ok;
+  }
+
+  async function applyBulkUpdates(updates: Partial<Ticket> & { assigned_user_id?: string | null }) {
+    if (selectedTicketIds.length === 0) return;
+    setBulkUpdating(true);
+    setBulkError(null);
+    let failed = 0;
+    for (const ticketId of selectedTicketIds) {
+      const ok = await updateTicket(ticketId, updates);
+      if (!ok) failed += 1;
+    }
+    setBulkUpdating(false);
+    if (failed > 0) {
+      setBulkError(`Failed to update ${failed} ticket(s).`);
+      return;
+    }
+    setBulkStatus("");
+    setBulkPriority("");
+    setSelectedTicketIds([]);
   }
 
   async function sendReply(ticketId: string) {
@@ -561,6 +593,13 @@ export default function TicketsClient() {
   const missingTemplateParams = selectedTemplateParamCount
     ? Math.max(0, selectedTemplateParamCount - templateParamList.length)
     : 0;
+  const normalizedMacroQuery = macroQuery.trim().toLowerCase();
+  const quickMacros = (normalizedMacroQuery
+    ? macros.filter((macro) =>
+        `${macro.title} ${macro.body}`.toLowerCase().includes(normalizedMacroQuery)
+      )
+    : macros
+  ).slice(0, 6);
   const templateParamPreview = (() => {
     if (!selectedTemplate) {
       return [];
@@ -690,6 +729,95 @@ export default function TicketsClient() {
                 Shortcuts: <code>j</code>/<code>k</code> to move · <code>r</code> to reply
               </div>
             </div>
+            <div className="tickets-bulk-bar">
+              <label className="tickets-select-all">
+                <input
+                  type="checkbox"
+                  checked={tickets.length > 0 && selectedTicketIds.length === tickets.length}
+                  onChange={(event) =>
+                    setSelectedTicketIds(event.target.checked ? tickets.map((ticket) => ticket.id) : [])
+                  }
+                />
+                Select all
+              </label>
+              {selectedTicketIds.length ? (
+                <span className="tickets-selected-count">
+                  {selectedTicketIds.length} selected
+                </span>
+              ) : null}
+              {selectedTicketIds.length ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTicketIds([])}
+                  className="tickets-clear-selection"
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+            {selectedTicketIds.length ? (
+              <div className="tickets-bulk-actions">
+                <div className="tickets-bulk-row">
+                  <label>
+                    Status
+                    <select
+                      value={bulkStatus}
+                      onChange={(event) => setBulkStatus(event.target.value)}
+                    >
+                      <option value="">Choose status</option>
+                      {STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!bulkStatus || bulkUpdating}
+                    onClick={() => applyBulkUpdates({ status: bulkStatus })}
+                  >
+                    Apply
+                  </button>
+                </div>
+                <div className="tickets-bulk-row">
+                  <label>
+                    Priority
+                    <select
+                      value={bulkPriority}
+                      onChange={(event) => setBulkPriority(event.target.value)}
+                    >
+                      <option value="">Choose priority</option>
+                      {["low", "normal", "high", "urgent"].map((priority) => (
+                        <option key={priority} value={priority}>
+                          {priority}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!bulkPriority || bulkUpdating}
+                    onClick={() => applyBulkUpdates({ priority: bulkPriority })}
+                  >
+                    Apply
+                  </button>
+                </div>
+                {user?.role_name === "lead_admin" ? (
+                  <button
+                    type="button"
+                    className="tickets-bulk-assign"
+                    disabled={bulkUpdating}
+                    onClick={() =>
+                      user ? applyBulkUpdates({ assigned_user_id: user.id }) : null
+                    }
+                  >
+                    Assign to me
+                  </button>
+                ) : null}
+                {bulkError ? <span className="tickets-bulk-error">{bulkError}</span> : null}
+              </div>
+            ) : null}
             {tickets.length === 0 ? (
               <div className="ticket-empty">
                 <h3>No tickets yet</h3>
@@ -699,24 +827,43 @@ export default function TicketsClient() {
                 </a>
               </div>
             ) : (
-              tickets.map((ticket) => (
-                <button
-                  key={ticket.id}
-                  type="button"
-                  onClick={() => setActiveTicketId(ticket.id)}
-                  className={`ticket-card${ticket.id === activeTicketId ? " active" : ""}`}
-                >
-                  <strong>{ticket.subject ?? "(no subject)"}</strong>
-                  <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
-                  <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
-                  {ticket.category ? (
-                    <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>
-                  ) : null}
-                  {ticket.tags && ticket.tags.length ? (
-                    <div style={{ fontSize: 12 }}>Tags: {ticket.tags.join(", ")}</div>
-                  ) : null}
-                </button>
-              ))
+              tickets.map((ticket) => {
+                const isSelected = selectedTicketIds.includes(ticket.id);
+                return (
+                  <div key={ticket.id} className="ticket-card-row">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(event) => {
+                        setSelectedTicketIds((prev) =>
+                          event.target.checked
+                            ? [...new Set([...prev, ticket.id])]
+                            : prev.filter((id) => id !== ticket.id)
+                        );
+                      }}
+                      className="ticket-card-checkbox"
+                      aria-label="Select ticket"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setActiveTicketId(ticket.id)}
+                      className={`ticket-card${ticket.id === activeTicketId ? " active" : ""}${
+                        isSelected ? " selected" : ""
+                      }`}
+                    >
+                      <strong>{ticket.subject ?? "(no subject)"}</strong>
+                      <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
+                      <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
+                      {ticket.category ? (
+                        <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>
+                      ) : null}
+                      {ticket.tags && ticket.tags.length ? (
+                        <div style={{ fontSize: 12 }}>Tags: {ticket.tags.join(", ")}</div>
+                      ) : null}
+                    </button>
+                  </div>
+                );
+              })
             )}
           </aside>
 
@@ -1361,6 +1508,39 @@ export default function TicketsClient() {
                     <p style={{ fontSize: 12, color: "var(--muted)", marginTop: -6 }}>
                       Replies send through the connected WhatsApp Business number.
                     </p>
+                  ) : null}
+                  {macros.length ? (
+                    <div className="quick-replies">
+                      <div className="quick-replies-header">
+                        <strong>Quick replies</strong>
+                        <input
+                          type="text"
+                          placeholder="Search templates..."
+                          value={macroQuery}
+                          onChange={(event) => setMacroQuery(event.target.value)}
+                        />
+                      </div>
+                      <div className="quick-replies-list">
+                        {quickMacros.length ? (
+                          quickMacros.map((macro) => (
+                            <button
+                              key={macro.id}
+                              type="button"
+                              onClick={() =>
+                                setReplyText((prev) =>
+                                  prev ? `${prev}\n\n${macro.body}` : macro.body
+                                )
+                              }
+                              className="quick-reply-chip"
+                            >
+                              {macro.title}
+                            </button>
+                          ))
+                        ) : (
+                          <span className="quick-reply-empty">No templates found.</span>
+                        )}
+                      </div>
+                    </div>
                   ) : null}
                   {ticketChannel === "whatsapp" && whatsappWindow ? (
                     <div style={{ fontSize: 12, color: "var(--muted)" }}>
