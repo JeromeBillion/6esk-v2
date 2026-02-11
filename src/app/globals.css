@@ -570,6 +570,24 @@ button {
   color: var(--muted);
 }
 
+.wa-status-history {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.wa-preview {
+  margin: 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 18, 0.6);
+  color: var(--text);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

@@ -42,6 +42,20 @@ export async function GET(
   const attachments = await getAttachmentsForMessage(message.id);
   const textKey = message.r2_key_text;
   const htmlKey = message.r2_key_html;
+  let statusEvents: Array<{ status: string; occurred_at: string | null }> = [];
+  if (message.channel === "whatsapp") {
+    const eventsResult = await db.query(
+      `SELECT status, occurred_at
+       FROM whatsapp_status_events
+       WHERE message_id = $1 OR external_message_id = $2
+       ORDER BY occurred_at ASC`,
+      [message.id, message.external_message_id ?? null]
+    );
+    statusEvents = eventsResult.rows.map((row) => ({
+      status: row.status,
+      occurred_at: row.occurred_at ? new Date(row.occurred_at).toISOString() : null
+    }));
+  }
 
   let text: string | null = null;
   let html: string | null = null;
@@ -76,6 +90,7 @@ export async function GET(
       waContact: message.wa_contact ?? null,
       conversationId: message.conversation_id ?? null,
       provider: message.provider ?? null,
+      statusEvents,
       text,
       html,
       aiMeta: message.ai_meta ?? null

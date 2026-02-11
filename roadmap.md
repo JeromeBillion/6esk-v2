@@ -228,6 +228,7 @@ Status
 - WhatsApp bubble view added to Support ticket conversations.
 - WhatsApp template registry (admin) + Support template picker added.
 - WhatsApp template parameter validation + status timeline added.
+- WhatsApp payload preview + status history log + auto-refresh polling added.
 
 **WhatsApp Channel Plan**
 Goal

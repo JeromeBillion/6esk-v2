@@ -49,6 +49,7 @@ type MessageDetail = {
   waTimestamp?: string | null;
   waContact?: string | null;
   conversationId?: string | null;
+  statusEvents?: Array<{ status: string; occurred_at: string | null }>;
   text: string | null;
   html: string | null;
 };
@@ -342,6 +343,15 @@ export default function TicketsClient() {
     }
   }, [messages, activeTicketId]);
 
+  useEffect(() => {
+    if (!activeTicketId) return;
+    if (!messages.some((message) => message.channel === "whatsapp")) return;
+    const interval = setInterval(() => {
+      void loadTicketDetail(activeTicketId);
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [activeTicketId, messages]);
+
   async function updateTicket(ticketId: string, updates: Partial<Ticket> & { assigned_user_id?: string | null }) {
     const payload: Record<string, unknown> = {};
     if (updates.status) payload.status = updates.status;
@@ -494,6 +504,26 @@ export default function TicketsClient() {
   const selectedTemplate =
     whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
   const selectedTemplateParamCount = getTemplateParamCount(selectedTemplate);
+  const templateParamList = waTemplateParams
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const whatsappPreviewPayload =
+    ticketChannel === "whatsapp"
+      ? selectedTemplate
+        ? {
+            type: "template",
+            name: selectedTemplate.name,
+            language: selectedTemplate.language,
+            parameters: templateParamList
+          }
+        : replyText.trim()
+          ? {
+              type: "text",
+              body: replyText.trim()
+            }
+          : null
+      : null;
   const whatsappWindow = (() => {
     if (ticketChannel !== "whatsapp") {
       return null;
@@ -803,38 +833,65 @@ export default function TicketsClient() {
                         </div>
                         {messageDetail.channel === "whatsapp" ? (
                           <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                              Status: {messageDetail.waStatus ?? "—"} · Contact:{" "}
-                              {messageDetail.waContact ?? messageDetail.from}
-                            </div>
-                            {messageDetail.direction === "outbound" ? (
-                              <div className="wa-status-track">
-                                {WHATSAPP_STATUS_STEPS.map((step) => {
-                                  const status = (messageDetail.waStatus ?? "queued").toLowerCase();
-                                  const isFailed = status === "failed";
-                                  const isActive =
-                                    !isFailed &&
-                                    (WHATSAPP_STATUS_INDEX[status] ?? 0) >=
-                                      WHATSAPP_STATUS_INDEX[step];
-                                  return (
-                                    <span
-                                      key={step}
-                                      className={`wa-status-step${isActive ? " active" : ""}${
-                                        isFailed ? " failed" : ""
-                                      }`}
-                                    >
-                                      {step}
-                                    </span>
-                                  );
-                                })}
-                                <span className="wa-status-timestamp">
-                                  Updated:{" "}
-                                  {messageDetail.waTimestamp
-                                    ? new Date(messageDetail.waTimestamp).toLocaleString()
-                                    : "—"}
-                                </span>
-                              </div>
-                            ) : null}
+                            {(() => {
+                              const events = messageDetail.statusEvents ?? [];
+                              const latestStatus =
+                                events.length > 0
+                                  ? events[events.length - 1].status
+                                  : messageDetail.waStatus ?? "queued";
+                              const latestTimestamp =
+                                events.length > 0
+                                  ? events[events.length - 1].occurred_at
+                                  : messageDetail.waTimestamp ?? null;
+                              return (
+                                <>
+                                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                                    Status: {latestStatus ?? "—"} · Contact:{" "}
+                                    {messageDetail.waContact ?? messageDetail.from}
+                                  </div>
+                                  {messageDetail.direction === "outbound" ? (
+                                    <div className="wa-status-track">
+                                      {WHATSAPP_STATUS_STEPS.map((step) => {
+                                        const status = (latestStatus ?? "queued").toLowerCase();
+                                        const isFailed = status === "failed";
+                                        const isActive =
+                                          !isFailed &&
+                                          (WHATSAPP_STATUS_INDEX[status] ?? 0) >=
+                                            WHATSAPP_STATUS_INDEX[step];
+                                        return (
+                                          <span
+                                            key={step}
+                                            className={`wa-status-step${isActive ? " active" : ""}${
+                                              isFailed ? " failed" : ""
+                                            }`}
+                                          >
+                                            {step}
+                                          </span>
+                                        );
+                                      })}
+                                      <span className="wa-status-timestamp">
+                                        Updated:{" "}
+                                        {latestTimestamp
+                                          ? new Date(latestTimestamp).toLocaleString()
+                                          : "—"}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {events.length ? (
+                                    <div className="wa-status-history">
+                                      {events.map((event, index) => (
+                                        <div key={`${event.status}-${index}`}>
+                                          {event.status} ·{" "}
+                                          {event.occurred_at
+                                            ? new Date(event.occurred_at).toLocaleString()
+                                            : "—"}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </>
+                              );
+                            })()}
                           </div>
                         ) : null}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1289,6 +1346,14 @@ export default function TicketsClient() {
                           ) : null}
                         </label>
                       ) : null}
+                    </div>
+                  ) : null}
+                  {whatsappPreviewPayload ? (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <strong style={{ fontSize: 12 }}>WhatsApp Payload Preview</strong>
+                      <pre className="wa-preview">
+                        {JSON.stringify(whatsappPreviewPayload, null, 2)}
+                      </pre>
                     </div>
                   ) : null}
                   {replyError ? <p style={{ color: "var(--danger)" }}>{replyError}</p> : null}

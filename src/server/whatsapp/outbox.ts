@@ -64,7 +64,11 @@ async function lockPendingEvents(limit: number): Promise<WhatsAppEventRow[]> {
   }
 }
 
-async function markDelivered(eventId: string, messageRecordId?: string | null, providerMessageId?: string | null) {
+async function markDelivered(
+  eventId: string,
+  messageRecordId?: string | null,
+  providerMessageId?: string | null
+) {
   await db.query(
     `UPDATE whatsapp_events
      SET status = 'sent',
@@ -73,22 +77,35 @@ async function markDelivered(eventId: string, messageRecordId?: string | null, p
     [eventId]
   );
 
+  const sentAt = new Date();
+  await db.query(
+    `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      messageRecordId ?? null,
+      providerMessageId ?? null,
+      "sent",
+      sentAt,
+      { source: "outbox", status: "sent" }
+    ]
+  );
+
   if (messageRecordId && providerMessageId) {
     await db.query(
       `UPDATE messages
        SET external_message_id = $1,
            wa_status = 'sent',
-           wa_timestamp = now()
-       WHERE id = $2`,
-      [providerMessageId, messageRecordId]
+           wa_timestamp = $2
+       WHERE id = $3`,
+      [providerMessageId, sentAt, messageRecordId]
     );
   } else if (messageRecordId) {
     await db.query(
       `UPDATE messages
        SET wa_status = 'sent',
-           wa_timestamp = now()
+           wa_timestamp = $2
        WHERE id = $1`,
-      [messageRecordId]
+      [messageRecordId, sentAt]
     );
   }
 }
@@ -108,6 +125,11 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
   );
 
   if (messageRecordId) {
+    await db.query(
+      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [messageRecordId, null, "failed", new Date(), { source: "outbox", status: "failed" }]
+    );
     await db.query(
       `UPDATE messages
        SET wa_status = 'failed',

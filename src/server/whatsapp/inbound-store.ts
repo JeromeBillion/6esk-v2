@@ -175,6 +175,18 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     ]
   );
 
+  await db.query(
+    `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      messageId,
+      message.messageId ?? null,
+      "received",
+      receivedAt,
+      { source: "inbound", status: "received" }
+    ]
+  );
+
   let textKey: string | null = null;
   let sizeBytes = 0;
 

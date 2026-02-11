@@ -116,6 +116,12 @@ export async function queueWhatsAppSend({
         data: origin === "ai" ? { ai: true } : null
       });
 
+      await db.query(
+        `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [messageId, null, "queued", sentAt, { source: "outbox", status: "queued" }]
+      );
+
       if (ticket.status === "new" || ticket.status === "pending") {
         await db.query("UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1", [
           ticketId

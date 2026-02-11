@@ -175,6 +175,25 @@ async function applyStatusUpdates(
   for (const status of statuses) {
     if (!status.messageId) continue;
     const timestamp = parseStatusTimestamp(status.timestamp ?? null);
+    const messageResult = await db.query<{ id: string }>(
+      `SELECT id
+       FROM messages
+       WHERE channel = 'whatsapp' AND external_message_id = $1
+       LIMIT 1`,
+      [status.messageId]
+    );
+    const messageId = messageResult.rows[0]?.id ?? null;
+    await db.query(
+      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        messageId,
+        status.messageId,
+        status.status ?? "unknown",
+        timestamp ?? new Date(),
+        { source: "webhook", status: status.status ?? null }
+      ]
+    );
     await db.query(
       `UPDATE messages
        SET wa_status = $1,
