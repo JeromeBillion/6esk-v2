@@ -49,10 +49,6 @@ export async function sendTicketReply({
     ticket.requester_email?.startsWith("whatsapp:") ||
     (ticket.metadata && (ticket.metadata as Record<string, unknown>).channel === "whatsapp");
 
-  if (!text && !html) {
-    throw new Error("Reply body required");
-  }
-
   if (isWhatsAppTicket) {
     const contact = ticket.requester_email?.replace(/^whatsapp:/, "") ?? "";
     const body =
@@ -61,12 +57,12 @@ export async function sendTicketReply({
         ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
         : "");
     const cleanBody = body.trim() ? body : null;
+    if (!cleanBody && !template) {
+      throw new Error("Reply body required");
+    }
     const windowStatus = await getWhatsAppWindowStatus(ticketId);
     if (!windowStatus.isOpen && !template) {
       throw new Error("WhatsApp 24h window closed. Template required.");
-    }
-    if (!cleanBody && !template) {
-      throw new Error("Reply body required");
     }
 
     const result = await queueWhatsAppSend({
@@ -79,6 +75,10 @@ export async function sendTicketReply({
       aiMeta: aiMeta ?? null
     });
     return { messageId: result.messageId ?? null };
+  }
+
+  if (!text && !html) {
+    throw new Error("Reply body required");
   }
 
   const from = getSupportAddress();

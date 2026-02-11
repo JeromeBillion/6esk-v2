@@ -8,6 +8,7 @@ export type AgentDraft = {
   body_text: string | null;
   body_html: string | null;
   confidence: number | null;
+  metadata: Record<string, unknown> | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -24,7 +25,7 @@ export async function getDraftById({
 }) {
   const result = await db.query<AgentDraft>(
     `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
-            status, created_at, updated_at
+            metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE id = $1 AND ticket_id = $2
      LIMIT 1`,
@@ -36,7 +37,7 @@ export async function getDraftById({
 export async function listDraftsForTicket(ticketId: string) {
   const result = await db.query<AgentDraft>(
     `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
-            status, created_at, updated_at
+            metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE ticket_id = $1
        AND status = 'pending'
@@ -52,7 +53,8 @@ export async function createDraft({
   subject,
   bodyText,
   bodyHtml,
-  confidence
+  confidence,
+  metadata
 }: {
   integrationId: string;
   ticketId: string;
@@ -60,19 +62,21 @@ export async function createDraft({
   bodyText?: string | null;
   bodyHtml?: string | null;
   confidence?: number | null;
+  metadata?: Record<string, unknown> | null;
 }) {
   const result = await db.query<AgentDraft>(
-    `INSERT INTO agent_drafts (integration_id, ticket_id, subject, body_text, body_html, confidence)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO agent_drafts (integration_id, ticket_id, subject, body_text, body_html, confidence, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
-               confidence, status, created_at, updated_at`,
+               confidence, metadata, status, created_at, updated_at`,
     [
       integrationId,
       ticketId,
       subject ?? null,
       bodyText ?? null,
       bodyHtml ?? null,
-      confidence ?? null
+      confidence ?? null,
+      metadata ?? null
     ]
   );
   return result.rows[0];
@@ -92,7 +96,7 @@ export async function updateDraftStatus({
      SET status = $1, updated_at = now()
      WHERE id = $2 AND ticket_id = $3 AND status = 'pending'
      RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
-               confidence, status, created_at, updated_at`,
+               confidence, metadata, status, created_at, updated_at`,
     [status, draftId, ticketId]
   );
   return result.rows[0] ?? null;
@@ -119,7 +123,7 @@ export async function updateDraftContent({
          updated_at = now()
      WHERE id = $4 AND ticket_id = $5 AND status = 'pending'
      RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
-               confidence, status, created_at, updated_at`,
+               confidence, metadata, status, created_at, updated_at`,
     [subject, bodyText, bodyHtml, draftId, ticketId]
   );
   return result.rows[0] ?? null;

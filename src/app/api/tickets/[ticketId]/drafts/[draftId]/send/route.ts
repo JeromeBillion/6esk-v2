@@ -38,8 +38,18 @@ export async function POST(
   }
 
   if (!draft.body_text && !draft.body_html) {
-    return Response.json({ error: "Draft body required" }, { status: 400 });
+    const template = draft.metadata && typeof draft.metadata === "object"
+      ? (draft.metadata as Record<string, unknown>).template
+      : null;
+    if (!template) {
+      return Response.json({ error: "Draft body required" }, { status: 400 });
+    }
   }
+
+  const template =
+    draft.metadata && typeof draft.metadata === "object"
+      ? (draft.metadata as Record<string, unknown>).template ?? null
+      : null;
 
   try {
     const result = await sendTicketReply({
@@ -47,6 +57,7 @@ export async function POST(
       text: draft.body_text,
       html: draft.body_html,
       subject: draft.subject,
+      template: template && typeof template === "object" ? (template as Record<string, unknown>) : null,
       actorUserId: user.id,
       origin: "ai",
       aiMeta: {

@@ -232,6 +232,8 @@ Status
 - WhatsApp bubble status iconography (queued/sent/delivered/read/failed) added.
 - WhatsApp template parameter preview chips added in Support reply panel.
 - WhatsApp resend flow added for failed outbound messages (API + UI action).
+- AI actions now accept WhatsApp templates; template-only replies supported for WhatsApp.
+- AI drafts can carry WhatsApp template metadata and send with template on approval.
 
 **WhatsApp Channel Plan**
 Goal

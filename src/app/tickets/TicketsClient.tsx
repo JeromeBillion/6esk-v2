@@ -60,6 +60,7 @@ type Draft = {
   body_text: string | null;
   body_html: string | null;
   confidence: number | null;
+  metadata?: Record<string, unknown> | null;
   status?: string;
   created_at: string;
 };
@@ -181,6 +182,34 @@ export default function TicketsClient() {
       return draft.body_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     }
     return "";
+  }
+
+  function getDraftTemplate(draft: Draft) {
+    if (!draft.metadata || typeof draft.metadata !== "object") return null;
+    const template = (draft.metadata as Record<string, unknown>).template;
+    if (!template || typeof template !== "object") return null;
+    return template as Record<string, unknown>;
+  }
+
+  function getDraftTemplateSummary(draft: Draft) {
+    const template = getDraftTemplate(draft);
+    if (!template) return null;
+    const name = typeof template.name === "string" ? template.name : "template";
+    const language = typeof template.language === "string" ? template.language : null;
+    const components = Array.isArray(template.components) ? template.components : [];
+    let paramCount = 0;
+    for (const component of components) {
+      if (!component || typeof component !== "object") continue;
+      const params = (component as Record<string, unknown>).parameters;
+      if (Array.isArray(params)) {
+        paramCount += params.length;
+      }
+    }
+    return {
+      name,
+      language,
+      paramCount
+    };
   }
 
   async function loadUser() {
@@ -1128,6 +1157,7 @@ export default function TicketsClient() {
                       {drafts.map((draft) => {
                         const isEditing = editingDraftId === draft.id;
                         const draftText = draftEdits[draft.id] ?? getDraftPlainText(draft);
+                        const draftTemplateSummary = getDraftTemplateSummary(draft);
 
                         return (
                           <div
@@ -1146,6 +1176,17 @@ export default function TicketsClient() {
                                 ? ` · ${(draft.confidence * 100).toFixed(0)}% confidence`
                                 : ""}
                             </div>
+                            {draftTemplateSummary ? (
+                              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+                                Template: {draftTemplateSummary.name}
+                                {draftTemplateSummary.language
+                                  ? ` (${draftTemplateSummary.language})`
+                                  : ""}
+                                {draftTemplateSummary.paramCount
+                                  ? ` · ${draftTemplateSummary.paramCount} params`
+                                  : ""}
+                              </div>
+                            ) : null}
                             {isEditing ? (
                               <textarea
                                 rows={6}
@@ -1186,7 +1227,8 @@ export default function TicketsClient() {
                                   margin: 0
                                 }}
                               >
-                                {draft.body_text ?? "No draft body provided."}
+                                {draft.body_text ??
+                                  (draftTemplateSummary ? "Template-only draft." : "No draft body provided.")}
                               </pre>
                             )}
                             <div

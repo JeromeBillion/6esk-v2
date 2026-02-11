@@ -21,6 +21,14 @@ const actionSchema = z.object({
   subject: z.string().optional().nullable(),
   text: z.string().optional().nullable(),
   html: z.string().optional().nullable(),
+  template: z
+    .object({
+      name: z.string(),
+      language: z.string(),
+      components: z.array(z.record(z.unknown())).optional()
+    })
+    .optional()
+    .nullable(),
   tags: z.array(z.string()).optional().nullable(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional().nullable(),
   assignedUserId: z.string().uuid().nullable().optional(),
@@ -75,17 +83,21 @@ export async function POST(request: Request) {
 
     switch (action.type) {
       case "draft_reply": {
-        if (!action.text && !action.html) {
+        if (!action.text && !action.html && !action.template) {
           results.push({ type: action.type, status: "failed", detail: "Missing draft body" });
           break;
         }
+        const draftMetadata = action.template
+          ? { ...(action.metadata ?? {}), template: action.template }
+          : (action.metadata ?? null);
         await createDraft({
           integrationId: integration.id,
           ticketId: action.ticketId,
           subject: action.subject ?? null,
           bodyText: action.text ?? null,
           bodyHtml: action.html ?? null,
-          confidence: action.confidence ?? null
+          confidence: action.confidence ?? null,
+          metadata: draftMetadata
         });
         await recordTicketEvent({
           ticketId: action.ticketId,
@@ -117,6 +129,7 @@ export async function POST(request: Request) {
             subject: action.subject ?? null,
             text: action.text ?? null,
             html: action.html ?? null,
+            template: action.template ?? null,
             origin: "ai",
             aiMeta: {
               agentId: integration.id,
