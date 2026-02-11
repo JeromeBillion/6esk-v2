@@ -48,7 +48,7 @@ These are the “performance reports” referenced in the PRD.
 
 **Roadmap Phases**
 
-**Progress Update (2026-02-09)**
+**Progress Update (2026-02-11)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
 - Phase 1 dev-ready, awaiting DNS verification.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
@@ -73,7 +73,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 - Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
 
-**Roadmap Status (as of 2026-02-09)**
+**Roadmap Status (as of 2026-02-11)**
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | Complete |
