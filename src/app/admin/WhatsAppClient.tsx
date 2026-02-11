@@ -10,6 +10,8 @@ type WhatsAppAccount = {
   accessToken: string;
   verifyToken: string;
   status: "active" | "paused" | "inactive";
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 type WhatsAppTemplate = {
@@ -51,6 +53,8 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
   });
   const [templateEditingId, setTemplateEditingId] = useState<string | null>(null);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [showAccessToken, setShowAccessToken] = useState(false);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -81,12 +85,31 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
     void loadTemplates();
   }, []);
 
+  useEffect(() => {
+    if (!copyMessage) return;
+    const timer = setTimeout(() => setCopyMessage(null), 2500);
+    return () => clearTimeout(timer);
+  }, [copyMessage]);
+
   function generateVerifyToken() {
     const token =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID().replace(/-/g, "")
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setForm((prev) => ({ ...prev, verifyToken: token }));
+  }
+
+  async function copyToClipboard(value: string, label: string) {
+    if (!value) {
+      setCopyMessage(`No ${label} available`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyMessage(`${label} copied`);
+    } catch (error) {
+      setCopyMessage(`Failed to copy ${label}`);
+    }
   }
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
@@ -158,6 +181,19 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
     setTemplateError(null);
   }
 
+  function formatComponentsJson() {
+    if (!templateForm.componentsJson.trim()) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(templateForm.componentsJson);
+      setTemplateForm((prev) => ({ ...prev, componentsJson: JSON.stringify(parsed, null, 2) }));
+      setTemplateError(null);
+    } catch (error) {
+      setTemplateError("Components JSON is invalid.");
+    }
+  }
+
   async function handleTemplateSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setTemplateError(null);
@@ -227,6 +263,35 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
 
   const webhookUrl =
     typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/inbound` : "";
+  const statusTone =
+    form.status === "active"
+      ? "#7ff5a2"
+      : form.status === "paused"
+        ? "var(--muted)"
+        : "var(--danger)";
+  const statusLabel =
+    form.status === "active" ? "Active" : form.status === "paused" ? "Paused" : "Inactive";
+  const statusWarnings: string[] = [];
+  if (form.status === "active" && !form.accessToken.trim()) {
+    statusWarnings.push("Access token is required for Active status.");
+  }
+  if (form.provider === "meta" && !form.verifyToken.trim()) {
+    statusWarnings.push("Verify token is empty. Meta webhook verification will fail.");
+  }
+  const lastUpdated = account?.updatedAt ? new Date(account.updatedAt).toLocaleString() : null;
+
+  function getTemplateParamCount(template: WhatsAppTemplate) {
+    if (!template.components) return 0;
+    let count = 0;
+    for (const component of template.components) {
+      if (!component || typeof component !== "object") continue;
+      const params = (component as Record<string, unknown>).parameters;
+      if (Array.isArray(params)) {
+        count += params.length;
+      }
+    }
+    return count;
+  }
 
   return (
     <section style={{ marginTop: compact ? 0 : 40 }}>
@@ -234,6 +299,32 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
       <p style={{ marginBottom: 12 }}>
         Connect your WhatsApp Business account. Webhook verification must be configured in Meta.
       </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <span
+          style={{
+            padding: "4px 10px",
+            borderRadius: 999,
+            border: "1px solid var(--border)",
+            background: "rgba(10, 12, 18, 0.6)",
+            color: statusTone,
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em"
+          }}
+        >
+          {statusLabel}
+        </span>
+        {lastUpdated ? (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Updated {lastUpdated}</span>
+        ) : null}
+      </div>
+      {statusWarnings.length ? (
+        <div style={{ display: "grid", gap: 6, marginBottom: 16, fontSize: 12, color: "var(--danger)" }}>
+          {statusWarnings.map((warning) => (
+            <span key={warning}>{warning}</span>
+          ))}
+        </div>
+      ) : null}
       <form onSubmit={handleSave} style={{ display: "grid", gap: 12 }}>
         <label>
           Provider
@@ -272,13 +363,29 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
         </label>
         <label>
           Access token
-          <input
-            type="password"
-            value={form.accessToken}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, accessToken: event.target.value }))
-            }
-          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type={showAccessToken ? "text" : "password"}
+              value={form.accessToken}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, accessToken: event.target.value }))
+              }
+            />
+            <button
+              type="button"
+              onClick={() => setShowAccessToken((prev) => !prev)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                cursor: "pointer"
+              }}
+            >
+              {showAccessToken ? "Hide" : "Show"}
+            </button>
+          </div>
         </label>
         <label>
           Verify token
@@ -304,6 +411,20 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
             >
               Generate
             </button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(form.verifyToken, "Verify token")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                cursor: "pointer"
+              }}
+            >
+              Copy
+            </button>
           </div>
         </label>
         <label>
@@ -328,12 +449,30 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
           </p>
         ) : null}
         {webhookUrl ? (
-          <p style={{ fontSize: 12, color: "var(--muted)" }}>
-            Webhook URL: <span style={{ color: "var(--text)" }}>{webhookUrl}</span>
-          </p>
+          <label>
+            Webhook URL
+            <div style={{ display: "flex", gap: 8 }}>
+              <input type="text" value={webhookUrl} readOnly />
+              <button
+                type="button"
+                onClick={() => copyToClipboard(webhookUrl, "Webhook URL")}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  cursor: "pointer"
+                }}
+              >
+                Copy
+              </button>
+            </div>
+          </label>
         ) : null}
         {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
         {saved ? <p style={{ color: "var(--accent)" }}>Saved.</p> : null}
+        {copyMessage ? <p style={{ color: "var(--muted)" }}>{copyMessage}</p> : null}
         <button
           type="submit"
           disabled={loading}
@@ -421,6 +560,22 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
           </label>
           <label>
             Components JSON (optional)
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <button
+                type="button"
+                onClick={formatComponentsJson}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer"
+                }}
+              >
+                Format JSON
+              </button>
+            </div>
             <textarea
               rows={4}
               value={templateForm.componentsJson}
@@ -484,6 +639,7 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>
                   {template.category ? `Category: ${template.category} · ` : ""}
                   Status: {template.status}
+                  {template.components ? ` · Params: ${getTemplateParamCount(template)}` : ""}
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   <button

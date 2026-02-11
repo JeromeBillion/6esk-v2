@@ -60,6 +60,7 @@ These are the “performance reports” referenced in the PRD.
 - Admin panel reorganized into section list with single-panel focus.
 - Mail enhancements: folder sidebar, compose actions, search/filters, pin/star flags, attachments.
 - Mail compose now supports HTML mode with preview and text fallback.
+- Admin WhatsApp settings UX improved (status warnings, copy helpers, template param counts).
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Admin polish: section counts, user search, role badges.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
