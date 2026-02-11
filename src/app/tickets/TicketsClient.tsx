@@ -146,6 +146,8 @@ export default function TicketsClient() {
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>("");
   const [bulkPriority, setBulkPriority] = useState<string>("");
+  const [bulkAddTags, setBulkAddTags] = useState("");
+  const [bulkRemoveTags, setBulkRemoveTags] = useState("");
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [macroQuery, setMacroQuery] = useState("");
@@ -433,6 +435,46 @@ export default function TicketsClient() {
     setBulkStatus("");
     setBulkPriority("");
     setSelectedTicketIds([]);
+  }
+
+  function parseBulkTags(value: string) {
+    return value
+      .split(",")
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  async function applyBulkTags(action: "add" | "remove") {
+    if (selectedTicketIds.length === 0) return;
+    const tags = parseBulkTags(action === "add" ? bulkAddTags : bulkRemoveTags);
+    if (tags.length === 0) {
+      setBulkError("Provide at least one tag.");
+      return;
+    }
+    setBulkUpdating(true);
+    setBulkError(null);
+    let failed = 0;
+    for (const ticketId of selectedTicketIds) {
+      const res = await fetch(`/api/tickets/${ticketId}/tags`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          action === "add" ? { addTags: tags } : { removeTags: tags }
+        )
+      });
+      if (!res.ok) {
+        failed += 1;
+      }
+    }
+    setBulkUpdating(false);
+    if (failed > 0) {
+      setBulkError(`Failed to update ${failed} ticket(s).`);
+      return;
+    }
+    setBulkAddTags("");
+    setBulkRemoveTags("");
+    setSelectedTicketIds([]);
+    await loadTickets();
   }
 
   async function sendReply(ticketId: string) {
@@ -801,6 +843,58 @@ export default function TicketsClient() {
                     onClick={() => applyBulkUpdates({ priority: bulkPriority })}
                   >
                     Apply
+                  </button>
+                </div>
+                <div className="tickets-bulk-row">
+                  <label>
+                    Add tags
+                    <input
+                      type="text"
+                      placeholder="billing, urgent"
+                      value={bulkAddTags}
+                      onChange={(event) => setBulkAddTags(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!bulkAddTags.trim() || bulkUpdating}
+                    onClick={() => applyBulkTags("add")}
+                  >
+                    Apply
+                  </button>
+                </div>
+                <div className="tickets-bulk-row">
+                  <label>
+                    Remove tags
+                    <input
+                      type="text"
+                      placeholder="general"
+                      value={bulkRemoveTags}
+                      onChange={(event) => setBulkRemoveTags(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!bulkRemoveTags.trim() || bulkUpdating}
+                    onClick={() => applyBulkTags("remove")}
+                  >
+                    Apply
+                  </button>
+                </div>
+                <div className="tickets-bulk-quick">
+                  <button
+                    type="button"
+                    disabled={bulkUpdating}
+                    onClick={() => applyBulkUpdates({ status: "closed" })}
+                  >
+                    Close selected
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulkUpdating}
+                    onClick={() => applyBulkUpdates({ status: "pending" })}
+                  >
+                    Snooze (pending)
                   </button>
                 </div>
                 {user?.role_name === "lead_admin" ? (

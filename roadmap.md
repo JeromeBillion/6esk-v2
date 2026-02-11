@@ -63,6 +63,7 @@ These are the “performance reports” referenced in the PRD.
 - Admin WhatsApp settings UX improved (status warnings, copy helpers, template param counts).
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
+- Tickets bulk tags (add/remove) and quick close/snooze actions added.
 - Admin polish: section counts, user search, role badges.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
 - Sidebar renamed from “Platform” to “Support.”

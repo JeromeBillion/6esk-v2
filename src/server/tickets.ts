@@ -130,6 +130,24 @@ export async function addTagsToTicket(ticketId: string, tagNames: string[]) {
   }
 }
 
+export async function removeTagsFromTicket(ticketId: string, tagNames: string[]) {
+  const clean = Array.from(
+    new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean))
+  );
+  if (clean.length === 0) {
+    return;
+  }
+
+  await db.query(
+    `DELETE FROM ticket_tags
+     WHERE ticket_id = $1
+       AND tag_id IN (
+         SELECT id FROM tags WHERE name = ANY($2)
+       )`,
+    [ticketId, clean]
+  );
+}
+
 export function inferTagsFromText({
   subject,
   text
