@@ -1871,30 +1871,36 @@ export default function TicketsClient() {
                                 </div>
                                 {waAttachments.length ? (
                                   <div className="whatsapp-attachments">
-                                    {waAttachments.map((attachment) => {
-                                      const isImage = attachment.content_type?.startsWith("image/");
-                                      const url = `/api/attachments/${attachment.id}`;
-                                      return (
-                                        <div key={attachment.id} className="whatsapp-attachment">
-                                          {isImage ? (
-                                            <Image
-                                              src={url}
-                                              alt={attachment.filename}
-                                              width={240}
-                                              height={160}
-                                              unoptimized
-                                              style={{ display: "block", width: "100%", height: "auto" }}
-                                            />
-                                          ) : (
-                                            <a href={url} target="_blank" rel="noreferrer">
-                                              {attachment.filename}
-                                            </a>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : null}
+                                  {waAttachments.map((attachment) => {
+                                    const isImage = attachment.content_type?.startsWith("image/");
+                                    const isVideo = attachment.content_type?.startsWith("video/");
+                                    const isAudio = attachment.content_type?.startsWith("audio/");
+                                    const url = `/api/attachments/${attachment.id}`;
+                                    return (
+                                      <div key={attachment.id} className="whatsapp-attachment">
+                                        {isImage ? (
+                                          <Image
+                                            src={url}
+                                            alt={attachment.filename}
+                                            width={240}
+                                            height={160}
+                                            unoptimized
+                                            style={{ display: "block", width: "100%", height: "auto" }}
+                                          />
+                                        ) : isVideo ? (
+                                          <video controls preload="metadata" src={url} />
+                                        ) : isAudio ? (
+                                          <audio controls preload="metadata" src={url} />
+                                        ) : (
+                                          <a href={url} target="_blank" rel="noreferrer">
+                                            {attachment.filename}
+                                          </a>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
                                 <div className="whatsapp-meta">
                                   <span>{formatMessageTimestamp(message)}</span>
                                   {isOutbound ? (
@@ -2107,6 +2113,8 @@ export default function TicketsClient() {
                             <strong>Attachments</strong>
                             {attachments.map((attachment) => {
                               const isImage = attachment.content_type?.startsWith("image/");
+                              const isVideo = attachment.content_type?.startsWith("video/");
+                              const isAudio = attachment.content_type?.startsWith("audio/");
                               const isPdf = attachment.content_type === "application/pdf";
                               const url = `/api/attachments/${attachment.id}`;
                               return (
@@ -2138,6 +2146,26 @@ export default function TicketsClient() {
                                         }}
                                       />
                                     </div>
+                                  ) : null}
+                                  {isVideo ? (
+                                    <video
+                                      controls
+                                      preload="metadata"
+                                      src={url}
+                                      style={{
+                                        width: "100%",
+                                        marginTop: 8,
+                                        borderRadius: 8
+                                      }}
+                                    />
+                                  ) : null}
+                                  {isAudio ? (
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      src={url}
+                                      style={{ width: "100%", marginTop: 8 }}
+                                    />
                                   ) : null}
                                   {isPdf ? (
                                     <iframe

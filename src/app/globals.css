@@ -837,6 +837,14 @@ button {
   border-radius: 8px;
 }
 
+.whatsapp-attachment video,
+.whatsapp-attachment audio {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  border-radius: 8px;
+}
+
 .whatsapp-attachment a {
   color: var(--accent);
   font-size: 12px;
