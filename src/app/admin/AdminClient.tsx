@@ -57,6 +57,28 @@ type InboundFailure = {
   created_at: string;
 };
 
+type InboundMetricsPoint = {
+  hour: string;
+  failed: number;
+  processed: number;
+  processing: number;
+  attempts: number;
+};
+
+type InboundMetrics = {
+  generatedAt: string;
+  windowHours: number;
+  summary: {
+    failedQueue: number;
+    dueRetryNow: number;
+    processingNow: number;
+    processedWindow: number;
+    failedWindow: number;
+    attemptsWindow: number;
+  };
+  series: InboundMetricsPoint[];
+};
+
 type SecurityStatus = {
   adminAllowlist: string[];
   agentAllowlist: string[];
@@ -116,21 +138,25 @@ export default function AdminClient() {
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
   const [spamMessages, setSpamMessages] = useState<SpamMessage[]>([]);
   const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
+  const [inboundMetrics, setInboundMetrics] = useState<InboundMetrics | null>(null);
+  const [inboundMetricsError, setInboundMetricsError] = useState<string | null>(null);
   const [retryingInbound, setRetryingInbound] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
 
   async function loadData() {
-    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes, securityRes] = await Promise.all([
-      fetch("/api/admin/roles"),
-      fetch("/api/admin/users"),
-      fetch("/api/admin/sla"),
-      fetch("/api/admin/audit-logs?limit=50"),
-      fetch("/api/admin/spam-messages?limit=50"),
-      fetch("/api/admin/inbound/failed?limit=50"),
-      fetch("/api/admin/security")
-    ]);
+    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes, securityRes, inboundMetricsRes] =
+      await Promise.all([
+        fetch("/api/admin/roles"),
+        fetch("/api/admin/users"),
+        fetch("/api/admin/sla"),
+        fetch("/api/admin/audit-logs?limit=50"),
+        fetch("/api/admin/spam-messages?limit=50"),
+        fetch("/api/admin/inbound/failed?limit=50"),
+        fetch("/api/admin/security"),
+        fetch("/api/admin/inbound/metrics?hours=24")
+      ]);
 
     if (rolesRes.ok) {
       const payload = await rolesRes.json();
@@ -174,6 +200,15 @@ export default function AdminClient() {
       setSecurityError(null);
     } else {
       setSecurityError("Failed to load security status.");
+    }
+
+    if (inboundMetricsRes.ok) {
+      const payload = await inboundMetricsRes.json();
+      setInboundMetrics(payload);
+      setInboundMetricsError(null);
+    } else {
+      setInboundMetrics(null);
+      setInboundMetricsError("Failed to load inbound trend metrics.");
     }
   }
 
@@ -280,6 +315,13 @@ export default function AdminClient() {
         return null;
     }
   }
+
+  const inboundSeries = inboundMetrics?.series ?? [];
+  const inboundWindowHours = inboundMetrics?.windowHours ?? 24;
+  const maxInboundBarValue = Math.max(
+    1,
+    ...inboundSeries.map((point) => point.failed + point.processed + point.processing)
+  );
 
   return (
     <AppShell title="Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
@@ -719,6 +761,145 @@ export default function AdminClient() {
               >
                 {checkingAlerts ? "Checking..." : "Send alert check"}
               </button>
+              {inboundMetricsError ? (
+                <p style={{ color: "var(--danger)", marginTop: 10 }}>{inboundMetricsError}</p>
+              ) : null}
+              {inboundMetrics ? (
+                <div style={{ display: "grid", gap: 12, marginTop: 12, marginBottom: 14 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 10,
+                      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))"
+                    }}
+                  >
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Failed Queue</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.failedQueue}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Due Retry Now</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.dueRetryNow}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Processed ({inboundWindowHours}h)</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.processedWindow}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Attempts ({inboundWindowHours}h)</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.attemptsWindow}</strong>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <strong>Inbound Trend ({inboundWindowHours}h)</strong>
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Updated {new Date(inboundMetrics.generatedAt).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    {inboundSeries.length === 0 ? (
+                      <p style={{ margin: 0, color: "var(--muted)" }}>No inbound activity in this window.</p>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: `repeat(${inboundSeries.length}, minmax(0, 1fr))`,
+                            gap: 4,
+                            alignItems: "end",
+                            height: 124
+                          }}
+                        >
+                          {inboundSeries.map((point) => {
+                            const failedHeight = (point.failed / maxInboundBarValue) * 100;
+                            const processedHeight = (point.processed / maxInboundBarValue) * 100;
+                            const processingHeight = (point.processing / maxInboundBarValue) * 100;
+                            return (
+                              <div
+                                key={point.hour}
+                                title={`${new Date(point.hour).toLocaleString()} | failed: ${point.failed}, processed: ${point.processed}, processing: ${point.processing}`}
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  justifyContent: "flex-end",
+                                  gap: 2,
+                                  height: "100%"
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    height: `${Math.max(0, failedHeight)}%`,
+                                    minHeight: point.failed ? 3 : 0,
+                                    borderRadius: 4,
+                                    background: "rgba(255, 112, 112, 0.9)"
+                                  }}
+                                />
+                                <div
+                                  style={{
+                                    height: `${Math.max(0, processingHeight)}%`,
+                                    minHeight: point.processing ? 3 : 0,
+                                    borderRadius: 4,
+                                    background: "rgba(255, 190, 99, 0.9)"
+                                  }}
+                                />
+                                <div
+                                  style={{
+                                    height: `${Math.max(0, processedHeight)}%`,
+                                    minHeight: point.processed ? 3 : 0,
+                                    borderRadius: 4,
+                                    background: "rgba(104, 220, 160, 0.9)"
+                                  }}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+                          <span>Red: Failed</span>
+                          <span>Amber: Processing</span>
+                          <span>Green: Processed</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : null}
               {inboundFailures.length === 0 ? (
                 <p>No failed inbound events.</p>
               ) : (

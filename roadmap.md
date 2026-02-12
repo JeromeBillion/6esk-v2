@@ -221,6 +221,7 @@ Status
 - Admin spam review + inbound failure monitoring added.
 - Inbound failure alerting (webhook + cron script) added.
 - Inbound maintenance job runner added (`npm run jobs:inbound`) with cron and loop modes.
+- Admin inbound metrics API + trend panel added (queue health + 24h processing/failure view).
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
 - Viewer role restricted from ticket mutations + outbound send; SLA/tag changes now audited.
