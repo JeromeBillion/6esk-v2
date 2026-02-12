@@ -66,6 +66,24 @@ type Draft = {
   created_at: string;
 };
 
+type DraftQueueItem = {
+  id: string;
+  ticket_id: string;
+  subject: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  confidence: number | null;
+  metadata?: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  ticket_subject: string | null;
+  requester_email: string;
+  ticket_status: string;
+  ticket_priority: string;
+  assigned_user_id: string | null;
+  has_whatsapp: boolean;
+};
+
 type Attachment = {
   id: string;
   filename: string;
@@ -129,6 +147,15 @@ export default function TicketsClient() {
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [draftQueue, setDraftQueue] = useState<DraftQueueItem[]>([]);
+  const [draftQueueQuery, setDraftQueueQuery] = useState("");
+  const [draftQueueChannel, setDraftQueueChannel] = useState<string>("all");
+  const [draftQueueAssigned, setDraftQueueAssigned] = useState<string>("all");
+  const [draftQueueSelectedIds, setDraftQueueSelectedIds] = useState<string[]>([]);
+  const [draftQueueLoading, setDraftQueueLoading] = useState(false);
+  const [draftQueueError, setDraftQueueError] = useState<string | null>(null);
+  const [draftQueueActionId, setDraftQueueActionId] = useState<string | null>(null);
+  const [draftQueueBulkAction, setDraftQueueBulkAction] = useState<string | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
@@ -280,6 +307,27 @@ export default function TicketsClient() {
     setMacros(payload.macros ?? []);
   }
 
+  async function loadDraftQueue() {
+    if (!user) {
+      return;
+    }
+    const params = new URLSearchParams();
+    if (draftQueueQuery.trim()) params.set("q", draftQueueQuery.trim());
+    if (draftQueueChannel !== "all") params.set("channel", draftQueueChannel);
+    if (draftQueueAssigned !== "all") params.set("assigned", draftQueueAssigned);
+    setDraftQueueLoading(true);
+    setDraftQueueError(null);
+    const res = await fetch(`/api/ai-drafts?${params.toString()}`);
+    if (!res.ok) {
+      setDraftQueueError("Failed to load AI drafts.");
+      setDraftQueueLoading(false);
+      return;
+    }
+    const payload = await res.json();
+    setDraftQueue(payload.drafts ?? []);
+    setDraftQueueLoading(false);
+  }
+
   async function loadWhatsAppTemplates() {
     const res = await fetch("/api/whatsapp/templates");
     if (!res.ok) {
@@ -337,6 +385,18 @@ export default function TicketsClient() {
     void loadTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterStatus, filterPriority, filterTag, filterChannel, filterQuery, assignedFilter]);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadDraftQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, draftQueueQuery, draftQueueChannel, draftQueueAssigned]);
+
+  useEffect(() => {
+    if (draftQueueSelectedIds.length === 0) return;
+    const validIds = new Set(draftQueue.map((draft) => draft.id));
+    setDraftQueueSelectedIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [draftQueue, draftQueueSelectedIds.length]);
 
   useEffect(() => {
     if (selectedTicketIds.length === 0) return;
@@ -619,6 +679,7 @@ export default function TicketsClient() {
       setWaTemplateParams("");
       setSelectedTemplateId("");
       await loadTicketDetail(ticketId);
+      await loadDraftQueue();
     } else {
       const payload = await res.json().catch(() => ({}));
       setReplyError(payload.error ?? "Failed to send reply");
@@ -683,6 +744,7 @@ export default function TicketsClient() {
     if (res.ok) {
       setEditingDraftId(null);
       await loadTicketDetail(ticketId);
+      await loadDraftQueue();
     }
     setSendingDraftId(null);
   }
@@ -695,7 +757,79 @@ export default function TicketsClient() {
     });
     if (res.ok) {
       await loadTicketDetail(ticketId);
+      await loadDraftQueue();
     }
+  }
+
+  async function sendQueueDraft(draft: DraftQueueItem, skipRefresh = false) {
+    setDraftQueueError(null);
+    setDraftQueueActionId(draft.id);
+    const res = await fetch(`/api/tickets/${draft.ticket_id}/drafts/${draft.id}/send`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setDraftQueueError(payload.error ?? "Failed to send draft.");
+      setDraftQueueActionId(null);
+      return false;
+    }
+    if (activeTicketId === draft.ticket_id) {
+      await loadTicketDetail(draft.ticket_id);
+    }
+    if (!skipRefresh) {
+      await loadDraftQueue();
+    }
+    setDraftQueueActionId(null);
+    return true;
+  }
+
+  async function dismissQueueDraft(draft: DraftQueueItem, skipRefresh = false) {
+    setDraftQueueError(null);
+    setDraftQueueActionId(draft.id);
+    const res = await fetch(`/api/tickets/${draft.ticket_id}/drafts/${draft.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "dismissed" })
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setDraftQueueError(payload.error ?? "Failed to dismiss draft.");
+      setDraftQueueActionId(null);
+      return false;
+    }
+    if (activeTicketId === draft.ticket_id) {
+      await loadTicketDetail(draft.ticket_id);
+    }
+    if (!skipRefresh) {
+      await loadDraftQueue();
+    }
+    setDraftQueueActionId(null);
+    return true;
+  }
+
+  async function bulkQueueAction(action: "send" | "dismiss") {
+    if (draftQueueSelectedIds.length === 0) return;
+    setDraftQueueError(null);
+    setDraftQueueBulkAction(action);
+    let failed = 0;
+    for (const draftId of draftQueueSelectedIds) {
+      const draft = draftQueue.find((item) => item.id === draftId);
+      if (!draft) continue;
+      const ok =
+        action === "send"
+          ? await sendQueueDraft(draft, true)
+          : await dismissQueueDraft(draft, true);
+      if (!ok) {
+        failed += 1;
+      }
+    }
+    await loadDraftQueue();
+    if (failed > 0) {
+      setDraftQueueError(`Failed to ${action} ${failed} draft(s).`);
+    } else {
+      setDraftQueueSelectedIds([]);
+    }
+    setDraftQueueBulkAction(null);
   }
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
@@ -779,6 +913,8 @@ export default function TicketsClient() {
     const minutesRemaining = isOpen ? Math.max(0, Math.ceil((expires - now) / 60000)) : 0;
     return { isOpen, minutesRemaining };
   })();
+  const draftQueueSelectedAll =
+    draftQueue.length > 0 && draftQueueSelectedIds.length === draftQueue.length;
 
   useEffect(() => {
     if (!waContactCopyStatus) return;
@@ -1099,21 +1235,189 @@ export default function TicketsClient() {
           </aside>
 
           <section className="tickets-detail">
-            {!activeTicket ? (
-              <div className="panel ticket-empty">
-                <h3>Select a ticket</h3>
-                <p>Choose a ticket on the left to see conversation, drafts, and activity.</p>
+            <div className="tickets-detail-stack">
+              <div className="panel draft-queue">
+                <div className="draft-queue-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>AI Draft Queue</h3>
+                    <p style={{ margin: "6px 0 0" }}>
+                      {draftQueue.length} pending draft{draftQueue.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  {draftQueueLoading ? <span className="draft-queue-status">Loading…</span> : null}
+                </div>
+                <div className="draft-queue-filters">
+                  <label>
+                    Search drafts
+                    <input
+                      type="text"
+                      placeholder="Subject, requester, or draft text"
+                      value={draftQueueQuery}
+                      onChange={(event) => setDraftQueueQuery(event.target.value)}
+                    />
+                  </label>
+                  <div className="ticket-filter-chips">
+                    <span className="ticket-filter-label">Channel</span>
+                    <div className="ticket-filter-chip-row">
+                      {[
+                        { value: "all", label: "All" },
+                        { value: "email", label: "Email" },
+                        { value: "whatsapp", label: "WhatsApp" }
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setDraftQueueChannel(option.value)}
+                          className={`ticket-filter-chip${
+                            draftQueueChannel === option.value ? " active" : ""
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {user?.role_name === "lead_admin" ? (
+                    <label>
+                      Assignment
+                      <select
+                        value={draftQueueAssigned}
+                        onChange={(event) => setDraftQueueAssigned(event.target.value)}
+                      >
+                        <option value="all">All</option>
+                        <option value="mine">My tickets</option>
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+                {draftQueue.length ? (
+                  <>
+                    <div className="draft-queue-bulk">
+                      <label className="tickets-select-all">
+                        <input
+                          type="checkbox"
+                          checked={draftQueueSelectedAll}
+                          onChange={(event) =>
+                            setDraftQueueSelectedIds(
+                              event.target.checked ? draftQueue.map((draft) => draft.id) : []
+                            )
+                          }
+                        />
+                        Select all
+                      </label>
+                      <div className="draft-queue-bulk-actions">
+                        <button
+                          type="button"
+                          disabled={
+                            draftQueueSelectedIds.length === 0 || draftQueueBulkAction === "send"
+                          }
+                          onClick={() => bulkQueueAction("send")}
+                        >
+                          {draftQueueBulkAction === "send" ? "Sending..." : "Approve & send"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            draftQueueSelectedIds.length === 0 ||
+                            draftQueueBulkAction === "dismiss"
+                          }
+                          onClick={() => bulkQueueAction("dismiss")}
+                        >
+                          {draftQueueBulkAction === "dismiss" ? "Dismissing..." : "Dismiss"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="draft-queue-list">
+                      {draftQueue.map((draft) => {
+                        const isSelected = draftQueueSelectedIds.includes(draft.id);
+                        const channel = draft.has_whatsapp ? "whatsapp" : "email";
+                        const requesterLabel = draft.requester_email.startsWith("whatsapp:")
+                          ? `WhatsApp ${draft.requester_email.replace(/^whatsapp:/, "")}`
+                          : draft.requester_email;
+                        const preview = getDraftPlainText(draft);
+                        return (
+                          <div
+                            key={draft.id}
+                            className={`draft-queue-item${isSelected ? " selected" : ""}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(event) =>
+                                setDraftQueueSelectedIds((prev) =>
+                                  event.target.checked
+                                    ? [...new Set([...prev, draft.id])]
+                                    : prev.filter((id) => id !== draft.id)
+                                )
+                              }
+                              aria-label="Select draft"
+                            />
+                            <div className="draft-queue-meta">
+                              <div className="draft-queue-title">
+                                <strong>{draft.ticket_subject ?? "(no subject)"}</strong>
+                                <span className={`ticket-channel-badge ${channel}`}>
+                                  {channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                </span>
+                              </div>
+                              <div className="draft-queue-sub">
+                                {requesterLabel} · {new Date(draft.created_at).toLocaleString()}
+                              </div>
+                              {preview ? (
+                                <div className="draft-queue-preview">{preview}</div>
+                              ) : (
+                                <div className="draft-queue-preview muted">No draft body.</div>
+                              )}
+                            </div>
+                            <div className="draft-queue-actions">
+                              <button
+                                type="button"
+                                onClick={() => setActiveTicketId(draft.ticket_id)}
+                              >
+                                Open ticket
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => sendQueueDraft(draft)}
+                                disabled={draftQueueActionId === draft.id}
+                              >
+                                {draftQueueActionId === draft.id ? "Sending..." : "Approve & send"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dismissQueueDraft(draft)}
+                                disabled={draftQueueActionId === draft.id}
+                              >
+                                {draftQueueActionId === draft.id ? "Dismissing..." : "Dismiss"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="draft-queue-empty">
+                    No pending AI drafts. When the agent creates a draft, it will appear here.
+                  </p>
+                )}
+                {draftQueueError ? <p className="draft-queue-error">{draftQueueError}</p> : null}
               </div>
-            ) : (
-              <div className="tickets-detail-stack">
-                <div
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 12,
-                    padding: 16,
-                    background: "rgba(10, 12, 18, 0.6)"
-                  }}
-                >
+
+              {!activeTicket ? (
+                <div className="panel ticket-empty">
+                  <h3>Select a ticket</h3>
+                  <p>Choose a ticket on the left to see conversation, drafts, and activity.</p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: 16,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
                   <h2 style={{ margin: 0 }}>{activeTicket.subject ?? "(no subject)"}</h2>
                   <p>
                     Requester:{" "}
@@ -2019,9 +2323,10 @@ export default function TicketsClient() {
                         ? "Send WhatsApp reply"
                         : "Send reply"}
                   </button>
-                </div>
-              </div>
+                  </div>
+                </>
             )}
+            </div>
           </section>
         </div>
       </div>

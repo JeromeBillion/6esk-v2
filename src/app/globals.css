@@ -536,6 +536,132 @@ button {
   color: var(--danger);
 }
 
+.draft-queue {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.draft-queue-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.draft-queue-filters {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-queue-bulk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.draft-queue-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draft-queue-bulk-actions button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.draft-queue-list {
+  display: grid;
+  gap: 12px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.draft-queue-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(10, 12, 18, 0.6);
+}
+
+.draft-queue-item.selected {
+  border-color: rgba(139, 215, 255, 0.4);
+  box-shadow: 0 0 0 1px rgba(139, 215, 255, 0.2);
+}
+
+.draft-queue-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.draft-queue-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.draft-queue-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.draft-queue-preview {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.draft-queue-preview.muted {
+  color: var(--muted);
+}
+
+.draft-queue-actions {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.draft-queue-actions button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.draft-queue-empty,
+.draft-queue-error {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.draft-queue-error {
+  color: var(--danger);
+}
+
 .quick-replies {
   display: grid;
   gap: 8px;

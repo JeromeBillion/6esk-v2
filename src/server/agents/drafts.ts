@@ -1,4 +1,6 @@
 import { db } from "@/server/db";
+import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
+import type { SessionUser } from "@/server/auth/session";
 
 export type AgentDraft = {
   id: string;
@@ -15,6 +17,15 @@ export type AgentDraft = {
 };
 
 export type DraftStatus = "pending" | "used" | "dismissed";
+
+export type DraftQueueItem = AgentDraft & {
+  ticket_subject: string | null;
+  requester_email: string;
+  ticket_status: string;
+  ticket_priority: string;
+  assigned_user_id: string | null;
+  has_whatsapp: boolean;
+};
 
 export async function getDraftById({
   draftId,
@@ -44,6 +55,84 @@ export async function listDraftsForTicket(ticketId: string) {
      ORDER BY created_at DESC`,
     [ticketId]
   );
+  return result.rows;
+}
+
+export async function listPendingDraftsForUser(
+  user: SessionUser,
+  filters?: {
+    search?: string | null;
+    channel?: string | null;
+    assignedUserId?: string | null;
+  }
+) {
+  const values: Array<string> = [];
+  const conditions: string[] = ["d.status = 'pending'"];
+
+  const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
+  if (!isAdmin) {
+    values.push(user.id);
+    conditions.push(`t.assigned_user_id = $${values.length}`);
+  } else if (filters?.assignedUserId) {
+    values.push(filters.assignedUserId);
+    conditions.push(`t.assigned_user_id = $${values.length}`);
+  }
+
+  if (filters?.search) {
+    values.push(`%${filters.search}%`);
+    conditions.push(
+      `(t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length} OR d.body_text ILIKE $${values.length})`
+    );
+  }
+
+  if (filters?.channel) {
+    const channel = filters.channel.toLowerCase();
+    if (channel === "whatsapp") {
+      values.push("whatsapp");
+      const placeholder = `$${values.length}`;
+      conditions.push(
+        `EXISTS (
+          SELECT 1
+          FROM messages channel_msg
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+        )`
+      );
+    }
+    if (channel === "email") {
+      values.push("whatsapp");
+      const placeholder = `$${values.length}`;
+      conditions.push(
+        `NOT EXISTS (
+          SELECT 1
+          FROM messages channel_msg
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+        )`
+      );
+    }
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const result = await db.query<DraftQueueItem>(
+    `SELECT d.id, d.integration_id, d.ticket_id, d.subject, d.body_text, d.body_html, d.confidence,
+            d.metadata, d.status, d.created_at, d.updated_at,
+            t.subject AS ticket_subject,
+            t.requester_email,
+            t.status AS ticket_status,
+            t.priority AS ticket_priority,
+            t.assigned_user_id,
+            EXISTS (
+              SELECT 1 FROM messages msg
+              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+            ) AS has_whatsapp
+     FROM agent_drafts d
+     JOIN tickets t ON t.id = d.ticket_id
+     ${whereClause}
+     ORDER BY d.created_at DESC
+     LIMIT 200`,
+    values
+  );
+
   return result.rows;
 }
 
