@@ -10,6 +10,20 @@ type Overview = {
   ticketsSolvedToday: number;
   avgFirstResponseSeconds: number;
   avgResolutionSeconds: number;
+  channels?: {
+    email: {
+      inbound: number;
+      outbound: number;
+    };
+    whatsapp: {
+      inbound: number;
+      outbound: number;
+      sent: number;
+      delivered: number;
+      read: number;
+      failed: number;
+    };
+  };
 };
 
 type Sla = {
@@ -119,6 +133,15 @@ export default function AnalyticsClient() {
   const range = useMemo(() => {
     return { start: startDate, end: endDate };
   }, [startDate, endDate]);
+
+  const emailTotal =
+    (overview?.channels?.email.inbound ?? 0) + (overview?.channels?.email.outbound ?? 0);
+  const whatsappTotal =
+    (overview?.channels?.whatsapp.inbound ?? 0) + (overview?.channels?.whatsapp.outbound ?? 0);
+  const whatsappOutbound = overview?.channels?.whatsapp.outbound ?? 0;
+  const whatsappFailed = overview?.channels?.whatsapp.failed ?? 0;
+  const whatsappDeliveryRate =
+    whatsappOutbound > 0 ? Math.max(0, Math.round(((whatsappOutbound - whatsappFailed) / whatsappOutbound) * 100)) : null;
 
   useEffect(() => {
     const params = new URLSearchParams({
@@ -282,6 +305,23 @@ export default function AnalyticsClient() {
               <h2 style={{ margin: 0 }}>{card.value ?? "—"}</h2>
             </div>
           ))}
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 16,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <p style={{ marginBottom: 8 }}>Channel mix</p>
+            <h2 style={{ margin: 0 }}>
+              Email {emailTotal} · WhatsApp {whatsappTotal}
+            </h2>
+            <p style={{ marginTop: 10, color: "var(--muted)" }}>
+              WhatsApp outbound {whatsappOutbound} · failed {whatsappFailed} · delivery{" "}
+              {whatsappDeliveryRate === null ? "—" : `${whatsappDeliveryRate}%`}
+            </p>
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 16, marginTop: 24 }}>

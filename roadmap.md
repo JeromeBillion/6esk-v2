@@ -62,6 +62,7 @@ These are the “performance reports” referenced in the PRD.
 - Mail compose now supports HTML mode with preview and text fallback.
 - Admin WhatsApp settings UX improved (status warnings, copy helpers, template param counts).
 - Admin WhatsApp outbox queue metrics + refresh controls added.
+- Analytics now includes channel mix + WhatsApp delivery health metrics.
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
@@ -178,6 +179,7 @@ Status
 - Date range selector added.
 - SLA admin controls added.
  - Analytics filters and CSV export added.
+ - Channel mix and WhatsApp delivery health summary added in analytics overview.
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.
