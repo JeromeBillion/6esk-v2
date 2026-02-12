@@ -182,6 +182,21 @@ export default function TicketsClient() {
   const [filterChannel, setFilterChannel] = useState<string>("all");
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [assignedFilter, setAssignedFilter] = useState<string>("all");
+  const [savedViews, setSavedViews] = useState<
+    Array<{
+      name: string;
+      filters: {
+        status: string;
+        priority: string;
+        tag: string;
+        channel: string;
+        query: string;
+        assigned: string;
+      };
+    }>
+  >([]);
+  const [activeView, setActiveView] = useState<string | null>(null);
+  const [saveViewName, setSaveViewName] = useState("");
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>("");
   const [bulkPriority, setBulkPriority] = useState<string>("");
@@ -210,6 +225,7 @@ export default function TicketsClient() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+  const viewStorageKey = "sixesk:supportViews";
 
   function formatMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at;
@@ -329,6 +345,59 @@ export default function TicketsClient() {
     setUser(payload.user ?? null);
   }
 
+  function persistViews(next: typeof savedViews) {
+    setSavedViews(next);
+    try {
+      window.localStorage.setItem(viewStorageKey, JSON.stringify(next));
+    } catch (error) {
+      // Ignore localStorage failures (private mode, quota).
+    }
+  }
+
+  function saveCurrentView() {
+    const name = saveViewName.trim();
+    if (!name) return;
+    const view = {
+      name,
+      filters: {
+        status: filterStatus,
+        priority: filterPriority,
+        tag: filterTag,
+        channel: filterChannel,
+        query: filterQuery,
+        assigned: assignedFilter
+      }
+    };
+    const next = [...savedViews];
+    const index = next.findIndex((item) => item.name.toLowerCase() === name.toLowerCase());
+    if (index >= 0) {
+      next[index] = view;
+    } else {
+      next.unshift(view);
+    }
+    persistViews(next);
+    setActiveView(view.name);
+    setSaveViewName("");
+  }
+
+  function applyView(view: (typeof savedViews)[number]) {
+    setFilterStatus(view.filters.status ?? "all");
+    setFilterPriority(view.filters.priority ?? "all");
+    setFilterTag(view.filters.tag ?? "all");
+    setFilterChannel(view.filters.channel ?? "all");
+    setFilterQuery(view.filters.query ?? "");
+    setAssignedFilter(view.filters.assigned ?? "all");
+    setActiveView(view.name);
+  }
+
+  function deleteView(name: string) {
+    const next = savedViews.filter((view) => view.name !== name);
+    persistViews(next);
+    if (activeView === name) {
+      setActiveView(null);
+    }
+  }
+
   async function loadTickets() {
     const params = new URLSearchParams();
     if (filterStatus !== "all") params.set("status", filterStatus);
@@ -437,6 +506,21 @@ export default function TicketsClient() {
   useEffect(() => {
     void loadUser();
     void loadMacros();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(viewStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setSavedViews(parsed);
+        }
+      }
+    } catch (error) {
+      // Ignore storage errors.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1026,6 +1110,53 @@ export default function TicketsClient() {
                 />
               </label>
               <div className="ticket-filter-chips">
+                <span className="ticket-filter-label">Quick status</span>
+                <div className="ticket-filter-chip-row">
+                  {[
+                    { value: "all", label: "All" },
+                    { value: "new", label: "New" },
+                    { value: "open", label: "Open" },
+                    { value: "pending", label: "Pending" },
+                    { value: "solved", label: "Solved" },
+                    { value: "closed", label: "Closed" }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterStatus(option.value)}
+                      className={`ticket-filter-chip${
+                        filterStatus === option.value ? " active" : ""
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="ticket-filter-chips">
+                <span className="ticket-filter-label">Quick priority</span>
+                <div className="ticket-filter-chip-row">
+                  {[
+                    { value: "all", label: "All" },
+                    { value: "low", label: "Low" },
+                    { value: "normal", label: "Normal" },
+                    { value: "high", label: "High" },
+                    { value: "urgent", label: "Urgent" }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterPriority(option.value)}
+                      className={`ticket-filter-chip${
+                        filterPriority === option.value ? " active" : ""
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="ticket-filter-chips">
                 <span className="ticket-filter-label">Channel</span>
                 <div className="ticket-filter-chip-row">
                   {[
@@ -1090,6 +1221,10 @@ export default function TicketsClient() {
                 Tag
                 <select value={filterTag} onChange={(event) => setFilterTag(event.target.value)}>
                   <option value="all">All</option>
+                  {filterTag !== "all" &&
+                  !tickets.flatMap((ticket) => ticket.tags ?? []).includes(filterTag) ? (
+                    <option value={filterTag}>{filterTag}</option>
+                  ) : null}
                   {Array.from(
                     new Set(tickets.flatMap((ticket) => ticket.tags ?? []))
                   ).map((tag) => (
@@ -1111,6 +1246,51 @@ export default function TicketsClient() {
                   <option value="compact">Compact</option>
                 </select>
               </label>
+              <div className="ticket-saved-views">
+                <div className="ticket-saved-views-header">
+                  <span>Saved views</span>
+                  <div className="ticket-saved-views-save">
+                    <input
+                      type="text"
+                      placeholder="View name"
+                      value={saveViewName}
+                      onChange={(event) => setSaveViewName(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      disabled={!saveViewName.trim()}
+                      onClick={saveCurrentView}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+                {savedViews.length ? (
+                  <div className="ticket-saved-views-list">
+                    {savedViews.map((view) => (
+                      <div
+                        key={view.name}
+                        className={`ticket-saved-view${
+                          activeView === view.name ? " active" : ""
+                        }`}
+                      >
+                        <button type="button" onClick={() => applyView(view)}>
+                          {view.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteView(view.name)}
+                          aria-label={`Delete ${view.name}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="ticket-saved-views-empty">No saved views yet.</span>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>
                 Shortcuts: <code>j</code>/<code>k</code> to move · <code>r</code> to reply ·{" "}
                 <code>shift</code> + click to range select

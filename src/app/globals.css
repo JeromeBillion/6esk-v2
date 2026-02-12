@@ -282,6 +282,77 @@ button {
   color: var(--text);
 }
 
+.ticket-saved-views {
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-saved-views-header {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ticket-saved-views-save {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ticket-saved-views-save input {
+  flex: 1;
+}
+
+.ticket-saved-views-save button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ticket-saved-views-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-saved-view {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 18, 0.6);
+}
+
+.ticket-saved-view.active {
+  border-color: rgba(139, 215, 255, 0.4);
+  background: rgba(139, 215, 255, 0.12);
+}
+
+.ticket-saved-view button {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ticket-saved-view button:last-child {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.ticket-saved-views-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .ticket-card {
   display: block;
   width: 100%;
