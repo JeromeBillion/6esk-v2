@@ -9,12 +9,43 @@ type AgentIntegration = {
   shared_secret: string;
   status: "active" | "paused";
   policy_mode: "draft_only" | "auto_send";
+  capabilities?: Record<string, unknown>;
   policy?: Record<string, unknown>;
+};
+
+type AgentOutboxMetrics = {
+  integrationId: string;
+  integrationStatus: "active" | "paused" | string;
+  throughput: {
+    configuredMaxEventsPerRun: number | null;
+    effectiveLimit: number;
+  };
+  queue: {
+    pending: number;
+    dueNow: number;
+    processing: number;
+    failed: number;
+    deliveredTotal: number;
+    delivered24h: number;
+    nextAttemptAt: string | null;
+    lastDeliveredAt: string | null;
+    lastFailedAt: string | null;
+    lastError: string | null;
+  };
 };
 
 type AgentIntegrationClientProps = {
   compact?: boolean;
 };
+
+function parseMaxEventsPerRun(capabilities?: Record<string, unknown>) {
+  const raw = capabilities?.max_events_per_run;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return "";
+  }
+  return String(Math.min(Math.trunc(parsed), 50));
+}
 
 export default function AgentIntegrationClient({ compact = false }: AgentIntegrationClientProps) {
   const [agent, setAgent] = useState<AgentIntegration | null>(null);
@@ -24,11 +55,16 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
     sharedSecret: "",
     status: "active" as "active" | "paused",
     policyMode: "draft_only" as "draft_only" | "auto_send",
+    maxEventsPerRun: "",
     policyJson: "{\n  \"working_hours\": {\n    \"timezone\": \"Africa/Johannesburg\",\n    \"days\": [0,1,2,3,4,5,6],\n    \"start\": \"00:00\",\n    \"end\": \"23:59\"\n  },\n  \"escalation\": {\n    \"out_of_hours\": \"draft_only\",\n    \"tag\": \"urgent\"\n  }\n}"
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [outboxMetrics, setOutboxMetrics] = useState<AgentOutboxMetrics | null>(null);
+  const [loadingOutbox, setLoadingOutbox] = useState(false);
+  const [outboxError, setOutboxError] = useState<string | null>(null);
+  const [deliveringOutbox, setDeliveringOutbox] = useState(false);
 
   function generateSecret() {
     const value =
@@ -36,6 +72,27 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
         ? crypto.randomUUID().replace(/-/g, "")
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setForm((prev) => ({ ...prev, sharedSecret: value }));
+  }
+
+  async function loadOutboxMetrics(agentId: string) {
+    setLoadingOutbox(true);
+    try {
+      const res = await fetch(`/api/admin/agents/${agentId}/outbox`);
+      if (!res.ok) {
+        setOutboxMetrics(null);
+        setOutboxError("Failed to load agent outbox metrics.");
+        setLoadingOutbox(false);
+        return;
+      }
+      const payload = (await res.json()) as AgentOutboxMetrics;
+      setOutboxMetrics(payload);
+      setOutboxError(null);
+      setLoadingOutbox(false);
+    } catch (error) {
+      setOutboxMetrics(null);
+      setOutboxError("Failed to load agent outbox metrics.");
+      setLoadingOutbox(false);
+    }
   }
 
   async function loadAgent() {
@@ -53,14 +110,24 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
         sharedSecret: primary.shared_secret,
         status: primary.status,
         policyMode: primary.policy_mode,
+        maxEventsPerRun: parseMaxEventsPerRun(primary.capabilities),
         policyJson: JSON.stringify(primary.policy ?? {}, null, 2)
       });
+    } else {
+      setOutboxMetrics(null);
+      setOutboxError(null);
     }
   }
 
   useEffect(() => {
     void loadAgent();
   }, []);
+
+  useEffect(() => {
+    if (!agent?.id) return;
+    void loadOutboxMetrics(agent.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent?.id]);
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,12 +146,28 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
       }
     }
 
+    const capabilities: Record<string, unknown> = {
+      ...(agent?.capabilities ?? {})
+    };
+    if (form.maxEventsPerRun.trim()) {
+      const parsedLimit = Number(form.maxEventsPerRun);
+      if (!Number.isFinite(parsedLimit) || parsedLimit < 1) {
+        setError("Max events per run must be a positive number.");
+        setLoading(false);
+        return;
+      }
+      capabilities.max_events_per_run = Math.min(Math.trunc(parsedLimit), 50);
+    } else {
+      delete capabilities.max_events_per_run;
+    }
+
     const payload = {
       name: form.name,
       baseUrl: form.baseUrl,
       sharedSecret: form.sharedSecret,
       status: form.status,
       policyMode: form.policyMode,
+      capabilities,
       policy
     };
 
@@ -102,9 +185,30 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
     }
 
     const body = await res.json();
-    setAgent(body.agent ?? agent);
+    const nextAgent = (body.agent ?? agent) as AgentIntegration | null;
+    setAgent(nextAgent);
+    if (nextAgent) {
+      void loadOutboxMetrics(nextAgent.id);
+    }
     setSaved(true);
     setLoading(false);
+  }
+
+  async function deliverOutboxNow() {
+    if (!agent) return;
+    setDeliveringOutbox(true);
+    setOutboxError(null);
+    const res = await fetch(`/api/admin/agents/${agent.id}/outbox/deliver`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setOutboxError(payload.error ?? "Failed to deliver queued events.");
+      setDeliveringOutbox(false);
+      return;
+    }
+    await loadOutboxMetrics(agent.id);
+    setDeliveringOutbox(false);
   }
 
   const webhookUrl = form.baseUrl
@@ -181,6 +285,19 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
           </select>
         </label>
         <label>
+          Max events per run (throughput cap)
+          <input
+            type="number"
+            min={1}
+            max={50}
+            placeholder="5"
+            value={form.maxEventsPerRun}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, maxEventsPerRun: event.target.value }))
+            }
+          />
+        </label>
+        <label>
           Policy JSON (working hours + escalation)
           <textarea
             rows={8}
@@ -212,6 +329,110 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
           <p style={{ fontSize: 12, color: "var(--muted)" }}>
             Webhook URL: <span style={{ color: "var(--text)" }}>{webhookUrl}</span>
           </p>
+        ) : null}
+        {agent ? (
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 12,
+              background: "rgba(10, 12, 18, 0.6)",
+              display: "grid",
+              gap: 10
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <strong>Outbox Queue Controls</strong>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => loadOutboxMetrics(agent.id)}
+                  disabled={loadingOutbox}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--text)",
+                    cursor: "pointer"
+                  }}
+                >
+                  {loadingOutbox ? "Refreshing..." : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={deliverOutboxNow}
+                  disabled={deliveringOutbox || form.status !== "active"}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    cursor: "pointer"
+                  }}
+                >
+                  {deliveringOutbox ? "Delivering..." : "Deliver now"}
+                </button>
+              </div>
+            </div>
+            {outboxMetrics ? (
+              <>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Integration status: {outboxMetrics.integrationStatus} · Effective limit:{" "}
+                  {outboxMetrics.throughput.effectiveLimit}
+                  {outboxMetrics.throughput.configuredMaxEventsPerRun
+                    ? ` (cap ${outboxMetrics.throughput.configuredMaxEventsPerRun})`
+                    : " (default)"}
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))"
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>Pending</div>
+                    <strong>{outboxMetrics.queue.pending}</strong>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>Due now</div>
+                    <strong>{outboxMetrics.queue.dueNow}</strong>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>Processing</div>
+                    <strong>{outboxMetrics.queue.processing}</strong>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>Failed</div>
+                    <strong>{outboxMetrics.queue.failed}</strong>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>Delivered (24h)</div>
+                    <strong>{outboxMetrics.queue.delivered24h}</strong>
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Next attempt:{" "}
+                  {outboxMetrics.queue.nextAttemptAt
+                    ? new Date(outboxMetrics.queue.nextAttemptAt).toLocaleString()
+                    : "—"}
+                  {" · "}
+                  Last delivered:{" "}
+                  {outboxMetrics.queue.lastDeliveredAt
+                    ? new Date(outboxMetrics.queue.lastDeliveredAt).toLocaleString()
+                    : "—"}
+                </div>
+                {outboxMetrics.queue.lastError ? (
+                  <div style={{ fontSize: 12, color: "var(--danger)" }}>
+                    Last error: {outboxMetrics.queue.lastError}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {outboxError ? <p style={{ color: "var(--danger)", margin: 0 }}>{outboxError}</p> : null}
+          </div>
         ) : null}
         {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
         {saved ? <p style={{ color: "var(--accent)" }}>Saved.</p> : null}

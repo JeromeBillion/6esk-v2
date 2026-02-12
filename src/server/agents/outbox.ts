@@ -5,6 +5,7 @@ import {
   getActiveAgentIntegration,
   getAgentIntegrationById
 } from "@/server/agents/integrations";
+import { resolveDeliveryLimit } from "@/server/agents/throughput";
 
 type EnqueueArgs = {
   eventType: string;
@@ -137,12 +138,16 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
     : await getActiveAgentIntegration();
 
   if (!integration || integration.status !== "active") {
-    return { delivered: 0, skipped: 0 };
+    return { delivered: 0, skipped: 0, limitUsed: 0 };
   }
 
-  const pending = await lockPendingEvents(integration.id, limit);
+  const limitUsed = resolveDeliveryLimit({
+    requestedLimit: limit,
+    capabilities: integration.capabilities
+  });
+  const pending = await lockPendingEvents(integration.id, limitUsed);
   if (!pending.length) {
-    return { delivered: 0, skipped: 0 };
+    return { delivered: 0, skipped: 0, limitUsed };
   }
 
   let delivered = 0;
@@ -158,5 +163,5 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
     }
   }
 
-  return { delivered, skipped: pending.length - delivered };
+  return { delivered, skipped: pending.length - delivered, limitUsed };
 }

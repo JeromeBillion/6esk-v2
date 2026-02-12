@@ -73,6 +73,7 @@ These are the “performance reports” referenced in the PRD.
 - Support filters now include channel chips (All / Email / WhatsApp).
 - Support ticket list now displays a channel badge per ticket.
 - AI drafts review queue added (filters + bulk approve/dismiss).
+- AI outbox controls added in Admin (max events/run cap, queue metrics, manual deliver).
 - WhatsApp attachments supported (inbound/outbound + thread preview incl. audio/video).
 - Support quick filters + saved views added.
 - Sidebar renamed from “Platform” to “Support.”
@@ -201,6 +202,7 @@ Status
 - Draft edit + approve/send flow completed.
 - Working hours + escalation policy config added (JSON policy).
 - Audit log UI added in Admin panel.
+- Agent outbox queue controls added (throughput cap + queue metrics + manual deliver trigger).
 Acceptance Criteria
 - Agent receives `ticket.message.created` events within 60 seconds.
 - Agent can fetch context via scoped APIs and post a draft reply.
