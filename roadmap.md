@@ -73,6 +73,7 @@ These are the “performance reports” referenced in the PRD.
 - Support filters now include channel chips (All / Email / WhatsApp).
 - Support ticket list now displays a channel badge per ticket.
 - AI drafts review queue added (filters + bulk approve/dismiss).
+- WhatsApp attachments supported (inbound/outbound + thread preview).
 - Sidebar renamed from “Platform” to “Support.”
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).

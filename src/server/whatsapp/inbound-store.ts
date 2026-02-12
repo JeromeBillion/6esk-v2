@@ -1,6 +1,8 @@
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
+import { decryptSecret } from "@/server/agents/secret";
 import { getOrCreateMailbox } from "@/server/email/mailbox";
+import { sanitizeFilename } from "@/server/email/normalize";
 import { putObject } from "@/server/storage/r2";
 import {
   addTagsToTicket,
@@ -12,6 +14,15 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 
+export type NormalizedWhatsAppAttachment = {
+  mediaId?: string | null;
+  mimeType?: string | null;
+  filename?: string | null;
+  caption?: string | null;
+  type?: string | null;
+  contentBase64?: string | null;
+};
+
 export type NormalizedWhatsAppMessage = {
   provider: string;
   messageId?: string | null;
@@ -21,6 +32,7 @@ export type NormalizedWhatsAppMessage = {
   text?: string | null;
   timestamp?: string | number | null;
   contactName?: string | null;
+  attachments?: NormalizedWhatsAppAttachment[] | null;
 };
 
 function getSupportAddress() {
@@ -53,6 +65,58 @@ function parseTimestamp(value?: string | number | null) {
   }
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
+
+async function getActiveAccessToken() {
+  const result = await db.query<{ access_token: string | null; provider: string }>(
+    `SELECT access_token, provider
+     FROM whatsapp_accounts
+     WHERE status = 'active'
+     ORDER BY created_at DESC
+     LIMIT 1`
+  );
+  const record = result.rows[0];
+  if (!record) return null;
+  if (record.provider !== "meta") return null;
+  const token = record.access_token ? decryptSecret(record.access_token) : "";
+  return token || null;
+}
+
+async function fetchMetaMedia(accessToken: string, mediaId: string) {
+  const infoUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
+  const infoResponse = await fetch(infoUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!infoResponse.ok) {
+    const errorBody = await infoResponse.text();
+    throw new Error(errorBody || `Failed to fetch WhatsApp media (${infoResponse.status})`);
+  }
+  const info = (await infoResponse.json()) as {
+    url?: string;
+    mime_type?: string;
+    file_size?: number;
+    filename?: string;
+  };
+  if (!info.url) {
+    throw new Error("Missing WhatsApp media URL");
+  }
+  const mediaResponse = await fetch(info.url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!mediaResponse.ok) {
+    const errorBody = await mediaResponse.text();
+    throw new Error(errorBody || `Failed to download WhatsApp media (${mediaResponse.status})`);
+  }
+  const arrayBuffer = await mediaResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  return {
+    buffer,
+    mimeType: info.mime_type ?? null,
+    filename: info.filename ?? null,
+    size: typeof info.file_size === "number" ? info.file_size : buffer.length
+  };
 }
 
 async function resolveWhatsAppTicketId(conversationId: string) {
@@ -104,12 +168,24 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   let ticketId: string | null = await resolveWhatsAppTicketId(conversationId);
   let createdNewTicket = false;
 
-  const previewSource = message.text ?? "";
+  const attachments = (message.attachments ?? []).filter(Boolean);
+  const fallbackCaption =
+    attachments.find((item) => item?.caption)?.caption ?? null;
+  const previewSource = message.text ?? fallbackCaption ?? "";
   const previewText = previewSource.replace(/\s+/g, " ").trim().slice(0, 200);
+  const attachmentHint = attachments.length
+    ? attachments[0]?.filename
+      ? `Attachment: ${attachments[0].filename}`
+      : `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}`
+    : "";
+  const subject = previewText
+    ? `WhatsApp: ${previewText.slice(0, 60)}`
+    : attachmentHint
+      ? `WhatsApp: ${attachmentHint}`
+      : `WhatsApp from ${from}`;
 
   if (!ticketId) {
     const inferredTags = inferTagsFromText({ subject: null, text: message.text ?? null });
-    const subject = previewText ? `WhatsApp: ${previewText.slice(0, 60)}` : `WhatsApp from ${from}`;
     const category = inferredTags[0]?.toLowerCase() ?? null;
     const metadata = {
       channel: "whatsapp",
@@ -169,8 +245,12 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       message.provider ?? "meta",
       from,
       [supportAddress],
-      previewText ? `WhatsApp: ${previewText.slice(0, 80)}` : null,
-      previewText || null,
+      previewText
+        ? `WhatsApp: ${previewText.slice(0, 80)}`
+        : attachmentHint
+          ? `WhatsApp: ${attachmentHint}`
+          : null,
+      previewText || attachmentHint || null,
       receivedAt
     ]
   );
@@ -190,16 +270,68 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   let textKey: string | null = null;
   let sizeBytes = 0;
 
-  if (message.text) {
+  if (message.text || fallbackCaption) {
+    const bodyText = message.text ?? fallbackCaption ?? "";
     textKey = await putObject({
       key: `messages/${messageId}/body.txt`,
-      body: message.text,
+      body: bodyText,
       contentType: "text/plain; charset=utf-8"
     });
-    sizeBytes += Buffer.byteLength(message.text);
+    sizeBytes += Buffer.byteLength(bodyText);
   }
 
-  if (textKey) {
+  if (attachments.length) {
+    const accessToken = await getActiveAccessToken();
+    for (const attachment of attachments) {
+      const attachmentId = randomUUID();
+      const safeFilename = sanitizeFilename(
+        attachment.filename ?? `${attachment.type ?? "attachment"}-${attachmentId}`
+      );
+      let buffer: Buffer | null = null;
+      let contentType = attachment.mimeType ?? null;
+      let size: number | null = null;
+
+      if (attachment.contentBase64) {
+        buffer = Buffer.from(attachment.contentBase64, "base64");
+        size = buffer.length;
+      } else if (attachment.mediaId && accessToken) {
+        const fetched = await fetchMetaMedia(accessToken, attachment.mediaId);
+        buffer = fetched.buffer;
+        contentType = contentType ?? fetched.mimeType ?? null;
+        size = fetched.size ?? buffer.length;
+        if (!attachment.filename && fetched.filename) {
+          attachment.filename = fetched.filename;
+        }
+      }
+
+      if (!buffer) {
+        continue;
+      }
+
+      const key = `messages/${messageId}/attachments/${attachmentId}-${safeFilename}`;
+      await putObject({
+        key,
+        body: buffer,
+        contentType: contentType ?? undefined
+      });
+
+      await db.query(
+        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          attachmentId,
+          messageId,
+          attachment.filename ?? safeFilename,
+          contentType ?? null,
+          size ?? buffer.length,
+          key
+        ]
+      );
+      sizeBytes += size ?? buffer.length;
+    }
+  }
+
+  if (textKey || sizeBytes) {
     await db.query(
       `UPDATE messages
        SET r2_key_text = $1, size_bytes = $2

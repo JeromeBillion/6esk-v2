@@ -8,6 +8,17 @@ const replySchema = z.object({
   text: z.string().optional().nullable(),
   html: z.string().optional().nullable(),
   subject: z.string().optional().nullable(),
+  attachments: z
+    .array(
+      z.object({
+        filename: z.string(),
+        contentType: z.string().optional().nullable(),
+        size: z.number().optional().nullable(),
+        contentBase64: z.string()
+      })
+    )
+    .optional()
+    .nullable(),
   template: z
     .object({
       name: z.string(),
@@ -53,8 +64,8 @@ export async function POST(
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const { text, html, subject, template } = parsed.data;
-  if (!text && !html && !template) {
+  const { text, html, subject, template, attachments } = parsed.data;
+  if (!text && !html && !template && !(attachments?.length ?? 0)) {
     return Response.json({ error: "Reply body required" }, { status: 400 });
   }
 
@@ -64,6 +75,7 @@ export async function POST(
       text,
       html,
       subject,
+      attachments: attachments ?? null,
       template: template ?? null,
       actorUserId: user.id,
       origin: "human"

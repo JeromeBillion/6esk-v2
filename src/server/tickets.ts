@@ -303,11 +303,25 @@ export async function getTicketById(ticketId: string) {
 
 export async function listTicketMessages(ticketId: string) {
   const result = await db.query(
-    `SELECT id, direction, channel, origin, from_email, to_emails, subject, preview_text,
-            received_at, sent_at, wa_status, wa_timestamp, wa_contact, conversation_id
-     FROM messages
-     WHERE ticket_id = $1
-     ORDER BY COALESCE(received_at, sent_at, created_at) ASC`,
+    `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.subject,
+            m.preview_text, m.received_at, m.sent_at, m.wa_status, m.wa_timestamp,
+            m.wa_contact, m.conversation_id,
+            COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', a.id,
+                  'filename', a.filename,
+                  'content_type', a.content_type,
+                  'size_bytes', a.size_bytes
+                )
+              ) FILTER (WHERE a.id IS NOT NULL),
+              '[]'
+            ) AS attachments
+     FROM messages m
+     LEFT JOIN attachments a ON a.message_id = m.id
+     WHERE m.ticket_id = $1
+     GROUP BY m.id
+     ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) ASC`,
     [ticketId]
   );
   return result.rows;

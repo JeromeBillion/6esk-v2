@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
+import { sanitizeFilename } from "@/server/email/normalize";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 
@@ -7,6 +8,12 @@ type SendWhatsAppArgs = {
   ticketId?: string | null;
   to: string;
   text?: string | null;
+  attachments?: Array<{
+    filename: string;
+    contentType?: string | null;
+    size?: number | null;
+    contentBase64: string;
+  }> | null;
   template?: Record<string, unknown> | null;
   actorUserId?: string | null;
   origin?: "human" | "ai";
@@ -32,11 +39,20 @@ export async function queueWhatsAppSend({
   ticketId,
   to,
   text,
+  attachments,
   template,
   actorUserId,
   origin = "human",
   aiMeta
 }: SendWhatsAppArgs) {
+  const attachmentList = attachments ?? [];
+  if (attachmentList.length > 1) {
+    throw new Error("WhatsApp supports one attachment per message.");
+  }
+  if (attachmentList.length && template) {
+    throw new Error("Templates cannot be combined with attachments.");
+  }
+
   const contact = formatContact(to);
   if (!contact) {
     throw new Error("Missing WhatsApp recipient");
@@ -49,6 +65,12 @@ export async function queueWhatsAppSend({
 
   let messageRecordId: string | null = null;
   let ticketMailboxId: string | null = null;
+  const payloadAttachments: Array<{
+    filename: string;
+    contentType: string | null;
+    size: number | null;
+    r2Key: string;
+  }> = [];
 
   if (ticketId) {
     const ticket = await getTicketById(ticketId);
@@ -62,7 +84,14 @@ export async function queueWhatsAppSend({
         (template
           ? `Template: ${template.name ?? "unknown"} (${template.language ?? "default"})`
           : "");
-      const previewText = bodyText.replace(/\s+/g, " ").trim().slice(0, 200);
+      const attachmentHint =
+        attachmentList.length > 0
+          ? attachmentList[0]?.filename
+            ? `Attachment: ${attachmentList[0].filename}`
+            : "Attachment"
+          : "";
+      const previewSource = bodyText || attachmentHint;
+      const previewText = previewSource.replace(/\s+/g, " ").trim().slice(0, 200);
 
       await db.query(
         `INSERT INTO messages (
@@ -98,15 +127,51 @@ export async function queueWhatsAppSend({
 
       const textKey = await putObject({
         key: `messages/${messageId}/body.txt`,
-        body: bodyText || "[whatsapp template]",
+        body: bodyText || (attachmentHint ? "[whatsapp attachment]" : "[whatsapp template]"),
         contentType: "text/plain; charset=utf-8"
       });
+
+      let sizeBytes = Buffer.byteLength(bodyText || "");
+
+      if (attachmentList.length) {
+        for (const attachment of attachmentList) {
+          if (!attachment.contentBase64) continue;
+          const attachmentId = randomUUID();
+          const safeFilename = sanitizeFilename(attachment.filename);
+          const key = `messages/${messageId}/attachments/${attachmentId}-${safeFilename}`;
+          const buffer = Buffer.from(attachment.contentBase64, "base64");
+          await putObject({
+            key,
+            body: buffer,
+            contentType: attachment.contentType ?? undefined
+          });
+          await db.query(
+            `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              attachmentId,
+              messageId,
+              attachment.filename,
+              attachment.contentType ?? null,
+              attachment.size ?? buffer.length,
+              key
+            ]
+          );
+          payloadAttachments.push({
+            filename: attachment.filename,
+            contentType: attachment.contentType ?? null,
+            size: attachment.size ?? buffer.length,
+            r2Key: key
+          });
+          sizeBytes += attachment.size ?? buffer.length;
+        }
+      }
 
       await db.query(
         `UPDATE messages
          SET r2_key_text = $1, size_bytes = $2
          WHERE id = $3`,
-        [textKey, Buffer.byteLength(bodyText || ""), messageId]
+        [textKey, sizeBytes || null, messageId]
       );
 
       await recordTicketEvent({
@@ -138,9 +203,13 @@ export async function queueWhatsAppSend({
     }
   }
 
+  const attachmentPayload = payloadAttachments.length ? payloadAttachments : null;
+
   const payload = {
     to: contact,
     text: text ?? null,
+    caption: attachments?.length ? text ?? null : null,
+    attachments: attachmentPayload,
     template: template ?? null,
     ticketId: ticketId ?? null,
     messageRecordId,

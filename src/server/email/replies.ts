@@ -10,6 +10,12 @@ type SendReplyArgs = {
   text?: string | null;
   html?: string | null;
   subject?: string | null;
+  attachments?: Array<{
+    filename: string;
+    contentType?: string | null;
+    size?: number | null;
+    contentBase64: string;
+  }> | null;
   template?: Record<string, unknown> | null;
   actorUserId?: string | null;
   origin?: "human" | "ai";
@@ -35,6 +41,7 @@ export async function sendTicketReply({
   text,
   html,
   subject,
+  attachments,
   template,
   actorUserId,
   origin = "human",
@@ -57,7 +64,14 @@ export async function sendTicketReply({
         ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
         : "");
     const cleanBody = body.trim() ? body : null;
-    if (!cleanBody && !template) {
+    const attachmentList = attachments ?? [];
+    if (attachmentList.length > 1) {
+      throw new Error("WhatsApp supports one attachment per message.");
+    }
+    if (attachmentList.length && template) {
+      throw new Error("Templates cannot be combined with attachments.");
+    }
+    if (!cleanBody && !template && attachmentList.length === 0) {
       throw new Error("Reply body required");
     }
     const windowStatus = await getWhatsAppWindowStatus(ticketId);
@@ -69,6 +83,7 @@ export async function sendTicketReply({
       ticketId,
       to: contact,
       text: cleanBody,
+      attachments: attachmentList,
       template: template ?? null,
       actorUserId: actorUserId ?? null,
       origin,

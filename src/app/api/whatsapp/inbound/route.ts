@@ -1,5 +1,9 @@
 import { db } from "@/server/db";
-import { storeInboundWhatsApp, type NormalizedWhatsAppMessage } from "@/server/whatsapp/inbound-store";
+import {
+  storeInboundWhatsApp,
+  type NormalizedWhatsAppAttachment,
+  type NormalizedWhatsAppMessage
+} from "@/server/whatsapp/inbound-store";
 
 async function getVerifyToken() {
   const result = await db.query(
@@ -43,6 +47,31 @@ function extractNormalizedMessages(payload: Record<string, unknown>) {
       const timestamp = (record.timestamp as string | number | null | undefined) ?? null;
       const conversationId =
         typeof record.conversationId === "string" ? record.conversationId : null;
+      const rawAttachments = Array.isArray(record.attachments) ? record.attachments : [];
+      const attachments = rawAttachments
+        .map((attachment) => {
+          if (!attachment || typeof attachment !== "object") return null;
+          const data = attachment as Record<string, unknown>;
+          return {
+            mediaId: typeof data.id === "string" ? data.id : null,
+            mimeType:
+              typeof data.mimeType === "string"
+                ? data.mimeType
+                : typeof data.mime_type === "string"
+                  ? data.mime_type
+                  : null,
+            filename: typeof data.filename === "string" ? data.filename : null,
+            caption: typeof data.caption === "string" ? data.caption : null,
+            type: typeof data.type === "string" ? data.type : null,
+            contentBase64:
+              typeof data.contentBase64 === "string"
+                ? data.contentBase64
+                : typeof data.content_base64 === "string"
+                  ? data.content_base64
+                  : null
+          } satisfies NormalizedWhatsAppAttachment;
+        })
+        .filter(Boolean) as NormalizedWhatsAppAttachment[];
 
       if (!from) return null;
       return {
@@ -53,7 +82,8 @@ function extractNormalizedMessages(payload: Record<string, unknown>) {
         to: typeof record.to === "string" ? record.to : null,
         text,
         timestamp,
-        contactName: typeof record.contactName === "string" ? record.contactName : null
+        contactName: typeof record.contactName === "string" ? record.contactName : null,
+        attachments: attachments.length ? attachments : null
       };
     })
     .filter(Boolean) as NormalizedWhatsAppMessage[];
@@ -107,12 +137,27 @@ function extractMetaMessages(payload: Record<string, unknown>) {
         const from = typeof msg.from === "string" ? msg.from : "";
         const messageId = typeof msg.id === "string" ? msg.id : null;
         const timestamp = (msg.timestamp as string | number | null | undefined) ?? null;
+        const messageType = typeof msg.type === "string" ? msg.type : "text";
         const text =
           typeof (msg.text as Record<string, unknown> | undefined)?.body === "string"
             ? ((msg.text as Record<string, unknown>).body as string)
             : typeof msg.body === "string"
               ? msg.body
               : null;
+        const attachments: NormalizedWhatsAppAttachment[] = [];
+        if (messageType !== "text") {
+          const media = msg[messageType] as Record<string, unknown> | undefined;
+          const mediaId = typeof media?.id === "string" ? media.id : null;
+          if (mediaId) {
+            attachments.push({
+              mediaId,
+              mimeType: typeof media?.mime_type === "string" ? media.mime_type : null,
+              filename: typeof media?.filename === "string" ? media.filename : null,
+              caption: typeof media?.caption === "string" ? media.caption : null,
+              type: messageType
+            });
+          }
+        }
         const contact =
           contacts.find((contact) => {
             if (!contact || typeof contact !== "object") return false;
@@ -131,9 +176,10 @@ function extractMetaMessages(payload: Record<string, unknown>) {
           messageId,
           conversationId: from,
           from,
-          text,
+          text: text ?? attachments[0]?.caption ?? null,
           timestamp,
-          contactName
+          contactName,
+          attachments: attachments.length ? attachments : null
         });
       }
 

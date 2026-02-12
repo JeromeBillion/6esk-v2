@@ -709,6 +709,68 @@ button {
   color: var(--muted);
 }
 
+.wa-attachments {
+  display: grid;
+  gap: 8px;
+}
+
+.wa-attachments-list {
+  display: grid;
+  gap: 8px;
+}
+
+.wa-attachment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 18, 0.6);
+  font-size: 12px;
+}
+
+.wa-attachment-item button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wa-attachment-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.whatsapp-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.whatsapp-attachment {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 6px;
+  background: rgba(10, 12, 18, 0.4);
+}
+
+.whatsapp-attachment img {
+  display: block;
+  max-width: 220px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.whatsapp-attachment a {
+  color: var(--accent);
+  font-size: 12px;
+}
+
 .ticket-empty {
   display: grid;
   gap: 8px;

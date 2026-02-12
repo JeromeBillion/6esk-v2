@@ -32,6 +32,7 @@ type Message = {
   wa_timestamp?: string | null;
   wa_contact?: string | null;
   conversation_id?: string | null;
+  attachments?: Attachment[];
 };
 
 type MessageDetail = {
@@ -89,6 +90,14 @@ type Attachment = {
   filename: string;
   content_type: string | null;
   size_bytes: number | null;
+};
+
+type ReplyAttachment = {
+  id: string;
+  filename: string;
+  contentType: string | null;
+  size: number;
+  contentBase64: string;
 };
 
 type TicketEvent = {
@@ -164,6 +173,7 @@ export default function TicketsClient() {
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
+  const [waReplyAttachments, setWaReplyAttachments] = useState<ReplyAttachment[]>([]);
   const [macros, setMacros] = useState<Macro[]>([]);
   const [selectedMacro, setSelectedMacro] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
@@ -260,6 +270,54 @@ export default function TicketsClient() {
       language,
       paramCount
     };
+  }
+
+  function fileToBase64(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const [, base64] = result.split(",");
+        resolve(base64 ?? "");
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleWaAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    if (waReplyAttachments.length >= 1) {
+      setReplyError("WhatsApp supports one attachment per message.");
+      event.target.value = "";
+      return;
+    }
+    const file = files[0];
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setReplyError("Attachments must be 10MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    const contentBase64 = await fileToBase64(file);
+    setWaReplyAttachments([
+      {
+        id:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        filename: file.name,
+        contentType: file.type || null,
+        size: file.size,
+        contentBase64
+      }
+    ]);
+    event.target.value = "";
+  }
+
+  function removeWaAttachment(id: string) {
+    setWaReplyAttachments((prev) => prev.filter((item) => item.id !== id));
   }
 
   async function loadUser() {
@@ -455,6 +513,8 @@ export default function TicketsClient() {
     }
     setEditingDraftId(null);
     setDraftEdits({});
+    setWaReplyAttachments([]);
+    setReplyError(null);
     void loadTicketDetail(activeTicketId);
   }, [activeTicketId]);
 
@@ -625,6 +685,15 @@ export default function TicketsClient() {
     const shouldBuildTemplate =
       ticketChannel === "whatsapp" && templateName && templateLanguage;
     let template: { name: string; language: string; components?: Array<Record<string, unknown>> } | null = null;
+    const attachmentPayload =
+      ticketChannel === "whatsapp"
+        ? waReplyAttachments.map((attachment) => ({
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            contentBase64: attachment.contentBase64
+          }))
+        : [];
 
     if (shouldBuildTemplate) {
       const params = waTemplateParams
@@ -656,7 +725,17 @@ export default function TicketsClient() {
       return;
     }
 
-    if (!trimmedText && !template) {
+    if (ticketChannel === "whatsapp" && attachmentPayload.length > 1) {
+      setReplyError("WhatsApp supports one attachment per message.");
+      return;
+    }
+
+    if (ticketChannel === "whatsapp" && attachmentPayload.length && template) {
+      setReplyError("Templates cannot be combined with attachments.");
+      return;
+    }
+
+    if (!trimmedText && !template && attachmentPayload.length === 0) {
       setReplyError(
         ticketChannel === "whatsapp"
           ? "Add a reply or provide a template."
@@ -670,7 +749,8 @@ export default function TicketsClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: trimmedText || null,
-        template
+        template,
+        attachments: attachmentPayload.length ? attachmentPayload : null
       })
     });
     if (res.ok) {
@@ -678,6 +758,7 @@ export default function TicketsClient() {
       setWaTemplateName("");
       setWaTemplateParams("");
       setSelectedTemplateId("");
+      setWaReplyAttachments([]);
       await loadTicketDetail(ticketId);
       await loadDraftQueue();
     } else {
@@ -1591,6 +1672,7 @@ export default function TicketsClient() {
                           const previousDate =
                             index > 0 ? getMessageDateKey(messages[index - 1]) : null;
                           const showDivider = currentDate !== previousDate;
+                          const waAttachments = message.attachments ?? [];
 
                           return (
                             <div key={message.id} className="whatsapp-thread-row">
@@ -1607,6 +1689,32 @@ export default function TicketsClient() {
                                 <div className="whatsapp-text">
                                   {message.preview_text ?? "(no message body)"}
                                 </div>
+                                {waAttachments.length ? (
+                                  <div className="whatsapp-attachments">
+                                    {waAttachments.map((attachment) => {
+                                      const isImage = attachment.content_type?.startsWith("image/");
+                                      const url = `/api/attachments/${attachment.id}`;
+                                      return (
+                                        <div key={attachment.id} className="whatsapp-attachment">
+                                          {isImage ? (
+                                            <Image
+                                              src={url}
+                                              alt={attachment.filename}
+                                              width={240}
+                                              height={160}
+                                              unoptimized
+                                              style={{ display: "block", width: "100%", height: "auto" }}
+                                            />
+                                          ) : (
+                                            <a href={url} target="_blank" rel="noreferrer">
+                                              {attachment.filename}
+                                            </a>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
                                 <div className="whatsapp-meta">
                                   <span>{formatMessageTimestamp(message)}</span>
                                   {isOutbound ? (
@@ -2223,6 +2331,34 @@ export default function TicketsClient() {
                     rows={5}
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--border)" }}
                   />
+                  {ticketChannel === "whatsapp" ? (
+                    <div className="wa-attachments">
+                      <label>
+                        Attachment (1 max, 10MB)
+                        <input type="file" onChange={handleWaAttachmentChange} />
+                      </label>
+                      {waReplyAttachments.length ? (
+                        <div className="wa-attachments-list">
+                          {waReplyAttachments.map((attachment) => (
+                            <div key={attachment.id} className="wa-attachment-item">
+                              <div>
+                                <strong>{attachment.filename}</strong>
+                                <div className="wa-attachment-meta">
+                                  {(attachment.size / 1024 / 1024).toFixed(1)} MB
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeWaAttachment(attachment.id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {ticketChannel === "whatsapp" ? (
                     <div style={{ display: "grid", gap: 8 }}>
                       <label>

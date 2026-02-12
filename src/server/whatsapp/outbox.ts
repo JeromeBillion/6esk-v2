@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { decryptSecret } from "@/server/agents/secret";
+import { getObjectBuffer } from "@/server/storage/r2";
 
 type WhatsAppEventRow = {
   id: string;
@@ -177,6 +178,52 @@ function buildMetaPayload(payload: Record<string, unknown>) {
   };
 }
 
+function resolveMediaType(contentType: string | null, filename: string) {
+  if (contentType?.startsWith("image/")) return "image";
+  if (contentType?.startsWith("video/")) return "video";
+  if (contentType?.startsWith("audio/")) return "audio";
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png")) return "image";
+  if (lower.endsWith(".mp4") || lower.endsWith(".mov")) return "video";
+  if (lower.endsWith(".mp3") || lower.endsWith(".wav")) return "audio";
+  return "document";
+}
+
+async function uploadMetaMedia(
+  accessToken: string,
+  phoneNumberId: string,
+  attachment: {
+    r2Key: string;
+    filename: string;
+    contentType: string | null;
+  },
+  mediaType: string
+) {
+  const { buffer, contentType } = await getObjectBuffer(attachment.r2Key);
+  const form = new FormData();
+  const blob = new Blob([buffer], { type: contentType ?? "application/octet-stream" });
+  form.append("file", blob, attachment.filename);
+  form.append("type", mediaType);
+  form.append("messaging_product", "whatsapp");
+
+  const uploadUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/media`;
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: form
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(errorBody || `WhatsApp media upload failed (${response.status})`);
+  }
+
+  const data = (await response.json()) as { id?: string };
+  return data.id ?? null;
+}
+
 async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string, unknown>) {
   const accessToken = account.access_token ? decryptSecret(account.access_token) : "";
   if (!accessToken) {
@@ -184,6 +231,75 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
   }
   if (!account.phone_number) {
     throw new Error("Missing WhatsApp phone number ID");
+  }
+
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const template =
+    typeof payload.template === "object" && payload.template
+      ? (payload.template as Record<string, unknown>)
+      : null;
+  const caption =
+    typeof payload.caption === "string" && payload.caption.trim()
+      ? payload.caption.trim()
+      : typeof payload.text === "string" && payload.text.trim()
+        ? payload.text.trim()
+        : null;
+
+  if (attachments.length && template) {
+    throw new Error("Templates cannot be combined with attachments");
+  }
+
+  if (attachments.length) {
+    const attachment = attachments[0] as {
+      r2Key?: string;
+      filename?: string;
+      contentType?: string | null;
+    };
+    if (!attachment?.r2Key || !attachment.filename) {
+      throw new Error("Missing WhatsApp attachment payload");
+    }
+    const mediaType = resolveMediaType(attachment.contentType ?? null, attachment.filename);
+    const mediaId = await uploadMetaMedia(
+      accessToken,
+      account.phone_number,
+      {
+        r2Key: attachment.r2Key,
+        filename: attachment.filename,
+        contentType: attachment.contentType ?? null
+      },
+      mediaType
+    );
+    if (!mediaId) {
+      throw new Error("WhatsApp media upload returned no id");
+    }
+    const body = {
+      messaging_product: "whatsapp",
+      to: typeof payload.to === "string" ? payload.to : "",
+      type: mediaType,
+      [mediaType]: {
+        id: mediaId,
+        ...(caption && mediaType !== "audio" ? { caption } : {})
+      }
+    };
+    if (!body.to) {
+      throw new Error("Missing WhatsApp recipient");
+    }
+    const url = `https://graph.facebook.com/${GRAPH_VERSION}/${account.phone_number}/messages`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || `WhatsApp send failed (${response.status})`);
+    }
+    const data = (await response.json()) as { messages?: Array<{ id?: string }> };
+    const providerMessageId = data.messages?.[0]?.id ?? null;
+    return { providerMessageId };
   }
 
   const { body, to } = buildMetaPayload(payload);

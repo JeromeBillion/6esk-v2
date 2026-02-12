@@ -87,6 +87,24 @@ export async function POST(
 
   let template = extractTemplate(priorPayload);
   let text = typeof priorPayload?.text === "string" ? priorPayload.text : null;
+  const attachmentsResult = await db.query<{
+    filename: string;
+    content_type: string | null;
+    size_bytes: number | null;
+    r2_key: string;
+  }>(
+    `SELECT filename, content_type, size_bytes, r2_key
+     FROM attachments
+     WHERE message_id = $1
+     ORDER BY created_at`,
+    [message.id]
+  );
+  const attachments = attachmentsResult.rows.map((row) => ({
+    filename: row.filename,
+    contentType: row.content_type,
+    size: row.size_bytes,
+    r2Key: row.r2_key
+  }));
 
   if (!text && !template && message.r2_key_text) {
     const { buffer } = await getObjectBuffer(message.r2_key_text);
@@ -100,7 +118,7 @@ export async function POST(
     return Response.json({ error: "Missing WhatsApp recipient" }, { status: 400 });
   }
 
-  if (!text && !template) {
+  if (!text && !template && attachments.length === 0) {
     return Response.json({ error: "Unable to reconstruct message payload" }, { status: 409 });
   }
 
@@ -117,6 +135,8 @@ export async function POST(
   const payload = {
     to,
     text: text ?? null,
+    caption: attachments.length ? text ?? null : null,
+    attachments: attachments.length ? attachments : null,
     template: template ?? null,
     ticketId: message.ticket_id ?? null,
     messageRecordId: message.id,

@@ -9,6 +9,17 @@ const payloadSchema = z.object({
   ticketId: z.string().uuid().optional().nullable(),
   to: z.string().min(3),
   text: z.string().optional(),
+  attachments: z
+    .array(
+      z.object({
+        filename: z.string(),
+        contentType: z.string().optional().nullable(),
+        size: z.number().optional().nullable(),
+        contentBase64: z.string()
+      })
+    )
+    .optional()
+    .nullable(),
   template: z
     .object({
       name: z.string(),
@@ -39,7 +50,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  if (!parsed.data.text && !parsed.data.template) {
+  if (!parsed.data.text && !parsed.data.template && !(parsed.data.attachments?.length ?? 0)) {
     return Response.json({ error: "Message body required" }, { status: 400 });
   }
 
@@ -58,6 +69,7 @@ export async function POST(request: Request) {
       ticketId: parsed.data.ticketId ?? null,
       to: parsed.data.to,
       text: parsed.data.text ?? "[template message queued]",
+      attachments: parsed.data.attachments ?? null,
       template: parsed.data.template ?? null,
       actorUserId: user.id,
       origin: "human"
