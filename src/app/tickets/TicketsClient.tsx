@@ -141,6 +141,7 @@ export default function TicketsClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterTag, setFilterTag] = useState<string>("all");
+  const [filterChannel, setFilterChannel] = useState<string>("all");
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [assignedFilter, setAssignedFilter] = useState<string>("all");
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
@@ -247,6 +248,7 @@ export default function TicketsClient() {
     if (filterStatus !== "all") params.set("status", filterStatus);
     if (filterPriority !== "all") params.set("priority", filterPriority);
     if (filterTag !== "all") params.set("tag", filterTag);
+    if (filterChannel !== "all") params.set("channel", filterChannel);
     if (filterQuery.trim()) params.set("q", filterQuery.trim());
     if (assignedFilter !== "all") params.set("assigned", assignedFilter);
 
@@ -333,7 +335,7 @@ export default function TicketsClient() {
   useEffect(() => {
     void loadTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus, filterPriority, filterTag, filterQuery, assignedFilter]);
+  }, [filterStatus, filterPriority, filterTag, filterChannel, filterQuery, assignedFilter]);
 
   useEffect(() => {
     if (selectedTicketIds.length === 0) return;
@@ -805,6 +807,27 @@ export default function TicketsClient() {
                   onChange={(event) => setFilterQuery(event.target.value)}
                 />
               </label>
+              <div className="ticket-filter-chips">
+                <span className="ticket-filter-label">Channel</span>
+                <div className="ticket-filter-chip-row">
+                  {[
+                    { value: "all", label: "All" },
+                    { value: "email", label: "Email" },
+                    { value: "whatsapp", label: "WhatsApp" }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterChannel(option.value)}
+                      className={`ticket-filter-chip${
+                        filterChannel === option.value ? " active" : ""
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {user?.role_name === "lead_admin" ? (
                 <label>
                   Assignment

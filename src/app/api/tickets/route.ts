@@ -14,6 +14,7 @@ export async function GET(request: Request) {
   const tag = url.searchParams.get("tag");
   const search = url.searchParams.get("q");
   const assigned = url.searchParams.get("assigned");
+  const channel = url.searchParams.get("channel");
 
   const assignedUserId =
     isLeadAdmin(user) && assigned === "mine" ? user.id : undefined;
@@ -23,7 +24,8 @@ export async function GET(request: Request) {
     priority: priority === "all" ? null : priority,
     tag: tag === "all" ? null : tag,
     search: search && search.trim() ? search.trim() : null,
-    assignedUserId
+    assignedUserId,
+    channel: channel === "all" ? null : channel
   });
   return Response.json({ tickets });
 }

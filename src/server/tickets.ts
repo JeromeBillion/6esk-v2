@@ -189,6 +189,7 @@ export async function listTicketsForUser(
     tag?: string | null;
     search?: string | null;
     assignedUserId?: string | null;
+    channel?: string | null;
   }
 ) {
   const values: Array<string> = [];
@@ -230,6 +231,32 @@ export async function listTicketsForUser(
         WHERE ttf.ticket_id = t.id AND tagf.name = $${values.length}
       )`
     );
+  }
+
+  if (filters?.channel) {
+    const channel = filters.channel.toLowerCase();
+    if (channel === "whatsapp") {
+      values.push("whatsapp");
+      const placeholder = `$${values.length}`;
+      conditions.push(
+        `EXISTS (
+          SELECT 1
+          FROM messages channel_msg
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+        )`
+      );
+    }
+    if (channel === "email") {
+      values.push("whatsapp");
+      const placeholder = `$${values.length}`;
+      conditions.push(
+        `NOT EXISTS (
+          SELECT 1
+          FROM messages channel_msg
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+        )`
+      );
+    }
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
