@@ -48,7 +48,7 @@ These are the “performance reports” referenced in the PRD.
 
 **Roadmap Phases**
 
-**Progress Update (2026-02-11)**
+**Progress Update (2026-02-12)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
 - Phase 1 dev-ready, awaiting DNS verification.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
@@ -66,15 +66,17 @@ These are the “performance reports” referenced in the PRD.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
 - Ticket list density toggle + shift-click range selection added.
 - WhatsApp thread view now includes date dividers and contact quick actions.
+- Ticket detail tag editor (add/remove + suggestions) added.
 - Admin polish: section counts, user search, role badges.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
+- AI agent default policy now uses 24/7 working hours (editable in admin).
 - Sidebar renamed from “Platform” to “Support.”
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 - Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
 
-**Roadmap Status (as of 2026-02-11)**
+**Roadmap Status (as of 2026-02-12)**
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | Complete |

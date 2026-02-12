@@ -281,6 +281,96 @@ button {
   margin-bottom: 8px;
 }
 
+.ticket-tags {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ticket-tags-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ticket-tags-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ticket-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ticket-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(139, 215, 255, 0.15);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.ticket-tag-pill button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ticket-tags-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ticket-tags-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-tags-actions button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ticket-tags-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ticket-tags-suggestions button {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.ticket-tags-suggestions button:hover {
+  background: rgba(57, 184, 255, 0.12);
+  border-color: rgba(57, 184, 255, 0.3);
+  color: var(--text);
+}
+
+.ticket-tags-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
 .tickets-sidebar[data-density="compact"] .ticket-card {
   padding: 6px 10px;
 }

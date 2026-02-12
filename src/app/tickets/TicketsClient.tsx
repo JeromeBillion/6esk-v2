@@ -154,6 +154,9 @@ export default function TicketsClient() {
   const [ticketDensity, setTicketDensity] = useState<"comfortable" | "compact">("comfortable");
   const [lastSelectedTicketId, setLastSelectedTicketId] = useState<string | null>(null);
   const [waContactCopyStatus, setWaContactCopyStatus] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -487,6 +490,39 @@ export default function TicketsClient() {
     await loadTickets();
   }
 
+  function parseTagList(value: string) {
+    return value
+      .split(",")
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  async function updateTicketTags(action: "add" | "remove", tags: string[]) {
+    if (!activeTicketId) return;
+    const clean = Array.from(new Set(tags.map((tag) => tag.toLowerCase().trim()).filter(Boolean)));
+    if (clean.length === 0) {
+      setTagError("Provide at least one tag.");
+      return;
+    }
+    setTagSaving(true);
+    setTagError(null);
+    const res = await fetch(`/api/tickets/${activeTicketId}/tags`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action === "add" ? { addTags: clean } : { removeTags: clean })
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setTagError(payload.error ?? "Failed to update tags");
+      setTagSaving(false);
+      return;
+    }
+    setTagInput("");
+    await loadTicketDetail(activeTicketId);
+    await loadTickets();
+    setTagSaving(false);
+  }
+
   function handleTicketSelection(ticketId: string, checked: boolean, shiftKey: boolean) {
     if (shiftKey && lastSelectedTicketId) {
       const ids = tickets.map((ticket) => ticket.id);
@@ -686,6 +722,11 @@ export default function TicketsClient() {
       )
     : macros
   ).slice(0, 6);
+  const availableTags = Array.from(
+    new Set(tickets.flatMap((ticket) => ticket.tags ?? []))
+  )
+    .map((tag) => tag.toLowerCase())
+    .filter((tag) => !(activeTicket?.tags ?? []).includes(tag));
   const templateParamPreview = (() => {
     if (!selectedTemplate) {
       return [];
@@ -1072,9 +1113,73 @@ export default function TicketsClient() {
                     </div>
                   ) : null}
                   {activeTicket.category ? <p>Category: {activeTicket.category}</p> : null}
-                  {activeTicket.tags && activeTicket.tags.length ? (
-                    <p>Tags: {activeTicket.tags.join(", ")}</p>
-                  ) : null}
+                  <div className="ticket-tags">
+                    <div className="ticket-tags-header">
+                      <strong>Tags</strong>
+                      {activeTicket.tags && activeTicket.tags.length ? (
+                        <span className="ticket-tags-count">
+                          {activeTicket.tags.length} total
+                        </span>
+                      ) : null}
+                    </div>
+                    {activeTicket.tags && activeTicket.tags.length ? (
+                      <div className="ticket-tags-list">
+                        {activeTicket.tags.map((tag) => (
+                          <span key={tag} className="ticket-tag-pill">
+                            {tag}
+                            <button
+                              type="button"
+                              onClick={() => updateTicketTags("remove", [tag])}
+                              disabled={tagSaving}
+                              aria-label={`Remove tag ${tag}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="ticket-tags-empty">No tags yet.</span>
+                    )}
+                    <div className="ticket-tags-actions">
+                      <label>
+                        Add tags
+                        <input
+                          type="text"
+                          placeholder="billing, urgent"
+                          value={tagInput}
+                          onChange={(event) => {
+                            setTagInput(event.target.value);
+                            if (tagError) {
+                              setTagError(null);
+                            }
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => updateTicketTags("add", parseTagList(tagInput))}
+                        disabled={!tagInput.trim() || tagSaving}
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {availableTags.length ? (
+                      <div className="ticket-tags-suggestions">
+                        {availableTags.slice(0, 8).map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => updateTicketTags("add", [tag])}
+                            disabled={tagSaving}
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {tagError ? <span className="ticket-tags-error">{tagError}</span> : null}
+                  </div>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <label>
                       Status

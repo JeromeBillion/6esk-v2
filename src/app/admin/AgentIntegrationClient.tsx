@@ -24,7 +24,7 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
     sharedSecret: "",
     status: "active" as "active" | "paused",
     policyMode: "draft_only" as "draft_only" | "auto_send",
-    policyJson: "{\n  \"working_hours\": {\n    \"timezone\": \"Africa/Johannesburg\",\n    \"days\": [1,2,3,4,5],\n    \"start\": \"08:00\",\n    \"end\": \"18:00\"\n  },\n  \"escalation\": {\n    \"out_of_hours\": \"draft_only\",\n    \"tag\": \"urgent\"\n  }\n}"
+    policyJson: "{\n  \"working_hours\": {\n    \"timezone\": \"Africa/Johannesburg\",\n    \"days\": [0,1,2,3,4,5,6],\n    \"start\": \"00:00\",\n    \"end\": \"23:59\"\n  },\n  \"escalation\": {\n    \"out_of_hours\": \"draft_only\",\n    \"tag\": \"urgent\"\n  }\n}"
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,8 +115,8 @@ export default function AgentIntegrationClient({ compact = false }: AgentIntegra
     <section style={{ marginTop: compact ? 0 : 40 }}>
       <h2 style={{ marginBottom: 12 }}>AI Agent Integration</h2>
       <p style={{ marginBottom: 12 }}>
-        Connect your ElizaOS runtime. Default mode is draft-only. Toggle auto-send if you want
-        AI to send replies without approval.
+        Connect your ElizaOS runtime. Default mode is draft-only with 24/7 working hours. Toggle
+        auto-send if you want AI to send replies without approval.
       </p>
       <form onSubmit={handleSave} style={{ display: "grid", gap: 12 }}>
         <label>
