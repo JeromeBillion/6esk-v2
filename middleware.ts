@@ -7,13 +7,27 @@ type RateEntry = {
 };
 
 const store = new Map<string, RateEntry>();
-const ADMIN_LIMIT = 120;
-const AGENT_LIMIT = 600;
-const AUTH_LIMIT = 20;
-const PORTAL_LIMIT = 40;
-const TICKET_CREATE_LIMIT = 60;
-const EMAIL_SEND_LIMIT = 120;
 const WINDOW_MS = 60_000;
+
+function parseLimit(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
+}
+
+const ADMIN_LIMIT = parseLimit(process.env.RATE_LIMIT_ADMIN, 120);
+const AGENT_LIMIT = parseLimit(process.env.RATE_LIMIT_AGENT, 600);
+const AUTH_LIMIT = parseLimit(process.env.RATE_LIMIT_AUTH_LOGIN, 20);
+const PORTAL_LIMIT = parseLimit(process.env.RATE_LIMIT_PORTAL_TICKET, 40);
+const TICKET_CREATE_LIMIT = parseLimit(process.env.RATE_LIMIT_TICKET_CREATE, 60);
+const TICKET_REPLY_LIMIT = parseLimit(process.env.RATE_LIMIT_TICKET_REPLY, 120);
+const TICKET_DRAFT_SEND_LIMIT = parseLimit(process.env.RATE_LIMIT_DRAFT_SEND, 120);
+const EMAIL_SEND_LIMIT = parseLimit(process.env.RATE_LIMIT_EMAIL_SEND, 120);
+const WHATSAPP_SEND_LIMIT = parseLimit(process.env.RATE_LIMIT_WHATSAPP_SEND, 120);
+const WHATSAPP_RESEND_LIMIT = parseLimit(process.env.RATE_LIMIT_WHATSAPP_RESEND, 90);
+const WHATSAPP_INBOUND_LIMIT = parseLimit(process.env.RATE_LIMIT_WHATSAPP_INBOUND, 1200);
 
 function getClientKey(request: NextRequest) {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -54,7 +68,18 @@ function checkRateLimit(key: string, limit: number) {
 type RateBucket = {
   key: string;
   limit: number;
-  type: "admin" | "agent" | "auth" | "portal" | "ticket_create" | "email_send";
+  type:
+    | "admin"
+    | "agent"
+    | "auth"
+    | "portal"
+    | "ticket_create"
+    | "ticket_reply"
+    | "draft_send"
+    | "email_send"
+    | "whatsapp_send"
+    | "whatsapp_resend"
+    | "whatsapp_inbound";
 };
 
 function getRateBucket(pathname: string): RateBucket | null {
@@ -73,8 +98,23 @@ function getRateBucket(pathname: string): RateBucket | null {
   if (pathname === "/api/tickets/create") {
     return { key: "ticket_create", limit: TICKET_CREATE_LIMIT, type: "ticket_create" };
   }
+  if (/^\/api\/tickets\/[^/]+\/replies$/.test(pathname)) {
+    return { key: "ticket_reply", limit: TICKET_REPLY_LIMIT, type: "ticket_reply" };
+  }
+  if (/^\/api\/tickets\/[^/]+\/drafts\/[^/]+\/send$/.test(pathname)) {
+    return { key: "draft_send", limit: TICKET_DRAFT_SEND_LIMIT, type: "draft_send" };
+  }
   if (pathname === "/api/email/send") {
     return { key: "email_send", limit: EMAIL_SEND_LIMIT, type: "email_send" };
+  }
+  if (pathname === "/api/whatsapp/send") {
+    return { key: "whatsapp_send", limit: WHATSAPP_SEND_LIMIT, type: "whatsapp_send" };
+  }
+  if (/^\/api\/messages\/[^/]+\/whatsapp-resend$/.test(pathname)) {
+    return { key: "whatsapp_resend", limit: WHATSAPP_RESEND_LIMIT, type: "whatsapp_resend" };
+  }
+  if (pathname === "/api/whatsapp/inbound") {
+    return { key: "whatsapp_inbound", limit: WHATSAPP_INBOUND_LIMIT, type: "whatsapp_inbound" };
   }
   return null;
 }
@@ -123,7 +163,10 @@ export const config = {
     "/api/agent/:path*",
     "/api/auth/login",
     "/api/portal/tickets",
-    "/api/tickets/create",
-    "/api/email/send"
+    "/api/tickets/:path*",
+    "/api/email/send",
+    "/api/whatsapp/send",
+    "/api/whatsapp/inbound",
+    "/api/messages/:path*"
   ]
 };

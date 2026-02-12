@@ -4,6 +4,7 @@ import {
   type NormalizedWhatsAppAttachment,
   type NormalizedWhatsAppMessage
 } from "@/server/whatsapp/inbound-store";
+import { verifyWhatsAppSignature } from "@/server/whatsapp/signature";
 
 type WhatsAppStatusUpdate = {
   messageId: string;
@@ -291,8 +292,22 @@ async function applyStatusUpdates(
 
 export async function POST(request: Request) {
   let payload: unknown;
+  const rawBody = await request.text();
+  const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
+  const providedSignature = request.headers.get("x-hub-signature-256");
+
+  const signatureValid = verifyWhatsAppSignature({
+    body: rawBody,
+    providedSignature,
+    appSecret
+  });
+
+  if (!signatureValid) {
+    return Response.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
   try {
-    payload = await request.json();
+    payload = rawBody ? JSON.parse(rawBody) : {};
   } catch (error) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }

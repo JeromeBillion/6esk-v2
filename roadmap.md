@@ -224,8 +224,10 @@ Status
 - Inbound failure alerting (webhook + cron script) added.
 - Inbound maintenance job runner added (`npm run jobs:inbound`) with cron and loop modes.
 - Admin inbound metrics API + trend panel added (queue health + 24h processing/failure view).
+- WhatsApp inbound webhook now supports Meta signature verification (`x-hub-signature-256`) when `WHATSAPP_APP_SECRET` is set.
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
+- Rate limits expanded to ticket replies/draft sends and WhatsApp send/resend/inbound routes (env-configurable).
 - Viewer role restricted from ticket mutations + outbound send; SLA/tag changes now audited.
 - Admin security panel shows encryption status + IP allowlist configuration guidance.
 Acceptance Criteria
