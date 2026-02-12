@@ -1286,6 +1286,101 @@ button {
   color: var(--muted);
 }
 
+.wa-status-latency {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wa-status-latency-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(16, 20, 28, 0.7);
+  color: var(--muted);
+}
+
+.wa-status-event {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(10, 12, 18, 0.5);
+  display: grid;
+  gap: 6px;
+}
+
+.wa-status-event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wa-status-event-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.wa-status-event-badge.status-queued {
+  border-color: rgba(154, 164, 178, 0.5);
+  color: #c5ccd6;
+}
+
+.wa-status-event-badge.status-sent {
+  border-color: rgba(139, 215, 255, 0.5);
+  color: #8bd7ff;
+}
+
+.wa-status-event-badge.status-delivered {
+  border-color: rgba(127, 245, 162, 0.5);
+  color: #7ff5a2;
+}
+
+.wa-status-event-badge.status-read {
+  border-color: rgba(57, 184, 255, 0.5);
+  color: #39b8ff;
+}
+
+.wa-status-event-badge.status-failed {
+  border-color: rgba(255, 122, 122, 0.6);
+  color: #ffb3b3;
+}
+
+.wa-status-event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wa-status-event-error {
+  color: #ffb3b3;
+  font-size: 12px;
+}
+
+.wa-status-event-payload summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.wa-status-event-payload pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 18, 0.7);
+  color: var(--text);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .wa-preview-meta {
   display: grid;
   gap: 6px;

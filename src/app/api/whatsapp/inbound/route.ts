@@ -5,6 +5,13 @@ import {
   type NormalizedWhatsAppMessage
 } from "@/server/whatsapp/inbound-store";
 
+type WhatsAppStatusUpdate = {
+  messageId: string;
+  status: string | null;
+  timestamp: string | number | null;
+  payload: Record<string, unknown>;
+};
+
 async function getVerifyToken() {
   const result = await db.query(
     `SELECT verify_token FROM whatsapp_accounts ORDER BY created_at DESC LIMIT 1`
@@ -89,21 +96,29 @@ function extractNormalizedMessages(payload: Record<string, unknown>) {
     .filter(Boolean) as NormalizedWhatsAppMessage[];
 
   const rawStatuses = Array.isArray(payload.statuses) ? payload.statuses : [];
-  const statuses = rawStatuses
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const record = item as Record<string, unknown>;
-      const timestamp = record.timestamp as string | number | null | undefined;
-      return {
-        messageId: typeof record.id === "string" ? record.id : null,
-        status: typeof record.status === "string" ? record.status : null,
-        timestamp: timestamp ?? null
-      };
-    })
-    .filter(
-      (item): item is { messageId: string; status: string | null; timestamp: string | number | null } =>
-        Boolean(item?.messageId)
-    );
+  const statuses: WhatsAppStatusUpdate[] = [];
+  for (const item of rawStatuses) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const messageId = typeof record.id === "string" ? record.id : null;
+    if (!messageId) continue;
+    const timestamp = record.timestamp as string | number | null | undefined;
+    const payload =
+      record.payload && typeof record.payload === "object"
+        ? (record.payload as Record<string, unknown>)
+        : null;
+    statuses.push({
+      messageId,
+      status: typeof record.status === "string" ? record.status : null,
+      timestamp: timestamp ?? null,
+      payload: payload
+        ? {
+            source: "webhook",
+            ...payload
+          }
+        : { source: "webhook" }
+    });
+  }
 
   return { messages, statuses };
 }
@@ -115,7 +130,7 @@ function extractMetaMessages(payload: Record<string, unknown>) {
 
   const entries = Array.isArray(payload.entry) ? payload.entry : [];
   const messages: NormalizedWhatsAppMessage[] = [];
-  const statuses: Array<{ messageId: string; status: string | null; timestamp: string | number | null }> = [];
+  const statuses: WhatsAppStatusUpdate[] = [];
 
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
@@ -189,10 +204,30 @@ function extractMetaMessages(payload: Record<string, unknown>) {
         const messageId = typeof record.id === "string" ? record.id : null;
         if (!messageId) continue;
         const timestamp = record.timestamp as string | number | null | undefined;
+        const eventPayload: Record<string, unknown> = {
+          source: "webhook",
+          provider: "meta"
+        };
+        if (typeof record.recipient_id === "string") {
+          eventPayload.recipientId = record.recipient_id;
+        }
+        if (typeof record.biz_opaque_callback_data === "string") {
+          eventPayload.callbackData = record.biz_opaque_callback_data;
+        }
+        if (record.conversation && typeof record.conversation === "object") {
+          eventPayload.conversation = record.conversation;
+        }
+        if (record.pricing && typeof record.pricing === "object") {
+          eventPayload.pricing = record.pricing;
+        }
+        if (Array.isArray(record.errors) && record.errors.length > 0) {
+          eventPayload.errors = record.errors;
+        }
         statuses.push({
           messageId,
           status: typeof record.status === "string" ? record.status : null,
-          timestamp: timestamp ?? null
+          timestamp: timestamp ?? null,
+          payload: eventPayload
         });
       }
     }
@@ -216,7 +251,7 @@ function parseStatusTimestamp(value: string | number | null | undefined) {
 }
 
 async function applyStatusUpdates(
-  statuses: Array<{ messageId: string; status: string | null; timestamp: string | number | null }>
+  statuses: WhatsAppStatusUpdate[]
 ) {
   for (const status of statuses) {
     if (!status.messageId) continue;
@@ -229,6 +264,10 @@ async function applyStatusUpdates(
       [status.messageId]
     );
     const messageId = messageResult.rows[0]?.id ?? null;
+    const eventPayload = {
+      status: status.status ?? null,
+      ...status.payload
+    };
     await db.query(
       `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -237,7 +276,7 @@ async function applyStatusUpdates(
         status.messageId,
         status.status ?? "unknown",
         timestamp ?? new Date(),
-        { source: "webhook", status: status.status ?? null }
+        eventPayload
       ]
     );
     await db.query(

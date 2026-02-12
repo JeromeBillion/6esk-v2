@@ -51,7 +51,14 @@ type MessageDetail = {
   waTimestamp?: string | null;
   waContact?: string | null;
   conversationId?: string | null;
-  statusEvents?: Array<{ status: string; occurred_at: string | null }>;
+  statusEvents?: Array<{
+    id: string;
+    status: string;
+    occurred_at: string | null;
+    externalMessageId?: string | null;
+    source?: string | null;
+    payload?: Record<string, unknown> | null;
+  }>;
   text: string | null;
   html: string | null;
 };
@@ -150,6 +157,71 @@ const WHATSAPP_STATUS_INDEX: Record<string, number> = {
   delivered: 2,
   read: 3
 };
+
+function parseEventTimestamp(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatStatusLabel(value: string | null | undefined) {
+  if (!value) return "Unknown";
+  return value
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatStatusLatency(
+  fromValue: string | null | undefined,
+  toValue: string | null | undefined
+) {
+  const from = parseEventTimestamp(fromValue);
+  const to = parseEventTimestamp(toValue);
+  if (!from || !to) return null;
+  const diffMs = to.getTime() - from.getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function extractStatusError(payload: Record<string, unknown> | null | undefined) {
+  if (!payload || typeof payload !== "object") return null;
+
+  if (typeof payload.error === "string" && payload.error.trim()) {
+    return payload.error.trim();
+  }
+
+  const errors = payload.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    const first = errors[0];
+    if (typeof first === "string" && first.trim()) {
+      return first.trim();
+    }
+    if (first && typeof first === "object") {
+      const record = first as Record<string, unknown>;
+      const message =
+        typeof record.message === "string"
+          ? record.message
+          : typeof record.title === "string"
+            ? record.title
+            : typeof record.error_data === "object" &&
+                typeof (record.error_data as Record<string, unknown>).details === "string"
+              ? ((record.error_data as Record<string, unknown>).details as string)
+              : null;
+      if (message && message.trim()) {
+        return message.trim();
+      }
+    }
+  }
+
+  return null;
+}
 
 export default function TicketsClient() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -1978,20 +2050,52 @@ export default function TicketsClient() {
                         {messageDetail.channel === "whatsapp" ? (
                           <div style={{ display: "grid", gap: 6 }}>
                             {(() => {
-                              const events = messageDetail.statusEvents ?? [];
+                              const events = [...(messageDetail.statusEvents ?? [])].sort((a, b) => {
+                                const aTime = parseEventTimestamp(a.occurred_at);
+                                const bTime = parseEventTimestamp(b.occurred_at);
+                                if (!aTime && !bTime) return 0;
+                                if (!aTime) return -1;
+                                if (!bTime) return 1;
+                                return aTime.getTime() - bTime.getTime();
+                              });
+                              const latestEvent = events[events.length - 1] ?? null;
                               const latestStatus =
-                                events.length > 0
-                                  ? events[events.length - 1].status
-                                  : messageDetail.waStatus ?? "queued";
+                                latestEvent?.status ?? messageDetail.waStatus ?? "queued";
                               const latestTimestamp =
-                                events.length > 0
-                                  ? events[events.length - 1].occurred_at
-                                  : messageDetail.waTimestamp ?? null;
+                                latestEvent?.occurred_at ?? messageDetail.waTimestamp ?? null;
                               const isFailed = (latestStatus ?? "").toLowerCase() === "failed";
+                              const stepTimestamps: Record<string, string | null> = {
+                                queued: null,
+                                sent: null,
+                                delivered: null,
+                                read: null
+                              };
+                              for (const event of events) {
+                                const key = event.status.toLowerCase();
+                                if (!(key in stepTimestamps)) continue;
+                                if (!stepTimestamps[key] && event.occurred_at) {
+                                  stepTimestamps[key] = event.occurred_at;
+                                }
+                              }
+                              const latencyRows = [
+                                {
+                                  label: "Queue -> Sent",
+                                  value: formatStatusLatency(stepTimestamps.queued, stepTimestamps.sent)
+                                },
+                                {
+                                  label: "Sent -> Delivered",
+                                  value: formatStatusLatency(stepTimestamps.sent, stepTimestamps.delivered)
+                                },
+                                {
+                                  label: "Delivered -> Read",
+                                  value: formatStatusLatency(stepTimestamps.delivered, stepTimestamps.read)
+                                }
+                              ].filter((item) => Boolean(item.value));
+
                               return (
                                 <>
                                   <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                                    Status: {latestStatus ?? "—"} · Contact:{" "}
+                                    Status: {formatStatusLabel(latestStatus)} · Contact:{" "}
                                     {messageDetail.waContact ?? messageDetail.from}
                                   </div>
                                   {messageDetail.direction === "outbound" ? (
@@ -2010,7 +2114,7 @@ export default function TicketsClient() {
                                               isFailed ? " failed" : ""
                                             }`}
                                           >
-                                            {step}
+                                            {formatStatusLabel(step)}
                                           </span>
                                         );
                                       })}
@@ -2020,6 +2124,15 @@ export default function TicketsClient() {
                                           ? new Date(latestTimestamp).toLocaleString()
                                           : "—"}
                                       </span>
+                                    </div>
+                                  ) : null}
+                                  {latencyRows.length ? (
+                                    <div className="wa-status-latency">
+                                      {latencyRows.map((row) => (
+                                        <span key={row.label} className="wa-status-latency-chip">
+                                          {row.label}: {row.value}
+                                        </span>
+                                      ))}
                                     </div>
                                   ) : null}
                                   {isFailed ? (
@@ -2050,14 +2163,58 @@ export default function TicketsClient() {
                                   ) : null}
                                   {events.length ? (
                                     <div className="wa-status-history">
-                                      {events.map((event, index) => (
-                                        <div key={`${event.status}-${index}`}>
-                                          {event.status} ·{" "}
-                                          {event.occurred_at
-                                            ? new Date(event.occurred_at).toLocaleString()
-                                            : "—"}
-                                        </div>
-                                      ))}
+                                      {events.map((event, index) => {
+                                        const statusError = extractStatusError(event.payload);
+                                        return (
+                                          <div key={event.id || `${event.status}-${index}`} className="wa-status-event">
+                                            <div className="wa-status-event-header">
+                                              <span
+                                                className={`wa-status-event-badge status-${event.status.toLowerCase()}`}
+                                              >
+                                                {formatStatusLabel(event.status)}
+                                              </span>
+                                              <span>
+                                                {event.occurred_at
+                                                  ? new Date(event.occurred_at).toLocaleString()
+                                                  : "—"}
+                                              </span>
+                                              {index > 0 ? (
+                                                <span>
+                                                  +
+                                                  {formatStatusLatency(
+                                                    events[index - 1].occurred_at,
+                                                    event.occurred_at
+                                                  ) ?? "—"}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                            <div className="wa-status-event-meta">
+                                              <span>
+                                                source:{" "}
+                                                {formatStatusLabel(
+                                                  event.source ??
+                                                    (event.payload &&
+                                                    typeof event.payload.source === "string"
+                                                      ? event.payload.source
+                                                      : "unknown")
+                                                )}
+                                              </span>
+                                              {event.externalMessageId ? (
+                                                <span>message: {event.externalMessageId}</span>
+                                              ) : null}
+                                            </div>
+                                            {statusError ? (
+                                              <div className="wa-status-event-error">{statusError}</div>
+                                            ) : null}
+                                            {event.payload ? (
+                                              <details className="wa-status-event-payload">
+                                                <summary>View payload</summary>
+                                                <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                                              </details>
+                                            ) : null}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   ) : null}
                                 </>

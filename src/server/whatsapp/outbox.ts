@@ -87,7 +87,12 @@ async function markDelivered(
       providerMessageId ?? null,
       "sent",
       sentAt,
-      { source: "outbox", status: "sent" }
+      {
+        source: "outbox",
+        status: "sent",
+        providerMessageId: providerMessageId ?? null,
+        eventId
+      }
     ]
   );
 
@@ -129,7 +134,19 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
     await db.query(
       `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
        VALUES ($1, $2, $3, $4, $5)`,
-      [messageRecordId, null, "failed", new Date(), { source: "outbox", status: "failed" }]
+      [
+        messageRecordId,
+        null,
+        "failed",
+        new Date(),
+        {
+          source: "outbox",
+          status: "failed",
+          eventId,
+          attemptCount,
+          error: errorMessage.slice(0, 500)
+        }
+      ]
     );
     await db.query(
       `UPDATE messages

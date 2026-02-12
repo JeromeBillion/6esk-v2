@@ -42,18 +42,38 @@ export async function GET(
   const attachments = await getAttachmentsForMessage(message.id);
   const textKey = message.r2_key_text;
   const htmlKey = message.r2_key_html;
-  let statusEvents: Array<{ status: string; occurred_at: string | null }> = [];
+  let statusEvents: Array<{
+    id: string;
+    status: string;
+    occurred_at: string | null;
+    externalMessageId: string | null;
+    source: string | null;
+    payload: Record<string, unknown> | null;
+  }> = [];
   if (message.channel === "whatsapp") {
-    const eventsResult = await db.query(
-      `SELECT status, occurred_at
+    const eventsResult = await db.query<{
+      id: string;
+      status: string;
+      occurred_at: Date | null;
+      external_message_id: string | null;
+      payload: Record<string, unknown> | null;
+    }>(
+      `SELECT id, status, occurred_at, external_message_id, payload
        FROM whatsapp_status_events
        WHERE message_id = $1 OR external_message_id = $2
-       ORDER BY occurred_at ASC`,
+       ORDER BY occurred_at ASC, created_at ASC`,
       [message.id, message.external_message_id ?? null]
     );
     statusEvents = eventsResult.rows.map((row) => ({
+      id: row.id,
       status: row.status,
-      occurred_at: row.occurred_at ? new Date(row.occurred_at).toISOString() : null
+      occurred_at: row.occurred_at ? new Date(row.occurred_at).toISOString() : null,
+      externalMessageId: row.external_message_id ?? null,
+      source:
+        row.payload && typeof row.payload.source === "string"
+          ? row.payload.source
+          : null,
+      payload: row.payload ?? null
     }));
   }
 
