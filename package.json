@@ -12,6 +12,7 @@
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed-admin.js",
     "retry:inbound": "node scripts/retry-inbound.js",
+    "jobs:inbound": "node scripts/inbound-backfill-runner.js",
     "alert:inbound": "node scripts/alert-inbound.js",
     "whatsapp:outbox": "node scripts/whatsapp-outbox.js"
   },

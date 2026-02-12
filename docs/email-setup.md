@@ -106,13 +106,25 @@ Production inbound test (after DNS + routing):
 3. Reply from 6esk and confirm it lands in your inbox.
 
 ## 7) Optional Backfill Job (Retries)
-Add a scheduled job to retry failed inbound events:
+Use the inbound maintenance runner to retry failed inbound events and trigger alert checks in one command:
 
 ```powershell
-npm run retry:inbound
+npm run jobs:inbound
 ```
 
-Use Railway cron or any scheduler to run every 5–15 minutes.
+Useful environment variables:
+
+```env
+INBOUND_RETRY_LIMIT=25
+INBOUND_ALERT_EVERY_RUN=true
+INBOUND_JOB_INTERVAL_SECONDS=0
+INBOUND_JOB_MAX_RUNS=1
+```
+
+Run modes:
+- Cron mode (recommended): keep `INBOUND_JOB_INTERVAL_SECONDS=0` and run `npm run jobs:inbound` every 5-15 minutes in Railway scheduler.
+- Worker mode: set `INBOUND_JOB_INTERVAL_SECONDS=300` and run `npm run jobs:inbound` as a long-running process.
+- Controlled batch mode: set `INBOUND_JOB_MAX_RUNS=12` with an interval to run a finite number of cycles.
 
 ## 8) Optional Alerts (External Logging)
 Set a webhook URL (Slack or similar) in `INBOUND_ALERT_WEBHOOK`, then schedule:

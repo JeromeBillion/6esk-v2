@@ -220,6 +220,7 @@ Status
 - Backfill retry script added (`npm run retry:inbound`).
 - Admin spam review + inbound failure monitoring added.
 - Inbound failure alerting (webhook + cron script) added.
+- Inbound maintenance job runner added (`npm run jobs:inbound`) with cron and loop modes.
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
 - Viewer role restricted from ticket mutations + outbound send; SLA/tag changes now audited.
@@ -374,7 +375,7 @@ Acceptance Criteria
 2. Finish ticketing UI gaps (platform web form client UI + tag edit/delete).
 3. Add admin password reset + basic audit log UI for user/role changes.
 4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
-5. Start Phase 7 hardening: inbound idempotency + retry/backfill plan.
+5. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.
 6. Stand up WhatsApp Business account and confirm provider choice.
 7. Define WhatsApp AI parity spec (data model + agent events/actions + policy gates).
 8. Implement the UI/UX plan above (app shell, routing, tickets/mail workflows, design system).
