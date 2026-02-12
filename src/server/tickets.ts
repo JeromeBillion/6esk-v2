@@ -10,6 +10,7 @@ export type TicketRecord = {
   category: string | null;
   metadata: Record<string, unknown> | null;
   tags?: string[];
+  has_whatsapp?: boolean;
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -264,7 +265,11 @@ export async function listTicketsForUser(
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
-            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
+            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
+            EXISTS (
+              SELECT 1 FROM messages msg
+              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+            ) AS has_whatsapp
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id
@@ -281,7 +286,11 @@ export async function getTicketById(ticketId: string) {
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
-            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags
+            COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
+            EXISTS (
+              SELECT 1 FROM messages msg
+              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+            ) AS has_whatsapp
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id

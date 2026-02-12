@@ -10,6 +10,7 @@ type Ticket = {
   subject: string | null;
   category?: string | null;
   tags?: string[];
+  has_whatsapp?: boolean;
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -1050,6 +1051,10 @@ export default function TicketsClient() {
             ) : (
               tickets.map((ticket) => {
                 const isSelected = selectedTicketIds.includes(ticket.id);
+                const channel = ticket.has_whatsapp ? "whatsapp" : "email";
+                const requesterLabel = ticket.requester_email.startsWith("whatsapp:")
+                  ? `WhatsApp ${ticket.requester_email.replace(/^whatsapp:/, "")}`
+                  : ticket.requester_email;
                 return (
                   <div key={ticket.id} className="ticket-card-row">
                     <input
@@ -1072,8 +1077,13 @@ export default function TicketsClient() {
                         isSelected ? " selected" : ""
                       }`}
                     >
-                      <strong>{ticket.subject ?? "(no subject)"}</strong>
-                      <div style={{ fontSize: 12 }}>{ticket.requester_email}</div>
+                      <div className="ticket-card-header">
+                        <strong>{ticket.subject ?? "(no subject)"}</strong>
+                        <span className={`ticket-channel-badge ${channel}`}>
+                          {channel === "whatsapp" ? "WhatsApp" : "Email"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12 }}>{requesterLabel}</div>
                       <div style={{ fontSize: 12 }}>Status: {ticket.status}</div>
                       {ticket.category ? (
                         <div style={{ fontSize: 12 }}>Category: {ticket.category}</div>

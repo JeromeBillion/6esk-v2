@@ -71,6 +71,7 @@ These are the “performance reports” referenced in the PRD.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
 - AI agent default policy now uses 24/7 working hours (editable in admin).
 - Support filters now include channel chips (All / Email / WhatsApp).
+- Support ticket list now displays a channel badge per ticket.
 - Sidebar renamed from “Platform” to “Support.”
 - Phase 4 complete: ticket core + platform web form UI + tag management.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).

@@ -137,15 +137,14 @@ export async function PATCH(
   fields.push("updated_at = now()");
   values.push(ticketId);
 
-  const result = await db.query(
+  await db.query(
     `UPDATE tickets
      SET ${fields.join(", ")}
      WHERE id = $${index}
      RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
     values
   );
-
-  const updated = result.rows[0];
+  const updated = await getTicketById(ticketId);
 
   if (parsed.data.status && parsed.data.status !== ticket.status) {
     await recordTicketEvent({
@@ -184,5 +183,5 @@ export async function PATCH(
     });
   }
 
-  return Response.json({ ticket: updated });
+  return Response.json({ ticket: updated ?? ticket });
 }

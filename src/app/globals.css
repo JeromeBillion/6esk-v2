@@ -294,6 +294,38 @@ button {
   cursor: pointer;
 }
 
+.ticket-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ticket-channel-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.ticket-channel-badge.email {
+  color: var(--accent);
+  border-color: rgba(139, 215, 255, 0.35);
+  background: rgba(139, 215, 255, 0.12);
+}
+
+.ticket-channel-badge.whatsapp {
+  color: #7ff5a2;
+  border-color: rgba(127, 245, 162, 0.35);
+  background: rgba(127, 245, 162, 0.12);
+}
+
 .ticket-card.active {
   background: rgba(139, 215, 255, 0.25);
   border-color: rgba(139, 215, 255, 0.4);
