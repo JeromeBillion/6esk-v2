@@ -24,6 +24,28 @@ type WhatsAppTemplate = {
   components?: Array<Record<string, unknown>> | null;
 };
 
+type WhatsAppOutboxMetrics = {
+  account: {
+    id: string;
+    provider: string;
+    phoneNumber: string;
+    status: string;
+    updatedAt: string;
+  } | null;
+  queue: {
+    queued: number;
+    dueNow: number;
+    processing: number;
+    failed: number;
+    sentTotal: number;
+    sent24h: number;
+    nextAttemptAt: string | null;
+    lastSentAt: string | null;
+    lastFailedAt: string | null;
+    lastError: string | null;
+  };
+};
+
 type WhatsAppClientProps = {
   compact?: boolean;
 };
@@ -43,6 +65,9 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
   const [error, setError] = useState<string | null>(null);
   const [sendingOutbox, setSendingOutbox] = useState(false);
   const [outboxResult, setOutboxResult] = useState<string | null>(null);
+  const [outboxMetrics, setOutboxMetrics] = useState<WhatsAppOutboxMetrics | null>(null);
+  const [loadingOutboxMetrics, setLoadingOutboxMetrics] = useState(false);
+  const [outboxMetricsError, setOutboxMetricsError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [templateForm, setTemplateForm] = useState({
     name: "",
@@ -55,6 +80,27 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [showAccessToken, setShowAccessToken] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+
+  async function loadOutboxMetrics() {
+    try {
+      setLoadingOutboxMetrics(true);
+      const res = await fetch("/api/admin/whatsapp/outbox");
+      if (!res.ok) {
+        setOutboxMetrics(null);
+        setOutboxMetricsError("Failed to load outbox metrics.");
+        setLoadingOutboxMetrics(false);
+        return;
+      }
+      const payload = (await res.json()) as WhatsAppOutboxMetrics;
+      setOutboxMetrics(payload);
+      setOutboxMetricsError(null);
+      setLoadingOutboxMetrics(false);
+    } catch (error) {
+      setOutboxMetrics(null);
+      setOutboxMetricsError("Failed to load outbox metrics.");
+      setLoadingOutboxMetrics(false);
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -83,6 +129,7 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
 
     void load();
     void loadTemplates();
+    void loadOutboxMetrics();
   }, []);
 
   useEffect(() => {
@@ -154,6 +201,7 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
     }
     const payload = await res.json();
     setOutboxResult(`Delivered ${payload.delivered ?? 0}, skipped ${payload.skipped ?? 0}`);
+    await loadOutboxMetrics();
     setSendingOutbox(false);
   }
 
@@ -489,23 +537,105 @@ export default function WhatsAppClient({ compact = false }: WhatsAppClientProps)
         </button>
       </form>
       <div style={{ marginTop: 16 }}>
-        <button
-          type="button"
-          onClick={runOutbox}
-          disabled={sendingOutbox}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid var(--border)",
-            background: "var(--surface-2)",
-            color: "var(--text)",
-            cursor: "pointer"
-          }}
-        >
-          {sendingOutbox ? "Sending..." : "Process outbound queue"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={runOutbox}
+            disabled={sendingOutbox}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              cursor: "pointer"
+            }}
+          >
+            {sendingOutbox ? "Sending..." : "Process outbound queue"}
+          </button>
+          <button
+            type="button"
+            onClick={loadOutboxMetrics}
+            disabled={loadingOutboxMetrics}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text)",
+              cursor: "pointer"
+            }}
+          >
+            {loadingOutboxMetrics ? "Refreshing..." : "Refresh queue metrics"}
+          </button>
+        </div>
         {outboxResult ? (
           <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>{outboxResult}</p>
+        ) : null}
+        {outboxMetricsError ? (
+          <p style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>{outboxMetricsError}</p>
+        ) : null}
+        {outboxMetrics ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              marginTop: 10,
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 12,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Account status: {outboxMetrics.account?.status ?? "not configured"} · Provider:{" "}
+              {outboxMetrics.account?.provider ?? "—"}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))"
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Queued</div>
+                <strong>{outboxMetrics.queue.queued}</strong>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Due now</div>
+                <strong>{outboxMetrics.queue.dueNow}</strong>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Processing</div>
+                <strong>{outboxMetrics.queue.processing}</strong>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Failed</div>
+                <strong>{outboxMetrics.queue.failed}</strong>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Sent (24h)</div>
+                <strong>{outboxMetrics.queue.sent24h}</strong>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Next attempt:{" "}
+              {outboxMetrics.queue.nextAttemptAt
+                ? new Date(outboxMetrics.queue.nextAttemptAt).toLocaleString()
+                : "—"}
+              {" · "}
+              Last sent:{" "}
+              {outboxMetrics.queue.lastSentAt
+                ? new Date(outboxMetrics.queue.lastSentAt).toLocaleString()
+                : "—"}
+            </div>
+            {outboxMetrics.queue.lastError ? (
+              <div style={{ fontSize: 12, color: "var(--danger)" }}>
+                Last outbox error: {outboxMetrics.queue.lastError}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

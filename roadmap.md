@@ -61,6 +61,7 @@ These are the “performance reports” referenced in the PRD.
 - Mail enhancements: folder sidebar, compose actions, search/filters, pin/star flags, attachments.
 - Mail compose now supports HTML mode with preview and text fallback.
 - Admin WhatsApp settings UX improved (status warnings, copy helpers, template param counts).
+- Admin WhatsApp outbox queue metrics + refresh controls added.
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
@@ -259,6 +260,7 @@ Status
 - Ticket UI shows WhatsApp channel badges + delivery status.
 - 24h window enforcement added with template-required flow in Support UI.
 - WhatsApp outbox processor added with retry/backoff + admin trigger script.
+- WhatsApp admin outbox metrics (queued/due/failed/sent) added for operations visibility.
 - WhatsApp bubble view added to Support ticket conversations.
 - WhatsApp template registry (admin) + Support template picker added.
 - WhatsApp template parameter validation + status timeline added.

@@ -2,6 +2,17 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { deliverPendingWhatsAppEvents } from "@/server/whatsapp/outbox";
+import { getWhatsAppOutboxMetrics } from "@/server/whatsapp/outbox-metrics";
+
+export async function GET() {
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const metrics = await getWhatsAppOutboxMetrics();
+  return Response.json(metrics);
+}
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
