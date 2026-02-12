@@ -1,16 +1,15 @@
 import { db } from "@/server/db";
+import { getInboundAlertConfig } from "@/server/email/inbound-alert-config";
 
 type AlertResult = {
   sent: boolean;
   reason: string;
   failures: number;
   threshold: number;
+  windowMinutes?: number;
+  cooldownMinutes?: number;
+  source?: "db" | "env";
 };
-
-function parseNumber(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 async function getFailureCount(windowMinutes: number) {
   const result = await db.query<{ count: string }>(
@@ -57,25 +56,50 @@ async function sendWebhook(webhookUrl: string, payload: Record<string, unknown>)
 }
 
 export async function sendInboundFailureAlert(): Promise<AlertResult> {
-  const webhook = process.env.INBOUND_ALERT_WEBHOOK ?? "";
+  const config = await getInboundAlertConfig();
+  const webhook = config.webhookUrl;
   if (!webhook) {
-    return { sent: false, reason: "missing_webhook", failures: 0, threshold: 0 };
+    return {
+      sent: false,
+      reason: "missing_webhook",
+      failures: 0,
+      threshold: config.threshold,
+      windowMinutes: config.windowMinutes,
+      cooldownMinutes: config.cooldownMinutes,
+      source: config.source
+    };
   }
 
-  const threshold = parseNumber(process.env.INBOUND_ALERT_THRESHOLD, 5);
-  const windowMinutes = parseNumber(process.env.INBOUND_ALERT_WINDOW_MINUTES, 30);
-  const cooldownMinutes = parseNumber(process.env.INBOUND_ALERT_COOLDOWN_MINUTES, 60);
+  const threshold = config.threshold;
+  const windowMinutes = config.windowMinutes;
+  const cooldownMinutes = config.cooldownMinutes;
 
   const failures = await getFailureCount(windowMinutes);
   if (failures < threshold) {
-    return { sent: false, reason: "below_threshold", failures, threshold };
+    return {
+      sent: false,
+      reason: "below_threshold",
+      failures,
+      threshold,
+      windowMinutes,
+      cooldownMinutes,
+      source: config.source
+    };
   }
 
   const lastSent = await getLastAlertSent();
   if (lastSent) {
     const elapsedMinutes = (Date.now() - lastSent.getTime()) / 60000;
     if (elapsedMinutes < cooldownMinutes) {
-      return { sent: false, reason: "cooldown", failures, threshold };
+      return {
+        sent: false,
+        reason: "cooldown",
+        failures,
+        threshold,
+        windowMinutes,
+        cooldownMinutes,
+        source: config.source
+      };
     }
   }
 
@@ -90,5 +114,13 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
   await sendWebhook(webhook, payload);
   await upsertLastAlertSent(new Date());
 
-  return { sent: true, reason: "sent", failures, threshold };
+  return {
+    sent: true,
+    reason: "sent",
+    failures,
+    threshold,
+    windowMinutes,
+    cooldownMinutes,
+    source: config.source
+  };
 }

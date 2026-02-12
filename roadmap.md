@@ -228,6 +228,7 @@ Status
 - Agent shared secrets encrypted at rest when `AGENT_SECRET_KEY` is set.
 - Optional IP allowlists for admin/agent endpoints added.
 - Rate limits expanded to ticket replies/draft sends and WhatsApp send/resend/inbound routes (env-configurable).
+- Inbound alert settings are now configurable in Admin (webhook, threshold, window, cooldown) with env fallback.
 - Viewer role restricted from ticket mutations + outbound send; SLA/tag changes now audited.
 - Admin security panel shows encryption status + IP allowlist configuration guidance.
 Acceptance Criteria

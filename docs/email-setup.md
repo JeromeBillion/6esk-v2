@@ -134,3 +134,6 @@ npm run alert:inbound
 ```
 
 Recommended schedule: every 10 minutes.
+
+You can also configure alert webhook/threshold/window/cooldown from Admin -> Inbound Failures.
+If no DB config exists, 6esk falls back to the `INBOUND_ALERT_*` environment variables.

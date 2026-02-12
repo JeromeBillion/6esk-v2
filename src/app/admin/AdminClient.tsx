@@ -79,6 +79,15 @@ type InboundMetrics = {
   series: InboundMetricsPoint[];
 };
 
+type InboundAlertConfig = {
+  source: "db" | "env";
+  webhookUrl: string;
+  threshold: number;
+  windowMinutes: number;
+  cooldownMinutes: number;
+  updatedAt: string | null;
+};
+
 type SecurityStatus = {
   adminAllowlist: string[];
   agentAllowlist: string[];
@@ -140,13 +149,32 @@ export default function AdminClient() {
   const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
   const [inboundMetrics, setInboundMetrics] = useState<InboundMetrics | null>(null);
   const [inboundMetricsError, setInboundMetricsError] = useState<string | null>(null);
+  const [inboundAlertConfig, setInboundAlertConfig] = useState<InboundAlertConfig | null>(null);
+  const [inboundAlertForm, setInboundAlertForm] = useState({
+    webhookUrl: "",
+    threshold: 5,
+    windowMinutes: 30,
+    cooldownMinutes: 60
+  });
+  const [savingInboundAlertConfig, setSavingInboundAlertConfig] = useState(false);
+  const [inboundAlertConfigError, setInboundAlertConfigError] = useState<string | null>(null);
   const [retryingInbound, setRetryingInbound] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
 
   async function loadData() {
-    const [rolesRes, usersRes, slaRes, logsRes, spamRes, inboundRes, securityRes, inboundMetricsRes] =
+    const [
+      rolesRes,
+      usersRes,
+      slaRes,
+      logsRes,
+      spamRes,
+      inboundRes,
+      securityRes,
+      inboundMetricsRes,
+      inboundSettingsRes
+    ] =
       await Promise.all([
         fetch("/api/admin/roles"),
         fetch("/api/admin/users"),
@@ -155,7 +183,8 @@ export default function AdminClient() {
         fetch("/api/admin/spam-messages?limit=50"),
         fetch("/api/admin/inbound/failed?limit=50"),
         fetch("/api/admin/security"),
-        fetch("/api/admin/inbound/metrics?hours=24")
+        fetch("/api/admin/inbound/metrics?hours=24"),
+        fetch("/api/admin/inbound/settings")
       ]);
 
     if (rolesRes.ok) {
@@ -209,6 +238,24 @@ export default function AdminClient() {
     } else {
       setInboundMetrics(null);
       setInboundMetricsError("Failed to load inbound trend metrics.");
+    }
+
+    if (inboundSettingsRes.ok) {
+      const payload = await inboundSettingsRes.json();
+      const config = payload.config as InboundAlertConfig | undefined;
+      if (config) {
+        setInboundAlertConfig(config);
+        setInboundAlertForm({
+          webhookUrl: config.webhookUrl ?? "",
+          threshold: config.threshold ?? 5,
+          windowMinutes: config.windowMinutes ?? 30,
+          cooldownMinutes: config.cooldownMinutes ?? 60
+        });
+        setInboundAlertConfigError(null);
+      }
+    } else {
+      setInboundAlertConfig(null);
+      setInboundAlertConfigError("Failed to load inbound alert settings.");
     }
   }
 
@@ -273,6 +320,28 @@ export default function AdminClient() {
     await fetch("/api/admin/inbound/alerts", { method: "POST" });
     await loadData();
     setCheckingAlerts(false);
+  }
+
+  async function saveInboundAlertSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingInboundAlertConfig(true);
+    setInboundAlertConfigError(null);
+
+    const res = await fetch("/api/admin/inbound/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(inboundAlertForm)
+    });
+
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      setInboundAlertConfigError(payload.error ?? "Failed to save inbound alert settings.");
+      setSavingInboundAlertConfig(false);
+      return;
+    }
+
+    await loadData();
+    setSavingInboundAlertConfig(false);
   }
 
   async function unspamMessage(messageId: string) {
@@ -729,6 +798,112 @@ export default function AdminClient() {
           {activeSection === "inbound" ? (
             <section className="panel">
               <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
+              <form
+                onSubmit={saveInboundAlertSettings}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: 12,
+                  background: "rgba(10, 12, 18, 0.6)",
+                  marginBottom: 12
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <strong>Alert Settings</strong>
+                  <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                    Source: {inboundAlertConfig?.source ?? "unknown"}
+                  </span>
+                </div>
+                <label>
+                  Webhook URL
+                  <input
+                    type="url"
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={inboundAlertForm.webhookUrl}
+                    onChange={(event) =>
+                      setInboundAlertForm((prev) => ({
+                        ...prev,
+                        webhookUrl: event.target.value
+                      }))
+                    }
+                  />
+                </label>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))"
+                  }}
+                >
+                  <label>
+                    Threshold
+                    <input
+                      type="number"
+                      min={1}
+                      value={inboundAlertForm.threshold}
+                      onChange={(event) =>
+                        setInboundAlertForm((prev) => ({
+                          ...prev,
+                          threshold: Number(event.target.value) || 1
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Window (minutes)
+                    <input
+                      type="number"
+                      min={1}
+                      value={inboundAlertForm.windowMinutes}
+                      onChange={(event) =>
+                        setInboundAlertForm((prev) => ({
+                          ...prev,
+                          windowMinutes: Number(event.target.value) || 1
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Cooldown (minutes)
+                    <input
+                      type="number"
+                      min={1}
+                      value={inboundAlertForm.cooldownMinutes}
+                      onChange={(event) =>
+                        setInboundAlertForm((prev) => ({
+                          ...prev,
+                          cooldownMinutes: Number(event.target.value) || 1
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                {inboundAlertConfig?.updatedAt ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    Last updated: {new Date(inboundAlertConfig.updatedAt).toLocaleString()}
+                  </div>
+                ) : null}
+                {inboundAlertConfigError ? (
+                  <p style={{ color: "var(--danger)", margin: 0 }}>{inboundAlertConfigError}</p>
+                ) : null}
+                <button
+                  type="submit"
+                  disabled={savingInboundAlertConfig}
+                  style={{
+                    justifySelf: "start",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    cursor: "pointer"
+                  }}
+                >
+                  {savingInboundAlertConfig ? "Saving..." : "Save alert settings"}
+                </button>
+              </form>
               <button
                 type="button"
                 onClick={retryInbound}
