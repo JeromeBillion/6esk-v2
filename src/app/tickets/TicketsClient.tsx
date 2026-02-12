@@ -153,6 +153,7 @@ export default function TicketsClient() {
   const [macroQuery, setMacroQuery] = useState("");
   const [ticketDensity, setTicketDensity] = useState<"comfortable" | "compact">("comfortable");
   const [lastSelectedTicketId, setLastSelectedTicketId] = useState<string | null>(null);
+  const [waContactCopyStatus, setWaContactCopyStatus] = useState<string | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -171,6 +172,13 @@ export default function TicketsClient() {
   function formatMessageTimestamp(message: Message) {
     const value = message.received_at ?? message.sent_at;
     return value ? new Date(value).toLocaleString() : "—";
+  }
+
+  function getMessageDateKey(message: Message) {
+    const value = message.received_at ?? message.sent_at;
+    if (!value) return "Unknown date";
+    const date = new Date(value);
+    return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   }
 
   function getTemplateParamCount(template?: WhatsAppTemplate | null) {
@@ -655,6 +663,11 @@ export default function TicketsClient() {
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
     ? "whatsapp"
     : "email";
+  const whatsappContact =
+    activeTicket && activeTicket.requester_email.startsWith("whatsapp:")
+      ? activeTicket.requester_email.replace(/^whatsapp:/, "")
+      : null;
+  const whatsappContactLink = whatsappContact ? `https://wa.me/${whatsappContact}` : null;
   const activeTemplates = whatsappTemplates.filter((template) => template.status === "active");
   const selectedTemplate =
     whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
@@ -722,6 +735,12 @@ export default function TicketsClient() {
     const minutesRemaining = isOpen ? Math.max(0, Math.ceil((expires - now) / 60000)) : 0;
     return { isOpen, minutesRemaining };
   })();
+
+  useEffect(() => {
+    if (!waContactCopyStatus) return;
+    const timer = setTimeout(() => setWaContactCopyStatus(null), 2000);
+    return () => clearTimeout(timer);
+  }, [waContactCopyStatus]);
   return (
     <AppShell
       title="Tickets"
@@ -1028,6 +1047,30 @@ export default function TicketsClient() {
                       ? `WhatsApp ${activeTicket.requester_email.replace(/^whatsapp:/, "")}`
                       : activeTicket.requester_email}
                   </p>
+                  {whatsappContact ? (
+                    <div className="whatsapp-contact-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!whatsappContact) return;
+                          navigator.clipboard
+                            .writeText(whatsappContact)
+                            .then(() => setWaContactCopyStatus("Copied contact"))
+                            .catch(() => setWaContactCopyStatus("Copy failed"));
+                        }}
+                      >
+                        Copy number
+                      </button>
+                      {whatsappContactLink ? (
+                        <a href={whatsappContactLink} target="_blank" rel="noreferrer">
+                          Open WhatsApp
+                        </a>
+                      ) : null}
+                      {waContactCopyStatus ? (
+                        <span className="whatsapp-contact-status">{waContactCopyStatus}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {activeTicket.category ? <p>Category: {activeTicket.category}</p> : null}
                   {activeTicket.tags && activeTicket.tags.length ? (
                     <p>Tags: {activeTicket.tags.join(", ")}</p>
@@ -1098,32 +1141,41 @@ export default function TicketsClient() {
                       {messages.length === 0 ? (
                         <p>No WhatsApp messages yet.</p>
                       ) : (
-                        messages.map((message) => {
+                        messages.map((message, index) => {
                           const isOutbound = message.direction === "outbound";
                           const statusLabel = (message.wa_status ?? "queued").toLowerCase();
                           const statusClass = `status-${statusLabel}`;
+                          const currentDate = getMessageDateKey(message);
+                          const previousDate =
+                            index > 0 ? getMessageDateKey(messages[index - 1]) : null;
+                          const showDivider = currentDate !== previousDate;
+
                           return (
-                            <button
-                              key={message.id}
-                              type="button"
-                              onClick={() => loadMessageDetail(message.id)}
-                              className={`whatsapp-bubble ${isOutbound ? "outbound" : "inbound"}${
-                                message.id === activeMessageId ? " active" : ""
-                              }`}
-                            >
-                              <div className="whatsapp-text">
-                                {message.preview_text ?? "(no message body)"}
-                              </div>
-                              <div className="whatsapp-meta">
-                                <span>{formatMessageTimestamp(message)}</span>
-                                {isOutbound ? (
-                                  <span className="whatsapp-status">
-                                    <span className={`whatsapp-status-dot ${statusClass}`} />
-                                    {message.wa_status ?? "queued"}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </button>
+                            <div key={message.id} className="whatsapp-thread-row">
+                              {showDivider ? (
+                                <div className="whatsapp-date-divider">{currentDate}</div>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => loadMessageDetail(message.id)}
+                                className={`whatsapp-bubble ${isOutbound ? "outbound" : "inbound"}${
+                                  message.id === activeMessageId ? " active" : ""
+                                }`}
+                              >
+                                <div className="whatsapp-text">
+                                  {message.preview_text ?? "(no message body)"}
+                                </div>
+                                <div className="whatsapp-meta">
+                                  <span>{formatMessageTimestamp(message)}</span>
+                                  {isOutbound ? (
+                                    <span className="whatsapp-status">
+                                      <span className={`whatsapp-status-dot ${statusClass}`} />
+                                      {message.wa_status ?? "queued"}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </button>
+                            </div>
                           );
                         })
                       )}

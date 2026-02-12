@@ -705,6 +705,48 @@ button {
   gap: 10px;
 }
 
+.whatsapp-thread-row {
+  display: grid;
+  gap: 8px;
+}
+
+.whatsapp-date-divider {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 18, 0.6);
+  width: fit-content;
+  justify-self: center;
+}
+
+.whatsapp-contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.whatsapp-contact-actions button,
+.whatsapp-contact-actions a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.whatsapp-contact-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .whatsapp-bubble {
   max-width: 70%;
   padding: 10px 12px;

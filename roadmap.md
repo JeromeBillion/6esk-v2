@@ -65,6 +65,7 @@ These are the “performance reports” referenced in the PRD.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
 - Ticket list density toggle + shift-click range selection added.
+- WhatsApp thread view now includes date dividers and contact quick actions.
 - Admin polish: section counts, user search, role badges.
 - AI workflow polish: ticket-level audit trail surfaced alongside drafts.
 - Sidebar renamed from “Platform” to “Support.”
