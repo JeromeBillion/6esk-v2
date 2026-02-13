@@ -8,11 +8,16 @@ import {
   addTagsToTicket,
   createTicket,
   inferTagsFromText,
+  mergeTicketMetadata,
   recordTicketEvent,
   reopenTicketIfNeeded
 } from "@/server/tickets";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import {
+  buildProfileMetadataPatch,
+  lookupPredictionProfile
+} from "@/server/integrations/prediction-profile";
 
 export type NormalizedWhatsAppAttachment = {
   mediaId?: string | null;
@@ -162,6 +167,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     }
   }
 
+  const requesterProfile = await lookupPredictionProfile({ phone: from });
+  const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
+
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
   const conversationId = message.conversationId ?? from;
 
@@ -191,7 +199,8 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       channel: "whatsapp",
       wa_contact: from,
       provider: message.provider ?? "meta",
-      contact_name: message.contactName ?? null
+      contact_name: message.contactName ?? null,
+      ...profileMetadataPatch
     };
 
     ticketId = await createTicket({
@@ -214,6 +223,21 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     }
   } else {
     await reopenTicketIfNeeded(ticketId);
+    if (requesterProfile.status === "matched") {
+      await mergeTicketMetadata(ticketId, profileMetadataPatch);
+    }
+  }
+
+  if (createdNewTicket && requesterProfile.status === "matched") {
+    await recordTicketEvent({
+      ticketId,
+      eventType: "profile_enriched",
+      data: {
+        source: "prediction-market-mvp",
+        matchedBy: requesterProfile.matchedBy,
+        externalUserId: requesterProfile.profile.id
+      }
+    });
   }
 
   await recordTicketEvent({ ticketId, eventType: "message_received" });

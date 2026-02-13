@@ -9,6 +9,7 @@ type Ticket = {
   requester_email: string;
   subject: string | null;
   category?: string | null;
+  metadata?: Record<string, unknown> | null;
   tags?: string[];
   has_whatsapp?: boolean;
   status: string;
@@ -157,6 +158,41 @@ const WHATSAPP_STATUS_INDEX: Record<string, number> = {
   delivered: 2,
   read: 3
 };
+
+type ExternalProfileSnapshot = {
+  source: string;
+  externalUserId: string | null;
+  matchedBy: string | null;
+  matchedAt: string | null;
+  fullName: string | null;
+  email: string | null;
+  secondaryEmail: string | null;
+  phoneNumber: string | null;
+  kycStatus: string | null;
+  accountStatus: string | null;
+};
+
+function readExternalProfile(ticket: Ticket | null): ExternalProfileSnapshot | null {
+  if (!ticket?.metadata || typeof ticket.metadata !== "object") return null;
+  const payload = (ticket.metadata as Record<string, unknown>).external_profile;
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+
+  return {
+    source: typeof record.source === "string" ? record.source : "unknown",
+    externalUserId:
+      typeof record.externalUserId === "string" ? record.externalUserId : null,
+    matchedBy: typeof record.matchedBy === "string" ? record.matchedBy : null,
+    matchedAt: typeof record.matchedAt === "string" ? record.matchedAt : null,
+    fullName: typeof record.fullName === "string" ? record.fullName : null,
+    email: typeof record.email === "string" ? record.email : null,
+    secondaryEmail:
+      typeof record.secondaryEmail === "string" ? record.secondaryEmail : null,
+    phoneNumber: typeof record.phoneNumber === "string" ? record.phoneNumber : null,
+    kycStatus: typeof record.kycStatus === "string" ? record.kycStatus : null,
+    accountStatus: typeof record.accountStatus === "string" ? record.accountStatus : null
+  };
+}
 
 function parseEventTimestamp(value: string | null | undefined) {
   if (!value) return null;
@@ -1070,6 +1106,7 @@ export default function TicketsClient() {
   }
 
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
+  const activeExternalProfile = readExternalProfile(activeTicket);
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
     ? "whatsapp"
     : "email";
@@ -1758,6 +1795,50 @@ export default function TicketsClient() {
                       ? `WhatsApp ${activeTicket.requester_email.replace(/^whatsapp:/, "")}`
                       : activeTicket.requester_email}
                   </p>
+                  {activeExternalProfile ? (
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 12,
+                        background: "rgba(8, 11, 16, 0.9)",
+                        display: "grid",
+                        gap: 6,
+                        marginBottom: 12
+                      }}
+                    >
+                      <strong style={{ color: "#7ff5a2" }}>Recognized User Profile</strong>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Source: {activeExternalProfile.source}
+                        {activeExternalProfile.matchedBy
+                          ? ` · Matched by ${activeExternalProfile.matchedBy.replace(/_/g, " ")}`
+                          : ""}
+                      </span>
+                      {activeExternalProfile.fullName ? (
+                        <span>Name: {activeExternalProfile.fullName}</span>
+                      ) : null}
+                      {activeExternalProfile.email ? (
+                        <span>Email: {activeExternalProfile.email}</span>
+                      ) : null}
+                      {activeExternalProfile.secondaryEmail ? (
+                        <span>Secondary email: {activeExternalProfile.secondaryEmail}</span>
+                      ) : null}
+                      {activeExternalProfile.phoneNumber ? (
+                        <span>Phone: {activeExternalProfile.phoneNumber}</span>
+                      ) : null}
+                      {activeExternalProfile.kycStatus ? (
+                        <span>KYC: {activeExternalProfile.kycStatus}</span>
+                      ) : null}
+                      {activeExternalProfile.accountStatus ? (
+                        <span>Account: {activeExternalProfile.accountStatus}</span>
+                      ) : null}
+                      {activeExternalProfile.externalUserId ? (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          External user ID: {activeExternalProfile.externalUserId}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {whatsappContact ? (
                     <div className="whatsapp-contact-actions">
                       <button

@@ -58,6 +58,16 @@ export async function createTicket({
   return result.rows[0].id;
 }
 
+export async function mergeTicketMetadata(ticketId: string, patch: Record<string, unknown>) {
+  await db.query(
+    `UPDATE tickets
+     SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+         updated_at = now()
+     WHERE id = $1`,
+    [ticketId, JSON.stringify(patch)]
+  );
+}
+
 export async function recordTicketEvent({
   ticketId,
   eventType,

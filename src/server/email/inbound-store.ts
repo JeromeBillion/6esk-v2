@@ -9,6 +9,7 @@ import {
   addTagsToTicket,
   createTicket,
   inferTagsFromText,
+  mergeTicketMetadata,
   recordTicketEvent,
   reopenTicketIfNeeded,
   resolveTicketIdForInbound
@@ -16,6 +17,10 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { evaluateSpam } from "@/server/email/spam";
+import {
+  buildProfileMetadataPatch,
+  lookupPredictionProfile
+} from "@/server/integrations/prediction-profile";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -66,6 +71,9 @@ export async function storeInboundEmail(data: InboundEmail) {
   let ticketId: string | null = null;
   let createdNewTicket = false;
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
+    const requesterProfile = await lookupPredictionProfile({ email: fromEmail });
+    const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
+
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
     );
@@ -76,7 +84,10 @@ export async function storeInboundEmail(data: InboundEmail) {
         : inferTagsFromText({ subject: data.subject, text: data.text });
       const category =
         data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
-      const metadata = (data.metadata as Record<string, unknown> | null) ?? null;
+      const metadata = {
+        ...(((data.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+        ...profileMetadataPatch
+      };
 
       ticketId = await createTicket({
         mailboxId: mailbox.id,
@@ -98,7 +109,23 @@ export async function storeInboundEmail(data: InboundEmail) {
       }
     } else {
       await reopenTicketIfNeeded(ticketId);
+      if (requesterProfile.status === "matched") {
+        await mergeTicketMetadata(ticketId, profileMetadataPatch);
+      }
     }
+
+    if (createdNewTicket && requesterProfile.status === "matched") {
+      await recordTicketEvent({
+        ticketId,
+        eventType: "profile_enriched",
+        data: {
+          source: "prediction-market-mvp",
+          matchedBy: requesterProfile.matchedBy,
+          externalUserId: requesterProfile.profile.id
+        }
+      });
+    }
+
     await recordTicketEvent({ ticketId, eventType: "message_received" });
   }
 

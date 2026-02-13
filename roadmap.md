@@ -85,6 +85,10 @@ These are the “performance reports” referenced in the PRD.
 - Phase 6 in progress: AI agent integration plumbing (registry, outbox, context/actions APIs, draft UI).
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 - Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
+- Phase 9 in progress: cross-repo profile enrichment from `prediction-market-mvp` users table.
+- `prediction-market-mvp` internal profile lookup API added (`/api/v1/internal/support/users/lookup`) with shared-secret auth.
+- 6esk inbound email + WhatsApp now perform profile lookup and persist profile enrichment metadata on tickets.
+- Support ticket detail now displays recognized external user profile context.
 
 **Roadmap Status (as of 2026-02-13)**
 | Phase | Status |
@@ -98,6 +102,7 @@ These are the “performance reports” referenced in the PRD.
 | 6 AI Agent | In progress |
 | 7 Hardening | In progress |
 | 8 WhatsApp | In progress |
+| 9 Cross-Repo Profile Enrichment | In progress |
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -278,6 +283,116 @@ Status
 - AI drafts can carry WhatsApp template metadata and send with template on approval.
 - Support message detail now includes WhatsApp status drill-down (source, latency hops, payload/error details).
 
+**Phase 9 — Cross-Repo Profile Enrichment (prediction-market-mvp)**
+Goal
+- Auto-detect and auto-fill customer profile data in 6esk when inbound email/WhatsApp matches a known `prediction-market-mvp` user.
+
+Scope
+- Enrich inbound email and inbound WhatsApp ticket creation flows with profile lookup.
+- Store a profile snapshot on ticket/message metadata plus a stable external link for future matches.
+- Surface profile pill/card in Support ticket detail (name, user id, KYC/account status, matched email/phone).
+
+Integration Strategy (recommended)
+- Use server-to-server API lookup from 6esk to `prediction-market-mvp` (not direct DB credentials from 6esk).
+- Keep 6esk as consumer-only for external identity; `prediction-market-mvp` remains source of truth.
+
+6esk Implementation Plan
+1. Add profile lookup client in 6esk (`src/server/integrations/prediction-profile.ts`) with timeout/retry and circuit-breaker fallback.
+2. Normalize inbound identifiers before lookup:
+   - Email: lowercase/trim, match against primary + secondary email.
+   - WhatsApp phone: normalize to SA local + E.164-compatible variants for matching.
+3. Enrich inbound handlers:
+   - Email path: `src/server/email/inbound-store.ts`
+   - WhatsApp path: `src/server/whatsapp/inbound-store.ts`
+4. Persist mapping:
+   - Add `external_user_links` table (external_system, external_user_id, email, phone, matched_by, confidence, last_seen_at).
+   - Add profile snapshot into `tickets.metadata.externalProfile` and `messages.ai_meta`/metadata where appropriate.
+5. UI update:
+   - Ticket detail in `src/app/tickets/TicketsClient.tsx` shows external profile panel with verification timestamp and statuses.
+6. Observability:
+   - Add counters in analytics/admin for lookup hit rate, miss rate, lookup latency, and lookup failures.
+7. Safe fallback:
+   - If lookup fails/timeouts, ticket creation continues normally with no blocker.
+
+Acceptance Criteria
+- Inbound email from known user auto-populates profile context in the created/updated ticket.
+- Inbound WhatsApp from known number auto-populates profile context in the created/updated ticket.
+- Lookup failures do not block inbound ingestion.
+- Audit/event trail records enrichment status (`matched`, `missed`, `lookup_error`).
+
+Explicit Dependencies Required From `C:\\Users\\choma\\Desktop\\prediction-market-mvp`
+1. User data source and fields:
+   - `backend/src/db/schema.ts` `users` columns required for lookup/enrichment:
+   - `id`, `email`, `secondary_email`, `full_name`, `phone_number`, `kyc_status`, `account_status`, `created_at`, `updated_at`.
+   - Optional closure fields for historical context: `closed_email_primary`, `closed_email_secondary`, `closed_at`.
+2. Phone/email normalization rules:
+   - `backend/src/api/validation/primitives.ts` (`safePhoneNumber`, `safeEmail`).
+   - `backend/src/api/validation/normalize.ts` (`normalizePhoneNumber`, text normalization).
+3. Existing integration auth pattern to reuse:
+   - `backend/src/utils/supportTickets.ts` (`x-6esk-secret`, `SUPPORT_TICKET_API_SECRET`) as the baseline for shared-secret auth style.
+4. New internal lookup endpoint to add in `prediction-market-mvp`:
+   - New route file: `backend/src/api/routes/internalSupport.ts` (to be created there).
+   - Route registration in: `backend/src/api.ts`.
+   - Proposed endpoint contract:
+     - `GET /api/v1/internal/support/users/lookup?email=...&phone=...`
+     - Header: `x-6esk-secret: <SUPPORT_PROFILE_LOOKUP_SECRET>`
+     - Response: `{ matched, user, matchedBy }` with minimal profile payload.
+5. New env vars in `prediction-market-mvp` backend:
+   - `SUPPORT_PROFILE_LOOKUP_SECRET` (required).
+   - `SUPPORT_PROFILE_LOOKUP_ENABLED=true` (optional feature flag).
+   - Optional allowlist: `SUPPORT_PROFILE_LOOKUP_ALLOWED_IPS`.
+6. DB performance dependency in `prediction-market-mvp`:
+   - Ensure case-insensitive email lookup index exists for primary email (`LOWER(email)`), plus existing `LOWER(secondary_email)` and `phone_number` indexes for fast lookup.
+7. Security/audit dependency in `prediction-market-mvp`:
+   - Audit log event for each lookup request (success/fail, caller, query type) to align with existing audit model.
+
+6esk Env Vars Needed For This Phase
+- `PREDICTION_PROFILE_LOOKUP_URL`
+- `PREDICTION_PROFILE_LOOKUP_SECRET`
+- `PREDICTION_PROFILE_LOOKUP_TIMEOUT_MS` (default 1500)
+- `PREDICTION_PROFILE_LOOKUP_RETRY_COUNT` (default 1)
+- `PREDICTION_PROFILE_LOOKUP_ENABLED` (default true)
+
+**Phase 9 Implementation Snapshot (2026-02-13)**
+Implemented in `prediction-market-mvp`
+- Added internal lookup route: `backend/src/api/routes/internalSupport.ts`
+- Registered route in API bootstrap: `backend/src/api.ts`
+- Added env template keys: `backend/.env.example`
+- Endpoint implemented:
+- `GET /api/v1/internal/support/users/lookup`
+- Auth header: `x-6esk-secret`
+- Query support: `email`, `phone`, `include_closed`
+- Match targets: `users.email`, `users.secondary_email`, `users.phone_number`
+- Response shape: `{ matched, matchedBy, user }`
+- Audit logging added for success/failure/unauthorized lookup attempts.
+
+Implemented in `6esk`
+- Added integration client: `src/server/integrations/prediction-profile.ts`
+- Added ticket metadata merge helper: `src/server/tickets.ts` (`mergeTicketMetadata`)
+- Wired inbound email enrichment: `src/server/email/inbound-store.ts`
+- Wired inbound WhatsApp enrichment: `src/server/whatsapp/inbound-store.ts`
+- Added Support UI profile panel: `src/app/tickets/TicketsClient.tsx`
+- Added env template keys: `.env.example`
+- Lookup is fail-open: inbound ingestion continues even when lookup misses/fails/timeouts.
+- Metadata stored on ticket:
+- `profile_lookup` (status, source, lookup timestamp, error if any)
+- `external_profile` (external user id, matchedBy, fullName, email, secondaryEmail, phoneNumber, kycStatus, accountStatus)
+- Ticket event emitted on successful first-time enrichment: `profile_enriched`.
+
+Activation checklist (required for live wiring)
+1. Set `SUPPORT_PROFILE_LOOKUP_SECRET` in `prediction-market-mvp` backend env.
+2. Set `PREDICTION_PROFILE_LOOKUP_SECRET` in 6esk env to the exact same value.
+3. Set `PREDICTION_PROFILE_LOOKUP_URL` in 6esk to the prediction backend base URL.
+4. Keep `SUPPORT_PROFILE_LOOKUP_ENABLED=true` and `PREDICTION_PROFILE_LOOKUP_ENABLED=true`.
+5. Verify endpoint manually with secret header before end-to-end inbox testing.
+
+Validation results captured
+- `prediction-market-mvp/backend`: `npm run build` passed.
+- `6esk`: `npm run test` passed, `npm run lint` passed, `npm run sanity` passed.
+
+Working state note
+- No commit and no push were performed for these changes (explicitly requested).
+
 **WhatsApp Channel Plan**
 Goal
 - Add a first-class WhatsApp support channel without breaking email-first workflow.
@@ -386,11 +501,11 @@ Acceptance Criteria
 4. Empty states guide the user with clear next actions.
 
 **Immediate Next Steps**
-1. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
-2. Finish ticketing UI gaps (platform web form client UI + tag edit/delete).
-3. Add admin password reset + basic audit log UI for user/role changes.
-4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
-5. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.
-6. Stand up WhatsApp Business account and confirm provider choice.
-7. Define WhatsApp AI parity spec (data model + agent events/actions + policy gates).
-8. Implement the UI/UX plan above (app shell, routing, tickets/mail workflows, design system).
+1. Validate Phase 9 end-to-end with live `prediction-market-mvp` data (email + WhatsApp recognized/missed/error paths).
+2. Add persistent `external_user_links` table in 6esk for stable mapping + last-seen analytics.
+3. Add admin diagnostics panel for profile lookup health (success/miss/error, latency, timeout rate).
+4. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
+5. Finalize AI drafts flow (approve/send + working hours + escalation rules).
+6. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.
+7. Stand up WhatsApp Business account and confirm provider choice.
+8. Implement remaining UI/UX plan refinements (tickets/mail workflows, design system polish).
