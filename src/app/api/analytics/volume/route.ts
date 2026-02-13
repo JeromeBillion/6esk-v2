@@ -3,6 +3,8 @@ import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
 import {
   buildWhatsAppStatusSeries,
+  parseWhatsAppStatusSource,
+  type WhatsAppStatusSource,
   type WhatsAppStatusAggregateRow
 } from "@/server/analytics/whatsapp-series";
 
@@ -19,6 +21,9 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
+  const whatsappSource: WhatsAppStatusSource = parseWhatsAppStatusSource(
+    url.searchParams.get("whatsappSource")
+  );
 
   const createdResult = await db.query<VolumeRow>(
     `SELECT date_trunc('day', created_at) AS day, COUNT(*)::int AS count
@@ -48,9 +53,10 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
      FROM whatsapp_status_events
      WHERE occurred_at >= $1 AND occurred_at < $2
+       AND ($3 = 'all' OR COALESCE(payload->>'source', 'unknown') = $3)
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, whatsappSource]
   );
 
   const formatRows = (rows: VolumeRow[]) =>
@@ -63,6 +69,7 @@ export async function GET(request: Request) {
     range: { start: start.toISOString(), end: end.toISOString() },
     created: formatRows(createdResult.rows),
     solved: formatRows(solvedResult.rows),
+    whatsappSource,
     whatsapp: buildWhatsAppStatusSeries(whatsappStatusResult.rows)
   });
 }

@@ -55,6 +55,15 @@ type WhatsAppStatusSeries = {
   failed: VolumePoint[];
 };
 
+type WhatsAppStatusKey = "sent" | "delivered" | "read" | "failed";
+
+const WHATSAPP_STATUS_META: Array<{ key: WhatsAppStatusKey; label: string; color: string }> = [
+  { key: "sent", label: "Sent", color: "#6ab8ff" },
+  { key: "delivered", label: "Delivered", color: "#7ff5a2" },
+  { key: "read", label: "Read", color: "#ffd166" },
+  { key: "failed", label: "Failed", color: "#ff6b6b" }
+];
+
 type PerformanceRow = {
   key: string;
   label: string;
@@ -86,10 +95,12 @@ export default function AnalyticsClient() {
   const [volume, setVolume] = useState<{
     created: VolumePoint[];
     solved: VolumePoint[];
+    whatsappSource: "all" | "webhook" | "outbox";
     whatsapp: WhatsAppStatusSeries;
   }>({
     created: [],
     solved: [],
+    whatsappSource: "all",
     whatsapp: {
       sent: [],
       delivered: [],
@@ -103,6 +114,13 @@ export default function AnalyticsClient() {
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  const [whatsappSourceFilter, setWhatsappSourceFilter] = useState<"all" | "webhook" | "outbox">("all");
+  const [whatsappStatusFilter, setWhatsappStatusFilter] = useState<Record<WhatsAppStatusKey, boolean>>({
+    sent: true,
+    delivered: true,
+    read: true,
+    failed: true
+  });
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
 
   const exportCsv = (rows: PerformanceRow[], filename: string) => {
@@ -190,10 +208,80 @@ export default function AnalyticsClient() {
     return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day));
   }, [volume.whatsapp.delivered, volume.whatsapp.failed, volume.whatsapp.read, volume.whatsapp.sent]);
 
+  const activeWhatsAppStatuses = useMemo(
+    () => WHATSAPP_STATUS_META.filter((status) => whatsappStatusFilter[status.key]),
+    [whatsappStatusFilter]
+  );
+
+  const whatsappChart = useMemo(() => {
+    if (whatsappTrendRows.length === 0 || activeWhatsAppStatuses.length === 0) {
+      return null;
+    }
+
+    const width = 760;
+    const height = 190;
+    const padding = { top: 14, right: 14, bottom: 22, left: 14 };
+    const innerWidth = width - padding.left - padding.right;
+    const innerHeight = height - padding.top - padding.bottom;
+
+    const maxValue = Math.max(
+      1,
+      ...activeWhatsAppStatuses.flatMap((status) =>
+        whatsappTrendRows.map((row) => row[status.key])
+      )
+    );
+
+    const toPoint = (index: number, value: number) => {
+      const x =
+        whatsappTrendRows.length === 1
+          ? padding.left + innerWidth / 2
+          : padding.left + (index / (whatsappTrendRows.length - 1)) * innerWidth;
+      const y = padding.top + innerHeight - (value / maxValue) * innerHeight;
+      return { x, y };
+    };
+
+    const lines = activeWhatsAppStatuses.map((status) => {
+      const points = whatsappTrendRows.map((row, index) => toPoint(index, row[status.key]));
+      const path = points
+        .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+        .join(" ");
+      return {
+        key: status.key,
+        label: status.label,
+        color: status.color,
+        path,
+        lastPoint: points[points.length - 1]
+      };
+    });
+
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+      y: padding.top + innerHeight - ratio * innerHeight,
+      value: Math.round(maxValue * ratio)
+    }));
+
+    return {
+      width,
+      height,
+      maxValue,
+      firstDay: whatsappTrendRows[0].day.slice(0, 10),
+      lastDay: whatsappTrendRows[whatsappTrendRows.length - 1].day.slice(0, 10),
+      lines,
+      gridLines
+    };
+  }, [activeWhatsAppStatuses, whatsappTrendRows]);
+
+  function toggleWhatsAppStatus(statusKey: WhatsAppStatusKey) {
+    setWhatsappStatusFilter((prev) => ({
+      ...prev,
+      [statusKey]: !prev[statusKey]
+    }));
+  }
+
   useEffect(() => {
     const params = new URLSearchParams({
       start: range.start,
-      end: range.end
+      end: range.end,
+      whatsappSource: whatsappSourceFilter
     }).toString();
 
     async function load() {
@@ -228,6 +316,7 @@ export default function AnalyticsClient() {
         setVolume({
           created: payload.created ?? [],
           solved: payload.solved ?? [],
+          whatsappSource: payload.whatsappSource ?? whatsappSourceFilter,
           whatsapp: {
             sent: payload.whatsapp?.sent ?? [],
             delivered: payload.whatsapp?.delivered ?? [],
@@ -260,7 +349,7 @@ export default function AnalyticsClient() {
     }
 
     void load();
-  }, [range, agentFilter, tagFilter, priorityFilter]);
+  }, [range, agentFilter, tagFilter, priorityFilter, whatsappSourceFilter]);
 
   return (
     <AppShell title="Analytics" subtitle="Track ticket performance and SLA health.">
@@ -451,20 +540,126 @@ export default function AnalyticsClient() {
               background: "rgba(10, 12, 18, 0.6)"
             }}
           >
-            <h2>WhatsApp Delivery Trend</h2>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0 }}>WhatsApp Delivery Trend</h2>
+              <label style={{ display: "grid", gap: 6 }}>
+                Source
+                <select
+                  value={whatsappSourceFilter}
+                  onChange={(event) =>
+                    setWhatsappSourceFilter(event.target.value as "all" | "webhook" | "outbox")
+                  }
+                >
+                  <option value="all">All sources</option>
+                  <option value="webhook">Webhook</option>
+                  <option value="outbox">Outbox</option>
+                </select>
+              </label>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              {WHATSAPP_STATUS_META.map((status) => {
+                const isActive = whatsappStatusFilter[status.key];
+                return (
+                  <button
+                    key={status.key}
+                    type="button"
+                    onClick={() => toggleWhatsAppStatus(status.key)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${isActive ? status.color : "var(--border)"}`,
+                      background: isActive ? "rgba(10, 12, 18, 0.9)" : "transparent",
+                      color: isActive ? status.color : "var(--muted)",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {status.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 12 }}>
               {whatsappTrendRows.length === 0 ? (
-                <p>No WhatsApp status events in this range.</p>
+                <p>
+                  No WhatsApp status events in this range for source{" "}
+                  <strong>{volume.whatsappSource}</strong>.
+                </p>
+              ) : !whatsappChart ? (
+                <p>Select at least one status to render the chart.</p>
               ) : (
-                whatsappTrendRows.map((row) => (
-                  <div key={row.day} style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>{row.day.slice(0, 10)}</span>
-                    <span>
-                      Sent: {row.sent} · Delivered: {row.delivered} · Read: {row.read} · Failed:{" "}
-                      {row.failed}
-                    </span>
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(6, 8, 12, 0.8)"
+                  }}
+                >
+                  <svg
+                    viewBox={`0 0 ${whatsappChart.width} ${whatsappChart.height}`}
+                    role="img"
+                    aria-label="WhatsApp status trend chart"
+                    style={{ width: "100%", height: 170, display: "block" }}
+                  >
+                    {whatsappChart.gridLines.map((line) => (
+                      <g key={`grid-${line.y}`}>
+                        <line
+                          x1={14}
+                          y1={line.y}
+                          x2={whatsappChart.width - 14}
+                          y2={line.y}
+                          stroke="rgba(255,255,255,0.12)"
+                          strokeWidth={1}
+                        />
+                      </g>
+                    ))}
+                    {whatsappChart.lines.map((line) => (
+                      <g key={line.key}>
+                        <path
+                          d={line.path}
+                          fill="none"
+                          stroke={line.color}
+                          strokeWidth={2.4}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle cx={line.lastPoint.x} cy={line.lastPoint.y} r={3} fill={line.color} />
+                      </g>
+                    ))}
+                  </svg>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: "var(--muted)"
+                    }}
+                  >
+                    <span>{whatsappChart.firstDay}</span>
+                    <span>Max {whatsappChart.maxValue}</span>
+                    <span>{whatsappChart.lastDay}</span>
                   </div>
-                ))
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10 }}>
+              {WHATSAPP_STATUS_META.filter((status) => whatsappStatusFilter[status.key]).map(
+                (status) => {
+                  const latest =
+                    whatsappTrendRows.length > 0
+                      ? whatsappTrendRows[whatsappTrendRows.length - 1][status.key]
+                      : 0;
+                  return (
+                    <span key={status.key} style={{ fontSize: 12, color: status.color }}>
+                      {status.label}: {latest}
+                    </span>
+                  );
+                }
               )}
             </div>
           </div>

@@ -3,6 +3,8 @@ export type VolumePoint = {
   count: number;
 };
 
+export type WhatsAppStatusSource = "all" | "webhook" | "outbox";
+
 export type WhatsAppStatusAggregateRow = {
   day: Date;
   sent: number | string | null;
@@ -21,6 +23,15 @@ export type WhatsAppStatusSeries = {
 function toInt(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function parseWhatsAppStatusSource(
+  value: string | null | undefined
+): WhatsAppStatusSource {
+  if (value === "webhook" || value === "outbox") {
+    return value;
+  }
+  return "all";
 }
 
 export function buildWhatsAppStatusSeries(

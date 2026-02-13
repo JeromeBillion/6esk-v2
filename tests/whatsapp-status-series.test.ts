@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildWhatsAppStatusSeries } from "../src/server/analytics/whatsapp-series";
+import {
+  buildWhatsAppStatusSeries,
+  parseWhatsAppStatusSource
+} from "../src/server/analytics/whatsapp-series";
 
 describe("buildWhatsAppStatusSeries", () => {
   it("normalizes mixed numeric types and keeps all status columns", () => {
@@ -44,5 +47,12 @@ describe("buildWhatsAppStatusSeries", () => {
       "2026-02-13T00:00:00.000Z"
     ]);
     expect(series.failed.map((row) => row.count)).toEqual([1, 0]);
+  });
+
+  it("parses source filters safely", () => {
+    expect(parseWhatsAppStatusSource("outbox")).toBe("outbox");
+    expect(parseWhatsAppStatusSource("webhook")).toBe("webhook");
+    expect(parseWhatsAppStatusSource("invalid")).toBe("all");
+    expect(parseWhatsAppStatusSource(null)).toBe("all");
   });
 });

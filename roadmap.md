@@ -64,6 +64,7 @@ These are the “performance reports” referenced in the PRD.
 - Admin WhatsApp outbox queue metrics + refresh controls added.
 - Analytics now includes channel mix + WhatsApp delivery health metrics.
 - Analytics now includes daily WhatsApp status trend (sent/delivered/read/failed).
+- WhatsApp analytics trend now includes compact chart UI plus source/status filters.
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
@@ -182,6 +183,7 @@ Status
  - Analytics filters and CSV export added.
  - Channel mix and WhatsApp delivery health summary added in analytics overview.
  - WhatsApp status trend added in analytics volume report.
+ - WhatsApp status trend source filter (all/webhook/outbox) and status toggles added.
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.
