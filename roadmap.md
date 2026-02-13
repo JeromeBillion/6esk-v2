@@ -48,7 +48,7 @@ These are the “performance reports” referenced in the PRD.
 
 **Roadmap Phases**
 
-**Progress Update (2026-02-12)**
+**Progress Update (2026-02-13)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
 - Phase 1 dev-ready, awaiting DNS verification.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
@@ -63,6 +63,7 @@ These are the “performance reports” referenced in the PRD.
 - Admin WhatsApp settings UX improved (status warnings, copy helpers, template param counts).
 - Admin WhatsApp outbox queue metrics + refresh controls added.
 - Analytics now includes channel mix + WhatsApp delivery health metrics.
+- Analytics now includes daily WhatsApp status trend (sent/delivered/read/failed).
 - Tickets UI cleanup: structured layout, empty states, keyboard shortcuts, quick actions.
 - Tickets bulk actions added (status/priority/assign) plus quick reply template chips.
 - Tickets bulk tags (add/remove) and quick close/snooze actions added.
@@ -84,7 +85,7 @@ These are the “performance reports” referenced in the PRD.
 - Phase 7 in progress: retries/backfill, spam handling, rate limiting, alerting.
 - Phase 8 in progress: WhatsApp scaffolding (schema, inbound/outbound endpoints, admin config UI).
 
-**Roadmap Status (as of 2026-02-12)**
+**Roadmap Status (as of 2026-02-13)**
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | Complete |
@@ -180,6 +181,7 @@ Status
 - SLA admin controls added.
  - Analytics filters and CSV export added.
  - Channel mix and WhatsApp delivery health summary added in analytics overview.
+ - WhatsApp status trend added in analytics volume report.
 Acceptance Criteria
 - Metrics match definitions in PRD for any date range.
 - Reports can be filtered by agent, tag, priority.

@@ -48,6 +48,13 @@ type VolumePoint = {
   count: number;
 };
 
+type WhatsAppStatusSeries = {
+  sent: VolumePoint[];
+  delivered: VolumePoint[];
+  read: VolumePoint[];
+  failed: VolumePoint[];
+};
+
 type PerformanceRow = {
   key: string;
   label: string;
@@ -76,9 +83,19 @@ const toHuman = (seconds: number) => {
 export default function AnalyticsClient() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [sla, setSla] = useState<Sla | null>(null);
-  const [volume, setVolume] = useState<{ created: VolumePoint[]; solved: VolumePoint[] }>({
+  const [volume, setVolume] = useState<{
+    created: VolumePoint[];
+    solved: VolumePoint[];
+    whatsapp: WhatsAppStatusSeries;
+  }>({
     created: [],
-    solved: []
+    solved: [],
+    whatsapp: {
+      sent: [],
+      delivered: [],
+      read: [],
+      failed: []
+    }
   });
   const [performanceAgent, setPerformanceAgent] = useState<PerformanceRow[]>([]);
   const [performanceTag, setPerformanceTag] = useState<PerformanceRow[]>([]);
@@ -143,6 +160,36 @@ export default function AnalyticsClient() {
   const whatsappDeliveryRate =
     whatsappOutbound > 0 ? Math.max(0, Math.round(((whatsappOutbound - whatsappFailed) / whatsappOutbound) * 100)) : null;
 
+  const whatsappTrendRows = useMemo(() => {
+    const map = new Map<
+      string,
+      { day: string; sent: number; delivered: number; read: number; failed: number }
+    >();
+
+    const ensure = (day: string) => {
+      const existing = map.get(day);
+      if (existing) return existing;
+      const next = { day, sent: 0, delivered: 0, read: 0, failed: 0 };
+      map.set(day, next);
+      return next;
+    };
+
+    for (const row of volume.whatsapp.sent) {
+      ensure(row.day).sent = row.count;
+    }
+    for (const row of volume.whatsapp.delivered) {
+      ensure(row.day).delivered = row.count;
+    }
+    for (const row of volume.whatsapp.read) {
+      ensure(row.day).read = row.count;
+    }
+    for (const row of volume.whatsapp.failed) {
+      ensure(row.day).failed = row.count;
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day));
+  }, [volume.whatsapp.delivered, volume.whatsapp.failed, volume.whatsapp.read, volume.whatsapp.sent]);
+
   useEffect(() => {
     const params = new URLSearchParams({
       start: range.start,
@@ -180,7 +227,13 @@ export default function AnalyticsClient() {
         const payload = await volumeRes.json();
         setVolume({
           created: payload.created ?? [],
-          solved: payload.solved ?? []
+          solved: payload.solved ?? [],
+          whatsapp: {
+            sent: payload.whatsapp?.sent ?? [],
+            delivered: payload.whatsapp?.delivered ?? [],
+            read: payload.whatsapp?.read ?? [],
+            failed: payload.whatsapp?.failed ?? []
+          }
         });
       }
 
@@ -386,6 +439,32 @@ export default function AnalyticsClient() {
                     </div>
                   );
                 })
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 16,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <h2>WhatsApp Delivery Trend</h2>
+            <div style={{ display: "grid", gap: 8 }}>
+              {whatsappTrendRows.length === 0 ? (
+                <p>No WhatsApp status events in this range.</p>
+              ) : (
+                whatsappTrendRows.map((row) => (
+                  <div key={row.day} style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>{row.day.slice(0, 10)}</span>
+                    <span>
+                      Sent: {row.sent} · Delivered: {row.delivered} · Read: {row.read} · Failed:{" "}
+                      {row.failed}
+                    </span>
+                  </div>
+                ))
               )}
             </div>
           </div>
