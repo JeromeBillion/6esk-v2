@@ -5,6 +5,9 @@ import { db } from "@/server/db";
 type LookupSummaryRow = {
   total: number;
   matched: number;
+  matched_live: number;
+  matched_cache: number;
+  matched_other: number;
   missed: number;
   errored: number;
   disabled: number;
@@ -16,6 +19,9 @@ type LookupSummaryRow = {
 type LookupSeriesRow = {
   day: string;
   matched: number;
+  matched_live: number;
+  matched_cache: number;
+  matched_other: number;
   missed: number;
   errored: number;
   disabled: number;
@@ -61,6 +67,7 @@ export async function GET(request: Request) {
           t.created_at
         ) AS lookup_at,
         COALESCE(NULLIF(t.metadata->'profile_lookup'->>'status', ''), 'unknown') AS status,
+        LOWER(COALESCE(NULLIF(t.metadata->'profile_lookup'->>'source', ''), 'unknown')) AS source,
         LOWER(COALESCE(t.metadata->'profile_lookup'->>'error', '')) AS error_text,
         CASE
           WHEN (t.metadata->'profile_lookup'->>'durationMs') ~ '^[0-9]+(\\.[0-9]+)?$'
@@ -77,6 +84,18 @@ export async function GET(request: Request) {
        SELECT
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source = 'prediction-market-mvp'
+         )::int AS matched_live,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source = 'prediction-market-mvp-cache'
+         )::int AS matched_cache,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
+         )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
          COUNT(*) FILTER (WHERE status = 'disabled')::int AS disabled,
@@ -99,6 +118,18 @@ export async function GET(request: Request) {
        SELECT
          to_char(date_trunc('day', lookup_at), 'YYYY-MM-DD') AS day,
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source = 'prediction-market-mvp'
+         )::int AS matched_live,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source = 'prediction-market-mvp-cache'
+         )::int AS matched_cache,
+         COUNT(*) FILTER (
+           WHERE status = 'matched'
+             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
+         )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
          COUNT(*) FILTER (WHERE status = 'disabled')::int AS disabled
@@ -113,6 +144,9 @@ export async function GET(request: Request) {
   const summary = summaryResult.rows[0] ?? {
     total: 0,
     matched: 0,
+    matched_live: 0,
+    matched_cache: 0,
+    matched_other: 0,
     missed: 0,
     errored: 0,
     disabled: 0,
@@ -121,6 +155,8 @@ export async function GET(request: Request) {
     p95_duration_ms: null
   };
 
+  const fallbackEligible = summary.matched_cache + summary.missed + summary.timeout_errors;
+
   return Response.json({
     generatedAt: new Date().toISOString(),
     windowDays,
@@ -128,18 +164,32 @@ export async function GET(request: Request) {
     summary: {
       total: summary.total,
       matched: summary.matched,
+      matchedLive: summary.matched_live,
+      matchedCache: summary.matched_cache,
+      matchedOther: summary.matched_other,
       missed: summary.missed,
       errored: summary.errored,
       disabled: summary.disabled,
       timeoutErrors: summary.timeout_errors,
       hitRate: toPercent(summary.matched, summary.total),
+      liveHitRate: toPercent(summary.matched_live, summary.total),
+      cacheHitRate: toPercent(summary.matched_cache, summary.total),
+      fallbackHitRate: toPercent(summary.matched_cache, fallbackEligible),
       missRate: toPercent(summary.missed, summary.total),
       errorRate: toPercent(summary.errored, summary.total),
       timeoutErrorRate: toPercent(summary.timeout_errors, summary.total),
       avgDurationMs: summary.avg_duration_ms,
       p95DurationMs: summary.p95_duration_ms
     },
-    series: seriesResult.rows
+    series: seriesResult.rows.map((row) => ({
+      day: row.day,
+      matched: row.matched,
+      matchedLive: row.matched_live,
+      matchedCache: row.matched_cache,
+      matchedOther: row.matched_other,
+      missed: row.missed,
+      errored: row.errored,
+      disabled: row.disabled
+    }))
   });
 }
-

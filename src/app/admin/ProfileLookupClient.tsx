@@ -5,6 +5,9 @@ import { useEffect, useState } from "react";
 type ProfileLookupMetricsPoint = {
   day: string;
   matched: number;
+  matchedLive: number;
+  matchedCache: number;
+  matchedOther: number;
   missed: number;
   errored: number;
   disabled: number;
@@ -17,11 +20,17 @@ type ProfileLookupMetrics = {
   summary: {
     total: number;
     matched: number;
+    matchedLive: number;
+    matchedCache: number;
+    matchedOther: number;
     missed: number;
     errored: number;
     disabled: number;
     timeoutErrors: number;
     hitRate: number;
+    liveHitRate: number;
+    cacheHitRate: number;
+    fallbackHitRate: number;
     missRate: number;
     errorRate: number;
     timeoutErrorRate: number;
@@ -65,11 +74,17 @@ export default function ProfileLookupClient({ compact = false }: { compact?: boo
   const summary = metrics?.summary ?? {
     total: 0,
     matched: 0,
+    matchedLive: 0,
+    matchedCache: 0,
+    matchedOther: 0,
     missed: 0,
     errored: 0,
     disabled: 0,
     timeoutErrors: 0,
     hitRate: 0,
+    liveHitRate: 0,
+    cacheHitRate: 0,
+    fallbackHitRate: 0,
     missRate: 0,
     errorRate: 0,
     timeoutErrorRate: 0,
@@ -134,7 +149,19 @@ export default function ProfileLookupClient({ compact = false }: { compact?: boo
         <div className="panel" style={{ padding: 10 }}>
           <div style={{ color: "var(--muted)", fontSize: 12 }}>Matched</div>
           <strong style={{ fontSize: 24 }}>{summary.matched}</strong>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>{summary.hitRate}% hit rate</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            {summary.hitRate}% hit rate · Live {summary.matchedLive} ({summary.liveHitRate}%)
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Cache {summary.matchedCache} ({summary.cacheHitRate}%) · Other {summary.matchedOther}
+          </div>
+        </div>
+        <div className="panel" style={{ padding: 10 }}>
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>Fallback Recovered</div>
+          <strong style={{ fontSize: 24 }}>{summary.matchedCache}</strong>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            {summary.fallbackHitRate}% fallback hit rate
+          </div>
         </div>
         <div className="panel" style={{ padding: 10 }}>
           <div style={{ color: "var(--muted)", fontSize: 12 }}>Missed</div>
@@ -186,11 +213,13 @@ export default function ProfileLookupClient({ compact = false }: { compact?: boo
                 const disabledHeight = (point.disabled / maxSeriesValue) * 100;
                 const erroredHeight = (point.errored / maxSeriesValue) * 100;
                 const missedHeight = (point.missed / maxSeriesValue) * 100;
-                const matchedHeight = (point.matched / maxSeriesValue) * 100;
+                const matchedOtherHeight = (point.matchedOther / maxSeriesValue) * 100;
+                const matchedCacheHeight = (point.matchedCache / maxSeriesValue) * 100;
+                const matchedLiveHeight = (point.matchedLive / maxSeriesValue) * 100;
                 return (
                   <div
                     key={point.day}
-                    title={`${point.day} | matched: ${point.matched}, missed: ${point.missed}, errors: ${point.errored}, disabled: ${point.disabled}`}
+                    title={`${point.day} | matched: ${point.matched} (live ${point.matchedLive}, cache ${point.matchedCache}, other ${point.matchedOther}), missed: ${point.missed}, errors: ${point.errored}, disabled: ${point.disabled}`}
                     style={{
                       display: "flex",
                       flexDirection: "column",
@@ -225,8 +254,24 @@ export default function ProfileLookupClient({ compact = false }: { compact?: boo
                     />
                     <div
                       style={{
-                        height: `${Math.max(0, matchedHeight)}%`,
-                        minHeight: point.matched ? 2 : 0,
+                        height: `${Math.max(0, matchedOtherHeight)}%`,
+                        minHeight: point.matchedOther ? 2 : 0,
+                        borderRadius: 4,
+                        background: "rgba(123, 194, 255, 0.9)"
+                      }}
+                    />
+                    <div
+                      style={{
+                        height: `${Math.max(0, matchedCacheHeight)}%`,
+                        minHeight: point.matchedCache ? 2 : 0,
+                        borderRadius: 4,
+                        background: "rgba(92, 225, 230, 0.9)"
+                      }}
+                    />
+                    <div
+                      style={{
+                        height: `${Math.max(0, matchedLiveHeight)}%`,
+                        minHeight: point.matchedLive ? 2 : 0,
                         borderRadius: 4,
                         background: "rgba(104, 220, 160, 0.9)"
                       }}
@@ -236,7 +281,9 @@ export default function ProfileLookupClient({ compact = false }: { compact?: boo
               })}
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-              <span>Green: Matched</span>
+              <span>Green: Matched (Live)</span>
+              <span>Cyan: Matched (Cache)</span>
+              <span>Blue: Matched (Other)</span>
               <span>Amber: Missed</span>
               <span>Red: Error</span>
               <span>Gray: Disabled</span>

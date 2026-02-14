@@ -53,6 +53,9 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
           {
             total: 20,
             matched: 12,
+            matched_live: 8,
+            matched_cache: 3,
+            matched_other: 1,
             missed: 5,
             errored: 3,
             disabled: 0,
@@ -64,8 +67,26 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
       })
       .mockResolvedValueOnce({
         rows: [
-          { day: "2026-02-12", matched: 6, missed: 2, errored: 1, disabled: 0 },
-          { day: "2026-02-13", matched: 6, missed: 3, errored: 2, disabled: 0 }
+          {
+            day: "2026-02-12",
+            matched: 6,
+            matched_live: 4,
+            matched_cache: 2,
+            matched_other: 0,
+            missed: 2,
+            errored: 1,
+            disabled: 0
+          },
+          {
+            day: "2026-02-13",
+            matched: 6,
+            matched_live: 4,
+            matched_cache: 1,
+            matched_other: 1,
+            missed: 3,
+            errored: 2,
+            disabled: 0
+          }
         ]
       });
 
@@ -79,16 +100,32 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
     expect(body.summary).toMatchObject({
       total: 20,
       matched: 12,
+      matchedLive: 8,
+      matchedCache: 3,
+      matchedOther: 1,
       missed: 5,
       errored: 3,
       disabled: 0,
       timeoutErrors: 2,
       hitRate: 60,
+      liveHitRate: 40,
+      cacheHitRate: 15,
+      fallbackHitRate: 30,
       missRate: 25,
       errorRate: 15,
       timeoutErrorRate: 10,
       avgDurationMs: 212.45,
       p95DurationMs: 488.1
+    });
+    expect(body.series[0]).toMatchObject({
+      day: "2026-02-12",
+      matched: 6,
+      matchedLive: 4,
+      matchedCache: 2,
+      matchedOther: 0,
+      missed: 2,
+      errored: 1,
+      disabled: 0
     });
     expect(body.series).toHaveLength(2);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
@@ -96,4 +133,3 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [90]);
   });
 });
-

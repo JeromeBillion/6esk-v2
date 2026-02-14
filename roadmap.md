@@ -108,6 +108,7 @@ These are the “performance reports” referenced in the PRD.
 - Admin now includes a Profile Lookup diagnostics panel backed by `/api/admin/profile-lookup/metrics` (hit/miss/error/timeout rates + avg/p95 latency trend over selectable windows).
 - Profile lookup metadata now stores `durationMs` for matched/missed/error/disabled outcomes, enabling real latency reporting in admin diagnostics.
 - Profile lookup now uses `external_user_links` as a warm-cache fallback for live miss/timeout paths, with matched metadata source tagged as `prediction-market-mvp-cache`.
+- Profile lookup diagnostics now segment matched outcomes by live vs cache source and report cache fallback hit rate.
 
 **Roadmap Status (as of 2026-02-14)**
 | Phase | Status |
@@ -525,9 +526,8 @@ Acceptance Criteria
 
 **Immediate Next Steps**
 1. Validate Phase 9 end-to-end with live `prediction-market-mvp` data (email + WhatsApp recognized/missed/error paths).
-2. Expand profile lookup diagnostics to segment live vs cache matches and monitor fallback hit rate.
-3. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
-4. Finalize AI drafts flow (approve/send + working hours + escalation rules).
-5. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.
-6. Stand up WhatsApp Business account and confirm provider choice.
-7. Implement remaining UI/UX plan refinements (tickets/mail workflows, design system polish).
+2. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
+3. Finalize AI drafts flow (approve/send + working hours + escalation rules).
+4. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.
+5. Stand up WhatsApp Business account and confirm provider choice.
+6. Implement remaining UI/UX plan refinements (tickets/mail workflows, design system polish).
