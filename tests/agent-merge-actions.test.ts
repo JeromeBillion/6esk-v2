@@ -333,5 +333,84 @@ describe("agent merge actions route", () => {
     });
     expect(mocks.mergeCustomers).not.toHaveBeenCalled();
   });
-});
 
+  it("escalates send_reply outside working hours to draft + tag when policy is draft_only", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: {
+        escalation: {
+          out_of_hours: "draft_only",
+          tag: "urgent"
+        }
+      }
+    });
+    mocks.isAutoSendAllowed.mockReturnValue(false);
+
+    const { response, body } = await postAction({
+      type: "send_reply",
+      ticketId: TICKET_A,
+      subject: "Update",
+      text: "Follow-up response"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "send_reply",
+      status: "blocked"
+    });
+    expect(body.results[0].detail).toContain("draft created");
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+    expect(mocks.createDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integrationId: "agent-1",
+        ticketId: TICKET_A,
+        subject: "Update",
+        bodyText: "Follow-up response"
+      })
+    );
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"]);
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_reply_escalated_out_of_hours",
+        entityId: TICKET_A
+      })
+    );
+  });
+
+  it("blocks send_reply outside working hours without draft when escalation mode is block", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: {
+        escalation: {
+          out_of_hours: "block",
+          tag: "urgent"
+        }
+      }
+    });
+    mocks.isAutoSendAllowed.mockReturnValue(false);
+
+    const { response, body } = await postAction({
+      type: "send_reply",
+      ticketId: TICKET_A,
+      text: "Follow-up response"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "send_reply",
+      status: "blocked",
+      detail: "Outside working hours"
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.addTagsToTicket).not.toHaveBeenCalled();
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+  });
+});

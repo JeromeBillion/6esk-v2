@@ -83,6 +83,26 @@ function validateMergeSafety(
   return null;
 }
 
+function normalizeEscalationTag(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function readOutOfHoursEscalation(policy: Record<string, unknown> | null | undefined) {
+  if (!policy || typeof policy !== "object") {
+    return { mode: "draft_only" as const, tag: null };
+  }
+  const escalation = policy.escalation;
+  if (!escalation || typeof escalation !== "object") {
+    return { mode: "draft_only" as const, tag: null };
+  }
+  const record = escalation as Record<string, unknown>;
+  const mode = record.out_of_hours === "block" ? "block" : "draft_only";
+  const tag = normalizeEscalationTag(record.tag);
+  return { mode, tag };
+}
+
 export async function POST(request: Request) {
   const integration = await getAgentFromRequest(request);
   if (!integration) {
@@ -166,6 +186,56 @@ export async function POST(request: Request) {
         }
 
         if (!isAutoSendAllowed(integration)) {
+          const escalation = readOutOfHoursEscalation(integration.policy);
+          if (escalation.mode === "draft_only" && (action.text || action.html || action.template)) {
+            const draftMetadata = action.template
+              ? { ...(action.metadata ?? {}), template: action.template }
+              : (action.metadata ?? null);
+            await createDraft({
+              integrationId: integration.id,
+              ticketId: action.ticketId,
+              subject: action.subject ?? null,
+              bodyText: action.text ?? null,
+              bodyHtml: action.html ?? null,
+              confidence: action.confidence ?? null,
+              metadata: draftMetadata
+            });
+            await recordTicketEvent({
+              ticketId: action.ticketId,
+              eventType: "ai_draft_created",
+              data: {
+                agentId: integration.id,
+                confidence: action.confidence ?? null,
+                source: "out_of_hours_escalation"
+              }
+            });
+            if (escalation.tag) {
+              await addTagsToTicket(action.ticketId, [escalation.tag]);
+              await recordTicketEvent({
+                ticketId: action.ticketId,
+                eventType: "tags_assigned",
+                data: { tags: [escalation.tag], source: "out_of_hours_escalation" }
+              });
+            }
+            await recordAuditLog({
+              action: "ai_reply_escalated_out_of_hours",
+              entityType: "ticket",
+              entityId: action.ticketId,
+              data: {
+                agentId: integration.id,
+                escalationMode: escalation.mode,
+                escalationTag: escalation.tag
+              }
+            });
+            results.push({
+              type: action.type,
+              status: "blocked",
+              detail: escalation.tag
+                ? `Outside working hours; draft created and tagged ${escalation.tag}`
+                : "Outside working hours; draft created for review"
+            });
+            break;
+          }
           results.push({ type: action.type, status: "blocked", detail: "Outside working hours" });
           break;
         }
