@@ -6,6 +6,7 @@ import TagsClient from "./TagsClient";
 import AgentIntegrationClient from "./AgentIntegrationClient";
 import SpamRulesClient from "./SpamRulesClient";
 import WhatsAppClient from "./WhatsAppClient";
+import ProfileLookupClient from "./ProfileLookupClient";
 
 type Role = {
   id: string;
@@ -115,6 +116,7 @@ const ADMIN_SECTIONS = [
   { key: "spam-rules", label: "Spam Rules" },
   { key: "agent", label: "AI Agent" },
   { key: "whatsapp", label: "WhatsApp" },
+  { key: "profile-lookup", label: "Profile Lookup" },
   { key: "security", label: "Security" },
   { key: "inbound", label: "Inbound Failures" },
   { key: "spam-review", label: "Spam Review" },
@@ -581,6 +583,12 @@ export default function AdminClient() {
           {activeSection === "whatsapp" ? (
             <div className="panel">
               <WhatsAppClient compact />
+            </div>
+          ) : null}
+
+          {activeSection === "profile-lookup" ? (
+            <div className="panel">
+              <ProfileLookupClient compact />
             </div>
           ) : null}
 

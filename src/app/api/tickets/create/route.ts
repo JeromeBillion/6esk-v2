@@ -15,6 +15,8 @@ import { canManageTickets } from "@/server/auth/roles";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { sendTicketReply } from "@/server/email/replies";
+import { resolveOrCreateCustomerForInbound } from "@/server/customers";
+import type { PredictionProfile } from "@/server/integrations/prediction-profile";
 
 const createTicketSchema = z.object({
   to: z.string().email().optional(),
@@ -91,6 +93,31 @@ function enrichExternalProfileMetadata(metadata: Record<string, unknown> | null)
   } as Record<string, unknown>;
 }
 
+function readProfileFromMetadata(
+  metadata: Record<string, unknown> | null
+): PredictionProfile | null {
+  if (!metadata) return null;
+  const payload = metadata.external_profile;
+  if (!payload || typeof payload !== "object") return null;
+  const profile = payload as Record<string, unknown>;
+
+  const id = readString(profile.externalUserId);
+  const email = readString(profile.email);
+  if (!id || !email) {
+    return null;
+  }
+
+  return {
+    id,
+    email,
+    secondaryEmail: readString(profile.secondaryEmail),
+    fullName: readString(profile.fullName),
+    phoneNumber: readString(profile.phoneNumber),
+    kycStatus: readString(profile.kycStatus),
+    accountStatus: readString(profile.accountStatus)
+  };
+}
+
 export async function POST(request: Request) {
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
   const provided = request.headers.get("x-6esk-secret");
@@ -139,9 +166,13 @@ export async function POST(request: Request) {
     if (!toEmail) {
       return Response.json({ error: "Email to is required" }, { status: 400 });
     }
+    const customerResolution = await resolveOrCreateCustomerForInbound({
+      inboundEmail: toEmail
+    });
 
     const ticketId = await createTicket({
       mailboxId: mailbox.id,
+      customerId: customerResolution?.customerId ?? null,
       requesterEmail: toEmail,
       subject: data.subject,
       category,
@@ -210,15 +241,21 @@ export async function POST(request: Request) {
   if (!fromEmail) {
     return Response.json({ error: "Invalid sender address" }, { status: 400 });
   }
+  const enrichedMetadata = enrichExternalProfileMetadata(
+    (data.metadata as Record<string, unknown> | null) ?? null
+  );
+  const customerResolution = await resolveOrCreateCustomerForInbound({
+    profile: readProfileFromMetadata(enrichedMetadata),
+    inboundEmail: fromEmail
+  });
 
   const ticketId = await createTicket({
     mailboxId: mailbox.id,
+    customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
     subject: data.subject,
     category,
-    metadata: enrichExternalProfileMetadata(
-      (data.metadata as Record<string, unknown> | null) ?? null
-    )
+    metadata: enrichedMetadata
   });
 
   await recordTicketEvent({ ticketId, eventType: "ticket_created" });

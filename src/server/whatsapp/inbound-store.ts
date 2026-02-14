@@ -18,6 +18,8 @@ import {
   buildProfileMetadataPatch,
   lookupPredictionProfile
 } from "@/server/integrations/prediction-profile";
+import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
+import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
 
 export type NormalizedWhatsAppAttachment = {
   mediaId?: string | null;
@@ -169,6 +171,11 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
 
   const requesterProfile = await lookupPredictionProfile({ phone: from });
   const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
+  const customerResolution = await resolveOrCreateCustomerForInbound({
+    profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+    inboundPhone: from,
+    displayName: message.contactName ?? null
+  });
 
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
   const conversationId = message.conversationId ?? from;
@@ -205,6 +212,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
 
     ticketId = await createTicket({
       mailboxId: mailbox.id,
+      customerId: customerResolution?.customerId ?? null,
       requesterEmail: formatRequester(from),
       subject,
       category,
@@ -226,6 +234,45 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     if (requesterProfile.status === "matched") {
       await mergeTicketMetadata(ticketId, profileMetadataPatch);
     }
+  }
+
+  if (ticketId && customerResolution?.customerId) {
+    const attached = await attachCustomerToTicket(ticketId, customerResolution.customerId);
+    if (createdNewTicket || attached) {
+      const identityEvent = buildAgentEvent({
+        eventType: "customer.identity.resolved",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: `Resolved customer ${customerResolution.customerId}`,
+        threadId: conversationId
+      });
+      await enqueueAgentEvent({
+        eventType: "customer.identity.resolved",
+        payload: {
+          ...identityEvent,
+          customer: {
+            id: customerResolution.customerId,
+            kind: customerResolution.kind
+          },
+          identity: {
+            email: null,
+            phone: from
+          },
+          matchedByProfile: requesterProfile.status === "matched"
+        }
+      });
+    }
+  }
+
+  if (requesterProfile.status === "matched" && ticketId) {
+    await upsertExternalUserLink({
+      externalSystem: "prediction-market-mvp",
+      profile: requesterProfile.profile,
+      matchedBy: requesterProfile.matchedBy,
+      inboundPhone: from,
+      ticketId,
+      channel: "whatsapp"
+    });
   }
 
   if (createdNewTicket && requesterProfile.status === "matched") {

@@ -25,10 +25,10 @@ export type PredictionProfile = {
 };
 
 export type PredictionProfileLookupResult =
-  | { status: "disabled" }
-  | { status: "missed" }
-  | { status: "matched"; matchedBy: string | null; profile: PredictionProfile }
-  | { status: "error"; error: string };
+  | { status: "disabled"; durationMs: number }
+  | { status: "missed"; durationMs: number }
+  | { status: "matched"; matchedBy: string | null; profile: PredictionProfile; durationMs: number }
+  | { status: "error"; error: string; durationMs: number };
 
 function parseBoolean(value: string | undefined, fallback: boolean) {
   if (!value) return fallback;
@@ -78,7 +78,8 @@ export function buildProfileMetadataPatch(
         source: "prediction-market-mvp",
         status: "matched",
         lookupAt,
-        matchedBy: lookup.matchedBy
+        matchedBy: lookup.matchedBy,
+        durationMs: lookup.durationMs
       },
       external_profile: {
         source: "prediction-market-mvp",
@@ -101,7 +102,8 @@ export function buildProfileMetadataPatch(
         source: "prediction-market-mvp",
         status: "error",
         lookupAt,
-        error: lookup.error
+        error: lookup.error,
+        durationMs: lookup.durationMs
       }
     };
   }
@@ -111,7 +113,8 @@ export function buildProfileMetadataPatch(
       profile_lookup: {
         source: "prediction-market-mvp",
         status: "missed",
-        lookupAt
+        lookupAt,
+        durationMs: lookup.durationMs
       }
     };
   }
@@ -120,7 +123,8 @@ export function buildProfileMetadataPatch(
     profile_lookup: {
       source: "prediction-market-mvp",
       status: "disabled",
-      lookupAt
+      lookupAt,
+      durationMs: lookup.durationMs
     }
   };
 }
@@ -132,18 +136,21 @@ export async function lookupPredictionProfile({
   email?: string;
   phone?: string;
 }): Promise<PredictionProfileLookupResult> {
+  const startedAt = Date.now();
+  const elapsedMs = () => Math.max(0, Date.now() - startedAt);
+
   const enabled = parseBoolean(process.env.PREDICTION_PROFILE_LOOKUP_ENABLED, true);
   const baseUrl = process.env.PREDICTION_PROFILE_LOOKUP_URL ?? "";
   const sharedSecret = process.env.PREDICTION_PROFILE_LOOKUP_SECRET ?? "";
 
   if (!enabled || !baseUrl || !sharedSecret) {
-    return { status: "disabled" };
+    return { status: "disabled", durationMs: elapsedMs() };
   }
 
   const normalizedEmail = normalizeEmail(email);
   const normalizedPhone = normalizePhone(phone);
   if (!normalizedEmail && !normalizedPhone) {
-    return { status: "missed" };
+    return { status: "missed", durationMs: elapsedMs() };
   }
 
   const timeoutMs = parseInteger(process.env.PREDICTION_PROFILE_LOOKUP_TIMEOUT_MS, 1500, 200, 10000);
@@ -165,7 +172,7 @@ export async function lookupPredictionProfile({
       });
 
       if (response.status === 404) {
-        return { status: "disabled" };
+        return { status: "disabled", durationMs: elapsedMs() };
       }
 
       if (!response.ok) {
@@ -176,7 +183,7 @@ export async function lookupPredictionProfile({
 
       const payload = (await response.json()) as LookupPayload;
       if (!payload.matched || !payload.user) {
-        return { status: "missed" };
+        return { status: "missed", durationMs: elapsedMs() };
       }
 
       return {
@@ -190,10 +197,15 @@ export async function lookupPredictionProfile({
           phoneNumber: payload.user.phone_number ?? null,
           kycStatus: payload.user.kyc_status ?? null,
           accountStatus: payload.user.account_status ?? null
-        }
+        },
+        durationMs: elapsedMs()
       };
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Lookup failed";
+      if (error instanceof Error && error.name === "AbortError") {
+        lastError = "timeout";
+      } else {
+        lastError = error instanceof Error ? error.message : "Lookup failed";
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -201,7 +213,7 @@ export async function lookupPredictionProfile({
 
   return {
     status: "error",
-    error: lastError.slice(0, 200)
+    error: lastError.slice(0, 200),
+    durationMs: elapsedMs()
   };
 }
-

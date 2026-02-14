@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
+import { getCustomerById } from "@/server/customers";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 
@@ -20,6 +21,7 @@ type SendReplyArgs = {
   actorUserId?: string | null;
   origin?: "human" | "ai";
   aiMeta?: Record<string, unknown> | null;
+  recipient?: string | null;
 };
 
 function getSupportAddress() {
@@ -29,6 +31,18 @@ function getSupportAddress() {
   }
   const domain = process.env.RESEND_FROM_DOMAIN ?? "";
   return domain ? `support@${domain}`.toLowerCase() : "";
+}
+
+function normalizeEmailRecipient(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizePhoneRecipient(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.replace(/[^\d+]/g, "").trim();
+  return normalized || null;
 }
 
 type ResendResponse = {
@@ -45,19 +59,35 @@ export async function sendTicketReply({
   template,
   actorUserId,
   origin = "human",
-  aiMeta
+  aiMeta,
+  recipient
 }: SendReplyArgs) {
   const ticket = await getTicketById(ticketId);
   if (!ticket) {
     throw new Error("Ticket not found");
   }
 
+  const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id) : null;
+  const requestedEmailRecipient = normalizeEmailRecipient(recipient);
+  const requestedPhoneRecipient = normalizePhoneRecipient(recipient);
+
   const isWhatsAppTicket =
     ticket.requester_email?.startsWith("whatsapp:") ||
     (ticket.metadata && (ticket.metadata as Record<string, unknown>).channel === "whatsapp");
 
   if (isWhatsAppTicket) {
-    const contact = ticket.requester_email?.replace(/^whatsapp:/, "") ?? "";
+    const fallbackTicketPhone = normalizePhoneRecipient(
+      ticket.requester_email?.replace(/^whatsapp:/, "") ?? null
+    );
+    const defaultPhone =
+      customer?.kind === "registered"
+        ? normalizePhoneRecipient(customer.primary_phone) ?? fallbackTicketPhone
+        : fallbackTicketPhone ?? normalizePhoneRecipient(customer?.primary_phone);
+    const resolvedPhone = requestedPhoneRecipient ?? defaultPhone;
+    if (!resolvedPhone) {
+      throw new Error("No WhatsApp recipient is available. Select a recipient.");
+    }
+
     const body =
       text ??
       (html
@@ -79,15 +109,31 @@ export async function sendTicketReply({
       throw new Error("WhatsApp 24h window closed. Template required.");
     }
 
+    const messageMetadata = {
+      recipient: {
+        channel: "whatsapp",
+        value: resolvedPhone,
+        selectedValue: requestedPhoneRecipient ?? null,
+        source: requestedPhoneRecipient
+          ? "agent_selected"
+          : customer?.kind === "registered" && normalizePhoneRecipient(customer.primary_phone)
+            ? "customer_primary"
+            : "ticket_requester",
+        customerId: ticket.customer_id ?? null,
+        customerKind: customer?.kind ?? null
+      }
+    };
+
     const result = await queueWhatsAppSend({
       ticketId,
-      to: contact,
+      to: resolvedPhone,
       text: cleanBody,
       attachments: attachmentList,
       template: template ?? null,
       actorUserId: actorUserId ?? null,
       origin,
-      aiMeta: aiMeta ?? null
+      aiMeta: aiMeta ?? null,
+      messageMetadata
     });
     return { messageId: result.messageId ?? null };
   }
@@ -101,11 +147,38 @@ export async function sendTicketReply({
     throw new Error("Support address not configured");
   }
 
+  const fallbackTicketEmail = ticket.requester_email?.startsWith("whatsapp:")
+    ? null
+    : normalizeEmailRecipient(ticket.requester_email);
+  const defaultEmail =
+    customer?.kind === "registered"
+      ? normalizeEmailRecipient(customer.primary_email) ?? fallbackTicketEmail
+      : fallbackTicketEmail ?? normalizeEmailRecipient(customer?.primary_email);
+  const resolvedEmail = requestedEmailRecipient ?? defaultEmail;
+  if (!resolvedEmail) {
+    throw new Error("No email recipient is available. Select a recipient.");
+  }
+
+  const messageMetadata = {
+    recipient: {
+      channel: "email",
+      value: resolvedEmail,
+      selectedValue: requestedEmailRecipient ?? null,
+      source: requestedEmailRecipient
+        ? "agent_selected"
+        : customer?.kind === "registered" && normalizeEmailRecipient(customer.primary_email)
+          ? "customer_primary"
+          : "ticket_requester",
+      customerId: ticket.customer_id ?? null,
+      customerKind: customer?.kind ?? null
+    }
+  };
+
   const finalSubject = subject ?? (ticket.subject ? `Re: ${ticket.subject}` : "Re: Support request");
 
   const resendPayload = {
     from,
-    to: [ticket.requester_email],
+    to: [resolvedEmail],
     subject: finalSubject,
     html: html ?? undefined,
     text: text ?? undefined
@@ -132,10 +205,10 @@ export async function sendTicketReply({
   await db.query(
     `INSERT INTO messages (
       id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
-      to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta
+      to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
     ) VALUES (
       $1, $2, $3, 'outbound', $4, $5, $6,
-      $7, $8, $9, $10, true, $11, $12
+      $7, $8, $9, $10, true, $11, $12, $13
     )`,
     [
       messageId,
@@ -144,12 +217,13 @@ export async function sendTicketReply({
       resendData.messageId ?? resendData.id ?? null,
       resendData.messageId ?? resendData.id ?? messageId,
       from,
-      [ticket.requester_email],
+      [resolvedEmail],
       finalSubject,
       (text ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null,
       sentAt,
       origin,
-      aiMeta ?? null
+      aiMeta ?? null,
+      messageMetadata
     ]
   );
 

@@ -21,6 +21,8 @@ import {
   buildProfileMetadataPatch,
   lookupPredictionProfile
 } from "@/server/integrations/prediction-profile";
+import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
+import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -73,6 +75,10 @@ export async function storeInboundEmail(data: InboundEmail) {
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
     const requesterProfile = await lookupPredictionProfile({ email: fromEmail });
     const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
+    const customerResolution = await resolveOrCreateCustomerForInbound({
+      profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+      inboundEmail: fromEmail
+    });
 
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
@@ -91,6 +97,7 @@ export async function storeInboundEmail(data: InboundEmail) {
 
       ticketId = await createTicket({
         mailboxId: mailbox.id,
+        customerId: customerResolution?.customerId ?? null,
         requesterEmail: fromEmail,
         subject: data.subject,
         category,
@@ -112,6 +119,45 @@ export async function storeInboundEmail(data: InboundEmail) {
       if (requesterProfile.status === "matched") {
         await mergeTicketMetadata(ticketId, profileMetadataPatch);
       }
+    }
+
+    if (ticketId && customerResolution?.customerId) {
+      const attached = await attachCustomerToTicket(ticketId, customerResolution.customerId);
+      if (createdNewTicket || attached) {
+        const identityEvent = buildAgentEvent({
+          eventType: "customer.identity.resolved",
+          ticketId,
+          mailboxId: mailbox.id,
+          excerpt: `Resolved customer ${customerResolution.customerId}`,
+          threadId: data.references?.[0] ?? data.messageId ?? ticketId
+        });
+        await enqueueAgentEvent({
+          eventType: "customer.identity.resolved",
+          payload: {
+            ...identityEvent,
+            customer: {
+              id: customerResolution.customerId,
+              kind: customerResolution.kind
+            },
+            identity: {
+              email: fromEmail,
+              phone: null
+            },
+            matchedByProfile: requesterProfile.status === "matched"
+          }
+        });
+      }
+    }
+
+    if (requesterProfile.status === "matched" && ticketId) {
+      await upsertExternalUserLink({
+        externalSystem: "prediction-market-mvp",
+        profile: requesterProfile.profile,
+        matchedBy: requesterProfile.matchedBy,
+        inboundEmail: fromEmail,
+        ticketId,
+        channel: "email"
+      });
     }
 
     if (createdNewTicket && requesterProfile.status === "matched") {

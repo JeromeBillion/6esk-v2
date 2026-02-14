@@ -13,6 +13,23 @@ type ChannelSummaryRow = {
   whatsapp_failed: number | string | null;
 };
 
+type MergeCountRow = {
+  total: number | string | null;
+  ai_initiated: number | string | null;
+  human_initiated: number | string | null;
+};
+
+type MergeReviewSummaryRow = {
+  pending: number | string | null;
+  rejected_in_range: number | string | null;
+  failed_in_range: number | string | null;
+};
+
+type MergeFailureRow = {
+  reason: string | null;
+  count: number | string | null;
+};
+
 function toInt(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -112,6 +129,70 @@ export async function GET(request: Request) {
     whatsapp_failed: 0
   };
 
+  const ticketMergeSummaryResult = await db.query<MergeCountRow>(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE actor_user_id IS NULL)::int AS ai_initiated,
+       COUNT(*) FILTER (WHERE actor_user_id IS NOT NULL)::int AS human_initiated
+     FROM ticket_merges
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
+  );
+
+  const customerMergeSummaryResult = await db.query<MergeCountRow>(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE actor_user_id IS NULL)::int AS ai_initiated,
+       COUNT(*) FILTER (WHERE actor_user_id IS NOT NULL)::int AS human_initiated
+     FROM customer_merges
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
+  );
+
+  const mergeReviewSummaryResult = await db.query<MergeReviewSummaryRow>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+       COUNT(*) FILTER (
+         WHERE status = 'rejected'
+           AND updated_at >= $1 AND updated_at < $2
+       )::int AS rejected_in_range,
+       COUNT(*) FILTER (
+         WHERE status = 'failed'
+           AND updated_at >= $1 AND updated_at < $2
+       )::int AS failed_in_range
+     FROM merge_review_tasks`,
+    [start, end]
+  );
+
+  const mergeFailureReasonsResult = await db.query<MergeFailureRow>(
+    `SELECT
+       COALESCE(NULLIF(TRIM(failure_reason), ''), 'Unknown failure') AS reason,
+       COUNT(*)::int AS count
+     FROM merge_review_tasks
+     WHERE status = 'failed'
+       AND updated_at >= $1 AND updated_at < $2
+     GROUP BY 1
+     ORDER BY count DESC
+     LIMIT 5`,
+    [start, end]
+  );
+
+  const ticketMergeSummary = ticketMergeSummaryResult.rows[0] ?? {
+    total: 0,
+    ai_initiated: 0,
+    human_initiated: 0
+  };
+  const customerMergeSummary = customerMergeSummaryResult.rows[0] ?? {
+    total: 0,
+    ai_initiated: 0,
+    human_initiated: 0
+  };
+  const reviewSummary = mergeReviewSummaryResult.rows[0] ?? {
+    pending: 0,
+    rejected_in_range: 0,
+    failed_in_range: 0
+  };
+
   return Response.json({
     range: { start: start.toISOString(), end: end.toISOString() },
     totalTickets: totalTicketsResult.rows[0]?.count ?? 0,
@@ -132,6 +213,25 @@ export async function GET(request: Request) {
         delivered: toInt(channelSummary.whatsapp_delivered),
         read: toInt(channelSummary.whatsapp_read),
         failed: toInt(channelSummary.whatsapp_failed)
+      }
+    },
+    merges: {
+      ticketMerges: toInt(ticketMergeSummary.total),
+      customerMerges: toInt(customerMergeSummary.total),
+      actorSplit: {
+        aiInitiated:
+          toInt(ticketMergeSummary.ai_initiated) + toInt(customerMergeSummary.ai_initiated),
+        humanInitiated:
+          toInt(ticketMergeSummary.human_initiated) + toInt(customerMergeSummary.human_initiated)
+      },
+      reviews: {
+        pending: toInt(reviewSummary.pending),
+        rejectedInRange: toInt(reviewSummary.rejected_in_range),
+        failedInRange: toInt(reviewSummary.failed_in_range),
+        topFailureReasons: mergeFailureReasonsResult.rows.map((row) => ({
+          reason: row.reason ?? "Unknown failure",
+          count: toInt(row.count)
+        }))
       }
     }
   });

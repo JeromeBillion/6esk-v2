@@ -12,6 +12,7 @@ import {
 } from "@/server/tickets";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -62,9 +63,13 @@ export async function POST(request: Request) {
     source: "portal",
     ...(data.metadata ?? {})
   };
+  const customerResolution = await resolveOrCreateCustomerForInbound({
+    inboundEmail: fromEmail
+  });
 
   const ticketId = await createTicket({
     mailboxId: mailbox.id,
+    customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
     subject: data.subject,
     category,

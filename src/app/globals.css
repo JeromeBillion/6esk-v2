@@ -125,7 +125,10 @@ button {
 
 .app-sidebar.collapsed .app-brand-row {
   width: 100%;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 10px;
 }
 
 .app-brand {
@@ -583,6 +586,150 @@ button {
   color: var(--danger);
 }
 
+.ticket-merge-panel {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(8, 11, 16, 0.85);
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-merge-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ticket-merge-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.ticket-merge-search button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ticket-merge-results {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.ticket-merge-result {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(10, 12, 18, 0.75);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.ticket-merge-result:hover {
+  border-color: rgba(139, 215, 255, 0.35);
+}
+
+.ticket-merge-result.active {
+  border-color: rgba(139, 215, 255, 0.5);
+  background: rgba(57, 184, 255, 0.15);
+}
+
+.ticket-merge-result-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ticket-merge-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ticket-merge-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.ticket-merge-preflight {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(10, 12, 18, 0.65);
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-merge-preflight strong {
+  font-size: 12px;
+}
+
+.ticket-merge-preflight-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.ticket-merge-preflight-grid span:nth-child(odd) {
+  color: var(--muted);
+}
+
+.ticket-merge-confirm {
+  border: 1px dashed rgba(255, 199, 102, 0.45);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 199, 102, 0.08);
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-merge-confirm p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ticket-merge-confirm code {
+  font-size: 11px;
+}
+
+.ticket-merge-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ticket-merge-confirm-actions button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ticket-merge-submit {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(57, 184, 255, 0.35), rgba(139, 215, 255, 0.25));
+  color: var(--text);
+  cursor: pointer;
+}
+
 .tickets-sidebar[data-density="compact"] .ticket-card {
   padding: 6px 10px;
 }
@@ -687,6 +834,106 @@ button {
 .draft-queue {
   display: grid;
   gap: 12px;
+}
+
+.merge-review-queue {
+  display: grid;
+  gap: 12px;
+}
+
+.merge-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.merge-review-filters {
+  display: grid;
+  gap: 12px;
+}
+
+.merge-review-list {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.merge-review-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(10, 12, 18, 0.6);
+  display: grid;
+  gap: 8px;
+}
+
+.merge-review-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.merge-review-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.merge-review-detail {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.merge-review-reason {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.merge-review-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.merge-review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.merge-review-actions button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.merge-review-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+}
+
+.merge-review-status.status-pending {
+  border-color: rgba(255, 199, 102, 0.5);
+  color: #ffe6b3;
+}
+
+.merge-review-status.status-applied {
+  border-color: rgba(72, 187, 120, 0.5);
+  color: #c4f2d6;
+}
+
+.merge-review-status.status-rejected,
+.merge-review-status.status-failed {
+  border-color: rgba(255, 107, 107, 0.5);
+  color: #ffb3b3;
 }
 
 .draft-queue-header {
@@ -939,6 +1186,132 @@ button {
 .tickets-detail-stack {
   display: grid;
   gap: 16px;
+}
+
+.ticket-conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.customer-history-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.customer-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-history-loading {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.customer-history-error,
+.customer-history-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.customer-history-error {
+  color: var(--danger);
+}
+
+.customer-history-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.customer-history-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(10, 12, 18, 0.75);
+  color: var(--text);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.customer-history-item:hover {
+  border-color: rgba(139, 215, 255, 0.35);
+  background: rgba(57, 184, 255, 0.12);
+}
+
+.customer-history-item.active {
+  border-color: rgba(139, 215, 255, 0.45);
+  background: rgba(57, 184, 255, 0.18);
+}
+
+.customer-history-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-history-item-top strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.customer-history-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.customer-history-hover {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.customer-history-load-more {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.customer-history-hover strong {
+  font-size: 12px;
+}
+
+.customer-history-hover-body {
+  display: grid;
+  gap: 6px;
+}
+
+.customer-history-hover-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.customer-history-hover-body p,
+.customer-history-hover-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
 }
 
 .admin-layout {
@@ -1535,6 +1908,8 @@ button {
   }
 
   .app-sidebar.collapsed .app-brand-row {
+    flex-direction: row;
+    align-items: center;
     justify-content: space-between;
   }
 
@@ -1579,6 +1954,12 @@ button {
   }
 
   .tickets-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1200px) {
+  .ticket-conversation-layout {
     grid-template-columns: 1fr;
   }
 }

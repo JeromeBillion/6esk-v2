@@ -26,7 +26,8 @@ const replySchema = z.object({
       components: z.array(z.record(z.unknown())).optional()
     })
     .optional()
-    .nullable()
+    .nullable(),
+  recipient: z.string().optional().nullable()
 });
 
 export async function POST(
@@ -64,7 +65,7 @@ export async function POST(
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const { text, html, subject, template, attachments } = parsed.data;
+  const { text, html, subject, template, attachments, recipient } = parsed.data;
   if (!text && !html && !template && !(attachments?.length ?? 0)) {
     return Response.json({ error: "Reply body required" }, { status: 400 });
   }
@@ -77,6 +78,7 @@ export async function POST(
       subject,
       attachments: attachments ?? null,
       template: template ?? null,
+      recipient: recipient ?? null,
       actorUserId: user.id,
       origin: "human"
     });

@@ -1,0 +1,56 @@
+import { z } from "zod";
+import { canManageTickets } from "@/server/auth/roles";
+import { getSessionUser } from "@/server/auth/session";
+import { MergeError, mergeCustomers } from "@/server/merges";
+import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
+
+const mergeSchema = z.object({
+  sourceCustomerId: z.string().uuid(),
+  targetCustomerId: z.string().uuid(),
+  reason: z.string().max(500).optional().nullable(),
+  acknowledgement: z
+    .string()
+    .trim()
+    .refine((value) => value === MERGE_IRREVERSIBLE_ACK_TEXT)
+});
+
+export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch (error) {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = mergeSchema.safeParse(payload);
+  if (!parsed.success) {
+    return Response.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
+  try {
+    const result = await mergeCustomers({
+      sourceCustomerId: parsed.data.sourceCustomerId,
+      targetCustomerId: parsed.data.targetCustomerId,
+      actorUserId: user.id,
+      reason: parsed.data.reason ?? null
+    });
+    return Response.json({ status: "merged", result });
+  } catch (error) {
+    if (error instanceof MergeError) {
+      const status =
+        error.code === "not_found" ? 404 : error.code === "invalid_input" ? 400 : 409;
+      return Response.json({ error: error.message, code: error.code }, { status });
+    }
+    const message = error instanceof Error ? error.message : "Failed to merge customers";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}

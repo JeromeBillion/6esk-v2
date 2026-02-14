@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "@/app/components/AppShell";
+import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
 
 type Ticket = {
   id: string;
@@ -133,6 +134,131 @@ type SessionUser = {
   role_name?: string | null;
 };
 
+type CustomerHistoryItem = {
+  ticketId: string;
+  subject: string | null;
+  status: string;
+  priority: string;
+  requesterEmail: string;
+  channel: "email" | "whatsapp";
+  lastMessageAt: string | null;
+  lastCustomerInboundPreview: string | null;
+  lastCustomerInboundAt: string | null;
+};
+
+type CustomerProfileIdentity = {
+  type: "email" | "phone";
+  value: string;
+  isPrimary: boolean;
+};
+
+type ActiveCustomerProfile = {
+  id: string;
+  kind: "registered" | "unregistered";
+  display_name: string | null;
+  primary_email: string | null;
+  primary_phone: string | null;
+  identities: CustomerProfileIdentity[];
+};
+
+type ReplyRecipientOption = {
+  value: string;
+  label: string;
+  isPrimary: boolean;
+};
+
+type TicketMergeSearchResult = {
+  id: string;
+  subject: string | null;
+  requesterEmail: string;
+  status: string;
+  priority: string;
+  assignedUserId: string | null;
+  channel: "email" | "whatsapp";
+  lastMessageAt: string | null;
+};
+
+type CustomerMergeSearchResult = {
+  id: string;
+  kind: "registered" | "unregistered";
+  displayName: string | null;
+  primaryEmail: string | null;
+  primaryPhone: string | null;
+  externalSystem: string | null;
+  externalUserId: string | null;
+  activeTicketCount: number;
+  identities: Array<{ type: "email" | "phone"; value: string; isPrimary: boolean }>;
+};
+
+type MergeReviewQueueItem = {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "applied" | "failed";
+  proposal_type: "ticket" | "customer";
+  ticket_id: string | null;
+  source_ticket_id: string | null;
+  target_ticket_id: string | null;
+  source_customer_id: string | null;
+  target_customer_id: string | null;
+  reason: string | null;
+  confidence: number | null;
+  metadata: Record<string, unknown> | null;
+  failure_reason: string | null;
+  proposed_by_agent_id: string | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  applied_at: string | null;
+  created_at: string;
+  context_ticket_subject: string | null;
+  context_ticket_requester_email: string | null;
+  source_ticket_subject: string | null;
+  source_ticket_requester_email: string | null;
+  source_ticket_has_whatsapp: boolean;
+  target_ticket_subject: string | null;
+  target_ticket_requester_email: string | null;
+  target_ticket_has_whatsapp: boolean;
+  source_customer_display_name: string | null;
+  source_customer_primary_email: string | null;
+  source_customer_primary_phone: string | null;
+  target_customer_display_name: string | null;
+  target_customer_primary_email: string | null;
+  target_customer_primary_phone: string | null;
+};
+
+type TicketMergePreflight = {
+  sourceTicketId: string;
+  targetTicketId: string;
+  sourceChannel: "email" | "whatsapp";
+  targetChannel: "email" | "whatsapp";
+  moveCounts: {
+    messages: number;
+    replies: number;
+    events: number;
+    drafts: number;
+    sourceTags: number;
+    newTagsOnTarget: number;
+  };
+  allowed: boolean;
+  blockingCode: "already_merged" | "cross_channel_not_allowed" | "too_large" | null;
+  blockingReason: string | null;
+};
+
+type CustomerMergePreflight = {
+  sourceCustomerId: string;
+  targetCustomerId: string;
+  moveCounts: {
+    totalTickets: number;
+    activeTickets: number;
+    activeEmailTickets: number;
+    activeWhatsappTickets: number;
+    sourceIdentities: number;
+    identitiesToMove: number;
+    identityConflicts: number;
+  };
+  allowed: boolean;
+  blockingCode: "already_merged" | null;
+  blockingReason: string | null;
+};
+
 type Macro = {
   id: string;
   title: string;
@@ -208,6 +334,18 @@ function formatStatusLabel(value: string | null | undefined) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function normalizeRecipientEmail(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeRecipientPhone(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.replace(/[^\d+]/g, "").trim();
+  return normalized || null;
+}
+
 function formatStatusLatency(
   fromValue: string | null | undefined,
   toValue: string | null | undefined
@@ -273,6 +411,15 @@ export default function TicketsClient() {
   const [draftQueueError, setDraftQueueError] = useState<string | null>(null);
   const [draftQueueActionId, setDraftQueueActionId] = useState<string | null>(null);
   const [draftQueueBulkAction, setDraftQueueBulkAction] = useState<string | null>(null);
+  const [mergeReviewQueue, setMergeReviewQueue] = useState<MergeReviewQueueItem[]>([]);
+  const [mergeReviewQuery, setMergeReviewQuery] = useState("");
+  const [mergeReviewStatusFilter, setMergeReviewStatusFilter] = useState<"pending" | "all">(
+    "pending"
+  );
+  const [mergeReviewAssigned, setMergeReviewAssigned] = useState<string>("all");
+  const [mergeReviewLoading, setMergeReviewLoading] = useState(false);
+  const [mergeReviewError, setMergeReviewError] = useState<string | null>(null);
+  const [mergeReviewActionId, setMergeReviewActionId] = useState<string | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
@@ -287,7 +434,7 @@ export default function TicketsClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterTag, setFilterTag] = useState<string>("all");
-  const [filterChannel, setFilterChannel] = useState<string>("all");
+  const [filterChannel, setFilterChannel] = useState<"email" | "whatsapp">("email");
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [assignedFilter, setAssignedFilter] = useState<string>("all");
   const [savedViews, setSavedViews] = useState<
@@ -326,6 +473,35 @@ export default function TicketsClient() {
   const [events, setEvents] = useState<TicketEvent[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [replyError, setReplyError] = useState<string | null>(null);
+  const [customerHistory, setCustomerHistory] = useState<CustomerHistoryItem[]>([]);
+  const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
+  const [customerHistoryLoadingMore, setCustomerHistoryLoadingMore] = useState(false);
+  const [customerHistoryNextCursor, setCustomerHistoryNextCursor] = useState<string | null>(null);
+  const [customerHistoryError, setCustomerHistoryError] = useState<string | null>(null);
+  const [hoveredHistoryTicketId, setHoveredHistoryTicketId] = useState<string | null>(null);
+  const [activeCustomer, setActiveCustomer] = useState<ActiveCustomerProfile | null>(null);
+  const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
+  const [selectedReplyRecipient, setSelectedReplyRecipient] = useState("");
+  const [showMergePanel, setShowMergePanel] = useState(false);
+  const [mergeMode, setMergeMode] = useState<"ticket" | "customer">("ticket");
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [mergeReason, setMergeReason] = useState("");
+  const [mergeSearching, setMergeSearching] = useState(false);
+  const [mergeSearchError, setMergeSearchError] = useState<string | null>(null);
+  const [ticketMergeResults, setTicketMergeResults] = useState<TicketMergeSearchResult[]>([]);
+  const [customerMergeResults, setCustomerMergeResults] = useState<CustomerMergeSearchResult[]>([]);
+  const [selectedMergeTicketId, setSelectedMergeTicketId] = useState<string | null>(null);
+  const [selectedMergeCustomerId, setSelectedMergeCustomerId] = useState<string | null>(null);
+  const [ticketMergePreflight, setTicketMergePreflight] = useState<TicketMergePreflight | null>(null);
+  const [customerMergePreflight, setCustomerMergePreflight] =
+    useState<CustomerMergePreflight | null>(null);
+  const [mergePreflightLoading, setMergePreflightLoading] = useState(false);
+  const [mergePreflightError, setMergePreflightError] = useState<string | null>(null);
+  const [mergeSubmitting, setMergeSubmitting] = useState(false);
+  const [mergeSubmitError, setMergeSubmitError] = useState<string | null>(null);
+  const [mergeSubmitSuccess, setMergeSubmitSuccess] = useState<string | null>(null);
+  const [showMergeConfirmStep, setShowMergeConfirmStep] = useState(false);
+  const [mergeAcknowledgeInput, setMergeAcknowledgeInput] = useState("");
   const [waTemplateName, setWaTemplateName] = useState("");
   const [waTemplateLanguage, setWaTemplateLanguage] = useState("en_US");
   const [waTemplateParams, setWaTemplateParams] = useState("");
@@ -492,7 +668,7 @@ export default function TicketsClient() {
     setFilterStatus(view.filters.status ?? "all");
     setFilterPriority(view.filters.priority ?? "all");
     setFilterTag(view.filters.tag ?? "all");
-    setFilterChannel(view.filters.channel ?? "all");
+    setFilterChannel(view.filters.channel === "whatsapp" ? "whatsapp" : "email");
     setFilterQuery(view.filters.query ?? "");
     setAssignedFilter(view.filters.assigned ?? "all");
     setActiveView(view.name);
@@ -511,7 +687,7 @@ export default function TicketsClient() {
     if (filterStatus !== "all") params.set("status", filterStatus);
     if (filterPriority !== "all") params.set("priority", filterPriority);
     if (filterTag !== "all") params.set("tag", filterTag);
-    if (filterChannel !== "all") params.set("channel", filterChannel);
+    params.set("channel", filterChannel);
     if (filterQuery.trim()) params.set("q", filterQuery.trim());
     if (assignedFilter !== "all") params.set("assigned", assignedFilter);
 
@@ -563,6 +739,29 @@ export default function TicketsClient() {
     setDraftQueueLoading(false);
   }
 
+  async function loadMergeReviewQueue() {
+    if (!user) {
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("status", mergeReviewStatusFilter);
+    params.set("limit", "100");
+    if (mergeReviewQuery.trim()) params.set("q", mergeReviewQuery.trim());
+    if (mergeReviewAssigned !== "all") params.set("assigned", mergeReviewAssigned);
+
+    setMergeReviewLoading(true);
+    setMergeReviewError(null);
+    const res = await fetch(`/api/merge-reviews?${params.toString()}`);
+    if (!res.ok) {
+      setMergeReviewError("Failed to load merge review queue.");
+      setMergeReviewLoading(false);
+      return;
+    }
+    const payload = await res.json();
+    setMergeReviewQueue((payload.reviews ?? []) as MergeReviewQueueItem[]);
+    setMergeReviewLoading(false);
+  }
+
   async function loadWhatsAppTemplates() {
     const res = await fetch("/api/whatsapp/templates");
     if (!res.ok) {
@@ -588,6 +787,49 @@ export default function TicketsClient() {
     }
   }
 
+  async function loadCustomerHistory(ticketId: string) {
+    setCustomerHistoryLoading(true);
+    setCustomerHistoryLoadingMore(false);
+    setCustomerHistoryError(null);
+    setCustomerHistoryNextCursor(null);
+    const res = await fetch(`/api/tickets/${ticketId}/customer-history?limit=30`);
+    if (!res.ok) {
+      setCustomerHistory([]);
+      setActiveCustomer(null);
+      setActiveCustomerId(null);
+      setCustomerHistoryNextCursor(null);
+      setCustomerHistoryError("Failed to load customer history.");
+      setCustomerHistoryLoading(false);
+      return;
+    }
+    const payload = await res.json();
+    setCustomerHistory(payload.history ?? []);
+    setActiveCustomer((payload.customer ?? null) as ActiveCustomerProfile | null);
+    setActiveCustomerId(payload.customer?.id ?? null);
+    setCustomerHistoryNextCursor(payload.nextCursor ?? null);
+    setCustomerHistoryError(null);
+    setCustomerHistoryLoading(false);
+  }
+
+  async function loadMoreCustomerHistory(ticketId: string) {
+    if (!customerHistoryNextCursor) return;
+    setCustomerHistoryLoadingMore(true);
+    const res = await fetch(
+      `/api/tickets/${ticketId}/customer-history?limit=30&cursor=${encodeURIComponent(
+        customerHistoryNextCursor
+      )}`
+    );
+    if (!res.ok) {
+      setCustomerHistoryError("Failed to load older customer history.");
+      setCustomerHistoryLoadingMore(false);
+      return;
+    }
+    const payload = await res.json();
+    setCustomerHistory((prev) => [...prev, ...((payload.history ?? []) as CustomerHistoryItem[])]);
+    setCustomerHistoryNextCursor(payload.nextCursor ?? null);
+    setCustomerHistoryLoadingMore(false);
+  }
+
   async function loadMessageDetail(messageId: string) {
     setLoadingMessage(true);
     setActiveMessageId(messageId);
@@ -611,10 +853,253 @@ export default function TicketsClient() {
     }
   }
 
+  async function searchMergeTargets() {
+    const query = mergeQuery.trim();
+    setMergeSearchError(null);
+    setMergePreflightError(null);
+    setSelectedMergeTicketId(null);
+    setSelectedMergeCustomerId(null);
+    setTicketMergePreflight(null);
+    setCustomerMergePreflight(null);
+    setShowMergeConfirmStep(false);
+    setMergeAcknowledgeInput("");
+    if (!query) {
+      setTicketMergeResults([]);
+      setCustomerMergeResults([]);
+      return;
+    }
+    setMergeSearching(true);
+    const endpoint =
+      mergeMode === "ticket"
+        ? `/api/tickets/search?q=${encodeURIComponent(query)}&limit=20`
+        : `/api/customers/search?q=${encodeURIComponent(query)}&limit=20`;
+    const res = await fetch(endpoint);
+    if (!res.ok) {
+      setMergeSearchError("Failed to search merge candidates.");
+      setMergeSearching(false);
+      return;
+    }
+    const payload = await res.json();
+    if (mergeMode === "ticket") {
+      const results = (payload.tickets ?? []) as TicketMergeSearchResult[];
+      setTicketMergeResults(results.filter((item) => item.id !== activeTicketId));
+      setCustomerMergeResults([]);
+    } else {
+      const results = (payload.customers ?? []) as CustomerMergeSearchResult[];
+      setCustomerMergeResults(results.filter((item) => item.id !== activeCustomerId));
+      setTicketMergeResults([]);
+    }
+    setMergeSearching(false);
+  }
+
+  async function submitMerge() {
+    if (!activeTicket) return;
+    setMergeSubmitError(null);
+    setMergeSubmitSuccess(null);
+    setMergeSubmitting(true);
+
+    if (mergeMode === "ticket") {
+      if (!selectedMergeTicketId) {
+        setMergeSubmitError("Select a target ticket.");
+        setMergeSubmitting(false);
+        return;
+      }
+      if (!ticketMergePreflight) {
+        setMergeSubmitError("Run merge preflight before merging.");
+        setMergeSubmitting(false);
+        return;
+      }
+      if (!ticketMergePreflight.allowed) {
+        setMergeSubmitError(ticketMergePreflight.blockingReason ?? "This merge cannot be executed.");
+        setMergeSubmitting(false);
+        return;
+      }
+      const res = await fetch("/api/tickets/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceTicketId: activeTicket.id,
+          targetTicketId: selectedMergeTicketId,
+          reason: mergeReason.trim() || null,
+          acknowledgement: mergeAcknowledgeInput.trim()
+        })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMergeSubmitError(payload.error ?? "Failed to merge tickets.");
+        setMergeSubmitting(false);
+        return;
+      }
+      await loadTickets();
+      setActiveTicketId(selectedMergeTicketId);
+      setShowMergePanel(false);
+      setShowMergeConfirmStep(false);
+      setMergeAcknowledgeInput("");
+      setMergeSubmitSuccess("Tickets merged.");
+      setMergeSubmitting(false);
+      return;
+    }
+
+    if (!activeCustomerId) {
+      setMergeSubmitError("No source customer identity linked to this ticket.");
+      setMergeSubmitting(false);
+      return;
+    }
+    if (!selectedMergeCustomerId) {
+      setMergeSubmitError("Select a target customer profile.");
+      setMergeSubmitting(false);
+      return;
+    }
+    if (!customerMergePreflight) {
+      setMergeSubmitError("Run merge preflight before merging.");
+      setMergeSubmitting(false);
+      return;
+    }
+    if (!customerMergePreflight.allowed) {
+      setMergeSubmitError(
+        customerMergePreflight.blockingReason ?? "This customer merge cannot be executed."
+      );
+      setMergeSubmitting(false);
+      return;
+    }
+
+    const res = await fetch("/api/customers/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceCustomerId: activeCustomerId,
+        targetCustomerId: selectedMergeCustomerId,
+        reason: mergeReason.trim() || null,
+        acknowledgement: mergeAcknowledgeInput.trim()
+      })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMergeSubmitError(payload.error ?? "Failed to merge customers.");
+      setMergeSubmitting(false);
+      return;
+    }
+    await loadCustomerHistory(activeTicket.id);
+    await loadTickets();
+    setShowMergePanel(false);
+    setShowMergeConfirmStep(false);
+    setMergeAcknowledgeInput("");
+    setMergeSubmitSuccess("Customers merged.");
+    setMergeSubmitting(false);
+  }
+
   useEffect(() => {
     void loadUser();
     void loadMacros();
   }, []);
+
+  useEffect(() => {
+    setMergeQuery("");
+    setMergeReason("");
+    setMergeSearchError(null);
+    setMergePreflightError(null);
+    setMergeSubmitError(null);
+    setTicketMergeResults([]);
+    setCustomerMergeResults([]);
+    setSelectedMergeTicketId(null);
+    setSelectedMergeCustomerId(null);
+    setTicketMergePreflight(null);
+    setCustomerMergePreflight(null);
+    setShowMergeConfirmStep(false);
+    setMergeAcknowledgeInput("");
+  }, [mergeMode]);
+
+  useEffect(() => {
+    if (!showMergePanel || !activeTicketId) {
+      setMergePreflightLoading(false);
+      setMergePreflightError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPreflight() {
+      if (mergeMode === "ticket") {
+        setCustomerMergePreflight(null);
+        if (!selectedMergeTicketId) {
+          setTicketMergePreflight(null);
+          setMergePreflightError(null);
+          setMergePreflightLoading(false);
+          return;
+        }
+
+        setMergePreflightLoading(true);
+        setMergePreflightError(null);
+        const res = await fetch("/api/tickets/merge/preflight", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceTicketId: activeTicketId,
+            targetTicketId: selectedMergeTicketId
+          })
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) {
+          setTicketMergePreflight(null);
+          setMergePreflightError(payload.error ?? "Failed to calculate merge preflight.");
+          setMergePreflightLoading(false);
+          return;
+        }
+        setTicketMergePreflight((payload.preflight ?? null) as TicketMergePreflight | null);
+        setMergePreflightLoading(false);
+        return;
+      }
+
+      setTicketMergePreflight(null);
+      if (!activeCustomerId || !selectedMergeCustomerId) {
+        setCustomerMergePreflight(null);
+        setMergePreflightError(null);
+        setMergePreflightLoading(false);
+        return;
+      }
+
+      setMergePreflightLoading(true);
+      setMergePreflightError(null);
+      const res = await fetch("/api/customers/merge/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceCustomerId: activeCustomerId,
+          targetCustomerId: selectedMergeCustomerId
+        })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (cancelled) return;
+      if (!res.ok) {
+        setCustomerMergePreflight(null);
+        setMergePreflightError(payload.error ?? "Failed to calculate merge preflight.");
+        setMergePreflightLoading(false);
+        return;
+      }
+      setCustomerMergePreflight((payload.preflight ?? null) as CustomerMergePreflight | null);
+      setMergePreflightLoading(false);
+    }
+
+    void loadPreflight();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeCustomerId,
+    activeTicketId,
+    mergeMode,
+    selectedMergeCustomerId,
+    selectedMergeTicketId,
+    showMergePanel
+  ]);
+
+  useEffect(() => {
+    setShowMergeConfirmStep(false);
+    setMergeAcknowledgeInput("");
+    setMergeSubmitError(null);
+  }, [selectedMergeTicketId, selectedMergeCustomerId, mergeMode]);
 
   useEffect(() => {
     try {
@@ -641,6 +1126,12 @@ export default function TicketsClient() {
     void loadDraftQueue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, draftQueueQuery, draftQueueChannel, draftQueueAssigned]);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadMergeReviewQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, mergeReviewQuery, mergeReviewStatusFilter, mergeReviewAssigned]);
 
   useEffect(() => {
     if (draftQueueSelectedIds.length === 0) return;
@@ -699,6 +1190,30 @@ export default function TicketsClient() {
       setMessages([]);
       setDrafts([]);
       setAuditLogs([]);
+      setCustomerHistory([]);
+      setActiveCustomer(null);
+      setActiveCustomerId(null);
+      setSelectedReplyRecipient("");
+      setCustomerHistoryLoading(false);
+      setCustomerHistoryNextCursor(null);
+      setCustomerHistoryLoadingMore(false);
+      setCustomerHistoryError(null);
+      setHoveredHistoryTicketId(null);
+      setShowMergePanel(false);
+      setMergeQuery("");
+      setMergeReason("");
+      setTicketMergeResults([]);
+      setCustomerMergeResults([]);
+      setSelectedMergeTicketId(null);
+      setSelectedMergeCustomerId(null);
+      setTicketMergePreflight(null);
+      setCustomerMergePreflight(null);
+      setMergePreflightError(null);
+      setMergePreflightLoading(false);
+      setMergeSubmitError(null);
+      setMergeSubmitSuccess(null);
+      setShowMergeConfirmStep(false);
+      setMergeAcknowledgeInput("");
       setEditingDraftId(null);
       setDraftEdits({});
       return;
@@ -707,7 +1222,20 @@ export default function TicketsClient() {
     setDraftEdits({});
     setWaReplyAttachments([]);
     setReplyError(null);
+    setSelectedReplyRecipient("");
+    setCustomerHistoryNextCursor(null);
+    setCustomerHistoryLoadingMore(false);
+    setHoveredHistoryTicketId(null);
+    setTicketMergePreflight(null);
+    setCustomerMergePreflight(null);
+    setMergePreflightError(null);
+    setMergePreflightLoading(false);
+    setMergeSubmitError(null);
+    setMergeSubmitSuccess(null);
+    setShowMergeConfirmStep(false);
+    setMergeAcknowledgeInput("");
     void loadTicketDetail(activeTicketId);
+    void loadCustomerHistory(activeTicketId);
   }, [activeTicketId]);
 
   useEffect(() => {
@@ -935,6 +1463,15 @@ export default function TicketsClient() {
       );
       return;
     }
+    const recipientValue = selectedReplyRecipient.trim();
+    if (requiresExplicitRecipientSelection && !recipientValue) {
+      setReplyError(
+        ticketChannel === "whatsapp"
+          ? "Select a WhatsApp recipient before sending."
+          : "Select an email recipient before sending."
+      );
+      return;
+    }
     setSending(true);
     const res = await fetch(`/api/tickets/${ticketId}/replies`, {
       method: "POST",
@@ -942,7 +1479,8 @@ export default function TicketsClient() {
       body: JSON.stringify({
         text: trimmedText || null,
         template,
-        attachments: attachmentPayload.length ? attachmentPayload : null
+        attachments: attachmentPayload.length ? attachmentPayload : null,
+        recipient: recipientValue || null
       })
     });
     if (res.ok) {
@@ -951,6 +1489,9 @@ export default function TicketsClient() {
       setWaTemplateParams("");
       setSelectedTemplateId("");
       setWaReplyAttachments([]);
+      if (requiresExplicitRecipientSelection) {
+        setSelectedReplyRecipient("");
+      }
       await loadTicketDetail(ticketId);
       await loadDraftQueue();
     } else {
@@ -1105,6 +1646,35 @@ export default function TicketsClient() {
     setDraftQueueBulkAction(null);
   }
 
+  async function resolveMergeReview(
+    review: MergeReviewQueueItem,
+    decision: "approve" | "reject"
+  ) {
+    setMergeReviewActionId(review.id);
+    setMergeReviewError(null);
+    const res = await fetch(`/api/merge-reviews/${review.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMergeReviewError(payload.error ?? "Failed to resolve merge review.");
+      setMergeReviewActionId(null);
+      return;
+    }
+
+    await loadMergeReviewQueue();
+    if (decision === "approve") {
+      await loadTickets();
+      if (activeTicketId) {
+        await loadTicketDetail(activeTicketId);
+        await loadCustomerHistory(activeTicketId);
+      }
+    }
+    setMergeReviewActionId(null);
+  }
+
   const activeTicket = tickets.find((ticket) => ticket.id === activeTicketId) ?? null;
   const activeExternalProfile = readExternalProfile(activeTicket);
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
@@ -1189,6 +1759,98 @@ export default function TicketsClient() {
   })();
   const draftQueueSelectedAll =
     draftQueue.length > 0 && draftQueueSelectedIds.length === draftQueue.length;
+  const hoveredHistoryItem =
+    customerHistory.find((item) => item.ticketId === hoveredHistoryTicketId) ?? null;
+  const canMerge = user?.role_name !== "viewer";
+  const replyRecipientOptions = useMemo(() => {
+    if (!activeTicket) return [] as ReplyRecipientOption[];
+    const options = new Map<string, ReplyRecipientOption>();
+    const isWhatsappChannel = ticketChannel === "whatsapp";
+
+    const addOption = (
+      rawValue: string | null | undefined,
+      label: string,
+      isPrimary = false
+    ) => {
+      const normalized = isWhatsappChannel
+        ? normalizeRecipientPhone(rawValue)
+        : normalizeRecipientEmail(rawValue);
+      if (!normalized) return;
+      const existing = options.get(normalized);
+      if (!existing) {
+        options.set(normalized, { value: normalized, label, isPrimary });
+        return;
+      }
+      if (isPrimary && !existing.isPrimary) {
+        options.set(normalized, {
+          ...existing,
+          label: `${existing.label} (Primary)`,
+          isPrimary: true
+        });
+      }
+    };
+
+    if (activeCustomer) {
+      if (isWhatsappChannel) {
+        addOption(activeCustomer.primary_phone, "Primary phone", true);
+      } else {
+        addOption(activeCustomer.primary_email, "Primary email", true);
+      }
+
+      for (const identity of activeCustomer.identities ?? []) {
+        if (isWhatsappChannel && identity.type !== "phone") continue;
+        if (!isWhatsappChannel && identity.type !== "email") continue;
+        addOption(
+          identity.value,
+          identity.isPrimary ? "Primary identity" : "Known identity",
+          identity.isPrimary
+        );
+      }
+    }
+
+    if (isWhatsappChannel) {
+      const requesterPhone = activeTicket.requester_email.startsWith("whatsapp:")
+        ? activeTicket.requester_email.replace(/^whatsapp:/, "")
+        : null;
+      addOption(requesterPhone, "Current ticket requester");
+    } else if (!activeTicket.requester_email.startsWith("whatsapp:")) {
+      addOption(activeTicket.requester_email, "Current ticket requester");
+    }
+
+    return Array.from(options.values());
+  }, [activeCustomer, activeTicket, ticketChannel]);
+  const isRegisteredCustomer = activeCustomer?.kind === "registered";
+  const requiresExplicitRecipientSelection = !isRegisteredCustomer;
+  const canLoadMoreHistory =
+    Boolean(customerHistoryNextCursor) && !customerHistoryLoading && !customerHistoryLoadingMore;
+  const mergePreflightReady =
+    mergeMode === "ticket"
+      ? Boolean(selectedMergeTicketId && ticketMergePreflight?.allowed)
+      : Boolean(
+          activeCustomerId &&
+            selectedMergeCustomerId &&
+            customerMergePreflight?.allowed
+        );
+  const mergeAcknowledgeMatches =
+    mergeAcknowledgeInput.trim() === MERGE_IRREVERSIBLE_ACK_TEXT;
+
+  useEffect(() => {
+    if (!activeTicketId) {
+      setSelectedReplyRecipient("");
+      return;
+    }
+    if (isRegisteredCustomer) {
+      setSelectedReplyRecipient((current) => {
+        if (current && replyRecipientOptions.some((option) => option.value === current)) {
+          return current;
+        }
+        const preferred = replyRecipientOptions.find((option) => option.isPrimary);
+        return preferred?.value ?? replyRecipientOptions[0]?.value ?? "";
+      });
+      return;
+    }
+    setSelectedReplyRecipient("");
+  }, [activeTicketId, isRegisteredCustomer, replyRecipientOptions, ticketChannel]);
 
   useEffect(() => {
     if (!waContactCopyStatus) return;
@@ -1209,6 +1871,28 @@ export default function TicketsClient() {
         <div className="tickets-layout">
           <aside className="panel tickets-sidebar" data-density={ticketDensity}>
             <div className="tickets-filters">
+              <div className="ticket-filter-chips">
+                <span className="ticket-filter-label">Channel</span>
+                <div className="ticket-filter-chip-row">
+                  {(
+                    [
+                      { value: "email", label: "Email" },
+                      { value: "whatsapp", label: "WhatsApp" }
+                    ] as const
+                  ).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterChannel(option.value)}
+                      className={`ticket-filter-chip${
+                        filterChannel === option.value ? " active" : ""
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <label>
                 Search
                 <input
@@ -1256,17 +1940,6 @@ export default function TicketsClient() {
                       {priority}
                     </option>
                   ))}
-                </select>
-              </label>
-              <label>
-                Channel
-                <select
-                  value={filterChannel}
-                  onChange={(event) => setFilterChannel(event.target.value)}
-                >
-                  <option value="all">All</option>
-                  <option value="email">Email</option>
-                  <option value="whatsapp">WhatsApp</option>
                 </select>
               </label>
               <label>
@@ -1541,6 +2214,166 @@ export default function TicketsClient() {
 
           <section className="tickets-detail">
             <div className="tickets-detail-stack">
+              <div className="panel merge-review-queue">
+                <div className="merge-review-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>Merge Review Queue</h3>
+                    <p style={{ margin: "6px 0 0" }}>
+                      {mergeReviewQueue.length} review item{mergeReviewQueue.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  {mergeReviewLoading ? (
+                    <span className="draft-queue-status">Loading…</span>
+                  ) : null}
+                </div>
+                <div className="merge-review-filters">
+                  <label>
+                    Search proposals
+                    <input
+                      type="text"
+                      placeholder="Ticket, customer, reason, or id"
+                      value={mergeReviewQuery}
+                      onChange={(event) => setMergeReviewQuery(event.target.value)}
+                    />
+                  </label>
+                  <div className="ticket-filter-chips">
+                    <span className="ticket-filter-label">Status</span>
+                    <div className="ticket-filter-chip-row">
+                      {[
+                        { value: "pending", label: "Pending" },
+                        { value: "all", label: "All" }
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() =>
+                            setMergeReviewStatusFilter(option.value as "pending" | "all")
+                          }
+                          className={`ticket-filter-chip${
+                            mergeReviewStatusFilter === option.value ? " active" : ""
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {user?.role_name === "lead_admin" ? (
+                    <label>
+                      Assignment
+                      <select
+                        value={mergeReviewAssigned}
+                        onChange={(event) => setMergeReviewAssigned(event.target.value)}
+                      >
+                        <option value="all">All</option>
+                        <option value="mine">My tickets</option>
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+                {mergeReviewQueue.length ? (
+                  <div className="merge-review-list">
+                    {mergeReviewQueue.map((review) => {
+                      const sourceTicketLabel = review.source_ticket_subject
+                        ? `${review.source_ticket_subject}`
+                        : review.source_ticket_id ?? "Unknown source ticket";
+                      const targetTicketLabel = review.target_ticket_subject
+                        ? `${review.target_ticket_subject}`
+                        : review.target_ticket_id ?? "Unknown target ticket";
+                      const sourceCustomerLabel =
+                        review.source_customer_display_name ??
+                        review.source_customer_primary_email ??
+                        review.source_customer_primary_phone ??
+                        review.source_customer_id ??
+                        "Unknown source customer";
+                      const targetCustomerLabel =
+                        review.target_customer_display_name ??
+                        review.target_customer_primary_email ??
+                        review.target_customer_primary_phone ??
+                        review.target_customer_id ??
+                        "Unknown target customer";
+                      const isPending = review.status === "pending";
+
+                      return (
+                        <div key={review.id} className="merge-review-item">
+                          <div className="merge-review-title">
+                            <strong>
+                              {review.proposal_type === "ticket" ? "Ticket merge" : "Customer merge"}
+                            </strong>
+                            <span className={`merge-review-status status-${review.status}`}>
+                              {review.status}
+                            </span>
+                          </div>
+                          <div className="merge-review-sub">
+                            {review.created_at
+                              ? new Date(review.created_at).toLocaleString()
+                              : "Unknown created time"}
+                            {review.confidence !== null && review.confidence !== undefined
+                              ? ` · confidence ${Math.round(review.confidence * 100)}%`
+                              : ""}
+                          </div>
+                          {review.proposal_type === "ticket" ? (
+                            <div className="merge-review-detail">
+                              <span>
+                                Source: {sourceTicketLabel}
+                                {review.source_ticket_requester_email
+                                  ? ` (${review.source_ticket_requester_email})`
+                                  : ""}
+                              </span>
+                              <span>
+                                Target: {targetTicketLabel}
+                                {review.target_ticket_requester_email
+                                  ? ` (${review.target_ticket_requester_email})`
+                                  : ""}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="merge-review-detail">
+                              <span>Source: {sourceCustomerLabel}</span>
+                              <span>Target: {targetCustomerLabel}</span>
+                            </div>
+                          )}
+                          {review.reason ? (
+                            <div className="merge-review-reason">Reason: {review.reason}</div>
+                          ) : null}
+                          {review.failure_reason && !isPending ? (
+                            <div className="merge-review-error">Result: {review.failure_reason}</div>
+                          ) : null}
+                          <div className="merge-review-actions">
+                            {review.ticket_id ? (
+                              <button type="button" onClick={() => setActiveTicketId(review.ticket_id)}>
+                                Open ticket
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => resolveMergeReview(review, "approve")}
+                              disabled={!isPending || mergeReviewActionId === review.id}
+                            >
+                              {mergeReviewActionId === review.id && isPending
+                                ? "Applying..."
+                                : "Approve & merge"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => resolveMergeReview(review, "reject")}
+                              disabled={!isPending || mergeReviewActionId === review.id}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="draft-queue-empty">
+                    No merge proposals in this view. AI proposals and failed reviews appear here.
+                  </p>
+                )}
+                {mergeReviewError ? <p className="draft-queue-error">{mergeReviewError}</p> : null}
+              </div>
+
               <div className="panel draft-queue">
                 <div className="draft-queue-header">
                   <div>
@@ -1915,9 +2748,279 @@ export default function TicketsClient() {
                         Assign to me
                       </button>
                     ) : null}
+                    {canMerge ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowMergePanel((prev) => {
+                            const next = !prev;
+                            if (!next) {
+                              setMergePreflightError(null);
+                              setMergePreflightLoading(false);
+                              setTicketMergePreflight(null);
+                              setCustomerMergePreflight(null);
+                              setShowMergeConfirmStep(false);
+                              setMergeAcknowledgeInput("");
+                            }
+                            return next;
+                          })
+                        }
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: showMergePanel
+                            ? "rgba(57, 184, 255, 0.18)"
+                            : "var(--surface-2)",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {showMergePanel ? "Close merge" : "Merge"}
+                      </button>
+                    ) : null}
                   </div>
+                  {mergeSubmitSuccess ? (
+                    <p style={{ color: "#7ff5a2", marginTop: 10 }}>{mergeSubmitSuccess}</p>
+                  ) : null}
+                  {showMergePanel && canMerge ? (
+                    <div className="ticket-merge-panel">
+                      <div className="ticket-filter-chip-row">
+                        {(
+                          [
+                            { value: "ticket", label: "Merge Ticket" },
+                            { value: "customer", label: "Merge Customer" }
+                          ] as const
+                        ).map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => setMergeMode(option.value)}
+                            className={`ticket-filter-chip${mergeMode === option.value ? " active" : ""}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="ticket-merge-note">
+                        Merge is irreversible. Direct ticket merge across Email and WhatsApp is
+                        blocked; use customer merge for cross-channel unification.
+                      </p>
+                      <div className="ticket-merge-search">
+                        <input
+                          type="text"
+                          value={mergeQuery}
+                          onChange={(event) => setMergeQuery(event.target.value)}
+                          placeholder={
+                            mergeMode === "ticket"
+                              ? "Search ticket id, requester email, or subject"
+                              : "Search customer email, phone, name, or external user id"
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={searchMergeTargets}
+                          disabled={mergeSearching || !mergeQuery.trim()}
+                        >
+                          {mergeSearching ? "Searching..." : "Search"}
+                        </button>
+                      </div>
+                      {mergeSearchError ? (
+                        <p className="ticket-merge-error">{mergeSearchError}</p>
+                      ) : null}
+                      {mergeMode === "ticket" ? (
+                        <div className="ticket-merge-results">
+                          {ticketMergeResults.length === 0 ? (
+                            <p className="ticket-merge-empty">No ticket candidates yet.</p>
+                          ) : (
+                            ticketMergeResults.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className={`ticket-merge-result${
+                                  selectedMergeTicketId === item.id ? " active" : ""
+                                }`}
+                                onClick={() => setSelectedMergeTicketId(item.id)}
+                              >
+                                <div className="ticket-merge-result-top">
+                                  <strong>{item.subject ?? "(no subject)"}</strong>
+                                  <span className={`ticket-channel-badge ${item.channel}`}>
+                                    {item.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                  </span>
+                                </div>
+                                <span>
+                                  {item.requesterEmail} · {item.status} · {item.priority}
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                        <div className="ticket-merge-results">
+                          {customerMergeResults.length === 0 ? (
+                            <p className="ticket-merge-empty">No customer candidates yet.</p>
+                          ) : (
+                            customerMergeResults.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className={`ticket-merge-result${
+                                  selectedMergeCustomerId === item.id ? " active" : ""
+                                }`}
+                                onClick={() => setSelectedMergeCustomerId(item.id)}
+                              >
+                                <div className="ticket-merge-result-top">
+                                  <strong>{item.displayName ?? item.primaryEmail ?? item.id}</strong>
+                                  <span className="ticket-channel-badge email">
+                                    {item.kind === "registered" ? "Registered" : "Unregistered"}
+                                  </span>
+                                </div>
+                                <span>
+                                  {item.primaryEmail ?? "no email"} · {item.primaryPhone ?? "no phone"} ·{" "}
+                                  {item.activeTicketCount} active tickets
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                      {mergePreflightLoading ? (
+                        <p className="ticket-merge-empty">Calculating merge impact...</p>
+                      ) : null}
+                      {mergePreflightError ? (
+                        <p className="ticket-merge-error">{mergePreflightError}</p>
+                      ) : null}
+                      {mergeMode === "ticket" && ticketMergePreflight ? (
+                        <div className="ticket-merge-preflight">
+                          <strong>Preflight impact</strong>
+                          <div className="ticket-merge-preflight-grid">
+                            <span>Source channel</span>
+                            <span>
+                              {ticketMergePreflight.sourceChannel === "whatsapp"
+                                ? "WhatsApp"
+                                : "Email"}
+                            </span>
+                            <span>Target channel</span>
+                            <span>
+                              {ticketMergePreflight.targetChannel === "whatsapp"
+                                ? "WhatsApp"
+                                : "Email"}
+                            </span>
+                            <span>Messages to move</span>
+                            <span>{ticketMergePreflight.moveCounts.messages}</span>
+                            <span>Replies to move</span>
+                            <span>{ticketMergePreflight.moveCounts.replies}</span>
+                            <span>Events to move</span>
+                            <span>{ticketMergePreflight.moveCounts.events}</span>
+                            <span>Drafts to move</span>
+                            <span>{ticketMergePreflight.moveCounts.drafts}</span>
+                            <span>Source tags</span>
+                            <span>{ticketMergePreflight.moveCounts.sourceTags}</span>
+                            <span>New tags on target</span>
+                            <span>{ticketMergePreflight.moveCounts.newTagsOnTarget}</span>
+                          </div>
+                          {!ticketMergePreflight.allowed && ticketMergePreflight.blockingReason ? (
+                            <p className="ticket-merge-error">{ticketMergePreflight.blockingReason}</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {mergeMode === "customer" && customerMergePreflight ? (
+                        <div className="ticket-merge-preflight">
+                          <strong>Preflight impact</strong>
+                          <div className="ticket-merge-preflight-grid">
+                            <span>Total tickets to re-link</span>
+                            <span>{customerMergePreflight.moveCounts.totalTickets}</span>
+                            <span>Active tickets</span>
+                            <span>{customerMergePreflight.moveCounts.activeTickets}</span>
+                            <span>Active email tickets</span>
+                            <span>{customerMergePreflight.moveCounts.activeEmailTickets}</span>
+                            <span>Active WhatsApp tickets</span>
+                            <span>{customerMergePreflight.moveCounts.activeWhatsappTickets}</span>
+                            <span>Source identities</span>
+                            <span>{customerMergePreflight.moveCounts.sourceIdentities}</span>
+                            <span>Identities to move</span>
+                            <span>{customerMergePreflight.moveCounts.identitiesToMove}</span>
+                            <span>Identity conflicts</span>
+                            <span>{customerMergePreflight.moveCounts.identityConflicts}</span>
+                          </div>
+                          {!customerMergePreflight.allowed && customerMergePreflight.blockingReason ? (
+                            <p className="ticket-merge-error">{customerMergePreflight.blockingReason}</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <label>
+                        Merge reason (optional)
+                        <input
+                          type="text"
+                          value={mergeReason}
+                          onChange={(event) => setMergeReason(event.target.value)}
+                          placeholder="Duplicate escalation from same customer"
+                        />
+                      </label>
+                      {mergeSubmitError ? (
+                        <p className="ticket-merge-error">{mergeSubmitError}</p>
+                      ) : null}
+                      {!showMergeConfirmStep ? (
+                        <button
+                          type="button"
+                          className="ticket-merge-submit"
+                          disabled={mergeSubmitting || mergePreflightLoading || !mergePreflightReady}
+                          onClick={() => {
+                            setMergeSubmitError(null);
+                            setShowMergeConfirmStep(true);
+                          }}
+                        >
+                          {mergePreflightLoading ? "Calculating impact..." : "Continue to confirmation"}
+                        </button>
+                      ) : (
+                        <div className="ticket-merge-confirm">
+                          <p>
+                            This action is irreversible and cannot be undone.
+                          </p>
+                          <p>
+                            Type <code>{MERGE_IRREVERSIBLE_ACK_TEXT}</code> to confirm.
+                          </p>
+                          <input
+                            type="text"
+                            value={mergeAcknowledgeInput}
+                            onChange={(event) => setMergeAcknowledgeInput(event.target.value)}
+                            placeholder={MERGE_IRREVERSIBLE_ACK_TEXT}
+                          />
+                          {mergeAcknowledgeInput && !mergeAcknowledgeMatches ? (
+                            <p className="ticket-merge-error">
+                              Acknowledgment text does not match.
+                            </p>
+                          ) : null}
+                          <div className="ticket-merge-confirm-actions">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMergeConfirmStep(false);
+                                setMergeAcknowledgeInput("");
+                              }}
+                            >
+                              Back
+                            </button>
+                            <button
+                              type="button"
+                              className="ticket-merge-submit"
+                              disabled={mergeSubmitting || !mergePreflightReady || !mergeAcknowledgeMatches}
+                              onClick={submitMerge}
+                            >
+                              {mergeSubmitting
+                                ? "Merging..."
+                                : mergeMode === "ticket"
+                                  ? "Confirm irreversible ticket merge"
+                                  : "Confirm irreversible customer merge"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
+                <div className="ticket-conversation-layout">
                 <div
                   style={{
                     border: "1px solid var(--border)",
@@ -2362,6 +3465,96 @@ export default function TicketsClient() {
                     )}
                   </div>
                 </div>
+                  <aside className="panel customer-history-panel">
+                    <div className="customer-history-header">
+                      <h3 style={{ margin: 0 }}>Customer History</h3>
+                      {customerHistoryLoading ? (
+                        <span className="customer-history-loading">Loading…</span>
+                      ) : null}
+                    </div>
+                    {customerHistoryError ? (
+                      <p className="customer-history-error">{customerHistoryError}</p>
+                    ) : null}
+                    {customerHistory.length === 0 ? (
+                      <p className="customer-history-empty">
+                        No prior tickets found for this customer.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="customer-history-list">
+                          {customerHistory.map((item) => {
+                            const isActive = item.ticketId === activeTicketId;
+                            const requesterLabel = item.requesterEmail.startsWith("whatsapp:")
+                              ? `WhatsApp ${item.requesterEmail.replace(/^whatsapp:/, "")}`
+                              : item.requesterEmail;
+                            return (
+                              <button
+                                key={item.ticketId}
+                                type="button"
+                                className={`customer-history-item${isActive ? " active" : ""}`}
+                                onClick={() => setActiveTicketId(item.ticketId)}
+                                onMouseEnter={() => setHoveredHistoryTicketId(item.ticketId)}
+                                onMouseLeave={() => setHoveredHistoryTicketId(null)}
+                              >
+                                <div className="customer-history-item-top">
+                                  <strong>{item.subject ?? "(no subject)"}</strong>
+                                  <span className={`ticket-channel-badge ${item.channel}`}>
+                                    {item.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                  </span>
+                                </div>
+                                <div className="customer-history-item-meta">
+                                  <span>{requesterLabel}</span>
+                                  <span>
+                                    {item.lastMessageAt
+                                      ? new Date(item.lastMessageAt).toLocaleString()
+                                      : "—"}
+                                  </span>
+                                </div>
+                                <div className="customer-history-item-meta">
+                                  <span>Status: {item.status}</span>
+                                  <span>Priority: {item.priority}</span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {customerHistoryLoadingMore ? (
+                          <span className="customer-history-loading">Loading older history…</span>
+                        ) : null}
+                        {activeTicket && canLoadMoreHistory ? (
+                          <button
+                            type="button"
+                            className="customer-history-load-more"
+                            onClick={() => void loadMoreCustomerHistory(activeTicket.id)}
+                            disabled={customerHistoryLoadingMore}
+                          >
+                            Load older history
+                          </button>
+                        ) : null}
+                      </>
+                    )}
+                    <div className="customer-history-hover">
+                      <strong>Last customer message</strong>
+                      {hoveredHistoryItem ? (
+                        <div className="customer-history-hover-body">
+                          <span className="customer-history-hover-time">
+                            {hoveredHistoryItem.lastCustomerInboundAt
+                              ? new Date(hoveredHistoryItem.lastCustomerInboundAt).toLocaleString()
+                              : "No inbound timestamp"}
+                          </span>
+                          <p>
+                            {hoveredHistoryItem.lastCustomerInboundPreview ??
+                              "No inbound customer message found for this ticket."}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="customer-history-hover-empty">
+                          Hover a ticket to preview the latest inbound customer message.
+                        </p>
+                      )}
+                    </div>
+                  </aside>
+                </div>
 
                 <div
                   style={{
@@ -2671,6 +3864,44 @@ export default function TicketsClient() {
                         : "Closed (template required)"}
                     </div>
                   ) : null}
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <label>
+                      Recipient{" "}
+                      {requiresExplicitRecipientSelection ? "(Required)" : "(Default can be changed)"}
+                      <select
+                        value={selectedReplyRecipient}
+                        onChange={(event) => setSelectedReplyRecipient(event.target.value)}
+                      >
+                        {requiresExplicitRecipientSelection ? (
+                          <option value="">
+                            {ticketChannel === "whatsapp"
+                              ? "Select WhatsApp recipient"
+                              : "Select email recipient"}
+                          </option>
+                        ) : null}
+                        {replyRecipientOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label} - {option.value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {requiresExplicitRecipientSelection ? (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Unregistered or unknown customer: you must choose a recipient before
+                        sending.
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Registered customer: defaulting to primary contact for this channel.
+                      </span>
+                    )}
+                    {replyRecipientOptions.length === 0 ? (
+                      <span style={{ fontSize: 12, color: "var(--danger)" }}>
+                        No valid recipient found for this channel.
+                      </span>
+                    ) : null}
+                  </div>
                   {macros.length ? (
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <select
@@ -2823,7 +4054,11 @@ export default function TicketsClient() {
                   <button
                     type="button"
                     onClick={() => sendReply(activeTicket.id)}
-                    disabled={sending}
+                    disabled={
+                      sending ||
+                      replyRecipientOptions.length === 0 ||
+                      (requiresExplicitRecipientSelection && !selectedReplyRecipient.trim())
+                    }
                     style={{
                       marginTop: 12,
                       padding: "10px 14px",

@@ -3,10 +3,14 @@ import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
+import { buildAgentEvent } from "@/server/agents/events";
+import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { sendTicketReply } from "@/server/email/replies";
 import { addTagsToTicket, getTicketById, recordTicketEvent } from "@/server/tickets";
+import { mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
+import { createMergeReviewTask, MergeReviewError } from "@/server/merge-reviews";
 
 const actionSchema = z.object({
   type: z.enum([
@@ -15,7 +19,10 @@ const actionSchema = z.object({
     "set_tags",
     "set_priority",
     "assign_to",
-    "request_human_review"
+    "request_human_review",
+    "merge_tickets",
+    "merge_customers",
+    "propose_merge"
   ]),
   ticketId: z.string().uuid(),
   subject: z.string().optional().nullable(),
@@ -32,6 +39,11 @@ const actionSchema = z.object({
   tags: z.array(z.string()).optional().nullable(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional().nullable(),
   assignedUserId: z.string().uuid().nullable().optional(),
+  sourceTicketId: z.string().uuid().optional().nullable(),
+  targetTicketId: z.string().uuid().optional().nullable(),
+  sourceCustomerId: z.string().uuid().optional().nullable(),
+  targetCustomerId: z.string().uuid().optional().nullable(),
+  reason: z.string().max(500).optional().nullable(),
   confidence: z.number().min(0).max(1).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable()
 });
@@ -40,6 +52,36 @@ const payloadSchema = z.object({
   action: actionSchema.optional(),
   actions: z.array(actionSchema).max(10).optional()
 });
+
+const DEFAULT_AGENT_MERGE_MIN_CONFIDENCE = 0.85;
+
+function getAgentMergeMinConfidence() {
+  const raw = Number.parseFloat(
+    process.env.AGENT_MERGE_MIN_CONFIDENCE ?? `${DEFAULT_AGENT_MERGE_MIN_CONFIDENCE}`
+  );
+  if (Number.isNaN(raw)) {
+    return DEFAULT_AGENT_MERGE_MIN_CONFIDENCE;
+  }
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+}
+
+function validateMergeSafety(
+  action: { reason?: string | null; confidence?: number | null },
+  minConfidence: number
+) {
+  if (!action.reason?.trim()) {
+    return "Merge reason is required.";
+  }
+  if (typeof action.confidence !== "number") {
+    return "Merge confidence is required.";
+  }
+  if (action.confidence < minConfidence) {
+    return `Merge confidence ${action.confidence.toFixed(2)} is below minimum ${minConfidence.toFixed(2)}.`;
+  }
+  return null;
+}
 
 export async function POST(request: Request) {
   const integration = await getAgentFromRequest(request);
@@ -69,6 +111,10 @@ export async function POST(request: Request) {
   }
 
   const results: Array<{ type: string; status: string; detail?: string }> = [];
+  const allowMergeActions =
+    integration.capabilities?.allow_merge_actions === true ||
+    integration.capabilities?.allowMergeActions === true;
+  const mergeMinConfidence = getAgentMergeMinConfidence();
 
   for (const action of actions) {
     const ticket = await getTicketById(action.ticketId);
@@ -226,6 +272,259 @@ export async function POST(request: Request) {
           data: { agentId: integration.id, metadata: action.metadata ?? null }
         });
         results.push({ type: action.type, status: "ok" });
+        break;
+      }
+      case "propose_merge": {
+        const hasCustomerPair = Boolean(action.sourceCustomerId && action.targetCustomerId);
+        const proposedSourceTicketId = action.sourceTicketId ?? action.ticketId;
+        const hasTicketPair = Boolean(proposedSourceTicketId && action.targetTicketId);
+
+        if (hasCustomerPair && hasTicketPair) {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail: "Provide either ticket merge fields or customer merge fields, not both."
+          });
+          break;
+        }
+        if (!hasCustomerPair && !hasTicketPair) {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail:
+              "Missing merge proposal target. Provide source/target ticket ids or source/target customer ids."
+          });
+          break;
+        }
+        const mergeSafetyError = validateMergeSafety(action, mergeMinConfidence);
+        if (mergeSafetyError) {
+          results.push({ type: action.type, status: "failed", detail: mergeSafetyError });
+          break;
+        }
+
+        let reviewTaskId: string | null = null;
+        let reviewProposalType: "ticket" | "customer" = hasCustomerPair ? "customer" : "ticket";
+        let sourceTicketId: string | null = null;
+        let targetTicketId: string | null = null;
+        let sourceCustomerId: string | null = null;
+        let targetCustomerId: string | null = null;
+        let targetTicketMailboxId: string | null = null;
+
+        if (hasCustomerPair) {
+          sourceCustomerId = action.sourceCustomerId ?? null;
+          targetCustomerId = action.targetCustomerId ?? null;
+        } else {
+          sourceTicketId = proposedSourceTicketId;
+          targetTicketId = action.targetTicketId ?? null;
+          if (!sourceTicketId || !targetTicketId) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              detail: "Missing source or target ticket id for merge proposal."
+            });
+            break;
+          }
+
+          const targetTicket = await getTicketById(targetTicketId);
+          if (!targetTicket) {
+            results.push({
+              type: action.type,
+              status: "not_found",
+              detail: "Target ticket not found for merge proposal."
+            });
+            break;
+          }
+          targetTicketMailboxId = targetTicket.mailbox_id;
+          if (
+            !hasMailboxScope(integration, ticket.mailbox_id) ||
+            !hasMailboxScope(integration, targetTicket.mailbox_id)
+          ) {
+            return Response.json({ error: "Forbidden" }, { status: 403 });
+          }
+        }
+
+        try {
+          const reviewTask = await createMergeReviewTask({
+            proposalType: reviewProposalType,
+            ticketId: action.ticketId,
+            sourceTicketId,
+            targetTicketId,
+            sourceCustomerId,
+            targetCustomerId,
+            reason: action.reason ?? null,
+            confidence: action.confidence ?? null,
+            metadata: action.metadata ?? null,
+            proposedByAgentId: integration.id
+          });
+          reviewTaskId = reviewTask.id;
+        } catch (error) {
+          const detail =
+            error instanceof MergeReviewError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Failed to create merge review task";
+          results.push({ type: action.type, status: "failed", detail });
+          break;
+        }
+
+        await recordTicketEvent({
+          ticketId: action.ticketId,
+          eventType: "ai_merge_proposed",
+          data: {
+            reviewTaskId,
+            proposalType: reviewProposalType,
+            sourceTicketId,
+            targetTicketId,
+            sourceCustomerId,
+            targetCustomerId,
+            metadata: action.metadata ?? null,
+            confidence: action.confidence ?? null,
+            reason: action.reason ?? null
+          }
+        });
+        await recordAuditLog({
+          action: "ai_merge_proposed",
+          entityType: "ticket",
+          entityId: action.ticketId,
+          data: {
+            agentId: integration.id,
+            reviewTaskId,
+            proposalType: reviewProposalType,
+            sourceTicketId,
+            targetTicketId,
+            sourceCustomerId,
+            targetCustomerId,
+            metadata: action.metadata ?? null,
+            confidence: action.confidence ?? null,
+            reason: action.reason ?? null
+          }
+        });
+
+        const reviewEvent = buildAgentEvent({
+          eventType: "merge.review.required",
+          ticketId: action.ticketId,
+          mailboxId: targetTicketMailboxId ?? ticket.mailbox_id,
+          excerpt:
+            reviewProposalType === "ticket"
+              ? `Merge review required for tickets ${sourceTicketId} -> ${targetTicketId}`
+              : `Merge review required for customers ${sourceCustomerId} -> ${targetCustomerId}`
+        });
+        await enqueueAgentEvent({
+          eventType: "merge.review.required",
+          payload: {
+            ...reviewEvent,
+            review: {
+              id: reviewTaskId,
+              proposalType: reviewProposalType,
+              sourceTicketId,
+              targetTicketId,
+              sourceCustomerId,
+              targetCustomerId,
+              confidence: action.confidence ?? null,
+              reason: action.reason ?? null
+            }
+          }
+        });
+        void deliverPendingAgentEvents().catch(() => {});
+
+        results.push({ type: action.type, status: "ok" });
+        break;
+      }
+      case "merge_tickets": {
+        if (!allowMergeActions) {
+          results.push({ type: action.type, status: "blocked", detail: "Merge actions disabled" });
+          break;
+        }
+        const sourceTicketId = action.sourceTicketId ?? action.ticketId;
+        const targetTicketId = action.targetTicketId;
+        if (!targetTicketId) {
+          results.push({ type: action.type, status: "failed", detail: "Missing target ticket id" });
+          break;
+        }
+        const mergeSafetyError = validateMergeSafety(action, mergeMinConfidence);
+        if (mergeSafetyError) {
+          results.push({ type: action.type, status: "failed", detail: mergeSafetyError });
+          break;
+        }
+
+        const targetTicket = await getTicketById(targetTicketId);
+        if (!targetTicket) {
+          results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
+          break;
+        }
+
+        if (
+          !hasMailboxScope(integration, ticket.mailbox_id) ||
+          !hasMailboxScope(integration, targetTicket.mailbox_id)
+        ) {
+          return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+
+        try {
+          const result = await mergeTickets({
+            sourceTicketId,
+            targetTicketId,
+            actorUserId: null,
+            reason: action.reason ?? null
+          });
+          await recordAuditLog({
+            action: "ai_ticket_merged",
+            entityType: "ticket",
+            entityId: sourceTicketId,
+            data: { agentId: integration.id, result }
+          });
+          results.push({ type: action.type, status: "ok" });
+        } catch (error) {
+          const detail =
+            error instanceof MergeError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Failed to merge tickets";
+          results.push({ type: action.type, status: "failed", detail });
+        }
+        break;
+      }
+      case "merge_customers": {
+        if (!allowMergeActions) {
+          results.push({ type: action.type, status: "blocked", detail: "Merge actions disabled" });
+          break;
+        }
+        const sourceCustomerId = action.sourceCustomerId;
+        const targetCustomerId = action.targetCustomerId;
+        if (!sourceCustomerId || !targetCustomerId) {
+          results.push({ type: action.type, status: "failed", detail: "Missing customer ids" });
+          break;
+        }
+        const mergeSafetyError = validateMergeSafety(action, mergeMinConfidence);
+        if (mergeSafetyError) {
+          results.push({ type: action.type, status: "failed", detail: mergeSafetyError });
+          break;
+        }
+        try {
+          const result = await mergeCustomers({
+            sourceCustomerId,
+            targetCustomerId,
+            actorUserId: null,
+            reason: action.reason ?? null
+          });
+          await recordAuditLog({
+            action: "ai_customer_merged",
+            entityType: "ticket",
+            entityId: action.ticketId,
+            data: { agentId: integration.id, result }
+          });
+          results.push({ type: action.type, status: "ok" });
+        } catch (error) {
+          const detail =
+            error instanceof MergeError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Failed to merge customers";
+          results.push({ type: action.type, status: "failed", detail });
+        }
         break;
       }
       default:

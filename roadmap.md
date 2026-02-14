@@ -48,7 +48,7 @@ These are the “performance reports” referenced in the PRD.
 
 **Roadmap Phases**
 
-**Progress Update (2026-02-13)**
+**Progress Update (2026-02-14)**
 - Phase 0 complete: repo, schema, migrations, R2 wiring, env setup.
 - Phase 1 dev-ready, awaiting DNS verification.
 - Phase 2 complete: auth + admin panel + seed + audit logs + password resets.
@@ -89,8 +89,26 @@ These are the “performance reports” referenced in the PRD.
 - `prediction-market-mvp` internal profile lookup API added (`/api/v1/internal/support/users/lookup`) with shared-secret auth.
 - 6esk inbound email + WhatsApp now perform profile lookup and persist profile enrichment metadata on tickets.
 - Support ticket detail now displays recognized external user profile context.
+- Added persistent `external_user_links` mapping table in 6esk for stable external user identity linkage and last-seen tracking.
+- Phase 10 in progress: CRM merge foundations shipped (customer model, customer history panel, merge APIs) and merge preflight impact summaries added in Support UI.
+- Phase 10 AI/event extension in progress: outbox events now include `ticket.merged`, `customer.merged`, and `customer.identity.resolved` for agent-side merge awareness.
+- Customer history API now supports cursor pagination (`nextCursor`) and Support UI can load older history progressively.
+- Added `merge.review.required` workflow: persisted `merge_review_tasks`, agent `propose_merge` now creates review tasks, and Support now includes a Merge Review Queue with approve/reject actions.
+- Analytics overview now includes merge counters (ticket/customer volume, AI vs human actor split, review queue/failure summary, top failure reasons).
+- Added customer reconciliation job script for legacy `tickets.customer_id` backfill (`npm run jobs:customer-backfill`, dry-run by default).
+- Support composer recipient logic now honors customer identity rules: registered users default to primary contact with agent override, unregistered/unknown users require explicit recipient selection, and outbound messages persist recipient metadata.
+- AI merge actions now enforce explicit reason + minimum confidence threshold (default `0.85`, configurable via `AGENT_MERGE_MIN_CONFIDENCE`) across `propose_merge`, `merge_tickets`, and `merge_customers`.
+- Ticket merge now appends provenance in target `tickets.metadata.mergedFrom[]` (source ticket/channel, reason, timestamp, moved row counts).
+- Ticket merge preflight/execution now enforce a configurable row-move safety cap (`TICKET_MERGE_MAX_MOVE_ROWS`, default `5000`) to guard against oversized merge operations.
+- Added API-level tests for ticket merge execution blocking paths (`cross_channel_not_allowed`, `too_large`) and success response contract.
+- Added API-level preflight tests for ticket merge blocking states (`cross_channel_not_allowed`, `too_large`) and merge error status mapping.
+- Added customer merge API and preflight contract tests (blocking codes/status mapping + success payloads) to mirror ticket-merge coverage depth.
+- Merge execution APIs now require explicit irreversible acknowledgment text (server-side validation), with Support UI passing the same acknowledgment string in submit payloads.
+- Expanded merge endpoint contract tests for auth/permissions (unauthorized, viewer-forbidden, and ticket assignment guardrails for non-admin users).
+- Admin now includes a Profile Lookup diagnostics panel backed by `/api/admin/profile-lookup/metrics` (hit/miss/error/timeout rates + avg/p95 latency trend over selectable windows).
+- Profile lookup metadata now stores `durationMs` for matched/missed/error/disabled outcomes, enabling real latency reporting in admin diagnostics.
 
-**Roadmap Status (as of 2026-02-13)**
+**Roadmap Status (as of 2026-02-14)**
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | Complete |
@@ -103,6 +121,7 @@ These are the “performance reports” referenced in the PRD.
 | 7 Hardening | In progress |
 | 8 WhatsApp | In progress |
 | 9 Cross-Repo Profile Enrichment | In progress |
+| 10 CRM Merge + Customer History | In progress |
 
 **Phase 0 — Repo & Foundations**
 Deliverables
@@ -372,6 +391,9 @@ Implemented in `6esk`
 - Wired inbound email enrichment: `src/server/email/inbound-store.ts`
 - Wired inbound WhatsApp enrichment: `src/server/whatsapp/inbound-store.ts`
 - Added Support UI profile panel: `src/app/tickets/TicketsClient.tsx`
+- Added persistent external user links table + migration: `db/migrations/0016_external_user_links.sql`
+- Added external link upsert utility: `src/server/integrations/external-user-links.ts`
+- Inbound email + WhatsApp now upsert `external_user_links` on matched enrichment
 - Added env template keys: `.env.example`
 - Lookup is fail-open: inbound ingestion continues even when lookup misses/fails/timeouts.
 - Metadata stored on ticket:
@@ -502,8 +524,8 @@ Acceptance Criteria
 
 **Immediate Next Steps**
 1. Validate Phase 9 end-to-end with live `prediction-market-mvp` data (email + WhatsApp recognized/missed/error paths).
-2. Add persistent `external_user_links` table in 6esk for stable mapping + last-seen analytics.
-3. Add admin diagnostics panel for profile lookup health (success/miss/error, latency, timeout rate).
+2. Add admin diagnostics panel for profile lookup health (success/miss/error, latency, timeout rate).
+3. Use `external_user_links` as a warm cache fallback when live lookup misses/timeouts.
 4. Complete DNS + Resend verification and confirm inbound/outbound email delivery.
 5. Finalize AI drafts flow (approve/send + working hours + escalation rules).
 6. Continue Phase 7 hardening: monitor inbound retries in production and tune retry/alert thresholds.

@@ -18,6 +18,7 @@ type SendWhatsAppArgs = {
   actorUserId?: string | null;
   origin?: "human" | "ai";
   aiMeta?: Record<string, unknown> | null;
+  messageMetadata?: Record<string, unknown> | null;
 };
 
 function formatContact(contact: string) {
@@ -43,7 +44,8 @@ export async function queueWhatsAppSend({
   template,
   actorUserId,
   origin = "human",
-  aiMeta
+  aiMeta,
+  messageMetadata
 }: SendWhatsAppArgs) {
   const attachmentList = attachments ?? [];
   if (attachmentList.length > 1) {
@@ -97,11 +99,11 @@ export async function queueWhatsAppSend({
         `INSERT INTO messages (
           id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
           external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
-          from_email, to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta
+          from_email, to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
         ) VALUES (
           $1, $2, $3, 'outbound', 'whatsapp', $4, $5,
           $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, true, $17, $18
+          $12, $13, $14, $15, $16, true, $17, $18, $19
         )`,
         [
           messageId,
@@ -121,7 +123,8 @@ export async function queueWhatsAppSend({
           previewText || null,
           sentAt,
           origin,
-          aiMeta ?? null
+          aiMeta ?? null,
+          messageMetadata ?? null
         ]
       );
 

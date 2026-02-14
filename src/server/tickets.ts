@@ -5,12 +5,16 @@ import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 export type TicketRecord = {
   id: string;
   mailbox_id: string | null;
+  customer_id: string | null;
   requester_email: string;
   subject: string | null;
   category: string | null;
   metadata: Record<string, unknown> | null;
   tags?: string[];
   has_whatsapp?: boolean;
+  merged_into_ticket_id?: string | null;
+  merged_by_user_id?: string | null;
+  merged_at?: string | null;
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -37,22 +41,24 @@ export async function resolveTicketIdForInbound(references: string[]) {
 
 export async function createTicket({
   mailboxId,
+  customerId,
   requesterEmail,
   subject,
   category,
   metadata
 }: {
   mailboxId: string;
+  customerId?: string | null;
   requesterEmail: string;
   subject?: string | null;
   category?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tickets (mailbox_id, requester_email, subject, category, metadata)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id`,
-    [mailboxId, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
+    [mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
   );
 
   return result.rows[0].id;
@@ -66,6 +72,37 @@ export async function mergeTicketMetadata(ticketId: string, patch: Record<string
      WHERE id = $1`,
     [ticketId, JSON.stringify(patch)]
   );
+}
+
+type MergedFromEntry = {
+  sourceTicketId: string;
+  sourceChannel: "email" | "whatsapp";
+  mergedAt: string;
+  reason: string | null;
+  movedMessages: number;
+  movedReplies: number;
+  movedEvents: number;
+  movedDrafts: number;
+};
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return { ...(value as Record<string, unknown>) };
+}
+
+export function appendMergedFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  entry: MergedFromEntry
+) {
+  const base = asObject(metadata);
+  const current = base.mergedFrom;
+  const mergedFrom = Array.isArray(current) ? [...current, entry] : [entry];
+  return {
+    ...base,
+    mergedFrom
+  };
 }
 
 export async function recordTicketEvent({
@@ -204,7 +241,7 @@ export async function listTicketsForUser(
   }
 ) {
   const values: Array<string> = [];
-  const conditions: string[] = [];
+  const conditions: string[] = ["t.merged_into_ticket_id IS NULL"];
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
@@ -273,8 +310,9 @@ export async function listTicketsForUser(
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+            t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
             EXISTS (
               SELECT 1 FROM messages msg
@@ -294,8 +332,9 @@ export async function listTicketsForUser(
 
 export async function getTicketById(ticketId: string) {
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.mailbox_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+            t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
             EXISTS (
               SELECT 1 FROM messages msg

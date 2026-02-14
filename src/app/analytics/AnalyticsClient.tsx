@@ -24,6 +24,20 @@ type Overview = {
       failed: number;
     };
   };
+  merges?: {
+    ticketMerges: number;
+    customerMerges: number;
+    actorSplit: {
+      aiInitiated: number;
+      humanInitiated: number;
+    };
+    reviews: {
+      pending: number;
+      rejectedInRange: number;
+      failedInRange: number;
+      topFailureReasons: Array<{ reason: string; count: number }>;
+    };
+  };
 };
 
 type Sla = {
@@ -177,6 +191,7 @@ export default function AnalyticsClient() {
   const whatsappFailed = overview?.channels?.whatsapp.failed ?? 0;
   const whatsappDeliveryRate =
     whatsappOutbound > 0 ? Math.max(0, Math.round(((whatsappOutbound - whatsappFailed) / whatsappOutbound) * 100)) : null;
+  const mergeFailureTop = overview?.merges?.reviews?.topFailureReasons ?? [];
 
   const whatsappTrendRows = useMemo(() => {
     const map = new Map<
@@ -463,6 +478,37 @@ export default function AnalyticsClient() {
               WhatsApp outbound {whatsappOutbound} · failed {whatsappFailed} · delivery{" "}
               {whatsappDeliveryRate === null ? "—" : `${whatsappDeliveryRate}%`}
             </p>
+          </div>
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 16,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <p style={{ marginBottom: 8 }}>Merge operations</p>
+            <h2 style={{ margin: 0 }}>
+              Ticket {overview?.merges?.ticketMerges ?? 0} · Customer {overview?.merges?.customerMerges ?? 0}
+            </h2>
+            <p style={{ marginTop: 10, color: "var(--muted)" }}>
+              AI {overview?.merges?.actorSplit.aiInitiated ?? 0} · Human{" "}
+              {overview?.merges?.actorSplit.humanInitiated ?? 0} · Pending review{" "}
+              {overview?.merges?.reviews.pending ?? 0}
+            </p>
+            <p style={{ marginTop: 6, color: "var(--muted)" }}>
+              Rejected {overview?.merges?.reviews.rejectedInRange ?? 0} · Failed{" "}
+              {overview?.merges?.reviews.failedInRange ?? 0}
+            </p>
+            {mergeFailureTop.length ? (
+              <p style={{ marginTop: 6, color: "var(--muted)", fontSize: 12 }}>
+                Top failure:{" "}
+                {mergeFailureTop
+                  .slice(0, 2)
+                  .map((item) => `${item.reason} (${item.count})`)
+                  .join(" · ")}
+              </p>
+            ) : null}
           </div>
         </div>
 
