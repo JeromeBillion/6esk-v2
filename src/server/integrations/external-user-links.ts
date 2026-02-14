@@ -31,6 +31,73 @@ export function deriveMatchConfidence(matchedBy: string | null | undefined) {
   }
 }
 
+export type ExternalUserLinkMatch = {
+  external_system: string;
+  external_user_id: string;
+  email: string | null;
+  phone: string | null;
+  matched_by: string | null;
+  confidence: number | null;
+  last_seen_at: string;
+  last_ticket_id: string | null;
+  last_channel: InboundChannel | null;
+};
+
+export async function findExternalUserLinkByIdentity({
+  externalSystem,
+  email,
+  phone
+}: {
+  externalSystem: string;
+  email?: string | null;
+  phone?: string | null;
+}) {
+  const normalizedEmail = normalizeLinkEmail(email);
+  const normalizedPhone = normalizeLinkPhone(phone);
+
+  if (!normalizedEmail && !normalizedPhone) {
+    return null;
+  }
+
+  const result = await db.query<ExternalUserLinkMatch>(
+    `SELECT
+       external_system,
+       external_user_id,
+       email,
+       phone,
+       matched_by,
+       confidence::float8 AS confidence,
+       last_seen_at,
+       last_ticket_id,
+       last_channel
+     FROM external_user_links
+     WHERE external_system = $1
+       AND (
+         ($2::text IS NOT NULL AND LOWER(email) = $2::text)
+         OR ($3::text IS NOT NULL AND phone = $3::text)
+       )
+     ORDER BY
+       CASE
+         WHEN $2::text IS NOT NULL
+           AND LOWER(email) = $2::text
+           AND $3::text IS NOT NULL
+           AND phone = $3::text
+           THEN 0
+         WHEN $2::text IS NOT NULL AND LOWER(email) = $2::text
+           THEN 1
+         WHEN $3::text IS NOT NULL AND phone = $3::text
+           THEN 2
+         ELSE 3
+       END ASC,
+       confidence DESC NULLS LAST,
+       last_seen_at DESC
+     LIMIT 1`,
+    [externalSystem, normalizedEmail, normalizedPhone]
+  );
+
+  return result.rows[0] ?? null;
+}
+
 export async function upsertExternalUserLink({
   externalSystem,
   profile,

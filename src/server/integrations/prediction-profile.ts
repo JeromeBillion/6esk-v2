@@ -1,3 +1,5 @@
+import { findExternalUserLinkByIdentity } from "@/server/integrations/external-user-links";
+
 type LookupPayloadUser = {
   id: string;
   email: string;
@@ -24,11 +26,23 @@ export type PredictionProfile = {
   accountStatus: string | null;
 };
 
+type PredictionProfileLookupSource = "prediction-market-mvp" | "prediction-market-mvp-cache";
+
 export type PredictionProfileLookupResult =
   | { status: "disabled"; durationMs: number }
   | { status: "missed"; durationMs: number }
-  | { status: "matched"; matchedBy: string | null; profile: PredictionProfile; durationMs: number }
+  | {
+      status: "matched";
+      source: PredictionProfileLookupSource;
+      matchedBy: string | null;
+      profile: PredictionProfile;
+      durationMs: number;
+    }
   | { status: "error"; error: string; durationMs: number };
+
+const LIVE_LOOKUP_SOURCE: PredictionProfileLookupSource = "prediction-market-mvp";
+const CACHE_LOOKUP_SOURCE: PredictionProfileLookupSource = "prediction-market-mvp-cache";
+const PREDICTION_EXTERNAL_SYSTEM = "prediction-market-mvp";
 
 function parseBoolean(value: string | undefined, fallback: boolean) {
   if (!value) return fallback;
@@ -53,6 +67,88 @@ function normalizePhone(value: string | undefined) {
   return normalized || null;
 }
 
+function isTimeoutError(value: string | null | undefined) {
+  if (!value) return false;
+  return value.toLowerCase().includes("timeout");
+}
+
+function inferCacheMatchedBy({
+  normalizedEmail,
+  normalizedPhone,
+  cachedEmail,
+  cachedPhone,
+  cachedMatchedBy
+}: {
+  normalizedEmail: string | null;
+  normalizedPhone: string | null;
+  cachedEmail: string | null;
+  cachedPhone: string | null;
+  cachedMatchedBy: string | null;
+}) {
+  if (cachedMatchedBy) {
+    return cachedMatchedBy;
+  }
+  if (normalizedEmail && cachedEmail && normalizedEmail === cachedEmail) {
+    return "email";
+  }
+  if (normalizedPhone && cachedPhone && normalizedPhone === cachedPhone) {
+    return "phone";
+  }
+  return null;
+}
+
+async function lookupProfileFromCache({
+  normalizedEmail,
+  normalizedPhone,
+  elapsedMs
+}: {
+  normalizedEmail: string | null;
+  normalizedPhone: string | null;
+  elapsedMs: () => number;
+}): Promise<PredictionProfileLookupResult | null> {
+  try {
+    const cached = await findExternalUserLinkByIdentity({
+      externalSystem: PREDICTION_EXTERNAL_SYSTEM,
+      email: normalizedEmail,
+      phone: normalizedPhone
+    });
+    if (!cached) {
+      return null;
+    }
+
+    const cachedEmail = normalizeEmail(cached.email ?? undefined);
+    const cachedPhone = normalizePhone(cached.phone ?? undefined);
+    const resolvedEmail = cachedEmail ?? normalizedEmail;
+    if (!resolvedEmail) {
+      return null;
+    }
+
+    return {
+      status: "matched",
+      source: CACHE_LOOKUP_SOURCE,
+      matchedBy: inferCacheMatchedBy({
+        normalizedEmail,
+        normalizedPhone,
+        cachedEmail,
+        cachedPhone,
+        cachedMatchedBy: cached.matched_by
+      }),
+      profile: {
+        id: cached.external_user_id,
+        email: resolvedEmail,
+        secondaryEmail: null,
+        fullName: null,
+        phoneNumber: cachedPhone ?? normalizedPhone,
+        kycStatus: null,
+        accountStatus: null
+      },
+      durationMs: elapsedMs()
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildLookupUrl(baseUrl: string, email: string | null, phone: string | null) {
   const endpoint = baseUrl.endsWith("/api/v1/internal/support/users/lookup")
     ? new URL(baseUrl)
@@ -75,14 +171,14 @@ export function buildProfileMetadataPatch(
   if (lookup.status === "matched") {
     return {
       profile_lookup: {
-        source: "prediction-market-mvp",
+        source: lookup.source,
         status: "matched",
         lookupAt,
         matchedBy: lookup.matchedBy,
         durationMs: lookup.durationMs
       },
       external_profile: {
-        source: "prediction-market-mvp",
+        source: lookup.source,
         externalUserId: lookup.profile.id,
         matchedBy: lookup.matchedBy,
         matchedAt: lookupAt,
@@ -99,7 +195,7 @@ export function buildProfileMetadataPatch(
   if (lookup.status === "error") {
     return {
       profile_lookup: {
-        source: "prediction-market-mvp",
+        source: LIVE_LOOKUP_SOURCE,
         status: "error",
         lookupAt,
         error: lookup.error,
@@ -111,7 +207,7 @@ export function buildProfileMetadataPatch(
   if (lookup.status === "missed") {
     return {
       profile_lookup: {
-        source: "prediction-market-mvp",
+        source: LIVE_LOOKUP_SOURCE,
         status: "missed",
         lookupAt,
         durationMs: lookup.durationMs
@@ -121,7 +217,7 @@ export function buildProfileMetadataPatch(
 
   return {
     profile_lookup: {
-      source: "prediction-market-mvp",
+      source: LIVE_LOOKUP_SOURCE,
       status: "disabled",
       lookupAt,
       durationMs: lookup.durationMs
@@ -158,6 +254,7 @@ export async function lookupPredictionProfile({
   const url = buildLookupUrl(baseUrl, normalizedEmail, normalizedPhone);
 
   let lastError = "Lookup failed";
+  let sawTimeoutError = false;
 
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const controller = new AbortController();
@@ -178,16 +275,25 @@ export async function lookupPredictionProfile({
       if (!response.ok) {
         const details = await response.text().catch(() => "");
         lastError = details || `Lookup failed (${response.status})`;
+        if (isTimeoutError(lastError)) {
+          sawTimeoutError = true;
+        }
         continue;
       }
 
       const payload = (await response.json()) as LookupPayload;
       if (!payload.matched || !payload.user) {
-        return { status: "missed", durationMs: elapsedMs() };
+        const cachedMatch = await lookupProfileFromCache({
+          normalizedEmail,
+          normalizedPhone,
+          elapsedMs
+        });
+        return cachedMatch ?? { status: "missed", durationMs: elapsedMs() };
       }
 
       return {
         status: "matched",
+        source: LIVE_LOOKUP_SOURCE,
         matchedBy: payload.matchedBy ?? null,
         profile: {
           id: payload.user.id,
@@ -203,11 +309,26 @@ export async function lookupPredictionProfile({
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         lastError = "timeout";
+        sawTimeoutError = true;
       } else {
         lastError = error instanceof Error ? error.message : "Lookup failed";
+        if (isTimeoutError(lastError)) {
+          sawTimeoutError = true;
+        }
       }
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  if (sawTimeoutError) {
+    const cachedMatch = await lookupProfileFromCache({
+      normalizedEmail,
+      normalizedPhone,
+      elapsedMs
+    });
+    if (cachedMatch) {
+      return cachedMatch;
     }
   }
 
