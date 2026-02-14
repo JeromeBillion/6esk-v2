@@ -46,6 +46,51 @@ function getSupportAddress() {
   return domain ? `support@${domain}`.toLowerCase() : "";
 }
 
+function readString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function enrichExternalProfileMetadata(metadata: Record<string, unknown> | null) {
+  if (!metadata) return null;
+
+  const hasExternalProfile =
+    typeof metadata.external_profile === "object" && metadata.external_profile !== null;
+  if (hasExternalProfile) {
+    return metadata;
+  }
+
+  const email = readString(metadata.appUserEmail);
+  const isAuthenticated = metadata.isAuthenticated === true;
+  if (!isAuthenticated || !email) {
+    return metadata;
+  }
+
+  const matchedAt = new Date().toISOString();
+  return {
+    ...metadata,
+    external_profile: {
+      source: "prediction-market-mvp-webchat",
+      externalUserId: readString(metadata.appUserId),
+      matchedBy: "session_auth",
+      matchedAt,
+      fullName: readString(metadata.appUserFullName),
+      email,
+      secondaryEmail: readString(metadata.appUserSecondaryEmail),
+      phoneNumber: readString(metadata.appUserPhone),
+      kycStatus: readString(metadata.appUserKycStatus),
+      accountStatus: readString(metadata.appUserAccountStatus)
+    },
+    profile_lookup: {
+      source: "prediction-market-mvp-webchat",
+      status: "matched",
+      matchedBy: "session_auth",
+      lookupAt: matchedAt
+    }
+  } as Record<string, unknown>;
+}
+
 export async function POST(request: Request) {
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
   const provided = request.headers.get("x-6esk-secret");
@@ -171,7 +216,9 @@ export async function POST(request: Request) {
     requesterEmail: fromEmail,
     subject: data.subject,
     category,
-    metadata: (data.metadata as Record<string, unknown> | null) ?? null
+    metadata: enrichExternalProfileMetadata(
+      (data.metadata as Record<string, unknown> | null) ?? null
+    )
   });
 
   await recordTicketEvent({ ticketId, eventType: "ticket_created" });
