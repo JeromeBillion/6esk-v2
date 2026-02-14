@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "@/app/components/AppShell";
 
 type Mailbox = {
@@ -59,6 +59,13 @@ type ComposeAttachment = {
 
 type Folder = "inbox" | "starred" | "sent" | "drafts";
 
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
+}
+
 export default function MailClient() {
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -84,6 +91,7 @@ export default function MailClient() {
     "idle"
   );
   const [composeError, setComposeError] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     async function loadMailboxes() {
@@ -323,6 +331,29 @@ export default function MailClient() {
     return groups;
   }, [messages, folder, searchQuery, filterUnread, filterHasAttachments]);
 
+  const messagesById = useMemo(() => {
+    const map = new Map<string, Message>();
+    for (const message of messages) {
+      map.set(message.id, message);
+    }
+    return map;
+  }, [messages]);
+
+  const keyboardNavigableMessageIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const thread of threadGroups) {
+      const expanded = threadsExpanded[thread.id] ?? false;
+      if (expanded) {
+        for (const message of thread.messages) {
+          ids.push(message.id);
+        }
+      } else {
+        ids.push(thread.latest.id);
+      }
+    }
+    return ids;
+  }, [threadGroups, threadsExpanded]);
+
   useEffect(() => {
     async function loadMessages() {
       if (!activeMailbox) {
@@ -349,6 +380,83 @@ export default function MailClient() {
 
     void loadMessages();
   }, [activeMailbox]);
+
+  useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === "/") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (key === "c") {
+        event.preventDefault();
+        startComposeNew();
+        return;
+      }
+
+      if (key === "j" || key === "k") {
+        if (keyboardNavigableMessageIds.length === 0) return;
+        event.preventDefault();
+        const currentIndex = activeMessageId
+          ? keyboardNavigableMessageIds.indexOf(activeMessageId)
+          : -1;
+        const nextIndex =
+          currentIndex === -1
+            ? key === "j"
+              ? 0
+              : keyboardNavigableMessageIds.length - 1
+            : key === "j"
+              ? Math.min(currentIndex + 1, keyboardNavigableMessageIds.length - 1)
+              : Math.max(currentIndex - 1, 0);
+        const nextMessageId = keyboardNavigableMessageIds[nextIndex];
+        const nextMessage = messagesById.get(nextMessageId);
+        if (nextMessage) {
+          void loadMessageDetail(nextMessage.id, nextMessage.thread_id);
+        }
+        return;
+      }
+
+      if (key === "r" && messageDetail) {
+        event.preventDefault();
+        prefillReply(messageDetail);
+        return;
+      }
+
+      if (key === "f" && messageDetail) {
+        event.preventDefault();
+        prefillForward(messageDetail);
+        return;
+      }
+
+      if (key === "s" && messageDetail) {
+        event.preventDefault();
+        void updateMessageFlags(messageDetail.id, {
+          isStarred: !Boolean(messageDetail.isStarred)
+        });
+        return;
+      }
+
+      if (key === "p" && messageDetail) {
+        event.preventDefault();
+        void updateMessageFlags(messageDetail.id, {
+          isPinned: !Boolean(messageDetail.isPinned)
+        });
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  },
+  // Keyboard shortcuts intentionally track a focused subset of state for agent workflow speed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [activeMessageId, keyboardNavigableMessageIds, messageDetail, messagesById]);
 
   async function loadMessageDetail(messageId: string, threadId?: string | null) {
     setLoadingMessage(true);
@@ -641,12 +749,18 @@ export default function MailClient() {
                         ? "No items here yet."
                         : "Recent conversations from your personal mailbox."}
                     </p>
+                    <p style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
+                      Shortcuts: <kbd>/</kbd> search, <kbd>c</kbd> compose, <kbd>j</kbd>/<kbd>k</kbd>{" "}
+                      navigate, <kbd>r</kbd> reply, <kbd>f</kbd> forward, <kbd>s</kbd> star, <kbd>p</kbd>{" "}
+                      pin.
+                    </p>
                   </div>
                 </div>
                 <div className="mail-filters">
                   <label className="mail-search">
                     <span>Search</span>
                     <input
+                      ref={searchInputRef}
                       type="text"
                       placeholder="Subject, sender, or preview..."
                       value={searchQuery}

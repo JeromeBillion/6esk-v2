@@ -111,6 +111,7 @@ These are the “performance reports” referenced in the PRD.
 - Profile lookup diagnostics now segment matched outcomes by live vs cache source and report cache fallback hit rate.
 - AI `send_reply` now enforces out-of-hours escalation policy: outside working hours can auto-create draft reviews and apply configured escalation tags instead of sending.
 - Inbound hardening diagnostics now include retry pressure signals (retry processed/failed counts, oldest failed age, high-attempt backlog) plus alert-threshold recommendation ranges from recent history.
+- Mail workflow UX now includes keyboard shortcuts for core actions (`/` search, `c` compose, `j/k` navigation, `r` reply, `f` forward, `s` star, `p` pin) with inline shortcut hints.
 
 **Roadmap Status (as of 2026-02-14)**
 | Phase | Status |
