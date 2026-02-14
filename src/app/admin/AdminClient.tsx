@@ -76,6 +76,34 @@ type InboundMetrics = {
     processedWindow: number;
     failedWindow: number;
     attemptsWindow: number;
+    retryProcessedWindow: number;
+    retryFailedWindow: number;
+    highAttemptQueue: number;
+    maxFailedAttemptCount: number;
+    p95FailedAttemptCount: number;
+    oldestFailedAgeMinutes: number | null;
+  };
+  alert: {
+    source: "db" | "env";
+    webhookConfigured: boolean;
+    threshold: number;
+    windowMinutes: number;
+    cooldownMinutes: number;
+    currentFailures: number;
+    status: "below_threshold" | "cooldown" | "at_or_above_threshold";
+    cooldownRemainingMinutes: number;
+    lastSentAt: string | null;
+    wouldSendNow: boolean;
+    recommendation: {
+      suggestedMinThreshold: number;
+      suggestedMaxThreshold: number;
+      inRange: boolean;
+      reason: "insufficient_history" | "aligned" | "outside_range";
+      avgBucketFailures: number;
+      p95BucketFailures: number;
+      maxBucketFailures: number;
+      bucketCount: number;
+    };
   };
   series: InboundMetricsPoint[];
 };
@@ -389,6 +417,20 @@ export default function AdminClient() {
 
   const inboundSeries = inboundMetrics?.series ?? [];
   const inboundWindowHours = inboundMetrics?.windowHours ?? 24;
+  const inboundAlert = inboundMetrics?.alert ?? null;
+  const inboundAlertRecommendation = inboundAlert?.recommendation ?? null;
+  const inboundAlertStatusColor =
+    inboundAlert?.status === "at_or_above_threshold"
+      ? "#ff7070"
+      : inboundAlert?.status === "cooldown"
+        ? "#ffbe63"
+        : "#68dca0";
+  const inboundAlertStatusLabel =
+    inboundAlert?.status === "at_or_above_threshold"
+      ? "Threshold exceeded"
+      : inboundAlert?.status === "cooldown"
+        ? `Cooldown (${inboundAlert.cooldownRemainingMinutes}m remaining)`
+        : "Below threshold";
   const maxInboundBarValue = Math.max(
     1,
     ...inboundSeries.map((point) => point.failed + point.processed + point.processing)
@@ -949,6 +991,60 @@ export default function AdminClient() {
               ) : null}
               {inboundMetrics ? (
                 <div style={{ display: "grid", gap: 12, marginTop: 12, marginBottom: 14 }}>
+                  {inboundAlert && inboundAlertRecommendation ? (
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 12,
+                        background: "rgba(10, 12, 18, 0.6)",
+                        display: "grid",
+                        gap: 8
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <strong>Alert Health ({inboundAlert.windowMinutes}m window)</strong>
+                        <span style={{ color: inboundAlertStatusColor, fontWeight: 700 }}>{inboundAlertStatusLabel}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Failures now: {inboundAlert.currentFailures} / threshold {inboundAlert.threshold} · Cooldown{" "}
+                        {inboundAlert.cooldownMinutes}m · Source {inboundAlert.source}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Webhook {inboundAlert.webhookConfigured ? "configured" : "missing"} · Last sent{" "}
+                        {inboundAlert.lastSentAt ? new Date(inboundAlert.lastSentAt).toLocaleString() : "never"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Suggested threshold range: {inboundAlertRecommendation.suggestedMinThreshold}-
+                        {inboundAlertRecommendation.suggestedMaxThreshold} (avg{" "}
+                        {inboundAlertRecommendation.avgBucketFailures.toFixed(2)}, p95{" "}
+                        {inboundAlertRecommendation.p95BucketFailures.toFixed(2)}, sample windows{" "}
+                        {inboundAlertRecommendation.bucketCount})
+                      </div>
+                      {!inboundAlertRecommendation.inRange ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setInboundAlertForm((prev) => ({
+                              ...prev,
+                              threshold: inboundAlertRecommendation.suggestedMaxThreshold
+                            }))
+                          }
+                          style={{
+                            justifySelf: "start",
+                            padding: "7px 10px",
+                            borderRadius: 8,
+                            border: "1px solid var(--border)",
+                            background: "var(--surface-2)",
+                            color: "var(--text)",
+                            cursor: "pointer"
+                          }}
+                        >
+                          Use suggested threshold ({inboundAlertRecommendation.suggestedMaxThreshold})
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div
                     style={{
                       display: "grid",
@@ -999,6 +1095,58 @@ export default function AdminClient() {
                     >
                       <div style={{ color: "var(--muted)", fontSize: 12 }}>Attempts ({inboundWindowHours}h)</div>
                       <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.attemptsWindow}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Retry Processed ({inboundWindowHours}h)</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.retryProcessedWindow}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Retry Failed ({inboundWindowHours}h)</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.retryFailedWindow}</strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Oldest Failed Age</div>
+                      <strong style={{ fontSize: 22 }}>
+                        {inboundMetrics.summary.oldestFailedAgeMinutes === null
+                          ? "—"
+                          : `${inboundMetrics.summary.oldestFailedAgeMinutes}m`}
+                      </strong>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        background: "rgba(10, 12, 18, 0.6)"
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>High Attempt Queue (&gt;=5)</div>
+                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.highAttemptQueue}</strong>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Max {inboundMetrics.summary.maxFailedAttemptCount} · p95{" "}
+                        {inboundMetrics.summary.p95FailedAttemptCount}
+                      </div>
                     </div>
                   </div>
 

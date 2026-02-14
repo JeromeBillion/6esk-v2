@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildInboundHourlySeries } from "../src/server/email/inbound-metrics";
+import {
+  buildInboundAlertThresholdRecommendation,
+  buildInboundHourlySeries
+} from "../src/server/email/inbound-metrics";
 
 describe("buildInboundHourlySeries", () => {
   it("fills missing hours and keeps chronological order", () => {
@@ -51,5 +54,39 @@ describe("buildInboundHourlySeries", () => {
 
     expect(minimumSeries.length).toBe(6);
     expect(maximumSeries.length).toBe(72);
+  });
+
+  it("derives alert threshold recommendation range from historical buckets", () => {
+    const recommendation = buildInboundAlertThresholdRecommendation({
+      configuredThreshold: 3,
+      avgBucketFailures: 2.1,
+      p95BucketFailures: 5.7,
+      maxBucketFailures: 8,
+      bucketCount: 20
+    });
+
+    expect(recommendation).toMatchObject({
+      suggestedMinThreshold: 3,
+      suggestedMaxThreshold: 6,
+      inRange: true,
+      reason: "aligned"
+    });
+  });
+
+  it("keeps current threshold when history is insufficient", () => {
+    const recommendation = buildInboundAlertThresholdRecommendation({
+      configuredThreshold: 9,
+      avgBucketFailures: 1.3,
+      p95BucketFailures: 3.2,
+      maxBucketFailures: 6,
+      bucketCount: 2
+    });
+
+    expect(recommendation).toMatchObject({
+      suggestedMinThreshold: 9,
+      suggestedMaxThreshold: 9,
+      inRange: true,
+      reason: "insufficient_history"
+    });
   });
 });
