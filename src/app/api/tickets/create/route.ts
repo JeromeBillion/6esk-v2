@@ -14,9 +14,11 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { sendTicketReply } from "@/server/email/replies";
 
 const createTicketSchema = z.object({
-  from: z.string().email(),
+  to: z.string().email().optional(),
+  from: z.string().email().optional(),
   subject: z.string().min(1),
   description: z.string().min(1),
   descriptionHtml: z.string().optional().nullable(),
@@ -79,16 +81,90 @@ export async function POST(request: Request) {
   }
 
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
-  const fromEmail = normalizeAddressList(data.from)[0];
-  if (!fromEmail) {
-    return Response.json({ error: "Invalid sender address" }, { status: 400 });
-  }
-
   const inferredTags = data.tags?.length
     ? data.tags
     : inferTagsFromText({ subject: data.subject, text: data.description });
   const category =
     data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
+  const previewText = data.description.replace(/\s+/g, " ").trim().slice(0, 200);
+
+  // Support agents creating tickets from CRM send outbound first contact.
+  if (sessionUser) {
+    const toEmail = normalizeAddressList(data.to ?? data.from ?? "")[0];
+    if (!toEmail) {
+      return Response.json({ error: "Email to is required" }, { status: 400 });
+    }
+
+    const ticketId = await createTicket({
+      mailboxId: mailbox.id,
+      requesterEmail: toEmail,
+      subject: data.subject,
+      category,
+      metadata: {
+        source: "manual_outbound",
+        createdByUserId: sessionUser.id,
+        ...(data.metadata ?? {})
+      } as Record<string, unknown>
+    });
+
+    await recordTicketEvent({
+      ticketId,
+      eventType: "ticket_created",
+      actorUserId: sessionUser.id
+    });
+
+    if (inferredTags.length) {
+      await addTagsToTicket(ticketId, inferredTags);
+      await recordTicketEvent({
+        ticketId,
+        eventType: "tags_assigned",
+        actorUserId: sessionUser.id,
+        data: { tags: inferredTags }
+      });
+    }
+
+    const sendResult = await sendTicketReply({
+      ticketId,
+      subject: data.subject,
+      text: data.description,
+      html: data.descriptionHtml ?? null,
+      attachments: data.attachments ?? null,
+      actorUserId: sessionUser.id,
+      origin: "human"
+    });
+
+    const messageId = sendResult.messageId ?? null;
+    const threadId = messageId;
+    const ticketEvent = buildAgentEvent({
+      eventType: "ticket.created",
+      ticketId,
+      mailboxId: mailbox.id,
+      excerpt: previewText,
+      threadId
+    });
+    await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+
+    if (messageId) {
+      const messageEvent = buildAgentEvent({
+        eventType: "ticket.message.created",
+        ticketId,
+        messageId,
+        mailboxId: mailbox.id,
+        excerpt: previewText,
+        threadId
+      });
+      await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+    }
+
+    void deliverPendingAgentEvents().catch(() => {});
+    return Response.json({ status: "created", ticketId, messageId });
+  }
+
+  // External platform callers create inbound tickets (end-user initiated).
+  const fromEmail = normalizeAddressList(data.from ?? data.to ?? "")[0];
+  if (!fromEmail) {
+    return Response.json({ error: "Invalid sender address" }, { status: 400 });
+  }
 
   const ticketId = await createTicket({
     mailboxId: mailbox.id,
@@ -111,7 +187,6 @@ export async function POST(request: Request) {
 
   const messageId = randomUUID();
   const receivedAt = new Date();
-  const previewText = data.description.replace(/\s+/g, " ").trim().slice(0, 200);
 
   await db.query(
     `INSERT INTO messages (

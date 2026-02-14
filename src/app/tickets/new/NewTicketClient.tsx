@@ -7,7 +7,7 @@ const CATEGORY_OPTIONS = ["payments", "markets", "account", "kyc", "security", "
 
 export default function NewTicketClient() {
   const [form, setForm] = useState({
-    from: "",
+    to: "",
     subject: "",
     description: "",
     category: "general",
@@ -24,7 +24,7 @@ export default function NewTicketClient() {
     setError(null);
 
     const payload = {
-      from: form.from,
+      to: form.to,
       subject: form.subject,
       description: form.description,
       category: form.category,
@@ -48,20 +48,20 @@ export default function NewTicketClient() {
     }
 
     setStatus("success");
-    setForm((prev) => ({ ...prev, subject: "", description: "", tags: "" }));
+    setForm((prev) => ({ ...prev, to: "", subject: "", description: "", tags: "" }));
   }
 
   return (
-    <AppShell title="Create Ticket" subtitle="Use this form to log a support request manually.">
+    <AppShell title="Create Ticket" subtitle="Create ticket and send email.">
       <div className="app-content">
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
           <label>
-            From (requester email)
+            Email to
             <input
               type="email"
               required
-              value={form.from}
-              onChange={(event) => setForm((prev) => ({ ...prev, from: event.target.value }))}
+              value={form.to}
+              onChange={(event) => setForm((prev) => ({ ...prev, to: event.target.value }))}
             />
           </label>
           <label>
@@ -107,7 +107,7 @@ export default function NewTicketClient() {
           </label>
           {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
           {status === "success" ? (
-            <p style={{ color: "var(--accent)" }}>Ticket created successfully.</p>
+            <p style={{ color: "var(--accent)" }}>Ticket created and email sent.</p>
           ) : null}
           <button
             type="submit"
@@ -121,7 +121,7 @@ export default function NewTicketClient() {
               cursor: "pointer"
             }}
           >
-            {status === "submitting" ? "Creating..." : "Create ticket"}
+            {status === "submitting" ? "Creating..." : "Create ticket and send email"}
           </button>
         </form>
       </div>

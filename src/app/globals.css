@@ -88,6 +88,11 @@ button {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
+  transition: grid-template-columns 180ms ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 84px minmax(0, 1fr);
 }
 
 .app-sidebar {
@@ -102,6 +107,25 @@ button {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  transition: padding 180ms ease, gap 180ms ease;
+}
+
+.app-sidebar.collapsed {
+  padding: 16px 10px;
+  gap: 16px;
+  align-items: center;
+}
+
+.app-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-sidebar.collapsed .app-brand-row {
+  width: 100%;
+  justify-content: center;
 }
 
 .app-brand {
@@ -110,9 +134,32 @@ button {
   gap: 12px;
 }
 
+.app-sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-sidebar-toggle:hover {
+  color: var(--text);
+  border-color: rgba(57, 184, 255, 0.35);
+  background: rgba(57, 184, 255, 0.12);
+}
+
 .app-nav {
   display: grid;
   gap: 8px;
+}
+
+.app-sidebar.collapsed .app-nav {
+  width: 100%;
 }
 
 .app-nav-link {
@@ -126,6 +173,19 @@ button {
   border: 1px solid transparent;
   background: transparent;
   min-height: 44px;
+}
+
+.app-nav-label {
+  white-space: nowrap;
+}
+
+.app-sidebar.collapsed .app-nav-link {
+  justify-content: center;
+  padding: 10px 8px;
+}
+
+.app-sidebar.collapsed .app-nav-label {
+  display: none;
 }
 
 .app-nav-link:hover {
@@ -212,6 +272,23 @@ button {
 
 .app-sidebar-footer {
   margin-top: auto;
+  width: 100%;
+}
+
+.app-signout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.app-sidebar.collapsed .app-signout-sidebar {
+  width: 44px;
+  padding: 10px;
+}
+
+.app-sidebar.collapsed .app-signout-label {
+  display: none;
 }
 
 .app-main {
@@ -1440,7 +1517,8 @@ button {
 }
 
 @media (max-width: 900px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 
@@ -1449,6 +1527,33 @@ button {
     height: auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .app-sidebar.collapsed {
+    padding: 24px;
+    align-items: stretch;
+  }
+
+  .app-sidebar.collapsed .app-brand-row {
+    justify-content: space-between;
+  }
+
+  .app-sidebar.collapsed .app-nav-link {
+    justify-content: flex-start;
+    padding: 10px 12px;
+  }
+
+  .app-sidebar.collapsed .app-nav-label {
+    display: inline;
+  }
+
+  .app-sidebar.collapsed .app-signout-sidebar {
+    width: 100%;
+    padding: 10px 14px;
+  }
+
+  .app-sidebar.collapsed .app-signout-label {
+    display: inline;
   }
 
   .app-nav {

@@ -1218,74 +1218,6 @@ export default function TicketsClient() {
                   onChange={(event) => setFilterQuery(event.target.value)}
                 />
               </label>
-              <div className="ticket-filter-chips">
-                <span className="ticket-filter-label">Quick status</span>
-                <div className="ticket-filter-chip-row">
-                  {[
-                    { value: "all", label: "All" },
-                    { value: "new", label: "New" },
-                    { value: "open", label: "Open" },
-                    { value: "pending", label: "Pending" },
-                    { value: "solved", label: "Solved" },
-                    { value: "closed", label: "Closed" }
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setFilterStatus(option.value)}
-                      className={`ticket-filter-chip${
-                        filterStatus === option.value ? " active" : ""
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="ticket-filter-chips">
-                <span className="ticket-filter-label">Quick priority</span>
-                <div className="ticket-filter-chip-row">
-                  {[
-                    { value: "all", label: "All" },
-                    { value: "low", label: "Low" },
-                    { value: "normal", label: "Normal" },
-                    { value: "high", label: "High" },
-                    { value: "urgent", label: "Urgent" }
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setFilterPriority(option.value)}
-                      className={`ticket-filter-chip${
-                        filterPriority === option.value ? " active" : ""
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="ticket-filter-chips">
-                <span className="ticket-filter-label">Channel</span>
-                <div className="ticket-filter-chip-row">
-                  {[
-                    { value: "all", label: "All" },
-                    { value: "email", label: "Email" },
-                    { value: "whatsapp", label: "WhatsApp" }
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setFilterChannel(option.value)}
-                      className={`ticket-filter-chip${
-                        filterChannel === option.value ? " active" : ""
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
               {user?.role_name === "lead_admin" ? (
                 <label>
                   Assignment
@@ -1324,6 +1256,17 @@ export default function TicketsClient() {
                       {priority}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label>
+                Channel
+                <select
+                  value={filterChannel}
+                  onChange={(event) => setFilterChannel(event.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="email">Email</option>
+                  <option value="whatsapp">WhatsApp</option>
                 </select>
               </label>
               <label>
@@ -1546,15 +1489,7 @@ export default function TicketsClient() {
                 {bulkError ? <span className="tickets-bulk-error">{bulkError}</span> : null}
               </div>
             ) : null}
-            {tickets.length === 0 ? (
-              <div className="ticket-empty">
-                <h3>No tickets yet</h3>
-                <p>Send an email to support or create a ticket manually.</p>
-                <a href="/tickets/new" className="app-action">
-                  Create ticket
-                </a>
-              </div>
-            ) : (
+            {tickets.length > 0 ? (
               tickets.map((ticket) => {
                 const isSelected = selectedTicketIds.includes(ticket.id);
                 const channel = ticket.has_whatsapp ? "whatsapp" : "email";
@@ -1601,7 +1536,7 @@ export default function TicketsClient() {
                   </div>
                 );
               })
-            )}
+            ) : null}
           </aside>
 
           <section className="tickets-detail">
