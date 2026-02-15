@@ -492,11 +492,15 @@ export default function TicketsClient() {
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
   const [selectedReplyRecipient, setSelectedReplyRecipient] = useState("");
   const [showMergePanel, setShowMergePanel] = useState(false);
+  const [isCompactHistoryLayout, setIsCompactHistoryLayout] = useState(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [mergeMode, setMergeMode] = useState<"ticket" | "customer">("ticket");
   const [mergeQuery, setMergeQuery] = useState("");
   const [mergeReason, setMergeReason] = useState("");
   const [mergeSearching, setMergeSearching] = useState(false);
   const [mergeSearchError, setMergeSearchError] = useState<string | null>(null);
+  const [mergeSearchAttempted, setMergeSearchAttempted] = useState(false);
+  const [mergeLastSearchQuery, setMergeLastSearchQuery] = useState("");
   const [ticketMergeResults, setTicketMergeResults] = useState<TicketMergeSearchResult[]>([]);
   const [customerMergeResults, setCustomerMergeResults] = useState<CustomerMergeSearchResult[]>([]);
   const [selectedMergeTicketId, setSelectedMergeTicketId] = useState<string | null>(null);
@@ -875,6 +879,8 @@ export default function TicketsClient() {
         setCustomerMergePreflight(null);
         setShowMergeConfirmStep(false);
         setMergeAcknowledgeInput("");
+        setMergeSearchAttempted(false);
+        setMergeLastSearchQuery("");
       } else {
         requestAnimationFrame(() => {
           mergeSearchRef.current?.focus();
@@ -895,11 +901,15 @@ export default function TicketsClient() {
     setShowMergeConfirmStep(false);
     setMergeAcknowledgeInput("");
     if (!query) {
+      setMergeSearchAttempted(false);
+      setMergeLastSearchQuery("");
       setTicketMergeResults([]);
       setCustomerMergeResults([]);
       return;
     }
     setMergeSearching(true);
+    setMergeSearchAttempted(true);
+    setMergeLastSearchQuery(query);
     const endpoint =
       mergeMode === "ticket"
         ? `/api/tickets/search?q=${encodeURIComponent(query)}&limit=20`
@@ -1025,11 +1035,33 @@ export default function TicketsClient() {
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia("(max-width: 1200px)");
+    const applyLayout = () => {
+      const compact = media.matches;
+      setIsCompactHistoryLayout(compact);
+      if (!compact) {
+        setIsHistoryDrawerOpen(false);
+      }
+    };
+
+    applyLayout();
+    const handler = () => applyLayout();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handler);
+      return () => media.removeEventListener("change", handler);
+    }
+    media.addListener(handler);
+    return () => media.removeListener(handler);
+  }, []);
+
+  useEffect(() => {
     setMergeQuery("");
     setMergeReason("");
     setMergeSearchError(null);
     setMergePreflightError(null);
     setMergeSubmitError(null);
+    setMergeSearchAttempted(false);
+    setMergeLastSearchQuery("");
     setTicketMergeResults([]);
     setCustomerMergeResults([]);
     setSelectedMergeTicketId(null);
@@ -1039,6 +1071,19 @@ export default function TicketsClient() {
     setShowMergeConfirmStep(false);
     setMergeAcknowledgeInput("");
   }, [mergeMode]);
+
+  useEffect(() => {
+    if (!showMergePanel) return;
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      toggleMergePanel(false);
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showMergePanel, toggleMergePanel]);
 
   useEffect(() => {
     if (!showMergePanel || !activeTicketId) {
@@ -1252,6 +1297,7 @@ export default function TicketsClient() {
       setCustomerHistoryLoadingMore(false);
       setCustomerHistoryError(null);
       setHoveredHistoryTicketId(null);
+      setIsHistoryDrawerOpen(false);
       setShowMergePanel(false);
       setMergeQuery("");
       setMergeReason("");
@@ -1279,6 +1325,9 @@ export default function TicketsClient() {
     setCustomerHistoryNextCursor(null);
     setCustomerHistoryLoadingMore(false);
     setHoveredHistoryTicketId(null);
+    if (isCompactHistoryLayout) {
+      setIsHistoryDrawerOpen(false);
+    }
     setTicketMergePreflight(null);
     setCustomerMergePreflight(null);
     setMergePreflightError(null);
@@ -1289,7 +1338,7 @@ export default function TicketsClient() {
     setMergeAcknowledgeInput("");
     void loadTicketDetail(activeTicketId);
     void loadCustomerHistory(activeTicketId);
-  }, [activeTicketId]);
+  }, [activeTicketId, isCompactHistoryLayout]);
 
   useEffect(() => {
     if (messages.some((message) => message.channel === "whatsapp")) {
@@ -1817,6 +1866,27 @@ export default function TicketsClient() {
   const previewHistoryItem =
     hoveredHistoryItem ?? customerHistory.find((item) => item.ticketId === activeTicketId) ?? null;
   const canMerge = user?.role_name !== "viewer";
+  const customerMergeSourceMissing = mergeMode === "customer" && !activeCustomerId;
+  const mergeSearchDisabled =
+    mergeSearching || !mergeQuery.trim() || customerMergeSourceMissing;
+  const customerHistoryEmptyMessage = customerHistoryLoading
+    ? "Loading customer history..."
+    : !activeCustomer
+      ? "Customer not identified yet. Once identified, email and WhatsApp history appears here."
+      : "No prior tickets found for this customer.";
+  const mergeSearchQueryLabel = mergeLastSearchQuery || "your search";
+  const ticketMergeEmptyMessage = !mergeSearchAttempted
+    ? "Search by ticket ID, requester email, or subject to find merge targets."
+    : `No ticket candidates found for "${mergeSearchQueryLabel}".`;
+  const customerMergeEmptyMessage = customerMergeSourceMissing
+    ? "Identify this ticket's customer profile before searching customer merge targets."
+    : !mergeSearchAttempted
+      ? "Search by email, phone, name, or external user ID to find customer profiles."
+      : `No customer candidates found for "${mergeSearchQueryLabel}".`;
+  const showCustomerHistoryPanel = !isCompactHistoryLayout || isHistoryDrawerOpen;
+  const customerHistoryToggleLabel = isHistoryDrawerOpen
+    ? "Hide customer history"
+    : "Show customer history";
   const replyRecipientOptions = useMemo(() => {
     if (!activeTicket) return [] as ReplyRecipientOption[];
     const options = new Map<string, ReplyRecipientOption>();
@@ -2826,11 +2896,52 @@ export default function TicketsClient() {
                         {showMergePanel ? "Close merge" : "Merge"}
                       </button>
                     ) : null}
+                    {isCompactHistoryLayout ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsHistoryDrawerOpen((prev) => !prev)}
+                        aria-expanded={isHistoryDrawerOpen}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: isHistoryDrawerOpen
+                            ? "rgba(57, 184, 255, 0.18)"
+                            : "var(--surface-2)",
+                          color: "var(--text)",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {customerHistoryToggleLabel}
+                      </button>
+                    ) : null}
                   </div>
                   {mergeSubmitSuccess ? (
                     <p style={{ color: "#7ff5a2", marginTop: 10 }}>{mergeSubmitSuccess}</p>
                   ) : null}
                   {showMergePanel && canMerge ? (
+                    <div
+                      className="ticket-merge-modal-backdrop"
+                      role="presentation"
+                      onClick={() => toggleMergePanel(false)}
+                    >
+                      <div
+                        className="ticket-merge-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Merge tickets or customers"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <div className="ticket-merge-modal-header">
+                          <strong>Merge Workspace</strong>
+                          <button
+                            type="button"
+                            className="ticket-merge-modal-close"
+                            onClick={() => toggleMergePanel(false)}
+                          >
+                            Close
+                          </button>
+                        </div>
                     <div className="ticket-merge-panel">
                       <div className="ticket-filter-chip-row">
                         {(
@@ -2868,18 +2979,24 @@ export default function TicketsClient() {
                         <button
                           type="button"
                           onClick={searchMergeTargets}
-                          disabled={mergeSearching || !mergeQuery.trim()}
+                          disabled={mergeSearchDisabled}
                         >
                           {mergeSearching ? "Searching..." : "Search"}
                         </button>
                       </div>
+                      {customerMergeSourceMissing ? (
+                        <p className="ticket-merge-empty">
+                          Current ticket has no identified customer profile yet. Resolve customer
+                          identity first, then merge profiles.
+                        </p>
+                      ) : null}
                       {mergeSearchError ? (
                         <p className="ticket-merge-error">{mergeSearchError}</p>
                       ) : null}
                       {mergeMode === "ticket" ? (
                         <div className="ticket-merge-results">
                           {ticketMergeResults.length === 0 ? (
-                            <p className="ticket-merge-empty">No ticket candidates yet.</p>
+                            <p className="ticket-merge-empty">{ticketMergeEmptyMessage}</p>
                           ) : (
                             ticketMergeResults.map((item) => (
                               <button
@@ -2906,7 +3023,7 @@ export default function TicketsClient() {
                       ) : (
                         <div className="ticket-merge-results">
                           {customerMergeResults.length === 0 ? (
-                            <p className="ticket-merge-empty">No customer candidates yet.</p>
+                            <p className="ticket-merge-empty">{customerMergeEmptyMessage}</p>
                           ) : (
                             customerMergeResults.map((item) => (
                               <button
@@ -3064,6 +3181,8 @@ export default function TicketsClient() {
                           </div>
                         </div>
                       )}
+                    </div>
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -3513,7 +3632,12 @@ export default function TicketsClient() {
                     )}
                   </div>
                 </div>
-                  <aside className="panel customer-history-panel">
+                  {showCustomerHistoryPanel ? (
+                    <aside
+                      className={`panel customer-history-panel${
+                        isCompactHistoryLayout ? " mobile-drawer" : ""
+                      }`}
+                    >
                     <div className="customer-history-header">
                       <h3 style={{ margin: 0 }}>Customer History</h3>
                       {customerHistoryLoading ? (
@@ -3523,9 +3647,9 @@ export default function TicketsClient() {
                     {customerHistoryError ? (
                       <p className="customer-history-error">{customerHistoryError}</p>
                     ) : null}
-                    {customerHistory.length === 0 ? (
+                    {!customerHistoryError && customerHistory.length === 0 ? (
                       <p className="customer-history-empty">
-                        No prior tickets found for this customer.
+                        {customerHistoryEmptyMessage}
                       </p>
                     ) : (
                       <>
@@ -3564,6 +3688,10 @@ export default function TicketsClient() {
                                 <div className="customer-history-item-meta">
                                   <span>Status: {item.status}</span>
                                   <span>Priority: {item.priority}</span>
+                                </div>
+                                <div className="customer-history-item-meta">
+                                  <span className="customer-history-ticket-id">Ticket: {item.ticketId}</span>
+                                  <span className="customer-history-open-action">Open ticket</span>
                                 </div>
                               </button>
                             );
@@ -3605,7 +3733,8 @@ export default function TicketsClient() {
                         </p>
                       )}
                     </div>
-                  </aside>
+                    </aside>
+                  ) : null}
                 </div>
 
                 <div

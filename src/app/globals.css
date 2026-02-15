@@ -596,6 +596,57 @@ button {
   gap: 10px;
 }
 
+.ticket-merge-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(4, 8, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.ticket-merge-modal {
+  width: min(760px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(8, 11, 16, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.ticket-merge-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ticket-merge-modal-close {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ticket-merge-modal-close:hover {
+  color: var(--text);
+  border-color: rgba(57, 184, 255, 0.35);
+}
+
+.ticket-merge-modal .ticket-merge-panel {
+  margin-top: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
 .ticket-merge-note {
   margin: 0;
   font-size: 12px;
@@ -1200,6 +1251,11 @@ button {
   display: grid;
   gap: 12px;
   min-width: 0;
+  align-content: start;
+}
+
+.customer-history-panel.mobile-drawer {
+  animation: customer-history-drawer-in 150ms ease;
 }
 
 .customer-history-header {
@@ -1231,6 +1287,7 @@ button {
   max-height: 420px;
   overflow: auto;
   padding-right: 2px;
+  overscroll-behavior: contain;
 }
 
 .customer-history-item {
@@ -1277,6 +1334,16 @@ button {
   color: var(--muted);
 }
 
+.customer-history-ticket-id {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+}
+
+.customer-history-open-action {
+  color: var(--accent);
+  font-size: 11px;
+}
+
 .customer-history-hover {
   border-top: 1px solid var(--border);
   padding-top: 10px;
@@ -1314,6 +1381,17 @@ button {
   font-size: 12px;
   color: var(--muted);
   white-space: pre-wrap;
+}
+
+@keyframes customer-history-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .admin-layout {
@@ -1964,9 +2042,27 @@ button {
   .ticket-conversation-layout {
     grid-template-columns: 1fr;
   }
+
+  .customer-history-list {
+    max-height: 320px;
+  }
 }
 
 @media (max-width: 700px) {
+  .ticket-merge-modal-backdrop {
+    padding: 10px;
+  }
+
+  .ticket-merge-modal {
+    width: min(760px, calc(100vw - 20px));
+    max-height: calc(100vh - 20px);
+    padding: 10px;
+  }
+
+  .ticket-merge-panel {
+    padding: 10px;
+  }
+
   .ticket-merge-search {
     grid-template-columns: 1fr;
   }
@@ -1979,11 +2075,40 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .ticket-merge-results {
+    max-height: 180px;
+  }
+
+  .ticket-merge-result-top,
+  .customer-history-item-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .ticket-merge-confirm-actions {
     justify-content: stretch;
   }
 
   .ticket-merge-confirm-actions button {
     flex: 1 1 100%;
+  }
+
+  .ticket-merge-submit {
+    width: 100%;
+  }
+
+  .customer-history-list {
+    max-height: none;
+  }
+
+  .customer-history-item-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .customer-history-hover {
+    gap: 4px;
+    padding-top: 8px;
   }
 }

@@ -56,17 +56,33 @@ export type InboundHourlyPoint = {
 
 export type InboundFailureReasonCode =
   | "invalid_payload"
+  | "attachment_error"
   | "provider_timeout"
+  | "provider_unavailable"
   | "provider_rate_limited"
   | "auth_error"
+  | "config_error"
   | "storage_error"
   | "database_error"
   | "duplicate_event"
   | "unknown";
 
+export type InboundFailureSeverity = "critical" | "high" | "medium" | "low";
+
+type InboundFailureClassification = {
+  code: InboundFailureReasonCode;
+  label: string;
+  severity: InboundFailureSeverity;
+  triageLabel: string;
+  triageHint: string;
+};
+
 export type InboundFailureReason = {
   code: InboundFailureReasonCode;
   label: string;
+  severity: InboundFailureSeverity;
+  triageLabel: string;
+  triageHint: string;
   count: number;
   sampleError: string | null;
 };
@@ -110,56 +126,198 @@ function normalizeErrorText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
 
+const FAILURE_REASON_CATALOG: Record<
+  InboundFailureReasonCode,
+  Omit<InboundFailureClassification, "code">
+> = {
+  invalid_payload: {
+    label: "Invalid Payload",
+    severity: "high",
+    triageLabel: "Contract Mismatch",
+    triageHint: "Validate inbound payload mapping and parser/schema versions."
+  },
+  attachment_error: {
+    label: "Attachment / Media Error",
+    severity: "medium",
+    triageLabel: "Media Handling",
+    triageHint: "Review attachment size/type limits and storage upload handling."
+  },
+  provider_timeout: {
+    label: "Provider Timeout",
+    severity: "medium",
+    triageLabel: "Provider Latency",
+    triageHint: "Check provider latency and retry backlog before escalating."
+  },
+  provider_unavailable: {
+    label: "Provider Unavailable",
+    severity: "high",
+    triageLabel: "Upstream Outage",
+    triageHint: "Validate provider health status and failover/runbook actions."
+  },
+  provider_rate_limited: {
+    label: "Rate Limited",
+    severity: "medium",
+    triageLabel: "Traffic Throttle",
+    triageHint: "Reduce send rate and review provider quota/burst limits."
+  },
+  auth_error: {
+    label: "Auth / Signature Error",
+    severity: "critical",
+    triageLabel: "Credential Failure",
+    triageHint: "Rotate/verify secrets and signature validation configuration."
+  },
+  config_error: {
+    label: "Configuration Error",
+    severity: "critical",
+    triageLabel: "Config Drift",
+    triageHint: "Fix missing/invalid env settings before retrying events."
+  },
+  storage_error: {
+    label: "Storage Error",
+    severity: "high",
+    triageLabel: "Storage Backend",
+    triageHint: "Check storage credentials, bucket policy, and write permissions."
+  },
+  database_error: {
+    label: "Database Error",
+    severity: "critical",
+    triageLabel: "Database Health",
+    triageHint: "Investigate DB availability, saturation, and transaction failures."
+  },
+  duplicate_event: {
+    label: "Duplicate Event",
+    severity: "low",
+    triageLabel: "Idempotency",
+    triageHint: "Monitor source retries; no immediate action if dedupe is expected."
+  },
+  unknown: {
+    label: "Unknown",
+    severity: "high",
+    triageLabel: "Needs Classification",
+    triageHint: "Inspect sample errors and add a classifier if pattern is recurring."
+  }
+};
+
+function getFailureClassification(code: InboundFailureReasonCode): InboundFailureClassification {
+  const details = FAILURE_REASON_CATALOG[code];
+  return {
+    code,
+    label: details.label,
+    severity: details.severity,
+    triageLabel: details.triageLabel,
+    triageHint: details.triageHint
+  };
+}
+
 export function classifyInboundFailureReason(
   error: string | null | undefined
-): { code: InboundFailureReasonCode; label: string } {
+): InboundFailureClassification {
   const text = normalizeErrorText(error);
   if (!text || text === "unknown") {
-    return { code: "unknown", label: "Unknown" };
+    return getFailureClassification("unknown");
   }
 
   if (text.includes("duplicate")) {
-    return { code: "duplicate_event", label: "Duplicate Event" };
-  }
-
-  if (
-    (text.includes("invalid") && (text.includes("payload") || text.includes("schema"))) ||
-    text.includes("zod")
-  ) {
-    return { code: "invalid_payload", label: "Invalid Payload" };
-  }
-
-  if (text.includes("timeout") || text.includes("abort")) {
-    return { code: "provider_timeout", label: "Provider Timeout" };
-  }
-
-  if (text.includes("429") || text.includes("rate limit")) {
-    return { code: "provider_rate_limited", label: "Rate Limited" };
+    return getFailureClassification("duplicate_event");
   }
 
   if (
     text.includes("unauthorized") ||
     text.includes("forbidden") ||
     text.includes("invalid secret") ||
-    text.includes("signature")
+    text.includes("signature") ||
+    text.includes("hmac") ||
+    text.includes("token expired")
   ) {
-    return { code: "auth_error", label: "Auth / Signature Error" };
+    return getFailureClassification("auth_error");
+  }
+
+  if (
+    text.includes("not configured") ||
+    text.includes("missing env") ||
+    text.includes("missing configuration") ||
+    text.includes("env var") ||
+    text.includes("support address") ||
+    text.includes("resend api key") ||
+    text.includes("api key missing")
+  ) {
+    return getFailureClassification("config_error");
+  }
+
+  if (
+    text.includes("429") ||
+    text.includes("rate limit") ||
+    text.includes("too many requests") ||
+    text.includes("throttl")
+  ) {
+    return getFailureClassification("provider_rate_limited");
+  }
+
+  if (
+    text.includes("timeout") ||
+    text.includes("timed out") ||
+    text.includes("abort") ||
+    text.includes("deadline exceeded")
+  ) {
+    return getFailureClassification("provider_timeout");
+  }
+
+  if (
+    text.includes("502") ||
+    text.includes("503") ||
+    text.includes("504") ||
+    text.includes("bad gateway") ||
+    text.includes("service unavailable") ||
+    text.includes("connection refused") ||
+    text.includes("econn") ||
+    text.includes("enotfound") ||
+    text.includes("network")
+  ) {
+    return getFailureClassification("provider_unavailable");
+  }
+
+  if (
+    text.includes("attachment") ||
+    text.includes("file too large") ||
+    text.includes("payload too large") ||
+    text.includes("unsupported media") ||
+    text.includes("mime") ||
+    text.includes("content-type") ||
+    text.includes("content type") ||
+    text.includes("413")
+  ) {
+    return getFailureClassification("attachment_error");
+  }
+
+  if (
+    (text.includes("invalid") &&
+      (text.includes("payload") ||
+        text.includes("schema") ||
+        text.includes("json") ||
+        text.includes("body"))) ||
+    text.includes("zod") ||
+    text.includes("parse error") ||
+    text.includes("syntaxerror")
+  ) {
+    return getFailureClassification("invalid_payload");
   }
 
   if (text.includes("r2") || text.includes("s3") || text.includes("storage")) {
-    return { code: "storage_error", label: "Storage Error" };
+    return getFailureClassification("storage_error");
   }
 
   if (
     text.includes("postgres") ||
     text.includes("database") ||
     text.includes("sql") ||
-    text.includes("db")
+    text.includes("db") ||
+    text.includes("deadlock") ||
+    text.includes("constraint")
   ) {
-    return { code: "database_error", label: "Database Error" };
+    return getFailureClassification("database_error");
   }
 
-  return { code: "unknown", label: "Unknown" };
+  return getFailureClassification("unknown");
 }
 
 export function aggregateInboundFailureReasons(
@@ -182,8 +340,7 @@ export function aggregateInboundFailureReasons(
       continue;
     }
     byCode.set(reason.code, {
-      code: reason.code,
-      label: reason.label,
+      ...reason,
       count,
       sampleError: row.last_error ?? null
     });

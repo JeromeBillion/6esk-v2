@@ -99,8 +99,17 @@ describe("buildInboundHourlySeries", () => {
     expect(classifyInboundFailureReason("timeout while calling provider")).toMatchObject({
       code: "provider_timeout"
     });
+    expect(classifyInboundFailureReason("503 service unavailable from provider")).toMatchObject({
+      code: "provider_unavailable"
+    });
     expect(classifyInboundFailureReason("429 rate limit")).toMatchObject({
       code: "provider_rate_limited"
+    });
+    expect(classifyInboundFailureReason("support address not configured")).toMatchObject({
+      code: "config_error"
+    });
+    expect(classifyInboundFailureReason("attachment payload too large")).toMatchObject({
+      code: "attachment_error"
     });
     expect(classifyInboundFailureReason("postgres connection failed")).toMatchObject({
       code: "database_error"
@@ -117,10 +126,13 @@ describe("buildInboundHourlySeries", () => {
 
     expect(top[0]).toMatchObject({
       code: "provider_timeout",
+      severity: "medium",
+      triageLabel: "Provider Latency",
       count: 5
     });
     expect(top[1]).toMatchObject({
       code: "invalid_payload",
+      severity: "high",
       count: 4
     });
   });

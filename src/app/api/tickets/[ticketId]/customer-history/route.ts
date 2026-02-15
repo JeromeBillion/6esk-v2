@@ -53,7 +53,8 @@ export async function GET(
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const cursorParam = url.searchParams.get("cursor");
-  const limit = Math.min(Math.max(Number(limitParam ?? 30) || 30, 1), 100);
+  const parsedLimit = Number(limitParam ?? 30);
+  const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 30, 1), 100);
 
   const [customer, historyPage] = await Promise.all([
     getCustomerById(customerId),

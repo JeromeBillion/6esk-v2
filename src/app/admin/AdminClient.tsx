@@ -66,6 +66,8 @@ type InboundMetricsPoint = {
   attempts: number;
 };
 
+type InboundFailureSeverity = "critical" | "high" | "medium" | "low";
+
 type InboundMetrics = {
   generatedAt: string;
   windowHours: number;
@@ -108,14 +110,20 @@ type InboundMetrics = {
   failureReasons: Array<{
     code:
       | "invalid_payload"
+      | "attachment_error"
       | "provider_timeout"
+      | "provider_unavailable"
       | "provider_rate_limited"
       | "auth_error"
+      | "config_error"
       | "storage_error"
       | "database_error"
       | "duplicate_event"
       | "unknown";
     label: string;
+    severity: InboundFailureSeverity;
+    triageLabel: string;
+    triageHint: string;
     count: number;
     sampleError: string | null;
   }>;
@@ -165,6 +173,35 @@ const ADMIN_SECTIONS = [
   { key: "audit-log", label: "Audit Log" }
 ];
 
+function getFailureSeverityStyles(severity: InboundFailureSeverity) {
+  switch (severity) {
+    case "critical":
+      return {
+        borderColor: "rgba(255, 112, 112, 0.7)",
+        background: "rgba(255, 112, 112, 0.14)",
+        color: "#ffb3b3"
+      };
+    case "high":
+      return {
+        borderColor: "rgba(255, 190, 99, 0.7)",
+        background: "rgba(255, 190, 99, 0.14)",
+        color: "#ffd9a8"
+      };
+    case "medium":
+      return {
+        borderColor: "rgba(139, 215, 255, 0.55)",
+        background: "rgba(139, 215, 255, 0.14)",
+        color: "#cdeeff"
+      };
+    default:
+      return {
+        borderColor: "rgba(104, 220, 160, 0.6)",
+        background: "rgba(104, 220, 160, 0.14)",
+        color: "#c8f6dc"
+      };
+  }
+}
+
 export default function AdminClient() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -206,6 +243,9 @@ export default function AdminClient() {
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
+  const [inboundFailureSeverityFilter, setInboundFailureSeverityFilter] = useState<
+    "all" | InboundFailureSeverity
+  >("all");
 
   async function loadData() {
     const [
@@ -431,6 +471,10 @@ export default function AdminClient() {
 
   const inboundSeries = inboundMetrics?.series ?? [];
   const inboundFailureReasons = inboundMetrics?.failureReasons ?? [];
+  const visibleInboundFailureReasons =
+    inboundFailureSeverityFilter === "all"
+      ? inboundFailureReasons
+      : inboundFailureReasons.filter((reason) => reason.severity === inboundFailureSeverityFilter);
   const inboundWindowHours = inboundMetrics?.windowHours ?? 24;
   const inboundAlert = inboundMetrics?.alert ?? null;
   const inboundAlertRecommendation = inboundAlert?.recommendation ?? null;
@@ -1175,17 +1219,55 @@ export default function AdminClient() {
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                       <strong>Top Failure Reasons ({inboundWindowHours}h)</strong>
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        Classification from `last_error`
-                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          justifyContent: "flex-end"
+                        }}
+                      >
+                        <label
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 12,
+                            color: "var(--muted)"
+                          }}
+                        >
+                          Severity
+                          <select
+                            value={inboundFailureSeverityFilter}
+                            onChange={(event) =>
+                              setInboundFailureSeverityFilter(
+                                event.target.value as "all" | InboundFailureSeverity
+                              )
+                            }
+                            style={{ marginTop: 0, width: "auto", minWidth: 130 }}
+                          >
+                            <option value="all">All</option>
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                          </select>
+                        </label>
+                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                          Classification + triage from `last_error`
+                        </span>
+                      </div>
                     </div>
-                    {inboundFailureReasons.length === 0 ? (
+                    {visibleInboundFailureReasons.length === 0 ? (
                       <p style={{ margin: 0, color: "var(--muted)" }}>
-                        No failed events in this window.
+                        {inboundFailureReasons.length === 0
+                          ? "No failed events in this window."
+                          : "No failures match the selected severity filter."}
                       </p>
                     ) : (
                       <div style={{ display: "grid", gap: 8 }}>
-                        {inboundFailureReasons.map((reason) => (
+                        {visibleInboundFailureReasons.map((reason) => (
                           <div
                             key={reason.code}
                             style={{
@@ -1196,8 +1278,29 @@ export default function AdminClient() {
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                              <strong>{reason.label}</strong>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <strong>{reason.label}</strong>
+                                <span
+                                  style={{
+                                    padding: "2px 8px",
+                                    borderRadius: 999,
+                                    border: "1px solid",
+                                    fontSize: 10,
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.04em",
+                                    ...getFailureSeverityStyles(reason.severity)
+                                  }}
+                                >
+                                  {reason.severity}
+                                </span>
+                                <span style={{ color: "var(--muted)", fontSize: 11 }}>
+                                  {reason.triageLabel}
+                                </span>
+                              </div>
                               <span style={{ color: "var(--muted)", fontSize: 12 }}>{reason.count}</span>
+                            </div>
+                            <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
+                              Next action: {reason.triageHint}
                             </div>
                             {reason.sampleError ? (
                               <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>

@@ -153,6 +153,48 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
     });
   });
 
+  it("clamps limit floor to 1 for customer history pagination", async () => {
+    const { response } = await getCustomerHistory(
+      `http://localhost/api/tickets/${TICKET_ID}/customer-history?limit=0`
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listCustomerHistory).toHaveBeenCalledWith(CUSTOMER_ID, {
+      limit: 1,
+      cursor: null
+    });
+  });
+
+  it("returns history even when customer record cannot be loaded", async () => {
+    mocks.getCustomerById.mockResolvedValue(null);
+    mocks.listCustomerHistory.mockResolvedValue({
+      items: [
+        {
+          ticketId: "99999999-9999-9999-9999-999999999999",
+          subject: "Prior WhatsApp escalation",
+          status: "pending",
+          priority: "high",
+          requesterEmail: "whatsapp:+27731234567",
+          channel: "whatsapp",
+          lastMessageAt: "2026-02-14T10:00:00.000Z",
+          lastCustomerInboundPreview: "Can I get an update?",
+          lastCustomerInboundAt: "2026-02-14T09:58:00.000Z"
+        }
+      ],
+      nextCursor: null
+    });
+
+    const { response, body } = await getCustomerHistory();
+
+    expect(response.status).toBe(200);
+    expect(body.customer).toBeNull();
+    expect(body.history).toHaveLength(1);
+    expect(body.history[0]).toMatchObject({
+      channel: "whatsapp",
+      requesterEmail: "whatsapp:+27731234567"
+    });
+  });
+
   it("auto-resolves customer for tickets missing customer_id and attaches linkage", async () => {
     mocks.getTicketById.mockResolvedValue(
       buildTicket({
