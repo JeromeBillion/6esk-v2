@@ -1,9 +1,9 @@
-# Email Setup (Plug-and-Play)
+# Email Integration
 
-This guide is designed so you can wire DNS and email routing later without code changes.
+This file is the current runbook + payload contract for inbound/outbound email in 6esk.
 
-## 1) Set Environment Variables (6esk)
-Set these in Railway for the 6esk app:
+## Required 6esk Env Vars
+Set these in your deployment:
 
 ```env
 APP_URL=https://<your-6esk-domain>
@@ -18,62 +18,94 @@ R2_SECRET_ACCESS_KEY=<r2_secret>
 R2_BUCKET=6esk-emails
 ```
 
-## 2) Verify Resend Domain
-1. In Resend, add the domain `6ex.co.za`.
-2. Copy the SPF and DKIM records Resend provides into Cloudflare DNS.
-3. In Resend, click Verify and wait for status to be “Verified”.
+## API Contracts
 
-## 3) Add DMARC
-Add a DMARC TXT record in Cloudflare:
+### `POST /api/email/inbound`
+- Auth: header `x-6esk-secret` is required only when `INBOUND_SHARED_SECRET` is set.
+- Required body fields:
+  - `from`: string
+  - `to`: string or string[]
+- Optional fields:
+  - `cc`, `bcc`: string or string[]
+  - `category`: string
+  - `tags`: string[]
+  - `metadata`: object
+  - `subject`, `text`, `html`: string
+  - `raw`: base64 RFC822
+  - `messageId`, `inReplyTo`: string
+  - `references`: string[]
+  - `date`: ISO string
+  - `attachments[]`: `{ filename, contentType?, size?, contentBase64? }`
 
-```
-Host: _dmarc
-Type: TXT
-Value: v=DMARC1; p=none; rua=mailto:dmarc@6ex.co.za
-```
-
-Adjust policy later to `quarantine` or `reject`.
-
-## 4) Enable Cloudflare Email Routing
-1. Enable Email Routing for `6ex.co.za` in Cloudflare.
-2. Create a catch‑all rule to forward to the Worker.
-
-## 5) Deploy the Email Worker
-From this repo:
-
-```powershell
-cd workers/email-forwarder
-npm install
-npx wrangler deploy
-```
-
-Set Worker secrets:
-
-```powershell
-npx wrangler secret put INBOUND_URL
-npx wrangler secret put INBOUND_SHARED_SECRET
+Example:
+```json
+{
+  "from": "Customer <customer@example.com>",
+  "to": ["support@6ex.co.za"],
+  "subject": "Billing issue",
+  "text": "Hello, I need help with my invoice.",
+  "messageId": "<abc123@example.com>"
+}
 ```
 
-Use these values:
-- `INBOUND_URL` = `https://<your-6esk-domain>/api/email/inbound`
-- `INBOUND_SHARED_SECRET` = the same value as 6esk’s `INBOUND_SHARED_SECRET`
+### `POST /api/email/send`
+- Auth: requires logged-in session user with non-`viewer` role.
+- Also enforces mailbox access for non-admin users.
+- Required body fields:
+  - `from`: string
+  - `to`: string or string[]
+  - `subject`: string
+- Optional:
+  - `cc`, `bcc`, `text`, `html`, `replyTo`
+  - `attachments[]`: `{ filename, contentType?, contentBase64 }`
 
-## 6) Validation Commands
-DNS checks:
+### `POST /api/tickets/create` (platform bridge)
+- Auth modes:
+  - session user (agent/admin), or
+  - `x-6esk-secret` matching `INBOUND_SHARED_SECRET`
+- Required:
+  - `subject`, `description`
+  - external callers should send `from`
+- Optional:
+  - `to`, `descriptionHtml`, `category`, `tags`, `metadata`, `attachments[]`
 
-```powershell
-Resolve-DnsName 6ex.co.za -Type TXT
-Resolve-DnsName _dmarc.6ex.co.za -Type TXT
-```
+## Cloudflare Worker Forwarder
+Worker source: `workers/email-forwarder/index.ts`
 
-Inbound test without DNS (direct API):
+Current worker behavior:
+- Reads inbound raw message
+- Forwards to `INBOUND_URL` with:
+  - `from`
+  - `to[]`
+  - `subject`
+  - `messageId`
+  - `date`
+  - `raw` (base64 RFC822)
+- Adds `x-6esk-secret` when `INBOUND_SHARED_SECRET` is configured
 
+Required worker secrets:
+- `INBOUND_URL=https://<your-6esk-domain>/api/email/inbound`
+- `INBOUND_SHARED_SECRET=<same value as 6esk>`
+
+Note: this repo currently includes worker code only. Add your own Wrangler project files (`wrangler.toml`, package manager config) before `wrangler deploy`.
+
+## DNS Setup
+1. Verify `6ex.co.za` in Resend (SPF + DKIM).
+2. Add DMARC, for example:
+   - `Host: _dmarc`
+   - `Type: TXT`
+   - `Value: v=DMARC1; p=none; rua=mailto:dmarc@6ex.co.za`
+3. Enable Cloudflare Email Routing catch-all and route to the worker.
+
+## Validation
+
+Inbound test:
 ```powershell
 $body = @{
   from = "test@example.com"
   to = "support@6ex.co.za"
   subject = "Inbound test"
-  text = "Hello from direct inbound test"
+  text = "Hello"
   messageId = "<test-message-id-1>"
 } | ConvertTo-Json
 
@@ -84,56 +116,26 @@ Invoke-RestMethod -Method POST `
   -Body $body
 ```
 
-Outbound test (Resend):
+Outbound test:
+- Use the UI while logged in (`/tickets` or `/mail`).
+- Or call `POST /api/email/send` with an authenticated session cookie.
 
-```powershell
-$body = @{
-  from = "support@6ex.co.za"
-  to = "your.personal@gmail.com"
-  subject = "Outbound test"
-  text = "Hello from 6esk outbound"
-} | ConvertTo-Json
+## Inbound Maintenance Jobs
+- Retry + alert in one runner:
+  - `npm run jobs:inbound`
+- Alert check only:
+  - `npm run alert:inbound`
+- Retry endpoint trigger script:
+  - `npm run retry:inbound`
 
-Invoke-RestMethod -Method POST `
-  -Uri "https://<your-6esk-domain>/api/email/send" `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-Production inbound test (after DNS + routing):
-1. Send an email to `support@6ex.co.za`.
-2. Confirm a ticket appears in `/tickets` within 60 seconds.
-3. Reply from 6esk and confirm it lands in your inbox.
-
-## 7) Optional Backfill Job (Retries)
-Use the inbound maintenance runner to retry failed inbound events and trigger alert checks in one command:
-
-```powershell
-npm run jobs:inbound
-```
-
-Useful environment variables:
-
+Useful env vars:
 ```env
 INBOUND_RETRY_LIMIT=25
 INBOUND_ALERT_EVERY_RUN=true
 INBOUND_JOB_INTERVAL_SECONDS=0
 INBOUND_JOB_MAX_RUNS=1
+INBOUND_ALERT_WEBHOOK=
+INBOUND_ALERT_THRESHOLD=5
+INBOUND_ALERT_WINDOW_MINUTES=30
+INBOUND_ALERT_COOLDOWN_MINUTES=60
 ```
-
-Run modes:
-- Cron mode (recommended): keep `INBOUND_JOB_INTERVAL_SECONDS=0` and run `npm run jobs:inbound` every 5-15 minutes in Railway scheduler.
-- Worker mode: set `INBOUND_JOB_INTERVAL_SECONDS=300` and run `npm run jobs:inbound` as a long-running process.
-- Controlled batch mode: set `INBOUND_JOB_MAX_RUNS=12` with an interval to run a finite number of cycles.
-
-## 8) Optional Alerts (External Logging)
-Set a webhook URL (Slack or similar) in `INBOUND_ALERT_WEBHOOK`, then schedule:
-
-```powershell
-npm run alert:inbound
-```
-
-Recommended schedule: every 10 minutes.
-
-You can also configure alert webhook/threshold/window/cooldown from Admin -> Inbound Failures.
-If no DB config exists, 6esk falls back to the `INBOUND_ALERT_*` environment variables.

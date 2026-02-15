@@ -39,6 +39,6 @@ Visit `http://localhost:3000/login` and use the Lead Admin credentials.
 
 Visit `http://localhost:3000/api/health`.
 
-## Email API
+## Docs
 
-Inbound/outbound payload specs are documented in `docs/email-payload.md`.
+Primary docs index: `docs/README.md`.

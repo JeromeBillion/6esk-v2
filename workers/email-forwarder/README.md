@@ -7,5 +7,5 @@ Environment variables
 - `INBOUND_SHARED_SECRET` -> matches `INBOUND_SHARED_SECRET` in 6esk env
 
 Notes
-- Payload matches `docs/email-payload.md` (raw base64 + headers).
+- Payload contract is documented in `docs/email-setup.md`.
 - Attachments and body parsing are handled in the 6esk backend later.
