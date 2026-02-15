@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "@/app/components/AppShell";
 import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
 
@@ -397,6 +397,13 @@ function extractStatusError(payload: Record<string, unknown> | null | undefined)
   return null;
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName;
+  return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+}
+
 export default function TicketsClient() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
@@ -428,6 +435,8 @@ export default function TicketsClient() {
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
+  const ticketSearchRef = useRef<HTMLInputElement | null>(null);
+  const mergeSearchRef = useRef<HTMLInputElement | null>(null);
   const [waReplyAttachments, setWaReplyAttachments] = useState<ReplyAttachment[]>([]);
   const [macros, setMacros] = useState<Macro[]>([]);
   const [selectedMacro, setSelectedMacro] = useState<string>("");
@@ -811,24 +820,27 @@ export default function TicketsClient() {
     setCustomerHistoryLoading(false);
   }
 
-  async function loadMoreCustomerHistory(ticketId: string) {
-    if (!customerHistoryNextCursor) return;
-    setCustomerHistoryLoadingMore(true);
-    const res = await fetch(
-      `/api/tickets/${ticketId}/customer-history?limit=30&cursor=${encodeURIComponent(
-        customerHistoryNextCursor
-      )}`
-    );
-    if (!res.ok) {
-      setCustomerHistoryError("Failed to load older customer history.");
+  const loadMoreCustomerHistory = useCallback(
+    async (ticketId: string) => {
+      if (!customerHistoryNextCursor) return;
+      setCustomerHistoryLoadingMore(true);
+      const res = await fetch(
+        `/api/tickets/${ticketId}/customer-history?limit=30&cursor=${encodeURIComponent(
+          customerHistoryNextCursor
+        )}`
+      );
+      if (!res.ok) {
+        setCustomerHistoryError("Failed to load older customer history.");
+        setCustomerHistoryLoadingMore(false);
+        return;
+      }
+      const payload = await res.json();
+      setCustomerHistory((prev) => [...prev, ...((payload.history ?? []) as CustomerHistoryItem[])]);
+      setCustomerHistoryNextCursor(payload.nextCursor ?? null);
       setCustomerHistoryLoadingMore(false);
-      return;
-    }
-    const payload = await res.json();
-    setCustomerHistory((prev) => [...prev, ...((payload.history ?? []) as CustomerHistoryItem[])]);
-    setCustomerHistoryNextCursor(payload.nextCursor ?? null);
-    setCustomerHistoryLoadingMore(false);
-  }
+    },
+    [customerHistoryNextCursor]
+  );
 
   async function loadMessageDetail(messageId: string) {
     setLoadingMessage(true);
@@ -852,6 +864,25 @@ export default function TicketsClient() {
       await loadMessageDetail(messageId);
     }
   }
+
+  const toggleMergePanel = useCallback((force?: boolean) => {
+    setShowMergePanel((prev) => {
+      const next = typeof force === "boolean" ? force : !prev;
+      if (!next) {
+        setMergePreflightError(null);
+        setMergePreflightLoading(false);
+        setTicketMergePreflight(null);
+        setCustomerMergePreflight(null);
+        setShowMergeConfirmStep(false);
+        setMergeAcknowledgeInput("");
+      } else {
+        requestAnimationFrame(() => {
+          mergeSearchRef.current?.focus();
+        });
+      }
+      return next;
+    });
+  }, []);
 
   async function searchMergeTargets() {
     const query = mergeQuery.trim();
@@ -1147,19 +1178,33 @@ export default function TicketsClient() {
 
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (target) {
-        const tagName = target.tagName;
-        if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
-          return;
-        }
-      }
+      if (isEditableTarget(event.target)) return;
       if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
-      if (tickets.length === 0) {
+
+      if (event.key === "/") {
+        event.preventDefault();
+        ticketSearchRef.current?.focus();
         return;
       }
+
+      if (event.key === "m") {
+        if (!activeTicketId || user?.role_name === "viewer") return;
+        event.preventDefault();
+        toggleMergePanel();
+        return;
+      }
+
+      if (event.key === "h") {
+        if (customerHistoryNextCursor && !customerHistoryLoadingMore && activeTicketId) {
+          event.preventDefault();
+          void loadMoreCustomerHistory(activeTicketId);
+        }
+        return;
+      }
+
+      if (tickets.length === 0) return;
 
       const currentIndex = tickets.findIndex((ticket) => ticket.id === activeTicketId);
 
@@ -1183,7 +1228,15 @@ export default function TicketsClient() {
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [tickets, activeTicketId]);
+  }, [
+    tickets,
+    activeTicketId,
+    user?.role_name,
+    customerHistoryNextCursor,
+    customerHistoryLoadingMore,
+    loadMoreCustomerHistory,
+    toggleMergePanel
+  ]);
 
   useEffect(() => {
     if (!activeTicketId) {
@@ -1896,12 +1949,17 @@ export default function TicketsClient() {
               <label>
                 Search
                 <input
+                  ref={ticketSearchRef}
                   type="text"
                   placeholder="Subject or requester"
                   value={filterQuery}
                   onChange={(event) => setFilterQuery(event.target.value)}
                 />
               </label>
+              <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
+                Shortcuts: <kbd>/</kbd> search, <kbd>j</kbd>/<kbd>k</kbd> navigate, <kbd>r</kbd>{" "}
+                reply, <kbd>m</kbd> merge panel, <kbd>h</kbd> load older history.
+              </p>
               {user?.role_name === "lead_admin" ? (
                 <label>
                   Assignment
@@ -2751,20 +2809,7 @@ export default function TicketsClient() {
                     {canMerge ? (
                       <button
                         type="button"
-                        onClick={() =>
-                          setShowMergePanel((prev) => {
-                            const next = !prev;
-                            if (!next) {
-                              setMergePreflightError(null);
-                              setMergePreflightLoading(false);
-                              setTicketMergePreflight(null);
-                              setCustomerMergePreflight(null);
-                              setShowMergeConfirmStep(false);
-                              setMergeAcknowledgeInput("");
-                            }
-                            return next;
-                          })
-                        }
+                        onClick={() => toggleMergePanel()}
                         style={{
                           padding: "6px 10px",
                           borderRadius: 8,
@@ -2808,6 +2853,7 @@ export default function TicketsClient() {
                       </p>
                       <div className="ticket-merge-search">
                         <input
+                          ref={mergeSearchRef}
                           type="text"
                           value={mergeQuery}
                           onChange={(event) => setMergeQuery(event.target.value)}
