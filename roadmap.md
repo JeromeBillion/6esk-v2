@@ -112,6 +112,7 @@ These are the “performance reports” referenced in the PRD.
 - AI `send_reply` now enforces out-of-hours escalation policy: outside working hours can auto-create draft reviews and apply configured escalation tags instead of sending.
 - Inbound hardening diagnostics now include retry pressure signals (retry processed/failed counts, oldest failed age, high-attempt backlog) plus alert-threshold recommendation ranges from recent history.
 - Inbound hardening diagnostics now classify top failure reasons from `inbound_events.last_error`, including sample errors in Admin for faster triage.
+- Inbound failure webhook alerts now include top classified failure reasons, so on-call notifications carry immediate triage context instead of count-only signals.
 - Mail workflow UX now includes keyboard shortcuts for core actions (`/` search, `c` compose, `j/k` navigation, `r` reply, `f` forward, `s` star, `p` pin) with inline shortcut hints.
 - Support workflow UX now includes keyboard shortcuts for fast triage (`/` search tickets, `j/k` navigate, `r` focus reply, `m` toggle merge panel, `h` load older customer history) with inline shortcut hints.
 - Customer History preview now supports hover/focus/tap with an active-ticket fallback so latest inbound context remains visible on mobile/touch devices.

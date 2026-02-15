@@ -1,5 +1,9 @@
 import { db } from "@/server/db";
 import { getInboundAlertConfig } from "@/server/email/inbound-alert-config";
+import {
+  aggregateInboundFailureReasons,
+  type InboundFailureReason
+} from "@/server/email/inbound-metrics";
 
 type AlertResult = {
   sent: boolean;
@@ -9,6 +13,7 @@ type AlertResult = {
   windowMinutes?: number;
   cooldownMinutes?: number;
   source?: "db" | "env";
+  topFailureReasons?: InboundFailureReason[];
 };
 
 async function getFailureCount(windowMinutes: number) {
@@ -20,6 +25,23 @@ async function getFailureCount(windowMinutes: number) {
     [windowMinutes.toString()]
   );
   return Number(result.rows[0]?.count ?? 0);
+}
+
+async function getTopFailureReasons(windowMinutes: number, limit = 3) {
+  const result = await db.query<{ last_error: string | null; count: string | number }>(
+    `SELECT
+       COALESCE(NULLIF(last_error, ''), 'unknown') AS last_error,
+       COUNT(*)::int AS count
+     FROM inbound_events
+     WHERE status = 'failed'
+       AND created_at >= now() - ($1::text || ' minutes')::interval
+     GROUP BY 1
+     ORDER BY 2 DESC
+     LIMIT 25`,
+    [windowMinutes.toString()]
+  );
+
+  return aggregateInboundFailureReasons(result.rows, limit);
 }
 
 async function getLastAlertSent() {
@@ -103,11 +125,17 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
     }
   }
 
+  const topFailureReasons = await getTopFailureReasons(windowMinutes, 3);
+  const topReasonSummary = topFailureReasons.length
+    ? topFailureReasons.map((reason) => `${reason.label} (${reason.count})`).join(", ")
+    : "No classified reasons";
+
   const payload = {
-    text: `6esk inbound failures detected: ${failures} in the last ${windowMinutes} minutes.`,
+    text: `6esk inbound failures detected: ${failures} in the last ${windowMinutes} minutes. Top reasons: ${topReasonSummary}.`,
     failures,
     windowMinutes,
     threshold,
+    topFailureReasons,
     timestamp: new Date().toISOString()
   };
 
@@ -121,6 +149,7 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
     threshold,
     windowMinutes,
     cooldownMinutes,
-    source: config.source
+    source: config.source,
+    topFailureReasons
   };
 }
