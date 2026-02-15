@@ -118,6 +118,7 @@ These are the “performance reports” referenced in the PRD.
 - Support workflow UX now includes keyboard shortcuts for fast triage (`/` search tickets, `j/k` navigate, `r` focus reply, `m` toggle merge panel, `h` load older customer history) with inline shortcut hints.
 - Customer History preview now supports hover/focus/tap with an active-ticket fallback so latest inbound context remains visible on mobile/touch devices.
 - Added API contract tests for `/api/tickets/[ticketId]/customer-history` covering auth/assignment guardrails, auto-link resolution, and pagination normalization.
+- Expanded customer history API tests to cover WhatsApp requester auto-resolution (`whatsapp:+number` -> phone identity lookup path).
 
 **Roadmap Status (as of 2026-02-14)**
 | Phase | Status |

@@ -180,6 +180,31 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
     expect(mocks.listCustomerHistory).toHaveBeenCalledWith(CUSTOMER_ID, { limit: 30, cursor: null });
   });
 
+  it("uses WhatsApp requester number for auto-resolution when ticket requester is whatsapp", async () => {
+    mocks.getTicketById.mockResolvedValue(
+      buildTicket({
+        customer_id: null,
+        requester_email: "whatsapp:+27731234567"
+      })
+    );
+    mocks.resolveOrCreateCustomerForInbound.mockResolvedValue({
+      customerId: CUSTOMER_ID,
+      kind: "unregistered"
+    });
+
+    const { response, body } = await getCustomerHistory();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      customer: expect.objectContaining({ id: CUSTOMER_ID })
+    });
+    expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith({
+      inboundEmail: null,
+      inboundPhone: "+27731234567"
+    });
+    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID);
+  });
+
   it("returns empty customer/history when customer cannot be resolved", async () => {
     mocks.getTicketById.mockResolvedValue(
       buildTicket({
