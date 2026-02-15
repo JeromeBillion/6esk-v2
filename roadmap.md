@@ -103,6 +103,7 @@ These are the “performance reports” referenced in the PRD.
 - Added API-level tests for ticket merge execution blocking paths (`cross_channel_not_allowed`, `too_large`) and success response contract.
 - Added API-level preflight tests for ticket merge blocking states (`cross_channel_not_allowed`, `too_large`) and merge error status mapping.
 - Added customer merge API and preflight contract tests (blocking codes/status mapping + success payloads) to mirror ticket-merge coverage depth.
+- Added admin inbound alert trigger API tests covering lead-admin/shared-secret auth paths and audit logging side effects.
 - Merge execution APIs now require explicit irreversible acknowledgment text (server-side validation), with Support UI passing the same acknowledgment string in submit payloads.
 - Expanded merge endpoint contract tests for auth/permissions (unauthorized, viewer-forbidden, and ticket assignment guardrails for non-admin users).
 - Admin now includes a Profile Lookup diagnostics panel backed by `/api/admin/profile-lookup/metrics` (hit/miss/error/timeout rates + avg/p95 latency trend over selectable windows).
