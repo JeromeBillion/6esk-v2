@@ -164,4 +164,19 @@ describe("POST /api/customers/merge", () => {
     expect(body).toMatchObject({ error: "Invalid payload" });
     expect(mocks.mergeCustomers).not.toHaveBeenCalled();
   });
+
+  it("returns 400 when source and target customer IDs are identical", async () => {
+    const { response, body } = await postMerge({
+      sourceCustomerId: SOURCE_CUSTOMER_ID,
+      targetCustomerId: SOURCE_CUSTOMER_ID,
+      acknowledgement: ACK_TEXT
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "invalid_input",
+      error: "Source and target customers must be different."
+    });
+    expect(mocks.mergeCustomers).not.toHaveBeenCalled();
+  });
 });

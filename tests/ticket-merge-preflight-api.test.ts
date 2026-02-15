@@ -206,4 +206,19 @@ describe("POST /api/tickets/merge/preflight", () => {
       error: "Source and target tickets must be different."
     });
   });
+
+  it("returns 400 when source and target ticket IDs are identical", async () => {
+    const { response, body } = await postPreflight({
+      sourceTicketId: SOURCE_TICKET_ID,
+      targetTicketId: SOURCE_TICKET_ID
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "invalid_input",
+      error: "Source and target tickets must be different."
+    });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
+    expect(mocks.preflightTicketMerge).not.toHaveBeenCalled();
+  });
 });

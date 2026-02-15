@@ -104,6 +104,7 @@ These are the “performance reports” referenced in the PRD.
 - Added API-level preflight tests for ticket merge blocking states (`cross_channel_not_allowed`, `too_large`) and merge error status mapping.
 - Added customer merge API and preflight contract tests (blocking codes/status mapping + success payloads) to mirror ticket-merge coverage depth.
 - Added admin inbound alert trigger API tests covering lead-admin/shared-secret auth paths and audit logging side effects.
+- Merge APIs now short-circuit self-merge attempts (`source === target`) with `invalid_input` before DB lookup/execution; execution and preflight route tests added for ticket + customer flows.
 - Merge execution APIs now require explicit irreversible acknowledgment text (server-side validation), with Support UI passing the same acknowledgment string in submit payloads.
 - Expanded merge endpoint contract tests for auth/permissions (unauthorized, viewer-forbidden, and ticket assignment guardrails for non-admin users).
 - Admin now includes a Profile Lookup diagnostics panel backed by `/api/admin/profile-lookup/metrics` (hit/miss/error/timeout rates + avg/p95 latency trend over selectable windows).
@@ -114,6 +115,7 @@ These are the “performance reports” referenced in the PRD.
 - Inbound hardening diagnostics now include retry pressure signals (retry processed/failed counts, oldest failed age, high-attempt backlog) plus alert-threshold recommendation ranges from recent history.
 - Inbound hardening diagnostics now classify top failure reasons from `inbound_events.last_error`, including sample errors in Admin for faster triage.
 - Inbound failure webhook alerts now include top classified failure reasons, so on-call notifications carry immediate triage context instead of count-only signals.
+- Admin inbound alert trigger route now returns structured 500 responses on delivery errors and records `inbound_alert_check_failed` audit events.
 - Mail workflow UX now includes keyboard shortcuts for core actions (`/` search, `c` compose, `j/k` navigation, `r` reply, `f` forward, `s` star, `p` pin) with inline shortcut hints.
 - Support workflow UX now includes keyboard shortcuts for fast triage (`/` search tickets, `j/k` navigate, `r` focus reply, `m` toggle merge panel, `h` load older customer history) with inline shortcut hints.
 - Customer History preview now supports hover/focus/tap with an active-ticket fallback so latest inbound context remains visible on mobile/touch devices.

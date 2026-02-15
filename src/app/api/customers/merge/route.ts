@@ -36,6 +36,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+  if (parsed.data.sourceCustomerId === parsed.data.targetCustomerId) {
+    return Response.json(
+      {
+        error: "Source and target customers must be different.",
+        code: "invalid_input"
+      },
+      { status: 400 }
+    );
+  }
+
   try {
     const result = await mergeCustomers({
       sourceCustomerId: parsed.data.sourceCustomerId,

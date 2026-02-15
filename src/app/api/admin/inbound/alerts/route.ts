@@ -3,6 +3,23 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { sendInboundFailureAlert } from "@/server/email/inbound-alerts";
 
+async function safeRecordAuditLog(data: {
+  actorUserId: string | null;
+  action: string;
+  payload: Record<string, unknown>;
+}) {
+  try {
+    await recordAuditLog({
+      actorUserId: data.actorUserId,
+      action: data.action,
+      entityType: "inbound_events",
+      data: data.payload
+    });
+  } catch (error) {
+    // Audit logging should never block alert checks.
+  }
+}
+
 export async function POST(request: Request) {
   const user = await getSessionUser();
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
@@ -12,14 +29,29 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await sendInboundFailureAlert();
+  try {
+    const result = await sendInboundFailureAlert();
 
-  await recordAuditLog({
-    actorUserId: user?.id ?? null,
-    action: "inbound_alert_checked",
-    entityType: "inbound_events",
-    data: result
-  });
+    await safeRecordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "inbound_alert_checked",
+      payload: result as Record<string, unknown>
+    });
 
-  return Response.json({ status: "ok", ...result });
+    return Response.json({ status: "ok", ...result });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    await safeRecordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "inbound_alert_check_failed",
+      payload: { error: detail }
+    });
+    return Response.json(
+      {
+        error: "Failed to run inbound alert check",
+        detail
+      },
+      { status: 500 }
+    );
+  }
 }

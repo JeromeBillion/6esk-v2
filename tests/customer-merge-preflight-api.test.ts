@@ -166,4 +166,18 @@ describe("POST /api/customers/merge/preflight", () => {
       blockingReason: null
     });
   });
+
+  it("returns 400 when source and target customer IDs are identical", async () => {
+    const { response, body } = await postPreflight({
+      sourceCustomerId: SOURCE_CUSTOMER_ID,
+      targetCustomerId: SOURCE_CUSTOMER_ID
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "invalid_input",
+      error: "Source and target customers must be different."
+    });
+    expect(mocks.preflightCustomerMerge).not.toHaveBeenCalled();
+  });
 });

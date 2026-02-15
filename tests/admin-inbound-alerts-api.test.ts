@@ -114,4 +114,29 @@ describe("POST /api/admin/inbound/alerts", () => {
       })
     );
   });
+
+  it("returns 500 and records failure audit when alert execution throws", async () => {
+    const admin = buildUser("lead_admin");
+    mocks.getSessionUser.mockResolvedValue(admin);
+    mocks.sendInboundFailureAlert.mockRejectedValue(new Error("Webhook failed with 502"));
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/inbound/alerts", {
+        method: "POST"
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toMatchObject({
+      error: "Failed to run inbound alert check",
+      detail: "Webhook failed with 502"
+    });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: admin.id,
+        action: "inbound_alert_check_failed"
+      })
+    );
+  });
 });

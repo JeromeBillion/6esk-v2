@@ -32,6 +32,16 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId } = parsed.data;
+  if (sourceTicketId === targetTicketId) {
+    return Response.json(
+      {
+        error: "Source and target tickets must be different.",
+        code: "invalid_input"
+      },
+      { status: 400 }
+    );
+  }
+
   const [source, target] = await Promise.all([
     getTicketById(sourceTicketId),
     getTicketById(targetTicketId)
