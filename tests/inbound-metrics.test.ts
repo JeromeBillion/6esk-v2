@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateInboundFailureReasons,
   buildInboundAlertThresholdRecommendation,
-  buildInboundHourlySeries
+  buildInboundHourlySeries,
+  classifyInboundFailureReason
 } from "../src/server/email/inbound-metrics";
 
 describe("buildInboundHourlySeries", () => {
@@ -87,6 +89,39 @@ describe("buildInboundHourlySeries", () => {
       suggestedMaxThreshold: 9,
       inRange: true,
       reason: "insufficient_history"
+    });
+  });
+
+  it("classifies inbound failure reasons from error text", () => {
+    expect(classifyInboundFailureReason("Stored payload is invalid for inbound schema")).toMatchObject({
+      code: "invalid_payload"
+    });
+    expect(classifyInboundFailureReason("timeout while calling provider")).toMatchObject({
+      code: "provider_timeout"
+    });
+    expect(classifyInboundFailureReason("429 rate limit")).toMatchObject({
+      code: "provider_rate_limited"
+    });
+    expect(classifyInboundFailureReason("postgres connection failed")).toMatchObject({
+      code: "database_error"
+    });
+  });
+
+  it("aggregates top failure reasons by classified code", () => {
+    const top = aggregateInboundFailureReasons([
+      { last_error: "timeout at upstream provider", count: 2 },
+      { last_error: "request aborted due to timeout", count: 3 },
+      { last_error: "Stored payload is invalid for inbound schema", count: 4 },
+      { last_error: "429 rate limit", count: 1 }
+    ]);
+
+    expect(top[0]).toMatchObject({
+      code: "provider_timeout",
+      count: 5
+    });
+    expect(top[1]).toMatchObject({
+      code: "invalid_payload",
+      count: 4
     });
   });
 });

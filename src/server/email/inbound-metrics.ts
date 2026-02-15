@@ -41,12 +41,34 @@ type InboundLastAlertRow = {
   last_sent_at: string | Date | null;
 };
 
+type InboundFailureReasonRow = {
+  last_error: string | null;
+  count: NumericLike;
+};
+
 export type InboundHourlyPoint = {
   hour: string;
   failed: number;
   processed: number;
   processing: number;
   attempts: number;
+};
+
+export type InboundFailureReasonCode =
+  | "invalid_payload"
+  | "provider_timeout"
+  | "provider_rate_limited"
+  | "auth_error"
+  | "storage_error"
+  | "database_error"
+  | "duplicate_event"
+  | "unknown";
+
+export type InboundFailureReason = {
+  code: InboundFailureReasonCode;
+  label: string;
+  count: number;
+  sampleError: string | null;
 };
 
 type InboundAlertStatus = "below_threshold" | "cooldown" | "at_or_above_threshold";
@@ -82,6 +104,94 @@ function toPositiveInteger(value: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   const rounded = Math.trunc(value);
   return rounded > 0 ? rounded : fallback;
+}
+
+function normalizeErrorText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+export function classifyInboundFailureReason(
+  error: string | null | undefined
+): { code: InboundFailureReasonCode; label: string } {
+  const text = normalizeErrorText(error);
+  if (!text || text === "unknown") {
+    return { code: "unknown", label: "Unknown" };
+  }
+
+  if (text.includes("duplicate")) {
+    return { code: "duplicate_event", label: "Duplicate Event" };
+  }
+
+  if (
+    (text.includes("invalid") && (text.includes("payload") || text.includes("schema"))) ||
+    text.includes("zod")
+  ) {
+    return { code: "invalid_payload", label: "Invalid Payload" };
+  }
+
+  if (text.includes("timeout") || text.includes("abort")) {
+    return { code: "provider_timeout", label: "Provider Timeout" };
+  }
+
+  if (text.includes("429") || text.includes("rate limit")) {
+    return { code: "provider_rate_limited", label: "Rate Limited" };
+  }
+
+  if (
+    text.includes("unauthorized") ||
+    text.includes("forbidden") ||
+    text.includes("invalid secret") ||
+    text.includes("signature")
+  ) {
+    return { code: "auth_error", label: "Auth / Signature Error" };
+  }
+
+  if (text.includes("r2") || text.includes("s3") || text.includes("storage")) {
+    return { code: "storage_error", label: "Storage Error" };
+  }
+
+  if (
+    text.includes("postgres") ||
+    text.includes("database") ||
+    text.includes("sql") ||
+    text.includes("db")
+  ) {
+    return { code: "database_error", label: "Database Error" };
+  }
+
+  return { code: "unknown", label: "Unknown" };
+}
+
+export function aggregateInboundFailureReasons(
+  rows: Array<{ last_error: string | null; count: NumericLike }>,
+  limit = 5
+): InboundFailureReason[] {
+  const byCode = new Map<InboundFailureReasonCode, InboundFailureReason>();
+
+  for (const row of rows) {
+    const count = Math.max(0, toNumber(row.count));
+    if (!count) continue;
+
+    const reason = classifyInboundFailureReason(row.last_error);
+    const existing = byCode.get(reason.code);
+    if (existing) {
+      existing.count += count;
+      if (!existing.sampleError && row.last_error) {
+        existing.sampleError = row.last_error;
+      }
+      continue;
+    }
+    byCode.set(reason.code, {
+      code: reason.code,
+      label: reason.label,
+      count,
+      sampleError: row.last_error ?? null
+    });
+  }
+
+  return [...byCode.values()]
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, Math.max(1, limit));
 }
 
 function minutesSince(value: string | Date | null | undefined, now = new Date()) {
@@ -190,7 +300,8 @@ export async function getInboundMetrics(hours = 24) {
     seriesResult,
     currentFailuresResult,
     alertHistoryResult,
-    lastAlertResult
+    lastAlertResult,
+    reasonResult
   ] = await Promise.all([
     db.query<InboundSummaryRow>(
       `SELECT
@@ -281,6 +392,18 @@ export async function getInboundMetrics(hours = 24) {
        FROM inbound_alerts
        WHERE alert_type = 'inbound_failures'
        LIMIT 1`
+    ),
+    db.query<InboundFailureReasonRow>(
+      `SELECT
+         COALESCE(NULLIF(last_error, ''), 'unknown') AS last_error,
+         COUNT(*)::int AS count
+       FROM inbound_events
+       WHERE status = 'failed'
+         AND updated_at >= now() - ($1::int * interval '1 hour')
+       GROUP BY 1
+       ORDER BY 2 DESC
+       LIMIT 25`,
+      [windowHours]
     )
   ]);
 
@@ -333,6 +456,7 @@ export async function getInboundMetrics(hours = 24) {
     maxBucketFailures: toNumber(history.max_bucket_failures),
     bucketCount: toNumber(history.bucket_count)
   });
+  const failureReasons = aggregateInboundFailureReasons(reasonResult.rows);
 
   return {
     generatedAt: now.toISOString(),
@@ -367,6 +491,7 @@ export async function getInboundMetrics(hours = 24) {
       wouldSendNow: alertStatus === "at_or_above_threshold" && Boolean(alertConfig.webhookUrl),
       recommendation
     },
+    failureReasons,
     series: buildInboundHourlySeries(seriesResult.rows, windowHours, now)
   };
 }

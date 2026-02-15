@@ -105,6 +105,20 @@ type InboundMetrics = {
       bucketCount: number;
     };
   };
+  failureReasons: Array<{
+    code:
+      | "invalid_payload"
+      | "provider_timeout"
+      | "provider_rate_limited"
+      | "auth_error"
+      | "storage_error"
+      | "database_error"
+      | "duplicate_event"
+      | "unknown";
+    label: string;
+    count: number;
+    sampleError: string | null;
+  }>;
   series: InboundMetricsPoint[];
 };
 
@@ -416,6 +430,7 @@ export default function AdminClient() {
   }
 
   const inboundSeries = inboundMetrics?.series ?? [];
+  const inboundFailureReasons = inboundMetrics?.failureReasons ?? [];
   const inboundWindowHours = inboundMetrics?.windowHours ?? 24;
   const inboundAlert = inboundMetrics?.alert ?? null;
   const inboundAlertRecommendation = inboundAlert?.recommendation ?? null;
@@ -1148,6 +1163,51 @@ export default function AdminClient() {
                         {inboundMetrics.summary.p95FailedAttemptCount}
                       </div>
                     </div>
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <strong>Top Failure Reasons ({inboundWindowHours}h)</strong>
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Classification from `last_error`
+                      </span>
+                    </div>
+                    {inboundFailureReasons.length === 0 ? (
+                      <p style={{ margin: 0, color: "var(--muted)" }}>
+                        No failed events in this window.
+                      </p>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {inboundFailureReasons.map((reason) => (
+                          <div
+                            key={reason.code}
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: 8,
+                              background: "rgba(10, 12, 18, 0.45)"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <strong>{reason.label}</strong>
+                              <span style={{ color: "var(--muted)", fontSize: 12 }}>{reason.count}</span>
+                            </div>
+                            {reason.sampleError ? (
+                              <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
+                                {reason.sampleError}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div

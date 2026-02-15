@@ -1814,6 +1814,8 @@ export default function TicketsClient() {
     draftQueue.length > 0 && draftQueueSelectedIds.length === draftQueue.length;
   const hoveredHistoryItem =
     customerHistory.find((item) => item.ticketId === hoveredHistoryTicketId) ?? null;
+  const previewHistoryItem =
+    hoveredHistoryItem ?? customerHistory.find((item) => item.ticketId === activeTicketId) ?? null;
   const canMerge = user?.role_name !== "viewer";
   const replyRecipientOptions = useMemo(() => {
     if (!activeTicket) return [] as ReplyRecipientOption[];
@@ -3541,6 +3543,9 @@ export default function TicketsClient() {
                                 onClick={() => setActiveTicketId(item.ticketId)}
                                 onMouseEnter={() => setHoveredHistoryTicketId(item.ticketId)}
                                 onMouseLeave={() => setHoveredHistoryTicketId(null)}
+                                onFocus={() => setHoveredHistoryTicketId(item.ticketId)}
+                                onBlur={() => setHoveredHistoryTicketId(null)}
+                                onTouchStart={() => setHoveredHistoryTicketId(item.ticketId)}
                               >
                                 <div className="customer-history-item-top">
                                   <strong>{item.subject ?? "(no subject)"}</strong>
@@ -3581,21 +3586,22 @@ export default function TicketsClient() {
                     )}
                     <div className="customer-history-hover">
                       <strong>Last customer message</strong>
-                      {hoveredHistoryItem ? (
+                      {previewHistoryItem ? (
                         <div className="customer-history-hover-body">
                           <span className="customer-history-hover-time">
-                            {hoveredHistoryItem.lastCustomerInboundAt
-                              ? new Date(hoveredHistoryItem.lastCustomerInboundAt).toLocaleString()
+                            {previewHistoryItem.lastCustomerInboundAt
+                              ? new Date(previewHistoryItem.lastCustomerInboundAt).toLocaleString()
                               : "No inbound timestamp"}
                           </span>
                           <p>
-                            {hoveredHistoryItem.lastCustomerInboundPreview ??
+                            {previewHistoryItem.lastCustomerInboundPreview ??
                               "No inbound customer message found for this ticket."}
                           </p>
                         </div>
                       ) : (
                         <p className="customer-history-hover-empty">
-                          Hover a ticket to preview the latest inbound customer message.
+                          Hover, focus, or tap a ticket to preview the latest inbound customer
+                          message.
                         </p>
                       )}
                     </div>
