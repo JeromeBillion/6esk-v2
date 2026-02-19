@@ -7,10 +7,21 @@ type ChannelSummaryRow = {
   email_outbound: number | string | null;
   whatsapp_inbound: number | string | null;
   whatsapp_outbound: number | string | null;
+  voice_inbound: number | string | null;
+  voice_outbound: number | string | null;
   whatsapp_sent: number | string | null;
   whatsapp_delivered: number | string | null;
   whatsapp_read: number | string | null;
   whatsapp_failed: number | string | null;
+};
+
+type VoiceSummaryRow = {
+  completed: number | string | null;
+  failed: number | string | null;
+  no_answer: number | string | null;
+  busy: number | string | null;
+  canceled: number | string | null;
+  avg_duration_seconds: number | string | null;
 };
 
 type MergeCountRow = {
@@ -101,6 +112,8 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'outbound')::int AS email_outbound,
        COUNT(*) FILTER (WHERE channel = 'whatsapp' AND direction = 'inbound')::int AS whatsapp_inbound,
        COUNT(*) FILTER (WHERE channel = 'whatsapp' AND direction = 'outbound')::int AS whatsapp_outbound,
+       COUNT(*) FILTER (WHERE channel = 'voice' AND direction = 'inbound')::int AS voice_inbound,
+       COUNT(*) FILTER (WHERE channel = 'voice' AND direction = 'outbound')::int AS voice_outbound,
        COUNT(*) FILTER (
          WHERE channel = 'whatsapp' AND direction = 'outbound' AND wa_status = 'sent'
        )::int AS whatsapp_sent,
@@ -118,15 +131,38 @@ export async function GET(request: Request) {
     [start, end]
   );
 
+  const voiceSummaryResult = await db.query<VoiceSummaryRow>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+       COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+       COUNT(*) FILTER (WHERE status = 'no_answer')::int AS no_answer,
+       COUNT(*) FILTER (WHERE status = 'busy')::int AS busy,
+       COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled,
+       AVG(duration_seconds)::numeric AS avg_duration_seconds
+     FROM call_sessions
+     WHERE queued_at >= $1 AND queued_at < $2`,
+    [start, end]
+  );
+
   const channelSummary = channelSummaryResult.rows[0] ?? {
     email_inbound: 0,
     email_outbound: 0,
     whatsapp_inbound: 0,
     whatsapp_outbound: 0,
+    voice_inbound: 0,
+    voice_outbound: 0,
     whatsapp_sent: 0,
     whatsapp_delivered: 0,
     whatsapp_read: 0,
     whatsapp_failed: 0
+  };
+  const voiceSummary = voiceSummaryResult.rows[0] ?? {
+    completed: 0,
+    failed: 0,
+    no_answer: 0,
+    busy: 0,
+    canceled: 0,
+    avg_duration_seconds: 0
   };
 
   const ticketMergeSummaryResult = await db.query<MergeCountRow>(
@@ -213,6 +249,16 @@ export async function GET(request: Request) {
         delivered: toInt(channelSummary.whatsapp_delivered),
         read: toInt(channelSummary.whatsapp_read),
         failed: toInt(channelSummary.whatsapp_failed)
+      },
+      voice: {
+        inbound: toInt(channelSummary.voice_inbound),
+        outbound: toInt(channelSummary.voice_outbound),
+        completed: toInt(voiceSummary.completed),
+        failed: toInt(voiceSummary.failed),
+        noAnswer: toInt(voiceSummary.no_answer),
+        busy: toInt(voiceSummary.busy),
+        canceled: toInt(voiceSummary.canceled),
+        avgDurationSeconds: Number(voiceSummary.avg_duration_seconds ?? 0)
       }
     },
     merges: {

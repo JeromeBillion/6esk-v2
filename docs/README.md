@@ -11,6 +11,16 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Current customer identity, customer history, and merge behavior/spec
 - `docs/webagent-escalation-dependencies.md`
   - Cross-repo env/secret map for prediction backend, Venus runtime, and 6esk
+- `docs/call-capabilities-plan.md`
+  - Inbound/outbound voice capability roadmap and implementation phases
+- `docs/call-capabilities-backlog.md`
+  - Ticketized execution backlog with dependencies, estimates, and sprint cut
+- `docs/call-ops-runbook.md`
+  - Call operations runbook (replay drill, outbox load/retry drill, rollback)
+- `docs/privacy-retention-policy.md`
+  - Voice consent source-of-truth and recording/transcript retention wording
+- `Venus-Voice.md` (repo root)
+  - Venus-to-6esk AI voice integration contract and safety model
 
 ## Culled
 Removed as stale/duplicative:

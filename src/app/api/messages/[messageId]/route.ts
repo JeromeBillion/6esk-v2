@@ -50,6 +50,8 @@ export async function GET(
     source: string | null;
     payload: Record<string, unknown> | null;
   }> = [];
+  let callSessionId: string | null = null;
+  let transcript: { available: boolean; text: string | null } | null = null;
   if (message.channel === "whatsapp") {
     const eventsResult = await db.query<{
       id: string;
@@ -75,6 +77,35 @@ export async function GET(
           : null,
       payload: row.payload ?? null
     }));
+  }
+  if (message.channel === "voice") {
+    const callSessionResult = await db.query<{
+      id: string;
+      transcript_r2_key: string | null;
+    }>(
+      `SELECT id, transcript_r2_key
+       FROM call_sessions
+       WHERE message_id = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [message.id]
+    );
+    const session = callSessionResult.rows[0];
+    if (session) {
+      callSessionId = session.id;
+      transcript = {
+        available: Boolean(session.transcript_r2_key),
+        text: null
+      };
+      if (session.transcript_r2_key) {
+        try {
+          const { buffer } = await getObjectBuffer(session.transcript_r2_key);
+          transcript.text = buffer.toString("utf-8");
+        } catch {
+          transcript.text = null;
+        }
+      }
+    }
   }
 
   let text: string | null = null;
@@ -110,6 +141,8 @@ export async function GET(
       waContact: message.wa_contact ?? null,
       conversationId: message.conversation_id ?? null,
       provider: message.provider ?? null,
+      callSessionId,
+      transcript,
       statusEvents,
       text,
       html,

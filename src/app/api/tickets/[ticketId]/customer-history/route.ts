@@ -30,12 +30,16 @@ export async function GET(
 
   let customerId = ticket.customer_id;
   if (!customerId) {
-    const requesterEmail = ticket.requester_email.startsWith("whatsapp:")
+    const requesterEmail =
+      ticket.requester_email.startsWith("whatsapp:") ||
+      ticket.requester_email.startsWith("voice:")
       ? null
       : ticket.requester_email;
     const requesterPhone = ticket.requester_email.startsWith("whatsapp:")
       ? ticket.requester_email.replace(/^whatsapp:/, "")
-      : null;
+      : ticket.requester_email.startsWith("voice:")
+        ? ticket.requester_email.replace(/^voice:/, "")
+        : null;
     const customerResolution = await resolveOrCreateCustomerForInbound({
       inboundEmail: requesterEmail,
       inboundPhone: requesterPhone

@@ -23,6 +23,16 @@ type Overview = {
       read: number;
       failed: number;
     };
+    voice: {
+      inbound: number;
+      outbound: number;
+      completed: number;
+      failed: number;
+      noAnswer: number;
+      busy: number;
+      canceled: number;
+      avgDurationSeconds: number;
+    };
   };
   merges?: {
     ticketMerges: number;
@@ -60,6 +70,18 @@ type Sla = {
 type VolumePoint = {
   day: string;
   count: number;
+};
+
+type VoiceVolumePoint = {
+  day: string;
+  inbound: number;
+  outbound: number;
+  completed: number;
+  failed: number;
+  noAnswer: number;
+  busy: number;
+  canceled: number;
+  avgDurationSeconds: number;
 };
 
 type WhatsAppStatusSeries = {
@@ -109,11 +131,13 @@ export default function AnalyticsClient() {
   const [volume, setVolume] = useState<{
     created: VolumePoint[];
     solved: VolumePoint[];
+    voice: VoiceVolumePoint[];
     whatsappSource: "all" | "webhook" | "outbox";
     whatsapp: WhatsAppStatusSeries;
   }>({
     created: [],
     solved: [],
+    voice: [],
     whatsappSource: "all",
     whatsapp: {
       sent: [],
@@ -187,10 +211,21 @@ export default function AnalyticsClient() {
     (overview?.channels?.email.inbound ?? 0) + (overview?.channels?.email.outbound ?? 0);
   const whatsappTotal =
     (overview?.channels?.whatsapp.inbound ?? 0) + (overview?.channels?.whatsapp.outbound ?? 0);
+  const voiceTotal =
+    (overview?.channels?.voice.inbound ?? 0) + (overview?.channels?.voice.outbound ?? 0);
   const whatsappOutbound = overview?.channels?.whatsapp.outbound ?? 0;
   const whatsappFailed = overview?.channels?.whatsapp.failed ?? 0;
+  const voiceOutbound = overview?.channels?.voice.outbound ?? 0;
+  const voiceCompleted = overview?.channels?.voice.completed ?? 0;
+  const voiceFailed = overview?.channels?.voice.failed ?? 0;
+  const voiceNoAnswer = overview?.channels?.voice.noAnswer ?? 0;
+  const voiceBusy = overview?.channels?.voice.busy ?? 0;
+  const voiceCanceled = overview?.channels?.voice.canceled ?? 0;
+  const voiceAvgDuration = overview?.channels?.voice.avgDurationSeconds ?? 0;
   const whatsappDeliveryRate =
     whatsappOutbound > 0 ? Math.max(0, Math.round(((whatsappOutbound - whatsappFailed) / whatsappOutbound) * 100)) : null;
+  const voiceConnectRate =
+    voiceOutbound > 0 ? Math.max(0, Math.round((voiceCompleted / voiceOutbound) * 100)) : null;
   const mergeFailureTop = overview?.merges?.reviews?.topFailureReasons ?? [];
 
   const whatsappTrendRows = useMemo(() => {
@@ -331,6 +366,7 @@ export default function AnalyticsClient() {
         setVolume({
           created: payload.created ?? [],
           solved: payload.solved ?? [],
+          voice: payload.voice ?? [],
           whatsappSource: payload.whatsappSource ?? whatsappSourceFilter,
           whatsapp: {
             sent: payload.whatsapp?.sent ?? [],
@@ -472,11 +508,17 @@ export default function AnalyticsClient() {
           >
             <p style={{ marginBottom: 8 }}>Channel mix</p>
             <h2 style={{ margin: 0 }}>
-              Email {emailTotal} · WhatsApp {whatsappTotal}
+              Email {emailTotal} · WhatsApp {whatsappTotal} · Voice {voiceTotal}
             </h2>
             <p style={{ marginTop: 10, color: "var(--muted)" }}>
               WhatsApp outbound {whatsappOutbound} · failed {whatsappFailed} · delivery{" "}
               {whatsappDeliveryRate === null ? "—" : `${whatsappDeliveryRate}%`}
+            </p>
+            <p style={{ marginTop: 6, color: "var(--muted)" }}>
+              Voice outbound {voiceOutbound} · completed {voiceCompleted} · failed {voiceFailed} ·
+              no answer {voiceNoAnswer} · busy {voiceBusy} · canceled {voiceCanceled} · connect{" "}
+              {voiceConnectRate === null ? "—" : `${voiceConnectRate}%`} · avg duration{" "}
+              {voiceAvgDuration > 0 ? `${Math.round(voiceAvgDuration)}s` : "—"}
             </p>
           </div>
           <div
@@ -570,6 +612,38 @@ export default function AnalyticsClient() {
                       <span>{row.day.slice(0, 10)}</span>
                       <span>
                         Created: {row.count} / Solved: {solvedRow?.count ?? 0}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 16,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <h2>Voice Outcomes</h2>
+            <div style={{ display: "grid", gap: 8 }}>
+              {volume.voice.length === 0 ? (
+                <p>No voice call data yet.</p>
+              ) : (
+                volume.voice.map((row) => {
+                  const connectRate =
+                    row.outbound > 0 ? Math.round((row.completed / row.outbound) * 100) : null;
+                  return (
+                    <div key={row.day} style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span>{row.day.slice(0, 10)}</span>
+                      <span>
+                        In {row.inbound} · Out {row.outbound} · Completed {row.completed} · Failed{" "}
+                        {row.failed} · No answer {row.noAnswer} · Busy {row.busy} · Canceled{" "}
+                        {row.canceled} · Connect {connectRate === null ? "—" : `${connectRate}%`} ·
+                        Avg {row.avgDurationSeconds > 0 ? `${Math.round(row.avgDurationSeconds)}s` : "—"}
                       </span>
                     </div>
                   );

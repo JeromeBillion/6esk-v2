@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { redactCallData } from "@/server/calls/redaction";
 
 export async function recordAuditLog({
   actorUserId,
@@ -31,5 +32,8 @@ export async function listAuditLogsForTicket(ticketId: string, limit = 50) {
      LIMIT $2`,
     [ticketId, limit]
   );
-  return result.rows;
+  return result.rows.map((row) => ({
+    ...row,
+    data: redactCallData(row.data ?? null)
+  }));
 }

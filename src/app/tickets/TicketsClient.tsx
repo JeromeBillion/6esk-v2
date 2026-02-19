@@ -13,6 +13,7 @@ type Ticket = {
   metadata?: Record<string, unknown> | null;
   tags?: string[];
   has_whatsapp?: boolean;
+  has_voice?: boolean;
   status: string;
   priority: string;
   assigned_user_id: string | null;
@@ -23,7 +24,7 @@ type Ticket = {
 type Message = {
   id: string;
   direction: "inbound" | "outbound";
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   origin: "human" | "ai";
   from_email: string;
   subject: string | null;
@@ -43,7 +44,7 @@ type MessageDetail = {
   from: string;
   to: string[];
   direction: "inbound" | "outbound";
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   origin: "human" | "ai";
   isSpam: boolean;
   spamReason?: string | null;
@@ -53,6 +54,11 @@ type MessageDetail = {
   waTimestamp?: string | null;
   waContact?: string | null;
   conversationId?: string | null;
+  callSessionId?: string | null;
+  transcript?: {
+    available: boolean;
+    text: string | null;
+  } | null;
   statusEvents?: Array<{
     id: string;
     status: string;
@@ -92,6 +98,7 @@ type DraftQueueItem = {
   ticket_priority: string;
   assigned_user_id: string | null;
   has_whatsapp: boolean;
+  has_voice: boolean;
 };
 
 type Attachment = {
@@ -140,7 +147,7 @@ type CustomerHistoryItem = {
   status: string;
   priority: string;
   requesterEmail: string;
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   lastMessageAt: string | null;
   lastCustomerInboundPreview: string | null;
   lastCustomerInboundAt: string | null;
@@ -174,8 +181,27 @@ type TicketMergeSearchResult = {
   status: string;
   priority: string;
   assignedUserId: string | null;
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   lastMessageAt: string | null;
+};
+
+type CallOptionCandidate = {
+  candidateId: string;
+  phone: string;
+  label: string;
+  source: string;
+  isPrimary: boolean;
+};
+
+type CallConsentSnapshot = {
+  state: "granted" | "revoked" | "unknown";
+  callbackPhone: string | null;
+  termsVersion: string | null;
+  source: string | null;
+  updatedAt: string | null;
+  identityType: "phone" | "email" | null;
+  identityValue: string | null;
+  customerId: string | null;
 };
 
 type CustomerMergeSearchResult = {
@@ -213,9 +239,11 @@ type MergeReviewQueueItem = {
   source_ticket_subject: string | null;
   source_ticket_requester_email: string | null;
   source_ticket_has_whatsapp: boolean;
+  source_ticket_has_voice: boolean;
   target_ticket_subject: string | null;
   target_ticket_requester_email: string | null;
   target_ticket_has_whatsapp: boolean;
+  target_ticket_has_voice: boolean;
   source_customer_display_name: string | null;
   source_customer_primary_email: string | null;
   source_customer_primary_phone: string | null;
@@ -227,8 +255,8 @@ type MergeReviewQueueItem = {
 type TicketMergePreflight = {
   sourceTicketId: string;
   targetTicketId: string;
-  sourceChannel: "email" | "whatsapp";
-  targetChannel: "email" | "whatsapp";
+  sourceChannel: "email" | "whatsapp" | "voice";
+  targetChannel: "email" | "whatsapp" | "voice";
   moveCounts: {
     messages: number;
     replies: number;
@@ -332,6 +360,12 @@ function formatStatusLabel(value: string | null | undefined) {
     .replace(/[_-]+/g, " ")
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function channelLabel(channel: "email" | "whatsapp" | "voice") {
+  if (channel === "whatsapp") return "WhatsApp";
+  if (channel === "voice") return "Voice";
+  return "Email";
 }
 
 function normalizeRecipientEmail(value: string | null | undefined) {
@@ -443,7 +477,9 @@ export default function TicketsClient() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterTag, setFilterTag] = useState<string>("all");
-  const [filterChannel, setFilterChannel] = useState<"email" | "whatsapp">("email");
+  const [filterChannel, setFilterChannel] = useState<"all" | "email" | "whatsapp" | "voice">(
+    "all"
+  );
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [assignedFilter, setAssignedFilter] = useState<string>("all");
   const [savedViews, setSavedViews] = useState<
@@ -522,6 +558,16 @@ export default function TicketsClient() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+  const [callCandidates, setCallCandidates] = useState<CallOptionCandidate[]>([]);
+  const [selectedCallCandidate, setSelectedCallCandidate] = useState("");
+  const [manualCallPhone, setManualCallPhone] = useState("");
+  const [callReason, setCallReason] = useState("");
+  const [callSelectionRequired, setCallSelectionRequired] = useState(false);
+  const [callLoading, setCallLoading] = useState(false);
+  const [callQueueing, setCallQueueing] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [callSuccess, setCallSuccess] = useState<string | null>(null);
+  const [callConsent, setCallConsent] = useState<CallConsentSnapshot | null>(null);
   const viewStorageKey = "sixesk:supportViews";
 
   function formatMessageTimestamp(message: Message) {
@@ -681,7 +727,15 @@ export default function TicketsClient() {
     setFilterStatus(view.filters.status ?? "all");
     setFilterPriority(view.filters.priority ?? "all");
     setFilterTag(view.filters.tag ?? "all");
-    setFilterChannel(view.filters.channel === "whatsapp" ? "whatsapp" : "email");
+    setFilterChannel(
+      view.filters.channel === "whatsapp"
+        ? "whatsapp"
+        : view.filters.channel === "voice"
+          ? "voice"
+          : view.filters.channel === "email"
+            ? "email"
+            : "all"
+    );
     setFilterQuery(view.filters.query ?? "");
     setAssignedFilter(view.filters.assigned ?? "all");
     setActiveView(view.name);
@@ -700,7 +754,7 @@ export default function TicketsClient() {
     if (filterStatus !== "all") params.set("status", filterStatus);
     if (filterPriority !== "all") params.set("priority", filterPriority);
     if (filterTag !== "all") params.set("tag", filterTag);
-    params.set("channel", filterChannel);
+    if (filterChannel !== "all") params.set("channel", filterChannel);
     if (filterQuery.trim()) params.set("q", filterQuery.trim());
     if (assignedFilter !== "all") params.set("assigned", assignedFilter);
 
@@ -797,6 +851,45 @@ export default function TicketsClient() {
     const updatedTicket = payload.ticket;
     if (updatedTicket) {
       setTickets((prev) => prev.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket)));
+    }
+  }
+
+  async function loadCallOptions(ticketId: string) {
+    setCallLoading(true);
+    setCallError(null);
+    setCallSuccess(null);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/call-options`);
+      if (!res.ok) {
+        setCallCandidates([]);
+        setSelectedCallCandidate("");
+        setCallSelectionRequired(false);
+        setCallConsent(null);
+        return;
+      }
+      const payload = await res.json();
+      const candidates = (payload.candidates ?? []) as CallOptionCandidate[];
+      const selectionRequired = Boolean(payload.selectionRequired);
+      setCallCandidates(candidates);
+      setCallSelectionRequired(selectionRequired);
+      setSelectedCallCandidate(
+        selectionRequired ? "" : payload.defaultCandidateId ?? candidates[0]?.candidateId ?? ""
+      );
+      setManualCallPhone("");
+      setCallConsent(
+        (payload.consent as CallConsentSnapshot | null) ?? {
+          state: "unknown",
+          callbackPhone: null,
+          termsVersion: null,
+          source: null,
+          updatedAt: null,
+          identityType: null,
+          identityValue: null,
+          customerId: null
+        }
+      );
+    } finally {
+      setCallLoading(false);
     }
   }
 
@@ -1288,6 +1381,16 @@ export default function TicketsClient() {
       setMessages([]);
       setDrafts([]);
       setAuditLogs([]);
+      setCallCandidates([]);
+      setSelectedCallCandidate("");
+      setManualCallPhone("");
+      setCallReason("");
+      setCallSelectionRequired(false);
+      setCallLoading(false);
+      setCallQueueing(false);
+      setCallError(null);
+      setCallSuccess(null);
+      setCallConsent(null);
       setCustomerHistory([]);
       setActiveCustomer(null);
       setActiveCustomerId(null);
@@ -1322,6 +1425,14 @@ export default function TicketsClient() {
     setWaReplyAttachments([]);
     setReplyError(null);
     setSelectedReplyRecipient("");
+    setCallCandidates([]);
+    setSelectedCallCandidate("");
+    setManualCallPhone("");
+    setCallReason("");
+    setCallSelectionRequired(false);
+    setCallError(null);
+    setCallSuccess(null);
+    setCallConsent(null);
     setCustomerHistoryNextCursor(null);
     setCustomerHistoryLoadingMore(false);
     setHoveredHistoryTicketId(null);
@@ -1337,6 +1448,7 @@ export default function TicketsClient() {
     setShowMergeConfirmStep(false);
     setMergeAcknowledgeInput("");
     void loadTicketDetail(activeTicketId);
+    void loadCallOptions(activeTicketId);
     void loadCustomerHistory(activeTicketId);
   }, [activeTicketId, isCompactHistoryLayout]);
 
@@ -1499,6 +1611,10 @@ export default function TicketsClient() {
 
   async function sendReply(ticketId: string) {
     setReplyError(null);
+    if (ticketChannel === "voice") {
+      setReplyError("Voice tickets do not support email or WhatsApp replies. Use Call instead.");
+      return;
+    }
     const trimmedText = replyText.trim();
     const selectedTemplate =
       whatsappTemplates.find((template) => template.id === selectedTemplateId) ?? null;
@@ -1601,6 +1717,62 @@ export default function TicketsClient() {
       setReplyError(payload.error ?? "Failed to send reply");
     }
     setSending(false);
+  }
+
+  async function queueTicketCall(ticketId: string) {
+    setCallError(null);
+    setCallSuccess(null);
+
+    const trimmedPhone = manualCallPhone.trim();
+    const reason = callReason.trim() || activeTicket?.subject || "Voice follow-up";
+    if (callConsent?.state === "revoked") {
+      setCallError("Voice consent is revoked. Request a fresh opt-in before calling.");
+      return;
+    }
+
+    if (!trimmedPhone && !selectedCallCandidate && callSelectionRequired) {
+      setCallError("Select a phone number before calling.");
+      return;
+    }
+
+    setCallQueueing(true);
+    try {
+      const res = await fetch("/api/calls/outbound", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticketId,
+          candidateId: trimmedPhone ? null : selectedCallCandidate || null,
+          toPhone: trimmedPhone || null,
+          reason
+        })
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (payload.status === "selection_required") {
+          setCallSelectionRequired(true);
+          setCallCandidates((payload.candidates ?? []) as CallOptionCandidate[]);
+          setSelectedCallCandidate("");
+          setCallError(payload.detail ?? "Select a phone number before calling.");
+        } else {
+          setCallError(payload.error ?? payload.detail ?? "Failed to queue call.");
+        }
+        return;
+      }
+
+      setCallSuccess("Call queued.");
+      setCallReason("");
+      setManualCallPhone("");
+      await loadCallOptions(ticketId);
+      await loadTicketDetail(ticketId);
+      await loadTickets();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Failed to queue call.";
+      setCallError(detail);
+    } finally {
+      setCallQueueing(false);
+    }
   }
 
   async function resendWhatsApp(messageId: string) {
@@ -1781,7 +1953,13 @@ export default function TicketsClient() {
   const activeExternalProfile = readExternalProfile(activeTicket);
   const ticketChannel = messages.some((message) => message.channel === "whatsapp")
     ? "whatsapp"
-    : "email";
+    : messages.some((message) => message.channel === "voice")
+      ? "voice"
+      : "email";
+  const isVoiceTicket = ticketChannel === "voice";
+  const callTargetSelected = Boolean(manualCallPhone.trim() || selectedCallCandidate);
+  const isConsentRevoked = callConsent?.state === "revoked";
+  const callDisabled = callLoading || callQueueing || !callTargetSelected || isConsentRevoked;
   const whatsappContact =
     activeTicket && activeTicket.requester_email.startsWith("whatsapp:")
       ? activeTicket.requester_email.replace(/^whatsapp:/, "")
@@ -2001,8 +2179,10 @@ export default function TicketsClient() {
                 <div className="ticket-filter-chip-row">
                   {(
                     [
+                      { value: "all", label: "All" },
                       { value: "email", label: "Email" },
-                      { value: "whatsapp", label: "WhatsApp" }
+                      { value: "whatsapp", label: "WhatsApp" },
+                      { value: "voice", label: "Voice" }
                     ] as const
                   ).map((option) => (
                     <button
@@ -2295,10 +2475,16 @@ export default function TicketsClient() {
             {tickets.length > 0 ? (
               tickets.map((ticket) => {
                 const isSelected = selectedTicketIds.includes(ticket.id);
-                const channel = ticket.has_whatsapp ? "whatsapp" : "email";
+                const channel: "email" | "whatsapp" | "voice" = ticket.has_whatsapp
+                  ? "whatsapp"
+                  : ticket.has_voice || ticket.requester_email.startsWith("voice:")
+                    ? "voice"
+                    : "email";
                 const requesterLabel = ticket.requester_email.startsWith("whatsapp:")
                   ? `WhatsApp ${ticket.requester_email.replace(/^whatsapp:/, "")}`
-                  : ticket.requester_email;
+                  : ticket.requester_email.startsWith("voice:")
+                    ? `Voice ${ticket.requester_email.replace(/^voice:/, "")}`
+                    : ticket.requester_email;
                 return (
                   <div key={ticket.id} className="ticket-card-row">
                     <input
@@ -2324,7 +2510,7 @@ export default function TicketsClient() {
                       <div className="ticket-card-header">
                         <strong>{ticket.subject ?? "(no subject)"}</strong>
                         <span className={`ticket-channel-badge ${channel}`}>
-                          {channel === "whatsapp" ? "WhatsApp" : "Email"}
+                          {channelLabel(channel)}
                         </span>
                       </div>
                       <div style={{ fontSize: 12 }}>{requesterLabel}</div>
@@ -2422,6 +2608,22 @@ export default function TicketsClient() {
                         review.target_customer_primary_phone ??
                         review.target_customer_id ??
                         "Unknown target customer";
+                      const sourceTicketChannel: "email" | "whatsapp" | "voice" =
+                        review.source_ticket_has_whatsapp ||
+                        review.source_ticket_requester_email?.startsWith("whatsapp:")
+                          ? "whatsapp"
+                          : review.source_ticket_has_voice ||
+                              review.source_ticket_requester_email?.startsWith("voice:")
+                            ? "voice"
+                            : "email";
+                      const targetTicketChannel: "email" | "whatsapp" | "voice" =
+                        review.target_ticket_has_whatsapp ||
+                        review.target_ticket_requester_email?.startsWith("whatsapp:")
+                          ? "whatsapp"
+                          : review.target_ticket_has_voice ||
+                              review.target_ticket_requester_email?.startsWith("voice:")
+                            ? "voice"
+                            : "email";
                       const isPending = review.status === "pending";
 
                       return (
@@ -2449,12 +2651,24 @@ export default function TicketsClient() {
                                 {review.source_ticket_requester_email
                                   ? ` (${review.source_ticket_requester_email})`
                                   : ""}
+                                <span
+                                  className={`ticket-channel-badge ${sourceTicketChannel}`}
+                                  style={{ marginLeft: 8 }}
+                                >
+                                  {channelLabel(sourceTicketChannel)}
+                                </span>
                               </span>
                               <span>
                                 Target: {targetTicketLabel}
                                 {review.target_ticket_requester_email
                                   ? ` (${review.target_ticket_requester_email})`
                                   : ""}
+                                <span
+                                  className={`ticket-channel-badge ${targetTicketChannel}`}
+                                  style={{ marginLeft: 8 }}
+                                >
+                                  {channelLabel(targetTicketChannel)}
+                                </span>
                               </span>
                             </div>
                           ) : (
@@ -2530,7 +2744,8 @@ export default function TicketsClient() {
                       {[
                         { value: "all", label: "All" },
                         { value: "email", label: "Email" },
-                        { value: "whatsapp", label: "WhatsApp" }
+                        { value: "whatsapp", label: "WhatsApp" },
+                        { value: "voice", label: "Voice" }
                       ].map((option) => (
                         <button
                           key={option.value}
@@ -2598,9 +2813,15 @@ export default function TicketsClient() {
                     <div className="draft-queue-list">
                       {draftQueue.map((draft) => {
                         const isSelected = draftQueueSelectedIds.includes(draft.id);
-                        const channel = draft.has_whatsapp ? "whatsapp" : "email";
+                        const channel: "email" | "whatsapp" | "voice" = draft.has_whatsapp
+                          ? "whatsapp"
+                          : draft.has_voice || draft.requester_email.startsWith("voice:")
+                            ? "voice"
+                            : "email";
                         const requesterLabel = draft.requester_email.startsWith("whatsapp:")
                           ? `WhatsApp ${draft.requester_email.replace(/^whatsapp:/, "")}`
+                          : draft.requester_email.startsWith("voice:")
+                            ? `Voice ${draft.requester_email.replace(/^voice:/, "")}`
                           : draft.requester_email;
                         const preview = getDraftPlainText(draft);
                         return (
@@ -2624,7 +2845,7 @@ export default function TicketsClient() {
                               <div className="draft-queue-title">
                                 <strong>{draft.ticket_subject ?? "(no subject)"}</strong>
                                 <span className={`ticket-channel-badge ${channel}`}>
-                                  {channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                  {channelLabel(channel)}
                                 </span>
                               </div>
                               <div className="draft-queue-sub">
@@ -2916,6 +3137,154 @@ export default function TicketsClient() {
                       </button>
                     ) : null}
                   </div>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 12,
+                      background: "rgba(8, 11, 16, 0.75)",
+                      display: "grid",
+                      gap: 10
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <strong>Call</strong>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Recording attaches to this ticket.
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        padding: "8px 10px",
+                        background: "rgba(8, 11, 16, 0.65)",
+                        display: "grid",
+                        gap: 4,
+                        fontSize: 12
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ color: "var(--muted)" }}>Consent state:</span>
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            background:
+                              callConsent?.state === "granted"
+                                ? "rgba(82, 210, 113, 0.18)"
+                                : callConsent?.state === "revoked"
+                                  ? "rgba(255, 107, 107, 0.2)"
+                                  : "rgba(139, 215, 255, 0.16)",
+                            color:
+                              callConsent?.state === "granted"
+                                ? "#7ff5a2"
+                                : callConsent?.state === "revoked"
+                                  ? "#ff9a9a"
+                                  : "var(--text)"
+                          }}
+                        >
+                          {callConsent?.state === "granted"
+                            ? "Granted"
+                            : callConsent?.state === "revoked"
+                              ? "Revoked"
+                              : "Unknown"}
+                        </span>
+                      </div>
+                      <span style={{ color: "var(--muted)" }}>
+                        Callback phone: {callConsent?.callbackPhone ?? "Not provided"}
+                      </span>
+                      {callConsent?.updatedAt ? (
+                        <span style={{ color: "var(--muted)" }}>
+                          Updated: {new Date(callConsent.updatedAt).toLocaleString()}
+                        </span>
+                      ) : null}
+                      {callConsent?.termsVersion ? (
+                        <span style={{ color: "var(--muted)" }}>
+                          Terms version: {callConsent.termsVersion}
+                        </span>
+                      ) : null}
+                      {isConsentRevoked ? (
+                        <span style={{ color: "var(--danger)" }}>
+                          Calling is blocked until the customer grants voice consent again.
+                        </span>
+                      ) : null}
+                    </div>
+                    {callLoading ? (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Loading saved phone numbers...
+                      </span>
+                    ) : null}
+                    {callCandidates.length ? (
+                      <label>
+                        Saved numbers
+                        <select
+                          value={selectedCallCandidate}
+                          onChange={(event) => setSelectedCallCandidate(event.target.value)}
+                          disabled={Boolean(manualCallPhone.trim())}
+                        >
+                          {callSelectionRequired ? (
+                            <option value="">Select number</option>
+                          ) : null}
+                          {callCandidates.map((candidate) => (
+                            <option key={candidate.candidateId} value={candidate.candidateId}>
+                              {candidate.label}
+                              {candidate.isPrimary ? " (primary)" : ""}
+                              {" · "}
+                              {candidate.phone}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        No saved number found. Enter a number manually.
+                      </span>
+                    )}
+                    <label>
+                      Call number (manual override)
+                      <input
+                        type="tel"
+                        placeholder="+15551234567"
+                        value={manualCallPhone}
+                        onChange={(event) => setManualCallPhone(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Call reason
+                      <input
+                        type="text"
+                        placeholder={activeTicket.subject ?? "Voice follow-up"}
+                        value={callReason}
+                        onChange={(event) => setCallReason(event.target.value)}
+                      />
+                    </label>
+                    {callSelectionRequired && !manualCallPhone.trim() ? (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Multiple numbers found. Select one before placing the call.
+                      </span>
+                    ) : null}
+                    {callError ? <span style={{ color: "var(--danger)" }}>{callError}</span> : null}
+                    {callSuccess ? <span style={{ color: "#7ff5a2" }}>{callSuccess}</span> : null}
+                    <button
+                      type="button"
+                      onClick={() => queueTicketCall(activeTicket.id)}
+                      disabled={callDisabled}
+                      style={{
+                        justifySelf: "start",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: "var(--surface-2)",
+                        color: "var(--text)",
+                        cursor: callDisabled ? "not-allowed" : "pointer",
+                        opacity: callDisabled ? 0.6 : 1
+                      }}
+                    >
+                      {callQueueing ? "Queueing..." : "Call now"}
+                    </button>
+                  </div>
                   {mergeSubmitSuccess ? (
                     <p style={{ color: "#7ff5a2", marginTop: 10 }}>{mergeSubmitSuccess}</p>
                   ) : null}
@@ -3010,7 +3379,7 @@ export default function TicketsClient() {
                                 <div className="ticket-merge-result-top">
                                   <strong>{item.subject ?? "(no subject)"}</strong>
                                   <span className={`ticket-channel-badge ${item.channel}`}>
-                                    {item.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                    {channelLabel(item.channel)}
                                   </span>
                                 </div>
                                 <span>
@@ -3061,15 +3430,11 @@ export default function TicketsClient() {
                           <div className="ticket-merge-preflight-grid">
                             <span>Source channel</span>
                             <span>
-                              {ticketMergePreflight.sourceChannel === "whatsapp"
-                                ? "WhatsApp"
-                                : "Email"}
+                              {channelLabel(ticketMergePreflight.sourceChannel)}
                             </span>
                             <span>Target channel</span>
                             <span>
-                              {ticketMergePreflight.targetChannel === "whatsapp"
-                                ? "WhatsApp"
-                                : "Email"}
+                              {channelLabel(ticketMergePreflight.targetChannel)}
                             </span>
                             <span>Messages to move</span>
                             <span>{ticketMergePreflight.moveCounts.messages}</span>
@@ -3196,7 +3561,13 @@ export default function TicketsClient() {
                     background: "rgba(10, 12, 18, 0.6)"
                   }}
                 >
-                  <h3>{ticketChannel === "whatsapp" ? "WhatsApp Thread" : "Conversation"}</h3>
+                  <h3>
+                    {ticketChannel === "whatsapp"
+                      ? "WhatsApp Thread"
+                      : ticketChannel === "voice"
+                        ? "Voice Thread"
+                        : "Conversation"}
+                  </h3>
                   {ticketChannel === "whatsapp" ? (
                     <div className="whatsapp-thread">
                       {messages.length === 0 ? (
@@ -3304,11 +3675,18 @@ export default function TicketsClient() {
                                 background:
                                   message.channel === "whatsapp"
                                     ? "rgba(82, 210, 113, 0.2)"
-                                    : "rgba(139, 215, 255, 0.2)",
-                                color: message.channel === "whatsapp" ? "#7ff5a2" : "var(--text)"
+                                    : message.channel === "voice"
+                                      ? "rgba(255, 192, 96, 0.18)"
+                                      : "rgba(139, 215, 255, 0.2)",
+                                color:
+                                  message.channel === "whatsapp"
+                                    ? "#7ff5a2"
+                                    : message.channel === "voice"
+                                      ? "#ffd29d"
+                                      : "var(--text)"
                               }}
                             >
-                              {message.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                              {channelLabel(message.channel)}
                             </span>
                             <span style={{ color: "var(--muted)" }}>
                               {message.origin === "ai" ? "AI" : "Human"}
@@ -3331,7 +3709,8 @@ export default function TicketsClient() {
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
                           From: {messageDetail.from} · To: {messageDetail.to.join(", ")} ·
                           {messageDetail.origin === "ai" ? " AI" : " Human"} ·
-                          {messageDetail.channel === "whatsapp" ? " WhatsApp" : " Email"}
+                          {" "}
+                          {channelLabel(messageDetail.channel)}
                         </div>
                         {messageDetail.channel === "whatsapp" ? (
                           <div style={{ display: "grid", gap: 6 }}>
@@ -3508,6 +3887,39 @@ export default function TicketsClient() {
                             })()}
                           </div>
                         ) : null}
+                        {messageDetail.channel === "voice" ? (
+                          <details
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                              padding: 10,
+                              background: "rgba(10, 12, 18, 0.6)"
+                            }}
+                          >
+                            <summary style={{ cursor: "pointer" }}>
+                              {messageDetail.transcript?.available
+                                ? "Transcript"
+                                : "Transcript (not available yet)"}
+                            </summary>
+                            {messageDetail.transcript?.available ? (
+                              <pre
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  marginTop: 10,
+                                  marginBottom: 0,
+                                  maxHeight: 320,
+                                  overflow: "auto"
+                                }}
+                              >
+                                {messageDetail.transcript?.text ?? "Transcript could not be loaded."}
+                              </pre>
+                            ) : (
+                              <p style={{ marginTop: 10, marginBottom: 0, color: "var(--muted)" }}>
+                                Transcript has not been attached to this call yet.
+                              </p>
+                            )}
+                          </details>
+                        ) : null}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>
                             Spam: {messageDetail.isSpam ? "Yes" : "No"}
@@ -3674,7 +4086,7 @@ export default function TicketsClient() {
                                 <div className="customer-history-item-top">
                                   <strong>{item.subject ?? "(no subject)"}</strong>
                                   <span className={`ticket-channel-badge ${item.channel}`}>
-                                    {item.channel === "whatsapp" ? "WhatsApp" : "Email"}
+                                    {channelLabel(item.channel)}
                                   </span>
                                 </div>
                                 <div className="customer-history-item-meta">
@@ -3998,10 +4410,21 @@ export default function TicketsClient() {
                     background: "rgba(10, 12, 18, 0.6)"
                   }}
                 >
-                  <h3>{ticketChannel === "whatsapp" ? "WhatsApp Reply" : "Reply"}</h3>
+                  <h3>
+                    {ticketChannel === "whatsapp"
+                      ? "WhatsApp Reply"
+                      : ticketChannel === "voice"
+                        ? "Voice Ticket"
+                        : "Reply"}
+                  </h3>
                   {ticketChannel === "whatsapp" ? (
                     <p style={{ fontSize: 12, color: "var(--muted)", marginTop: -6 }}>
                       Replies send through the connected WhatsApp Business number.
+                    </p>
+                  ) : null}
+                  {isVoiceTicket ? (
+                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: -6 }}>
+                      Use the Call section above for outbound voice follow-up.
                     </p>
                   ) : null}
                   {macros.length ? (
@@ -4045,44 +4468,46 @@ export default function TicketsClient() {
                         : "Closed (template required)"}
                     </div>
                   ) : null}
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <label>
-                      Recipient{" "}
-                      {requiresExplicitRecipientSelection ? "(Required)" : "(Default can be changed)"}
-                      <select
-                        value={selectedReplyRecipient}
-                        onChange={(event) => setSelectedReplyRecipient(event.target.value)}
-                      >
-                        {requiresExplicitRecipientSelection ? (
-                          <option value="">
-                            {ticketChannel === "whatsapp"
-                              ? "Select WhatsApp recipient"
-                              : "Select email recipient"}
-                          </option>
-                        ) : null}
-                        {replyRecipientOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label} - {option.value}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {requiresExplicitRecipientSelection ? (
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Unregistered or unknown customer: you must choose a recipient before
-                        sending.
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Registered customer: defaulting to primary contact for this channel.
-                      </span>
-                    )}
-                    {replyRecipientOptions.length === 0 ? (
-                      <span style={{ fontSize: 12, color: "var(--danger)" }}>
-                        No valid recipient found for this channel.
-                      </span>
-                    ) : null}
-                  </div>
+                  {!isVoiceTicket ? (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <label>
+                        Recipient{" "}
+                        {requiresExplicitRecipientSelection ? "(Required)" : "(Default can be changed)"}
+                        <select
+                          value={selectedReplyRecipient}
+                          onChange={(event) => setSelectedReplyRecipient(event.target.value)}
+                        >
+                          {requiresExplicitRecipientSelection ? (
+                            <option value="">
+                              {ticketChannel === "whatsapp"
+                                ? "Select WhatsApp recipient"
+                                : "Select email recipient"}
+                            </option>
+                          ) : null}
+                          {replyRecipientOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} - {option.value}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {requiresExplicitRecipientSelection ? (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          Unregistered or unknown customer: you must choose a recipient before
+                          sending.
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          Registered customer: defaulting to primary contact for this channel.
+                        </span>
+                      )}
+                      {replyRecipientOptions.length === 0 ? (
+                        <span style={{ fontSize: 12, color: "var(--danger)" }}>
+                          No valid recipient found for this channel.
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {macros.length ? (
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <select
@@ -4236,6 +4661,7 @@ export default function TicketsClient() {
                     type="button"
                     onClick={() => sendReply(activeTicket.id)}
                     disabled={
+                      isVoiceTicket ||
                       sending ||
                       replyRecipientOptions.length === 0 ||
                       (requiresExplicitRecipientSelection && !selectedReplyRecipient.trim())
@@ -4252,6 +4678,8 @@ export default function TicketsClient() {
                   >
                     {sending
                       ? "Sending..."
+                      : isVoiceTicket
+                        ? "Voice tickets use Call"
                       : ticketChannel === "whatsapp"
                         ? "Send WhatsApp reply"
                         : "Send reply"}

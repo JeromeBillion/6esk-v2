@@ -12,6 +12,7 @@ export type TicketRecord = {
   metadata: Record<string, unknown> | null;
   tags?: string[];
   has_whatsapp?: boolean;
+  has_voice?: boolean;
   merged_into_ticket_id?: string | null;
   merged_by_user_id?: string | null;
   merged_at?: string | null;
@@ -76,7 +77,7 @@ export async function mergeTicketMetadata(ticketId: string, patch: Record<string
 
 type MergedFromEntry = {
   sourceTicketId: string;
-  sourceChannel: "email" | "whatsapp";
+  sourceChannel: "email" | "whatsapp" | "voice";
   mergedAt: string;
   reason: string | null;
   movedMessages: number;
@@ -286,24 +287,60 @@ export async function listTicketsForUser(
     if (channel === "whatsapp") {
       values.push("whatsapp");
       const placeholder = `$${values.length}`;
+      values.push("whatsapp:%");
+      const requesterPlaceholder = `$${values.length}`;
       conditions.push(
-        `EXISTS (
-          SELECT 1
-          FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+        `(
+          EXISTS (
+            SELECT 1
+            FROM messages channel_msg
+            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+          )
+          OR t.requester_email ILIKE ${requesterPlaceholder}
+        )`
+      );
+    }
+    if (channel === "voice") {
+      values.push("voice");
+      const placeholder = `$${values.length}`;
+      values.push("voice:%");
+      const requesterPlaceholder = `$${values.length}`;
+      conditions.push(
+        `(
+          EXISTS (
+            SELECT 1
+            FROM messages channel_msg
+            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+          )
+          OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
       );
     }
     if (channel === "email") {
       values.push("whatsapp");
-      const placeholder = `$${values.length}`;
+      const whatsappPlaceholder = `$${values.length}`;
+      values.push("voice");
+      const voicePlaceholder = `$${values.length}`;
+      values.push("whatsapp:%");
+      const whatsappRequesterPlaceholder = `$${values.length}`;
+      values.push("voice:%");
+      const voiceRequesterPlaceholder = `$${values.length}`;
       conditions.push(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${whatsappPlaceholder}
         )`
       );
+      conditions.push(
+        `NOT EXISTS (
+          SELECT 1
+          FROM messages channel_msg
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${voicePlaceholder}
+        )`
+      );
+      conditions.push(`t.requester_email NOT ILIKE ${whatsappRequesterPlaceholder}`);
+      conditions.push(`t.requester_email NOT ILIKE ${voiceRequesterPlaceholder}`);
     }
   }
 
@@ -317,7 +354,11 @@ export async function listTicketsForUser(
             EXISTS (
               SELECT 1 FROM messages msg
               WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
-            ) AS has_whatsapp
+            ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+            EXISTS (
+              SELECT 1 FROM messages msg
+              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
+            ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id
@@ -339,7 +380,11 @@ export async function getTicketById(ticketId: string) {
             EXISTS (
               SELECT 1 FROM messages msg
               WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
-            ) AS has_whatsapp
+            ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+            EXISTS (
+              SELECT 1 FROM messages msg
+              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
+            ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id

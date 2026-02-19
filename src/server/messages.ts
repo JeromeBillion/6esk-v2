@@ -8,7 +8,7 @@ export type MessageRecord = {
   from_email: string;
   to_emails: string[];
   direction: "inbound" | "outbound";
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   origin: "human" | "ai";
   is_spam: boolean;
   spam_reason: string | null;

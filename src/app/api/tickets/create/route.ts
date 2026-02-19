@@ -17,12 +17,24 @@ import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/ou
 import { sendTicketReply } from "@/server/email/replies";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import { normalizeCallPhone, queueOutboundCall } from "@/server/calls/service";
+import { deliverPendingCallEvents } from "@/server/calls/outbox";
+import {
+  getLatestVoiceConsentState,
+  syncVoiceConsentFromMetadata
+} from "@/server/calls/consent";
+import {
+  evaluateVoiceCallPolicy,
+  getHumanVoicePolicyFromEnv
+} from "@/server/calls/policy";
 
 const createTicketSchema = z.object({
+  contactMode: z.enum(["email", "call"]).optional(),
   to: z.string().email().optional(),
   from: z.string().email().optional(),
+  toPhone: z.string().optional().nullable(),
   subject: z.string().min(1),
-  description: z.string().min(1),
+  description: z.string().optional().nullable(),
   descriptionHtml: z.string().optional().nullable(),
   category: z.string().optional().nullable(),
   tags: z.array(z.string()).optional().nullable(),
@@ -155,19 +167,149 @@ export async function POST(request: Request) {
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
   const inferredTags = data.tags?.length
     ? data.tags
-    : inferTagsFromText({ subject: data.subject, text: data.description });
+    : inferTagsFromText({ subject: data.subject, text: data.description ?? null });
   const category =
     data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
-  const previewText = data.description.replace(/\s+/g, " ").trim().slice(0, 200);
+  const descriptionText = data.description?.replace(/\s+/g, " ").trim() ?? "";
+  const previewText = descriptionText.slice(0, 200);
+  const contactMode = data.contactMode === "call" ? "call" : "email";
 
   // Support agents creating tickets from CRM send outbound first contact.
   if (sessionUser) {
+    if (contactMode === "call") {
+      const toPhone = normalizeCallPhone(data.toPhone ?? null);
+      if (!toPhone) {
+        return Response.json({ error: "Valid destination phone number is required" }, { status: 400 });
+      }
+
+      const callTicketMetadata = {
+        source: "manual_outbound_call",
+        createdByUserId: sessionUser.id,
+        toPhone,
+        ...(data.metadata ?? {})
+      } as Record<string, unknown>;
+
+      const customerResolution = await resolveOrCreateCustomerForInbound({
+        inboundPhone: toPhone
+      });
+      await syncVoiceConsentFromMetadata({
+        metadata: callTicketMetadata,
+        customerId: customerResolution?.customerId ?? null,
+        fallbackPhone: toPhone,
+        defaultSource: "manual_outbound_call",
+        consentTermsVersion: process.env.CALLS_CONSENT_TERMS_VERSION ?? null,
+        context: {
+          route: "/api/tickets/create",
+          contactMode: "call",
+          actorUserId: sessionUser.id
+        }
+      });
+      const consentState = await getLatestVoiceConsentState({
+        customerId: customerResolution?.customerId ?? null,
+        phone: toPhone
+      });
+
+      const maxCallsPerHour = Number(process.env.RATE_LIMIT_CALLS_OUTBOUND ?? "0");
+      const policyCheck = await evaluateVoiceCallPolicy({
+        actor: "human",
+        policy: getHumanVoicePolicyFromEnv(),
+        ticketMetadata: callTicketMetadata,
+        consentState,
+        selectedCandidateId: null,
+        actorUserId: sessionUser.id,
+        defaultMaxCallsPerHour: Number.isFinite(maxCallsPerHour) ? maxCallsPerHour : null
+      });
+      if (!policyCheck.allowed) {
+        return Response.json(
+          {
+            status: "blocked",
+            errorCode: policyCheck.code,
+            detail: policyCheck.detail
+          },
+          { status: 403 }
+        );
+      }
+
+      const ticketId = await createTicket({
+        mailboxId: mailbox.id,
+        customerId: customerResolution?.customerId ?? null,
+        requesterEmail: `voice:${toPhone}`,
+        subject: data.subject,
+        category,
+        metadata: callTicketMetadata
+      });
+
+      await recordTicketEvent({
+        ticketId,
+        eventType: "ticket_created",
+        actorUserId: sessionUser.id
+      });
+
+      if (inferredTags.length) {
+        await addTagsToTicket(ticketId, inferredTags);
+        await recordTicketEvent({
+          ticketId,
+          eventType: "tags_assigned",
+          actorUserId: sessionUser.id,
+          data: { tags: inferredTags }
+        });
+      }
+
+      const queuedCall = await queueOutboundCall({
+        ticketId,
+        toPhone,
+        reason: descriptionText || data.subject,
+        origin: "human",
+        actorUserId: sessionUser.id,
+        metadata: data.metadata ?? null
+      });
+      void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
+
+      const ticketEvent = buildAgentEvent({
+        eventType: "ticket.created",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: previewText || data.subject,
+        threadId: queuedCall.callSessionId
+      });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      void deliverPendingAgentEvents().catch(() => {});
+
+      return Response.json({
+        status: "created",
+        ticketId,
+        messageId: queuedCall.messageId,
+        callSessionId: queuedCall.callSessionId,
+        channel: "voice"
+      });
+    }
+
     const toEmail = normalizeAddressList(data.to ?? data.from ?? "")[0];
     if (!toEmail) {
       return Response.json({ error: "Email to is required" }, { status: 400 });
     }
+    if (!descriptionText) {
+      return Response.json({ error: "Description is required" }, { status: 400 });
+    }
     const customerResolution = await resolveOrCreateCustomerForInbound({
       inboundEmail: toEmail
+    });
+    const emailTicketMetadata = {
+      source: "manual_outbound",
+      createdByUserId: sessionUser.id,
+      ...(data.metadata ?? {})
+    } as Record<string, unknown>;
+    await syncVoiceConsentFromMetadata({
+      metadata: emailTicketMetadata,
+      customerId: customerResolution?.customerId ?? null,
+      fallbackEmail: toEmail,
+      defaultSource: "manual_outbound",
+      consentTermsVersion: process.env.CALLS_CONSENT_TERMS_VERSION ?? null,
+      context: {
+        route: "/api/tickets/create",
+        contactMode: "email",
+        actorUserId: sessionUser.id
+      }
     });
 
     const ticketId = await createTicket({
@@ -176,11 +318,7 @@ export async function POST(request: Request) {
       requesterEmail: toEmail,
       subject: data.subject,
       category,
-      metadata: {
-        source: "manual_outbound",
-        createdByUserId: sessionUser.id,
-        ...(data.metadata ?? {})
-      } as Record<string, unknown>
+      metadata: emailTicketMetadata
     });
 
     await recordTicketEvent({
@@ -202,7 +340,7 @@ export async function POST(request: Request) {
     const sendResult = await sendTicketReply({
       ticketId,
       subject: data.subject,
-      text: data.description,
+      text: descriptionText,
       html: data.descriptionHtml ?? null,
       attachments: data.attachments ?? null,
       actorUserId: sessionUser.id,
@@ -241,12 +379,27 @@ export async function POST(request: Request) {
   if (!fromEmail) {
     return Response.json({ error: "Invalid sender address" }, { status: 400 });
   }
+  if (!descriptionText) {
+    return Response.json({ error: "Description is required" }, { status: 400 });
+  }
   const enrichedMetadata = enrichExternalProfileMetadata(
     (data.metadata as Record<string, unknown> | null) ?? null
   );
   const customerResolution = await resolveOrCreateCustomerForInbound({
     profile: readProfileFromMetadata(enrichedMetadata),
     inboundEmail: fromEmail
+  });
+  await syncVoiceConsentFromMetadata({
+    metadata: enrichedMetadata,
+    customerId: customerResolution?.customerId ?? null,
+    fallbackEmail: fromEmail,
+    defaultSource: "external_ticket_create",
+    consentTermsVersion: process.env.CALLS_CONSENT_TERMS_VERSION ?? null,
+    context: {
+      route: "/api/tickets/create",
+      contactMode: "email",
+      source: "external_platform"
+    }
   });
 
   const ticketId = await createTicket({
@@ -301,10 +454,10 @@ export async function POST(request: Request) {
 
   textKey = await putObject({
     key: `${keyPrefix}/body.txt`,
-    body: data.description,
+    body: descriptionText,
     contentType: "text/plain; charset=utf-8"
   });
-  sizeBytes += Buffer.byteLength(data.description);
+  sizeBytes += Buffer.byteLength(descriptionText);
 
   if (data.descriptionHtml) {
     htmlKey = await putObject({

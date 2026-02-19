@@ -28,7 +28,7 @@ export type CustomerHistoryItem = {
   status: string;
   priority: string;
   requesterEmail: string;
-  channel: "email" | "whatsapp";
+  channel: "email" | "whatsapp" | "voice";
   lastMessageAt: string | null;
   lastCustomerInboundPreview: string | null;
   lastCustomerInboundAt: string | null;
@@ -383,6 +383,7 @@ export async function listCustomerHistory(
     priority: string;
     requester_email: string;
     has_whatsapp: boolean;
+    has_voice: boolean;
     last_message_at: Date | null;
     last_customer_inbound_preview: string | null;
     last_customer_inbound_at: Date | null;
@@ -397,7 +398,11 @@ export async function listCustomerHistory(
          EXISTS (
            SELECT 1 FROM messages wm
            WHERE wm.ticket_id = t.id AND wm.channel = 'whatsapp'
-         ) AS has_whatsapp,
+         ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+         EXISTS (
+           SELECT 1 FROM messages vm
+           WHERE vm.ticket_id = t.id AND vm.channel = 'voice'
+         ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
          COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at,
          COALESCE(
            (
@@ -468,6 +473,7 @@ export async function listCustomerHistory(
        priority,
        requester_email,
        has_whatsapp,
+       has_voice,
        last_message_at,
        last_customer_inbound_preview,
        last_customer_inbound_at
@@ -484,7 +490,11 @@ export async function listCustomerHistory(
     status: row.status,
     priority: row.priority,
     requesterEmail: row.requester_email,
-    channel: row.has_whatsapp ? ("whatsapp" as const) : ("email" as const),
+    channel: row.has_whatsapp
+      ? ("whatsapp" as const)
+      : row.has_voice
+        ? ("voice" as const)
+        : ("email" as const),
     lastMessageAt: row.last_message_at ? row.last_message_at.toISOString() : null,
     lastCustomerInboundPreview: row.last_customer_inbound_preview ?? null,
     lastCustomerInboundAt: row.last_customer_inbound_at

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { redactCallData } from "@/server/calls/redaction";
 
 const querySchema = z.object({
   limit: z.number().int().min(1).max(200).optional()
@@ -28,5 +29,10 @@ export async function GET(request: Request) {
     [limit]
   );
 
-  return Response.json({ logs: result.rows });
+  return Response.json({
+    logs: result.rows.map((row) => ({
+      ...row,
+      data: redactCallData(row.data ?? null)
+    }))
+  });
 }

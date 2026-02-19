@@ -15,7 +15,10 @@
     "jobs:inbound": "node scripts/inbound-backfill-runner.js",
     "jobs:customer-backfill": "node scripts/reconcile-ticket-customers.js",
     "alert:inbound": "node scripts/alert-inbound.js",
-    "whatsapp:outbox": "node scripts/whatsapp-outbox.js"
+    "whatsapp:outbox": "node scripts/whatsapp-outbox.js",
+    "calls:outbox": "node scripts/call-outbox.js",
+    "calls:replay-drill": "node scripts/call-webhook-replay-drill.js",
+    "calls:load-drill": "node scripts/call-outbox-load-drill.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.521.0",

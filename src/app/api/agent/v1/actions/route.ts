@@ -11,11 +11,21 @@ import { sendTicketReply } from "@/server/email/replies";
 import { addTagsToTicket, getTicketById, recordTicketEvent } from "@/server/tickets";
 import { mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
 import { createMergeReviewTask, MergeReviewError } from "@/server/merge-reviews";
+import {
+  getTicketCallOptions,
+  queueOutboundCall,
+  resolveCallPhoneForRequest
+} from "@/server/calls/service";
+import { deliverPendingCallEvents } from "@/server/calls/outbox";
+import { getLatestVoiceConsentState } from "@/server/calls/consent";
+import { evaluateVoiceCallPolicy } from "@/server/calls/policy";
+import { redactPhoneNumber } from "@/server/calls/redaction";
 
 const actionSchema = z.object({
   type: z.enum([
     "draft_reply",
     "send_reply",
+    "initiate_call",
     "set_tags",
     "set_priority",
     "assign_to",
@@ -44,6 +54,10 @@ const actionSchema = z.object({
   sourceCustomerId: z.string().uuid().optional().nullable(),
   targetCustomerId: z.string().uuid().optional().nullable(),
   reason: z.string().max(500).optional().nullable(),
+  candidateId: z.string().optional().nullable(),
+  toPhone: z.string().optional().nullable(),
+  fromPhone: z.string().optional().nullable(),
+  idempotencyKey: z.string().max(200).optional().nullable(),
   confidence: z.number().min(0).max(1).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable()
 });
@@ -89,6 +103,17 @@ function normalizeEscalationTag(value: unknown) {
   return normalized || null;
 }
 
+function requesterEmailForConsent(value: string | null | undefined) {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed.startsWith("voice:") || trimmed.startsWith("whatsapp:")) {
+    return null;
+  }
+  return trimmed;
+}
+
 function readOutOfHoursEscalation(policy: Record<string, unknown> | null | undefined) {
   if (!policy || typeof policy !== "object") {
     return { mode: "draft_only" as const, tag: null };
@@ -130,10 +155,18 @@ export async function POST(request: Request) {
     return Response.json({ error: "No actions provided" }, { status: 400 });
   }
 
-  const results: Array<{ type: string; status: string; detail?: string }> = [];
+  const results: Array<{
+    type: string;
+    status: string;
+    detail?: string;
+    data?: Record<string, unknown>;
+  }> = [];
   const allowMergeActions =
     integration.capabilities?.allow_merge_actions === true ||
     integration.capabilities?.allowMergeActions === true;
+  const allowVoiceActions =
+    integration.capabilities?.allow_voice_actions === true ||
+    integration.capabilities?.allowVoiceActions === true;
   const mergeMinConfidence = getAgentMergeMinConfidence();
 
   for (const action of actions) {
@@ -263,6 +296,137 @@ export async function POST(request: Request) {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to send";
           results.push({ type: action.type, status: "failed", detail: message });
+        }
+        break;
+      }
+      case "initiate_call": {
+        if (!allowVoiceActions) {
+          results.push({
+            type: action.type,
+            status: "blocked",
+            detail: "Voice actions disabled"
+          });
+          break;
+        }
+
+        if (!action.reason?.trim()) {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail: "Call reason is required."
+          });
+          break;
+        }
+
+        const callOptions = await getTicketCallOptions(action.ticketId);
+        if (!callOptions) {
+          results.push({
+            type: action.type,
+            status: "not_found",
+            detail: "Ticket not found."
+          });
+          break;
+        }
+
+        const resolved = resolveCallPhoneForRequest({
+          options: callOptions,
+          candidateId: action.candidateId ?? null,
+          toPhone: action.toPhone ?? null
+        });
+
+        if (resolved.status === "selection_required") {
+          results.push({
+            type: action.type,
+            status: "selection_required",
+            detail: resolved.detail,
+            data: {
+              defaultCandidateId: resolved.defaultCandidateId,
+              candidates: resolved.candidates
+            }
+          });
+          break;
+        }
+
+        if (resolved.status === "failed") {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail: resolved.detail
+          });
+          break;
+        }
+
+        const aiDefaultMaxCallsPerHour = Number(process.env.CALLS_AI_MAX_CALLS_PER_HOUR ?? "0");
+        const consentState = await getLatestVoiceConsentState({
+          customerId: ticket.customer_id ?? null,
+          phone: resolved.phone,
+          email: requesterEmailForConsent(ticket.requester_email)
+        });
+        const policyCheck = await evaluateVoiceCallPolicy({
+          actor: "ai",
+          policy: integration.policy ?? null,
+          ticketMetadata: (ticket.metadata as Record<string, unknown> | null) ?? null,
+          consentState,
+          selectedCandidateId: resolved.selectedCandidateId ?? null,
+          actorIntegrationId: integration.id,
+          defaultMaxCallsPerHour: Number.isFinite(aiDefaultMaxCallsPerHour)
+            ? aiDefaultMaxCallsPerHour
+            : null
+        });
+        if (!policyCheck.allowed) {
+          results.push({
+            type: action.type,
+            status: "blocked",
+            detail: policyCheck.detail,
+            data: { errorCode: policyCheck.code }
+          });
+          break;
+        }
+
+        try {
+          const queued = await queueOutboundCall({
+            ticketId: action.ticketId,
+            toPhone: resolved.phone,
+            fromPhone: action.fromPhone ?? null,
+            reason: action.reason,
+            idempotencyKey: action.idempotencyKey ?? null,
+            origin: "ai",
+            actorIntegrationId: integration.id,
+            metadata: {
+              ...(action.metadata ?? {}),
+              selectedCandidateId: resolved.selectedCandidateId
+              }
+            });
+          void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
+          await recordAuditLog({
+            action: "ai_call_queued",
+            entityType: "call_session",
+            entityId: queued.callSessionId,
+            data: {
+              agentId: integration.id,
+              ticketId: action.ticketId,
+              toPhone: redactPhoneNumber(queued.toPhone),
+              idempotent: queued.idempotent
+            }
+          });
+          results.push({
+            type: action.type,
+            status: "ok",
+            data: {
+              callSessionId: queued.callSessionId,
+              messageId: queued.messageId,
+              toPhone: queued.toPhone,
+              idempotent: queued.idempotent
+            }
+          });
+        } catch (error) {
+          const detail =
+            error instanceof Error ? error.message : "Failed to queue outbound voice call";
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail
+          });
         }
         break;
       }

@@ -43,6 +43,7 @@ export async function GET(request: Request) {
     priority: string;
     assigned_user_id: string | null;
     has_whatsapp: boolean;
+    has_voice: boolean;
     last_message_at: Date | null;
   }>(
     `SELECT
@@ -55,7 +56,11 @@ export async function GET(request: Request) {
        EXISTS (
          SELECT 1 FROM messages wm
          WHERE wm.ticket_id = t.id AND wm.channel = 'whatsapp'
-       ) AS has_whatsapp,
+       ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+       EXISTS (
+         SELECT 1 FROM messages vm
+         WHERE vm.ticket_id = t.id AND vm.channel = 'voice'
+       ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
        COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at
      FROM tickets t
      LEFT JOIN messages m ON m.ticket_id = t.id
@@ -74,7 +79,7 @@ export async function GET(request: Request) {
       status: row.status,
       priority: row.priority,
       assignedUserId: row.assigned_user_id,
-      channel: row.has_whatsapp ? "whatsapp" : "email",
+      channel: row.has_whatsapp ? "whatsapp" : row.has_voice ? "voice" : "email",
       lastMessageAt: row.last_message_at ? row.last_message_at.toISOString() : null
     }))
   });

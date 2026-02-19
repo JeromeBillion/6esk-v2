@@ -39,9 +39,11 @@ export type MergeReviewQueueItem = MergeReviewTask & {
   source_ticket_subject: string | null;
   source_ticket_requester_email: string | null;
   source_ticket_has_whatsapp: boolean;
+  source_ticket_has_voice: boolean;
   target_ticket_subject: string | null;
   target_ticket_requester_email: string | null;
   target_ticket_has_whatsapp: boolean;
+  target_ticket_has_voice: boolean;
   source_customer_display_name: string | null;
   source_customer_primary_email: string | null;
   source_customer_primary_phone: string | null;
@@ -341,14 +343,24 @@ export async function listMergeReviewTasksForUser(
          SELECT 1 FROM messages source_msg
          WHERE source_msg.ticket_id = source_ticket.id
            AND source_msg.channel = 'whatsapp'
-       ) AS source_ticket_has_whatsapp,
+       ) OR COALESCE(source_ticket.requester_email ILIKE 'whatsapp:%', FALSE) AS source_ticket_has_whatsapp,
+       EXISTS (
+         SELECT 1 FROM messages source_msg
+         WHERE source_msg.ticket_id = source_ticket.id
+           AND source_msg.channel = 'voice'
+       ) OR COALESCE(source_ticket.requester_email ILIKE 'voice:%', FALSE) AS source_ticket_has_voice,
        target_ticket.subject AS target_ticket_subject,
        target_ticket.requester_email AS target_ticket_requester_email,
        EXISTS (
          SELECT 1 FROM messages target_msg
          WHERE target_msg.ticket_id = target_ticket.id
            AND target_msg.channel = 'whatsapp'
-       ) AS target_ticket_has_whatsapp,
+       ) OR COALESCE(target_ticket.requester_email ILIKE 'whatsapp:%', FALSE) AS target_ticket_has_whatsapp,
+       EXISTS (
+         SELECT 1 FROM messages target_msg
+         WHERE target_msg.ticket_id = target_ticket.id
+           AND target_msg.channel = 'voice'
+       ) OR COALESCE(target_ticket.requester_email ILIKE 'voice:%', FALSE) AS target_ticket_has_voice,
        source_customer.display_name AS source_customer_display_name,
        source_customer.primary_email AS source_customer_primary_email,
        source_customer.primary_phone AS source_customer_primary_phone,

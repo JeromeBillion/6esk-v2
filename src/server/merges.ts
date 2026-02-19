@@ -40,16 +40,32 @@ function getTicketMergeMaxMoveRows() {
 }
 
 async function getTicketChannel(client: PoolClient, ticketId: string) {
-  const result = await client.query<{ has_whatsapp: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-       FROM messages
-       WHERE ticket_id = $1
-         AND channel = 'whatsapp'
-     ) AS has_whatsapp`,
+  const result = await client.query<{ has_whatsapp: boolean; has_voice: boolean }>(
+    `SELECT
+       EXISTS (
+         SELECT 1
+         FROM messages
+         WHERE ticket_id = $1
+           AND channel = 'whatsapp'
+       ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+       EXISTS (
+         SELECT 1
+         FROM messages
+         WHERE ticket_id = $1
+           AND channel = 'voice'
+       ) OR t.requester_email ILIKE 'voice:%' AS has_voice
+     FROM tickets t
+     WHERE t.id = $1
+     LIMIT 1`,
     [ticketId]
   );
-  return result.rows[0]?.has_whatsapp ? "whatsapp" : "email";
+  if (result.rows[0]?.has_whatsapp) {
+    return "whatsapp" as const;
+  }
+  if (result.rows[0]?.has_voice) {
+    return "voice" as const;
+  }
+  return "email" as const;
 }
 
 async function publishAgentMergeEvent({
@@ -70,8 +86,8 @@ async function publishAgentMergeEvent({
 export type TicketMergePreflight = {
   sourceTicketId: string;
   targetTicketId: string;
-  sourceChannel: "email" | "whatsapp";
-  targetChannel: "email" | "whatsapp";
+  sourceChannel: "email" | "whatsapp" | "voice";
+  targetChannel: "email" | "whatsapp" | "voice";
   sourceTicket: {
     subject: string | null;
     requesterEmail: string;
@@ -339,18 +355,24 @@ export async function preflightCustomerMerge({
                  AND m.channel = 'whatsapp'
              )
          ) AS active_whatsapp_tickets,
-         (
-           SELECT COUNT(*)
-           FROM tickets t
-           WHERE t.customer_id = $1
-             AND t.merged_into_ticket_id IS NULL
-             AND NOT EXISTS (
-               SELECT 1
-               FROM messages m
-               WHERE m.ticket_id = t.id
-                 AND m.channel = 'whatsapp'
-             )
-         ) AS active_email_tickets,
+          (
+            SELECT COUNT(*)
+            FROM tickets t
+            WHERE t.customer_id = $1
+              AND t.merged_into_ticket_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM messages m
+                WHERE m.ticket_id = t.id
+                  AND m.channel = 'whatsapp'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM messages m
+                WHERE m.ticket_id = t.id
+                  AND m.channel = 'voice'
+              )
+          ) AS active_email_tickets,
          (
            SELECT COUNT(*)
            FROM customer_identities

@@ -139,6 +139,52 @@ type InboundAlertConfig = {
   updatedAt: string | null;
 };
 
+type CallOutboxMetrics = {
+  provider: string;
+  queue: {
+    queued: number;
+    dueNow: number;
+    processing: number;
+    failed: number;
+    sentTotal: number;
+    sent24h: number;
+    nextAttemptAt: string | null;
+    lastSentAt: string | null;
+    lastFailedAt: string | null;
+    lastError: string | null;
+  };
+  webhookSecurity: {
+    mode: "hmac" | "shared_secret" | "open";
+    timestampRequired: boolean;
+    maxSkewSeconds: number;
+  };
+};
+
+type CallFailedEvent = {
+  id: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+  updated_at: string;
+  payload: Record<string, unknown>;
+};
+
+type CallWebhookRejections = {
+  windowHours: number;
+  summary: Array<{
+    reason: string;
+    mode: string;
+    count: number;
+  }>;
+  recent: Array<{
+    id: string;
+    createdAt: string;
+    data: Record<string, unknown> | null;
+  }>;
+};
+
 type SecurityStatus = {
   adminAllowlist: string[];
   agentAllowlist: string[];
@@ -168,6 +214,7 @@ const ADMIN_SECTIONS = [
   { key: "whatsapp", label: "WhatsApp" },
   { key: "profile-lookup", label: "Profile Lookup" },
   { key: "security", label: "Security" },
+  { key: "call-ops", label: "Call Ops" },
   { key: "inbound", label: "Inbound Failures" },
   { key: "spam-review", label: "Spam Review" },
   { key: "audit-log", label: "Audit Log" }
@@ -241,8 +288,16 @@ export default function AdminClient() {
   const [inboundAlertConfigError, setInboundAlertConfigError] = useState<string | null>(null);
   const [retryingInbound, setRetryingInbound] = useState(false);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
+  const [triggeringCallOutbox, setTriggeringCallOutbox] = useState(false);
+  const [retryingCallOutbox, setRetryingCallOutbox] = useState(false);
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
+  const [callOutboxMetrics, setCallOutboxMetrics] = useState<CallOutboxMetrics | null>(null);
+  const [callFailedEvents, setCallFailedEvents] = useState<CallFailedEvent[]>([]);
+  const [callWebhookRejections, setCallWebhookRejections] =
+    useState<CallWebhookRejections | null>(null);
+  const [callOpsError, setCallOpsError] = useState<string | null>(null);
+  const [callOpsResult, setCallOpsResult] = useState<string | null>(null);
   const [inboundFailureSeverityFilter, setInboundFailureSeverityFilter] = useState<
     "all" | InboundFailureSeverity
   >("all");
@@ -257,7 +312,10 @@ export default function AdminClient() {
       inboundRes,
       securityRes,
       inboundMetricsRes,
-      inboundSettingsRes
+      inboundSettingsRes,
+      callOutboxRes,
+      callFailedRes,
+      callRejectionsRes
     ] =
       await Promise.all([
         fetch("/api/admin/roles"),
@@ -268,7 +326,10 @@ export default function AdminClient() {
         fetch("/api/admin/inbound/failed?limit=50"),
         fetch("/api/admin/security"),
         fetch("/api/admin/inbound/metrics?hours=24"),
-        fetch("/api/admin/inbound/settings")
+        fetch("/api/admin/inbound/settings"),
+        fetch("/api/admin/calls/outbox"),
+        fetch("/api/admin/calls/failed?limit=50"),
+        fetch("/api/admin/calls/rejections?hours=24&limit=50")
       ]);
 
     if (rolesRes.ok) {
@@ -341,6 +402,33 @@ export default function AdminClient() {
       setInboundAlertConfig(null);
       setInboundAlertConfigError("Failed to load inbound alert settings.");
     }
+
+    const callErrors: string[] = [];
+    if (callOutboxRes.ok) {
+      const payload = (await callOutboxRes.json()) as CallOutboxMetrics;
+      setCallOutboxMetrics(payload);
+    } else {
+      setCallOutboxMetrics(null);
+      callErrors.push("Failed to load call outbox metrics.");
+    }
+
+    if (callFailedRes.ok) {
+      const payload = await callFailedRes.json();
+      setCallFailedEvents((payload.events ?? []) as CallFailedEvent[]);
+    } else {
+      setCallFailedEvents([]);
+      callErrors.push("Failed to load failed call events.");
+    }
+
+    if (callRejectionsRes.ok) {
+      const payload = (await callRejectionsRes.json()) as CallWebhookRejections;
+      setCallWebhookRejections(payload);
+    } else {
+      setCallWebhookRejections(null);
+      callErrors.push("Failed to load webhook rejection metrics.");
+    }
+
+    setCallOpsError(callErrors.length ? callErrors.join(" ") : null);
   }
 
   useEffect(() => {
@@ -406,6 +494,40 @@ export default function AdminClient() {
     setCheckingAlerts(false);
   }
 
+  async function runCallOutbox() {
+    setTriggeringCallOutbox(true);
+    setCallOpsResult(null);
+    const res = await fetch("/api/admin/calls/outbox?limit=25", { method: "POST" });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setCallOpsResult(payload.error ?? "Failed to run call outbox.");
+      setTriggeringCallOutbox(false);
+      return;
+    }
+    setCallOpsResult(
+      `Outbox run completed. Delivered ${payload.delivered ?? 0}, skipped ${
+        payload.skipped ?? 0
+      } (${payload.provider ?? "unknown"}).`
+    );
+    await loadData();
+    setTriggeringCallOutbox(false);
+  }
+
+  async function retryCallOutbox() {
+    setRetryingCallOutbox(true);
+    setCallOpsResult(null);
+    const res = await fetch("/api/admin/calls/retry?limit=25", { method: "POST" });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setCallOpsResult(payload.error ?? "Failed to retry failed call events.");
+      setRetryingCallOutbox(false);
+      return;
+    }
+    setCallOpsResult(`Retry request completed. Requeued ${payload.retried ?? 0} failed events.`);
+    await loadData();
+    setRetryingCallOutbox(false);
+  }
+
   async function saveInboundAlertSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavingInboundAlertConfig(true);
@@ -460,6 +582,8 @@ export default function AdminClient() {
         return users.length;
       case "spam-review":
         return spamMessages.length;
+      case "call-ops":
+        return callFailedEvents.length;
       case "inbound":
         return inboundFailures.length;
       case "audit-log":
@@ -900,6 +1024,198 @@ export default function AdminClient() {
                     );
                   })
                 )}
+              </div>
+            </section>
+          ) : null}
+
+          {activeSection === "call-ops" ? (
+            <section className="panel">
+              <h2 style={{ marginBottom: 12 }}>Call Ops</h2>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={runCallOutbox}
+                  disabled={triggeringCallOutbox}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    cursor: "pointer"
+                  }}
+                >
+                  {triggeringCallOutbox ? "Running..." : "Run call outbox"}
+                </button>
+                <button
+                  type="button"
+                  onClick={retryCallOutbox}
+                  disabled={retryingCallOutbox}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--text)",
+                    cursor: "pointer"
+                  }}
+                >
+                  {retryingCallOutbox ? "Retrying..." : "Retry failed calls"}
+                </button>
+              </div>
+              {callOpsResult ? (
+                <p style={{ color: "var(--muted)", marginTop: 0 }}>{callOpsResult}</p>
+              ) : null}
+              {callOpsError ? <p style={{ color: "var(--danger)", marginTop: 0 }}>{callOpsError}</p> : null}
+
+              {callOutboxMetrics ? (
+                <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 10,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <strong>Outbox Health</strong>
+                    <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
+                      Provider: {callOutboxMetrics.provider} · Queue {callOutboxMetrics.queue.queued} ·
+                      Due now {callOutboxMetrics.queue.dueNow} · Processing{" "}
+                      {callOutboxMetrics.queue.processing} · Failed {callOutboxMetrics.queue.failed}
+                    </p>
+                    <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13 }}>
+                      Sent 24h {callOutboxMetrics.queue.sent24h} · Last sent{" "}
+                      {callOutboxMetrics.queue.lastSentAt
+                        ? new Date(callOutboxMetrics.queue.lastSentAt).toLocaleString()
+                        : "—"}{" "}
+                      · Last failed{" "}
+                      {callOutboxMetrics.queue.lastFailedAt
+                        ? new Date(callOutboxMetrics.queue.lastFailedAt).toLocaleString()
+                        : "—"}
+                    </p>
+                    {callOutboxMetrics.queue.lastError ? (
+                      <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 12 }}>
+                        Last error: {callOutboxMetrics.queue.lastError}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: 10,
+                      background: "rgba(10, 12, 18, 0.6)"
+                    }}
+                  >
+                    <strong>Webhook Security</strong>
+                    <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
+                      Mode: {callOutboxMetrics.webhookSecurity.mode} · Timestamp required:{" "}
+                      {callOutboxMetrics.webhookSecurity.timestampRequired ? "Yes" : "No"} · Max skew:{" "}
+                      {callOutboxMetrics.webhookSecurity.maxSkewSeconds}s
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
+                  <strong>Webhook Rejections (last {callWebhookRejections?.windowHours ?? 24}h)</strong>
+                  {callWebhookRejections?.summary?.length ? (
+                    <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                      {callWebhookRejections.summary.map((item) => (
+                        <div key={`${item.mode}-${item.reason}`} style={{ fontSize: 13, color: "var(--muted)" }}>
+                          {item.reason} · mode {item.mode} · {item.count}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
+                      No grouped rejection data.
+                    </p>
+                  )}
+                  {callWebhookRejections?.recent?.length ? (
+                    <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
+                      <strong style={{ fontSize: 13 }}>Recent Rejections</strong>
+                      {callWebhookRejections.recent.slice(0, 10).map((item) => {
+                        const reason =
+                          typeof item.data?.reason === "string" ? item.data.reason : "unknown";
+                        const mode = typeof item.data?.mode === "string" ? item.data.mode : "unknown";
+                        const endpoint =
+                          typeof item.data?.endpoint === "string" ? item.data.endpoint : "unknown";
+                        return (
+                          <div
+                            key={item.id}
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: 8,
+                              background: "rgba(10, 12, 18, 0.45)",
+                              fontSize: 12,
+                              color: "var(--muted)"
+                            }}
+                          >
+                            {new Date(item.createdAt).toLocaleString()} · {reason} · mode {mode} ·{" "}
+                            {endpoint}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
+                      No recent rejection events.
+                    </p>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(10, 12, 18, 0.6)"
+                  }}
+                >
+                  <strong>Failed Call Outbox Events</strong>
+                  {callFailedEvents.length === 0 ? (
+                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
+                      No failed call outbox events.
+                    </p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                      {callFailedEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 8,
+                            padding: 8,
+                            background: "rgba(10, 12, 18, 0.45)",
+                            fontSize: 13
+                          }}
+                        >
+                          <div style={{ color: "var(--muted)" }}>
+                            Attempts: {event.attempt_count} · Next:{" "}
+                            {event.next_attempt_at
+                              ? new Date(event.next_attempt_at).toLocaleString()
+                              : "—"}
+                          </div>
+                          <div style={{ color: "var(--muted)" }}>
+                            {event.last_error ?? "Unknown error"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </section>
           ) : null}

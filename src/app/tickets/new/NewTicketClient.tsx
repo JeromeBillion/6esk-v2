@@ -7,7 +7,9 @@ const CATEGORY_OPTIONS = ["payments", "markets", "account", "kyc", "security", "
 
 export default function NewTicketClient() {
   const [form, setForm] = useState({
+    contactMode: "email" as "email" | "call",
     to: "",
+    toPhone: "",
     subject: "",
     description: "",
     category: "general",
@@ -24,9 +26,11 @@ export default function NewTicketClient() {
     setError(null);
 
     const payload = {
+      contactMode: form.contactMode,
       to: form.to,
+      toPhone: form.toPhone,
       subject: form.subject,
-      description: form.description,
+      description: form.description || null,
       category: form.category,
       tags: form.tags
         .split(",")
@@ -48,13 +52,36 @@ export default function NewTicketClient() {
     }
 
     setStatus("success");
-    setForm((prev) => ({ ...prev, to: "", subject: "", description: "", tags: "" }));
+    setForm((prev) => ({
+      ...prev,
+      to: "",
+      toPhone: "",
+      subject: "",
+      description: "",
+      tags: ""
+    }));
   }
 
   return (
-    <AppShell title="Create Ticket" subtitle="Create ticket and send email.">
+    <AppShell title="Create Ticket" subtitle="Create ticket via email or outbound call.">
       <div className="app-content">
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
+          <label>
+            Contact mode
+            <select
+              value={form.contactMode}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  contactMode: event.target.value === "call" ? "call" : "email"
+                }))
+              }
+            >
+              <option value="email">Email</option>
+              <option value="call">Call</option>
+            </select>
+          </label>
+          {form.contactMode === "email" ? (
           <label>
             Email to
             <input
@@ -64,6 +91,20 @@ export default function NewTicketClient() {
               onChange={(event) => setForm((prev) => ({ ...prev, to: event.target.value }))}
             />
           </label>
+          ) : (
+            <label>
+              Phone number
+              <input
+                type="tel"
+                required
+                placeholder="+15551234567"
+                value={form.toPhone}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, toPhone: event.target.value }))
+                }
+              />
+            </label>
+          )}
           <label>
             Subject
             <input
@@ -95,10 +136,10 @@ export default function NewTicketClient() {
             />
           </label>
           <label>
-            Description
+            {form.contactMode === "call" ? "Call reason (optional)" : "Description"}
             <textarea
               rows={6}
-              required
+              required={form.contactMode === "email"}
               value={form.description}
               onChange={(event) =>
                 setForm((prev) => ({ ...prev, description: event.target.value }))
@@ -107,7 +148,11 @@ export default function NewTicketClient() {
           </label>
           {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
           {status === "success" ? (
-            <p style={{ color: "var(--accent)" }}>Ticket created and email sent.</p>
+            <p style={{ color: "var(--accent)" }}>
+              {form.contactMode === "call"
+                ? "Ticket created and call queued."
+                : "Ticket created and email sent."}
+            </p>
           ) : null}
           <button
             type="submit"
@@ -121,7 +166,11 @@ export default function NewTicketClient() {
               cursor: "pointer"
             }}
           >
-            {status === "submitting" ? "Creating..." : "Create ticket and send email"}
+            {status === "submitting"
+              ? "Creating..."
+              : form.contactMode === "call"
+                ? "Create ticket and queue call"
+                : "Create ticket and send email"}
           </button>
         </form>
       </div>
