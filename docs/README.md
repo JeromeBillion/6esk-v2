@@ -17,6 +17,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Ticketized execution backlog with dependencies, estimates, and sprint cut
 - `docs/call-ops-runbook.md`
   - Call operations runbook (replay drill, outbox load/retry drill, rollback)
+- `docs/call-crm-staging-e2e.md`
+  - Staging E2E harness for CRM call orchestration checklist validation
 - `docs/privacy-retention-policy.md`
   - Voice consent source-of-truth and recording/transcript retention wording
 - `Venus-Voice.md` (repo root)

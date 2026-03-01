@@ -18,7 +18,8 @@
     "whatsapp:outbox": "node scripts/whatsapp-outbox.js",
     "calls:outbox": "node scripts/call-outbox.js",
     "calls:replay-drill": "node scripts/call-webhook-replay-drill.js",
-    "calls:load-drill": "node scripts/call-outbox-load-drill.js"
+    "calls:load-drill": "node scripts/call-outbox-load-drill.js",
+    "calls:crm-e2e": "node scripts/calls-crm-e2e.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.521.0",

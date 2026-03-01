@@ -11,6 +11,9 @@ CALLS_WEBHOOK_SECRET=<webhook-hmac-secret>
 CALLS_WEBHOOK_MAX_SKEW_SECONDS=300
 CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false
 CALLS_PROVIDER=mock
+SIXESK_AGENT_ID=<agent_integration_id>
+SIXESK_AGENT_KEY=<agent_shared_secret>
+CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 ```
 
 Notes:
@@ -74,6 +77,23 @@ Then re-run:
 ```powershell
 npm run calls:outbox
 ```
+
+## CRM Calls Staging E2E Harness
+
+Purpose: execute the end-to-end CRM orchestration checklist (call-options, initiate-call idempotency, lifecycle, transcript, review-writeback dedupe).
+
+```powershell
+$env:APP_URL="https://<your-6esk-domain>"
+$env:CALLS_WEBHOOK_SECRET="<webhook-hmac-secret>"
+$env:SIXESK_AGENT_ID="<agent_integration_id>"
+$env:SIXESK_AGENT_KEY="<agent_shared_secret>"
+$env:CRM_CALLS_TICKET_ID="<ticket_uuid_for_staging>"
+npm run calls:crm-e2e
+```
+
+Optional:
+- set `DATABASE_URL` to validate local `ticket.call.*` sequence metadata from `agent_outbox`.
+- set `CRM_CALLS_VENUS_EVENTS_URL` (and optional `CRM_CALLS_VENUS_EVENTS_TOKEN`) to verify Venus event observation.
 
 ## Incident Triage
 

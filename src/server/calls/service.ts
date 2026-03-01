@@ -414,6 +414,7 @@ export async function queueOutboundCall({
   const callSessionId = randomUUID();
   const messageId = randomUUID();
   const queuedAt = new Date();
+  let queuedEventMeta: { sequence: number; eventIdempotencyKey: string } | null = null;
   const previewText = normalizedReason.slice(0, 200);
   const messageFrom =
     normalizedFrom ?? (origin === "ai" ? "voice:ai" : actorUserId ? `voice:${actorUserId}` : "voice:agent");
@@ -490,21 +491,18 @@ export async function queueOutboundCall({
       ]
     );
 
-    await client.query(
-      `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        callSessionId,
-        "queued",
-        queuedAt,
-        {
-          source: origin,
-          reason: normalizedReason,
-          toPhone: normalizedTo,
-          fromPhone: normalizedFrom ?? null
-        }
-      ]
-    );
+    queuedEventMeta = await appendCallEvent({
+      queryExecutor: client,
+      callSessionId,
+      eventType: "queued",
+      occurredAt: queuedAt,
+      payload: {
+        source: origin,
+        reason: normalizedReason,
+        toPhone: normalizedTo,
+        fromPhone: normalizedFrom ?? null
+      }
+    });
 
     await client.query(
       `INSERT INTO call_outbox_events (direction, payload, status)
@@ -581,7 +579,11 @@ export async function queueOutboundCall({
       call: {
         id: callSessionId,
         status: "queued",
-        toPhone: normalizedTo
+        toPhone: normalizedTo,
+        sequence: queuedEventMeta?.sequence ?? 1,
+        eventType: "queued",
+        eventIdempotencyKey:
+          queuedEventMeta?.eventIdempotencyKey ?? buildCallEventIdempotencyKey(callSessionId, 1)
       }
     }
   });
@@ -618,6 +620,7 @@ type CallSessionRow = {
   provider: string;
   provider_call_id: string | null;
   status: CallStatus;
+  event_sequence: number;
   to_phone: string;
   from_phone: string | null;
   recording_url: string | null;
@@ -721,9 +724,66 @@ function getSupportAddress() {
   return domain ? `support@${domain}`.toLowerCase() : "";
 }
 
+type CallEventQueryExecutor = Pick<typeof db, "query">;
+
+function buildCallEventIdempotencyKey(callSessionId: string, sequence: number) {
+  return `${callSessionId}:${sequence}`;
+}
+
+async function reserveCallEventSequence(
+  queryExecutor: CallEventQueryExecutor,
+  callSessionId: string
+) {
+  const result = await queryExecutor.query<{ event_sequence: number | string | null }>(
+    `UPDATE call_sessions
+     SET event_sequence = event_sequence + 1,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING event_sequence`,
+    [callSessionId]
+  );
+  const sequence = Number(result.rows[0]?.event_sequence ?? 0);
+  if (!Number.isFinite(sequence) || sequence < 1) {
+    throw new Error("Failed to allocate call event sequence.");
+  }
+  return sequence;
+}
+
+async function appendCallEvent({
+  queryExecutor,
+  callSessionId,
+  eventType,
+  occurredAt,
+  payload
+}: {
+  queryExecutor: CallEventQueryExecutor;
+  callSessionId: string;
+  eventType: string;
+  occurredAt: Date;
+  payload?: Record<string, unknown> | null;
+}) {
+  const sequence = await reserveCallEventSequence(queryExecutor, callSessionId);
+  const eventIdempotencyKey = buildCallEventIdempotencyKey(callSessionId, sequence);
+  await queryExecutor.query(
+    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
+     VALUES ($1, $2, $3, $4)`,
+    [
+      callSessionId,
+      eventType,
+      occurredAt,
+      {
+        ...(payload ?? {}),
+        sequence,
+        eventIdempotencyKey
+      }
+    ]
+  );
+  return { sequence, eventIdempotencyKey };
+}
+
 async function getCallSessionByProvider(provider: string, providerCallId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, to_phone, from_phone,
+    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
             recording_url, recording_r2_key, transcript_r2_key, metadata
      FROM call_sessions
      WHERE provider = $1
@@ -737,7 +797,7 @@ async function getCallSessionByProvider(provider: string, providerCallId: string
 
 async function getCallSessionById(callSessionId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, to_phone, from_phone,
+    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
             recording_url, recording_r2_key, transcript_r2_key, metadata
      FROM call_sessions
      WHERE id = $1
@@ -828,20 +888,17 @@ export async function updateCallSessionStatus({
     ]
   );
 
-  await db.query(
-    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-     VALUES ($1, $2, $3, $4)`,
-    [
-      session.id,
-      statusValue,
-      at,
-      {
-        ...(payload ?? {}),
-        provider: providerValue,
-        providerCallId: providerCallIdValue
-      }
-    ]
-  );
+  const statusEventMeta = await appendCallEvent({
+    queryExecutor: db,
+    callSessionId: session.id,
+    eventType: statusValue,
+    occurredAt: at,
+    payload: {
+      ...(payload ?? {}),
+      provider: providerValue,
+      providerCallId: providerCallIdValue
+    }
+  });
 
   if (!isNoop) {
     if (statusValue === "in_progress") {
@@ -870,7 +927,10 @@ export async function updateCallSessionStatus({
             id: session.id,
             status: statusValue,
             toPhone: session.to_phone,
-            fromPhone: session.from_phone
+            fromPhone: session.from_phone,
+            sequence: statusEventMeta.sequence,
+            eventType: statusValue,
+            eventIdempotencyKey: statusEventMeta.eventIdempotencyKey
           }
         }
       });
@@ -904,7 +964,10 @@ export async function updateCallSessionStatus({
             status: statusValue,
             toPhone: session.to_phone,
             fromPhone: session.from_phone,
-            durationSeconds: nextDuration
+            durationSeconds: nextDuration,
+            sequence: statusEventMeta.sequence,
+            eventType: statusValue,
+            eventIdempotencyKey: statusEventMeta.eventIdempotencyKey
           }
         }
       });
@@ -1005,20 +1068,18 @@ export async function attachCallRecording({
     [session.id, url, uploadedKey, parsedDuration]
   );
 
-  await db.query(
-    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-     VALUES ($1, 'recording_ready', $2, $3)`,
-    [
-      session.id,
-      at,
-      {
-        recordingUrl: url,
-        recordingR2Key: uploadedKey,
-        attachmentId,
-        ...(payload ?? {})
-      }
-    ]
-  );
+  const recordingEventMeta = await appendCallEvent({
+    queryExecutor: db,
+    callSessionId: session.id,
+    eventType: "recording_ready",
+    occurredAt: at,
+    payload: {
+      recordingUrl: url,
+      recordingR2Key: uploadedKey,
+      attachmentId,
+      ...(payload ?? {})
+    }
+  });
 
   await recordTicketEvent({
     ticketId: session.ticket_id,
@@ -1045,7 +1106,10 @@ export async function attachCallRecording({
       call: {
         id: session.id,
         recordingUrl: url,
-        recordingR2Key: uploadedKey
+        recordingR2Key: uploadedKey,
+        sequence: recordingEventMeta.sequence,
+        eventType: "recording_ready",
+        eventIdempotencyKey: recordingEventMeta.eventIdempotencyKey
       }
     }
   });
@@ -1163,20 +1227,18 @@ export async function attachCallTranscript({
     [session.id, uploadedKey]
   );
 
-  await db.query(
-    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-     VALUES ($1, 'transcript_ready', $2, $3)`,
-    [
-      session.id,
-      at,
-      {
-        transcriptR2Key: uploadedKey,
-        transcriptUrl: transcriptUrlValue,
-        attachmentId,
-        ...(payload ?? {})
-      }
-    ]
-  );
+  const transcriptEventMeta = await appendCallEvent({
+    queryExecutor: db,
+    callSessionId: session.id,
+    eventType: "transcript_ready",
+    occurredAt: at,
+    payload: {
+      transcriptR2Key: uploadedKey,
+      transcriptUrl: transcriptUrlValue,
+      attachmentId,
+      ...(payload ?? {})
+    }
+  });
 
   await recordTicketEvent({
     ticketId: session.ticket_id,
@@ -1203,7 +1265,10 @@ export async function attachCallTranscript({
       call: {
         id: session.id,
         transcriptR2Key: uploadedKey,
-        transcriptUrl: transcriptUrlValue
+        transcriptUrl: transcriptUrlValue,
+        sequence: transcriptEventMeta.sequence,
+        eventType: "transcript_ready",
+        eventIdempotencyKey: transcriptEventMeta.eventIdempotencyKey
       }
     }
   });
@@ -1429,11 +1494,13 @@ export async function createOrUpdateInboundCall({
     ]
   );
 
-  await db.query(
-    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-     VALUES ($1, $2, $3, $4)`,
-    [callSessionId, statusValue, at, metadata ?? null]
-  );
+  const inboundEventMeta = await appendCallEvent({
+    queryExecutor: db,
+    callSessionId,
+    eventType: statusValue,
+    occurredAt: at,
+    payload: metadata ?? null
+  });
 
   await recordTicketEvent({
     ticketId: resolvedTicketId,
@@ -1462,7 +1529,10 @@ export async function createOrUpdateInboundCall({
         direction: "inbound",
         fromPhone: normalizedFrom,
         toPhone: normalizedTo,
-        status: statusValue
+        status: statusValue,
+        sequence: inboundEventMeta.sequence,
+        eventType: statusValue,
+        eventIdempotencyKey: inboundEventMeta.eventIdempotencyKey
       }
     }
   });

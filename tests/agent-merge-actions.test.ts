@@ -413,4 +413,100 @@ describe("agent merge actions route", () => {
     expect(mocks.addTagsToTicket).not.toHaveBeenCalled();
     expect(mocks.sendTicketReply).not.toHaveBeenCalled();
   });
+
+  it("requires idempotencyKey when request_human_review includes call session metadata", async () => {
+    const { response, body } = await postAction({
+      type: "request_human_review",
+      ticketId: TICKET_A,
+      metadata: {
+        callSessionId: "55555555-5555-4555-8555-555555555555",
+        summary: "Customer asked for payout follow-up."
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "request_human_review",
+      status: "failed",
+      detail: "idempotencyKey is required when metadata.callSessionId is provided."
+    });
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates repeated request_human_review writebacks by callSessionId + idempotencyKey", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.dbQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const { response, body } = await postAction({
+      type: "request_human_review",
+      ticketId: TICKET_A,
+      idempotencyKey: "summary-1",
+      metadata: {
+        callSessionId: "66666666-6666-4666-8666-666666666666",
+        summary: "Duplicate summary payload"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "request_human_review",
+      status: "ok",
+      detail: "Duplicate review writeback ignored.",
+      data: {
+        callSessionId: "66666666-6666-4666-8666-666666666666",
+        idempotencyKey: "summary-1",
+        deduplicated: true
+      }
+    });
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_review_writeback_deduplicated",
+        entityType: "call_session",
+        entityId: "66666666-6666-4666-8666-666666666666"
+      })
+    );
+  });
+
+  it("records first-time request_human_review writeback and returns deterministic metadata", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "writeback-1" }] });
+
+    const { response, body } = await postAction({
+      type: "request_human_review",
+      ticketId: TICKET_A,
+      idempotencyKey: "summary-2",
+      metadata: {
+        callSessionId: "77777777-7777-4777-8777-777777777777",
+        summary: "Customer requested escalation callback."
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "request_human_review",
+      status: "ok",
+      data: {
+        callSessionId: "77777777-7777-4777-8777-777777777777",
+        idempotencyKey: "summary-2",
+        deduplicated: false
+      }
+    });
+    expect(mocks.recordTicketEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketId: TICKET_A,
+        eventType: "ai_review_requested"
+      })
+    );
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_review_requested",
+        entityType: "ticket",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          callSessionId: "77777777-7777-4777-8777-777777777777",
+          idempotencyKey: "summary-2"
+        })
+      })
+    );
+  });
 });

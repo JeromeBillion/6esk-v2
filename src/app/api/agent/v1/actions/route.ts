@@ -128,6 +128,43 @@ function readOutOfHoursEscalation(policy: Record<string, unknown> | null | undef
   return { mode, tag };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function extractCallSessionId(metadata: Record<string, unknown> | null | undefined) {
+  const root = asRecord(metadata);
+  if (!root) return null;
+
+  const direct =
+    readString(root.callSessionId) ??
+    readString(root.call_session_id) ??
+    readString(root.voiceCallSessionId);
+  if (direct && UUID_PATTERN.test(direct)) {
+    return direct;
+  }
+
+  const call = asRecord(root.call);
+  const nested = readString(call?.id) ?? readString(call?.callSessionId);
+  if (nested && UUID_PATTERN.test(nested)) {
+    return nested;
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   const integration = await getAgentFromRequest(request);
   if (!integration) {
@@ -494,18 +531,89 @@ export async function POST(request: Request) {
         break;
       }
       case "request_human_review": {
+        const reviewMetadata = (action.metadata as Record<string, unknown> | null) ?? null;
+        const callSessionId = extractCallSessionId(reviewMetadata);
+        const idempotencyKey = readString(action.idempotencyKey);
+
+        if (callSessionId && !idempotencyKey) {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail: "idempotencyKey is required when metadata.callSessionId is provided."
+          });
+          break;
+        }
+
+        if (callSessionId && idempotencyKey) {
+          const claimed = await db.query<{ id: string }>(
+            `INSERT INTO call_review_writebacks (
+               ticket_id, call_session_id, idempotency_key, payload
+             ) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (call_session_id, idempotency_key) DO NOTHING
+             RETURNING id`,
+            [action.ticketId, callSessionId, idempotencyKey, reviewMetadata ?? {}]
+          );
+          if (!claimed.rows[0]?.id) {
+            await db.query(
+              `UPDATE call_review_writebacks
+               SET last_seen_at = now(),
+                   updated_at = now()
+               WHERE call_session_id = $1
+                 AND idempotency_key = $2`,
+              [callSessionId, idempotencyKey]
+            );
+            await recordAuditLog({
+              action: "ai_review_writeback_deduplicated",
+              entityType: "call_session",
+              entityId: callSessionId,
+              data: {
+                agentId: integration.id,
+                ticketId: action.ticketId,
+                idempotencyKey
+              }
+            });
+            results.push({
+              type: action.type,
+              status: "ok",
+              detail: "Duplicate review writeback ignored.",
+              data: {
+                callSessionId,
+                idempotencyKey,
+                deduplicated: true
+              }
+            });
+            break;
+          }
+        }
+
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "ai_review_requested",
-          data: action.metadata ?? null
+          data: reviewMetadata
         });
         await recordAuditLog({
           action: "ai_review_requested",
           entityType: "ticket",
           entityId: action.ticketId,
-          data: { agentId: integration.id, metadata: action.metadata ?? null }
+          data: {
+            agentId: integration.id,
+            metadata: reviewMetadata,
+            callSessionId,
+            idempotencyKey
+          }
         });
-        results.push({ type: action.type, status: "ok" });
+        results.push({
+          type: action.type,
+          status: "ok",
+          data:
+            callSessionId && idempotencyKey
+              ? {
+                  callSessionId,
+                  idempotencyKey,
+                  deduplicated: false
+                }
+              : undefined
+        });
         break;
       }
       case "propose_merge": {

@@ -92,6 +92,16 @@ Venus should consume and reconcile:
 - `ticket.call.failed`
 - `ticket.call.selection.required`
 
+For all `ticket.call.*` payloads, 6esk now includes:
+- `call.sequence` (monotonic per `callSessionId`)
+- `call.eventType` (call lifecycle label used for sequencing)
+- `call.eventIdempotencyKey` (format: `{callSessionId}:{sequence}`)
+
+Consumer rules:
+- Deduplicate by `call.eventIdempotencyKey`.
+- Apply state only when `call.sequence` is greater than the last applied sequence for that `callSessionId`.
+- Ignore duplicate or out-of-order events (`sequence <= lastAppliedSequence`).
+
 Expected Venus reaction:
 - `call.started`: mark workflow step active.
 - `call.ended`: close call step, store duration/outcome.
@@ -113,6 +123,14 @@ Expected Venus reaction:
   - 2nd retry: 60s
   - 3rd retry: 5m
 - Do not retry on `selection_required`, `consent_required`, `invalid_phone`.
+
+### Transcript Summary Writeback Idempotency
+When Venus posts transcript summary/action items via `POST /api/agent/v1/actions` with `type: "request_human_review"`:
+- include `metadata.callSessionId` (UUID)
+- include `idempotencyKey` (required when `metadata.callSessionId` is present)
+- 6esk deduplicates by `(callSessionId, idempotencyKey)`
+- first write returns `data.deduplicated=false`
+- duplicate write returns `data.deduplicated=true` and does not create duplicate review events
 
 ## Venus Repo Work Plan
 
@@ -160,6 +178,8 @@ Expected Venus reaction:
   - admin call ops endpoints and UI (`outbox`, `failed`, `retry`, `rejections`)
   - phone redaction for call-focused audit/admin payloads
   - webhook rejection audit logs and replay-window validation
+  - monotonic call event sequencing (`call.sequence`) and event idempotency keys (`call.eventIdempotencyKey`) on `ticket.call.*`
+  - transcript summary writeback deduplication for `request_human_review` keyed by `callSessionId + idempotencyKey`
   - call ops runbook and replay/load drill scripts for safe validation
 - Deferred:
   - non-mock provider dial adapter (`CALLS_PROVIDER=mock` remains default)
