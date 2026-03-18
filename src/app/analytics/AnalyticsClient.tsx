@@ -628,7 +628,87 @@ export default function AnalyticsClient() {
               background: "rgba(10, 12, 18, 0.6)"
             }}
           >
-            <h2>Voice Outcomes</h2>
+            <h2>Voice KPI Summary</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginTop: 12 }}>
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 8,
+                  background: "rgba(255, 192, 96, 0.1)",
+                  border: "1px solid rgba(255, 192, 96, 0.2)"
+                }}
+              >
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Total Calls</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#ffd29d" }}>
+                  {voiceTotal}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                  Inbound: {overview?.channels?.voice.inbound ?? 0} · Outbound: {voiceOutbound}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 8,
+                  background: "rgba(127, 245, 162, 0.1)",
+                  border: "1px solid rgba(127, 245, 162, 0.2)"
+                }}
+              >
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Success Rate</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#7ff5a2" }}>
+                  {voiceConnectRate === null ? "—" : `${voiceConnectRate}%`}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                  {voiceCompleted} completed of {voiceOutbound} outbound
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 8,
+                  background: "rgba(135, 206, 235, 0.1)",
+                  border: "1px solid rgba(135, 206, 235, 0.2)"
+                }}
+              >
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Avg Duration</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#87ceeb" }}>
+                  {voiceAvgDuration > 0 ? `${Math.round(voiceAvgDuration)}s` : "—"}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                  Per completed call
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 8,
+                  background: "rgba(255, 107, 107, 0.1)",
+                  border: "1px solid rgba(255, 107, 107, 0.2)"
+                }}
+              >
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Issues</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#ff6b6b" }}>
+                  {voiceFailed + voiceNoAnswer + voiceBusy + voiceCanceled}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                  Failed: {voiceFailed} · No answer: {voiceNoAnswer} · Busy: {voiceBusy}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: 16,
+              background: "rgba(10, 12, 18, 0.6)"
+            }}
+          >
+            <h2 style={{ margin: 0 }}>Voice Outcomes</h2>
             <div style={{ display: "grid", gap: 8 }}>
               {volume.voice.length === 0 ? (
                 <p>No voice call data yet.</p>

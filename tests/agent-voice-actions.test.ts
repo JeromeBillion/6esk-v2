@@ -338,4 +338,182 @@ describe("agent initiate_call action", () => {
       })
     );
   });
+
+  it("allows manual phone entry with toPhone parameter", async () => {
+    mocks.resolveCallPhoneForRequest.mockReturnValue({
+      status: "resolved",
+      phone: "+1-555-999-8888",
+      selectedCandidateId: null
+    });
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Manual override call",
+      toPhone: "+1-555-999-8888"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "ok"
+    });
+    expect(mocks.resolveCallPhoneForRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toPhone: "+1-555-999-8888"
+      })
+    );
+    expect(mocks.queueOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toPhone: "+1-555-999-8888"
+      })
+    );
+  });
+
+  it("returns blocked when ticket not found", async () => {
+    mocks.getTicketById.mockResolvedValue(null);
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Follow-up call"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "not_found"
+    });
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
+  });
+
+  it("blocks when user lacks mailbox scope", async () => {
+    mocks.hasMailboxScope.mockReturnValue(false);
+
+    const { response } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Call for verification"
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it("blocks when policy blocks call outside working hours", async () => {
+    mocks.evaluateVoiceCallPolicy.mockResolvedValue({
+      allowed: false,
+      code: "outside_allowed_hours",
+      detail: "Calls only allowed 9 AM - 5 PM EST (Mon-Fri)"
+    });
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Support callback",
+      candidateId: "primary"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "blocked",
+      detail: "Calls only allowed 9 AM - 5 PM EST (Mon-Fri)"
+    });
+    expect(body.results[0].data).toMatchObject({
+      errorCode: "outside_allowed_hours"
+    });
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
+  });
+
+  it("supports idempotency key for duplicate request handling", async () => {
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Retry attempt",
+      candidateId: "primary",
+      idempotencyKey: "retry-key-123"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "ok"
+    });
+    expect(mocks.queueOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "retry-key-123"
+      })
+    );
+  });
+
+  it("rejects call when phone resolution returns failed status", async () => {
+    mocks.resolveCallPhoneForRequest.mockReturnValue({
+      status: "failed",
+      errorCode: "missing_phone",
+      detail: "No phone number available and manual dial required"
+    });
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Need to call"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "failed",
+      detail: "No phone number available and manual dial required"
+    });
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
+  });
+
+  it("includes required reason field in validation", async () => {
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID
+      // reason field intentionally missing
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "failed"
+    });
+    expect(body.results[0].detail).toMatch(/reason|required/i);
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
+  });
+
+  it("passes consent state to policy evaluation", async () => {
+    const consentState = {
+      state: "granted",
+      callbackPhone: "+15551234567",
+      termsVersion: "v2.1",
+      source: "inbound_call_consent_audio_prompt",
+      updatedAt: "2026-02-20T14:30:00.000Z",
+      identityType: "phone",
+      identityValue: "+15551234567",
+      customerId: "cust-123"
+    };
+    mocks.getLatestVoiceConsentState.mockResolvedValue(consentState);
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Callback based on consent",
+      candidateId: "primary"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0].status).toBe("ok");
+    expect(mocks.evaluateVoiceCallPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        consentState: expect.objectContaining({
+          state: "granted",
+          callbackPhone: "+15551234567"
+        })
+      })
+    );
+  });
 });
+

@@ -55,6 +55,16 @@ type MessageDetail = {
   waContact?: string | null;
   conversationId?: string | null;
   callSessionId?: string | null;
+  callSession?: {
+    fromPhone: string | null;
+    toPhone: string;
+    direction: string;
+    status: string;
+    durationSeconds: number | null;
+    createdBy: string;
+    recordingUrl?: string | null;
+    recordingR2Key?: string | null;
+  } | null;
   transcript?: {
     available: boolean;
     text: string | null;
@@ -312,6 +322,15 @@ const WHATSAPP_STATUS_INDEX: Record<string, number> = {
   delivered: 2,
   read: 3
 };
+const VOICE_CALL_STATUS_STEPS = ["queued", "dialing", "ringing", "in_progress", "completed"] as const;
+const VOICE_CALL_STATUS_INDEX: Record<string, number> = {
+  queued: 0,
+  dialing: 1,
+  ringing: 2,
+  in_progress: 3,
+  completed: 4
+};
+const VOICE_CALL_TERMINAL_STATUSES = ["completed", "no_answer", "busy", "failed", "canceled"];
 
 type ExternalProfileSnapshot = {
   source: string;
@@ -396,6 +415,26 @@ function formatStatusLatency(
   const hours = Math.floor(minutes / 60);
   const remMinutes = minutes % 60;
   return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function formatCallDuration(seconds: number | null | undefined) {
+  if (!seconds || seconds < 0) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${secs}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+}
+
+function formatVoiceStatusColor(status: string | null | undefined) {
+  const s = (status ?? "").toLowerCase();
+  if (s === "completed") return "#7ff5a2"; // green
+  if (s === "in_progress" || s === "ringing" || s === "dialing") return "#87ceeb"; // blue
+  if (s === "queued") return "#ffd29d"; // orange
+  if (["no_answer", "busy", "failed", "canceled"].includes(s)) return "#ff6b6b"; // red
+  return "var(--muted)";
 }
 
 function extractStatusError(payload: Record<string, unknown> | null | undefined) {
@@ -3645,6 +3684,71 @@ export default function TicketsClient() {
                         })
                       )}
                     </div>
+                  ) : ticketChannel === "voice" ? (
+                    <div className="voice-thread">
+                      {messages.length === 0 ? (
+                        <p>No voice calls yet.</p>
+                      ) : (
+                        messages.map((message, index) => {
+                          const currentDate = getMessageDateKey(message);
+                          const previousDate =
+                            index > 0 ? getMessageDateKey(messages[index - 1]) : null;
+                          const showDivider = currentDate !== previousDate;
+
+                          return (
+                            <div key={message.id} className="voice-thread-row">
+                              {showDivider ? (
+                                <div className="voice-date-divider">{currentDate}</div>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => loadMessageDetail(message.id)}
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 12,
+                                  background:
+                                    message.id === activeMessageId
+                                      ? "rgba(255, 192, 96, 0.15)"
+                                      : "rgba(10, 12, 18, 0.6)",
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  width: "100%"
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                                  <span
+                                    style={{
+                                      padding: "4px 8px",
+                                      borderRadius: 4,
+                                      background: message.direction === "inbound" ? "rgba(76, 175, 80, 0.2)" : "rgba(33, 150, 243, 0.2)",
+                                      color: message.direction === "inbound" ? "#7cfc00" : "#87ceeb",
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      textTransform: "uppercase"
+                                    }}
+                                  >
+                                    {message.direction === "inbound" ? "Received" : "Initiated"}
+                                  </span>
+                                  <span style={{ color: "#ffd29d", fontWeight: 600 }}>Voice Call</span>
+                                </div>
+                                <div style={{ fontSize: 13, color: "var(--text)" }}>
+                                  {message.preview_text ?? "(no notes)"}
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8, fontSize: 11 }}>
+                                  <span style={{ color: "var(--muted)" }}>
+                                    {formatMessageTimestamp(message)}
+                                  </span>
+                                  <span style={{ color: "var(--muted)" }}>
+                                    {message.origin === "ai" ? "AI" : "Human"}
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   ) : (
                     <div style={{ display: "grid", gap: 12 }}>
                       {messages.map((message) => (
@@ -3888,37 +3992,192 @@ export default function TicketsClient() {
                           </div>
                         ) : null}
                         {messageDetail.channel === "voice" ? (
-                          <details
-                            style={{
-                              border: "1px solid var(--border)",
-                              borderRadius: 10,
-                              padding: 10,
-                              background: "rgba(10, 12, 18, 0.6)"
-                            }}
-                          >
-                            <summary style={{ cursor: "pointer" }}>
-                              {messageDetail.transcript?.available
-                                ? "Transcript"
-                                : "Transcript (not available yet)"}
-                            </summary>
-                            {messageDetail.transcript?.available ? (
-                              <pre
+                          <div style={{ display: "grid", gap: 12 }}>
+                            {/* Call Details */}
+                            {messageDetail.callSession ? (
+                              <div
                                 style={{
-                                  whiteSpace: "pre-wrap",
-                                  marginTop: 10,
-                                  marginBottom: 0,
-                                  maxHeight: 320,
-                                  overflow: "auto"
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 12,
+                                  background: "rgba(10, 12, 18, 0.6)"
                                 }}
                               >
-                                {messageDetail.transcript?.text ?? "Transcript could not be loaded."}
-                              </pre>
-                            ) : (
-                              <p style={{ marginTop: 10, marginBottom: 0, color: "var(--muted)" }}>
-                                Transcript has not been attached to this call yet.
-                              </p>
-                            )}
-                          </details>
+                                <h4 style={{ marginTop: 0 }}>Call Details</h4>
+                                <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ color: "var(--muted)" }}>From Phone:</span>
+                                    <span style={{ fontFamily: "monospace" }}>
+                                      {messageDetail.callSession.fromPhone ?? "—"}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ color: "var(--muted)" }}>To Phone:</span>
+                                    <span style={{ fontFamily: "monospace" }}>
+                                      {messageDetail.callSession.toPhone ?? "—"}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ color: "var(--muted)" }}>Duration:</span>
+                                    <span>{formatCallDuration(messageDetail.callSession.durationSeconds)}</span>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ color: "var(--muted)" }}>Initiated By:</span>
+                                    <span style={{ textTransform: "capitalize" }}>
+                                      {messageDetail.callSession.createdBy}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span style={{ color: "var(--muted)" }}>Status:</span>
+                                    <span
+                                      style={{
+                                        color: formatVoiceStatusColor(messageDetail.callSession.status),
+                                        fontWeight: 600,
+                                        textTransform: "capitalize"
+                                      }}
+                                    >
+                                      {formatStatusLabel(messageDetail.callSession.status)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Recording Playback & Download */}
+                                {messageDetail.callSession.recordingUrl ? (
+                                  <div
+                                    style={{
+                                      marginTop: 12,
+                                      paddingTop: 12,
+                                      borderTop: "1px solid var(--border)"
+                                    }}
+                                  >
+                                    <div style={{ marginBottom: 8 }}>
+                                      <span style={{ color: "var(--muted)", fontSize: 11 }}>Recording:</span>
+                                    </div>
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      src={messageDetail.callSession.recordingUrl}
+                                      style={{ width: "100%", marginBottom: 8 }}
+                                    />
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                      <a
+                                        href={messageDetail.callSession.recordingUrl}
+                                        download
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{
+                                          padding: "6px 12px",
+                                          borderRadius: 6,
+                                          border: "1px solid var(--border)",
+                                          background: "var(--surface-2)",
+                                          color: "var(--text)",
+                                          textDecoration: "none",
+                                          fontSize: 12,
+                                          cursor: "pointer"
+                                        }}
+                                      >
+                                        Download Recording
+                                      </a>
+                                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                                        Duration: {formatCallDuration(messageDetail.callSession.durationSeconds)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {/* Call Status Timeline */}
+                            {messageDetail.statusEvents && messageDetail.statusEvents.length > 0 ? (
+                              <div
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 10,
+                                  padding: 12,
+                                  background: "rgba(10, 12, 18, 0.6)"
+                                }}
+                              >
+                                <h4 style={{ marginTop: 0 }}>Call Timeline</h4>
+                                <div className="voice-status-timeline" style={{ display: "grid", gap: 8 }}>
+                                  {messageDetail.statusEvents.map((event, index) => (
+                                    <div
+                                      key={event.id || `${event.status}-${index}`}
+                                      style={{
+                                        display: "grid",
+                                        gridTemplateColumns: "auto 1fr",
+                                        gap: 10,
+                                        alignItems: "start",
+                                        fontSize: 12,
+                                        paddingBottom: index < messageDetail.statusEvents!.length - 1 ? 8 : 0,
+                                        borderBottom:
+                                          index < messageDetail.statusEvents!.length - 1
+                                            ? "1px solid var(--border)"
+                                            : "none"
+                                      }}
+                                    >
+                                      <div style={{ textAlign: "center" }}>
+                                        <span
+                                          style={{
+                                            display: "inline-block",
+                                            padding: "4px 8px",
+                                            borderRadius: 4,
+                                            background: `${formatVoiceStatusColor(event.status)}20`,
+                                            color: formatVoiceStatusColor(event.status),
+                                            fontWeight: 600,
+                                            fontSize: 11,
+                                            minWidth: 60,
+                                            textTransform: "capitalize"
+                                          }}
+                                        >
+                                          {formatStatusLabel(event.status)}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <div style={{ color: "var(--muted)", fontSize: 11 }}>
+                                          {event.occurred_at
+                                            ? new Date(event.occurred_at).toLocaleString()
+                                            : "—"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* Transcript */}
+                            <details
+                              style={{
+                                border: "1px solid var(--border)",
+                                borderRadius: 10,
+                                padding: 10,
+                                background: "rgba(10, 12, 18, 0.6)"
+                              }}
+                            >
+                              <summary style={{ cursor: "pointer" }}>
+                                {messageDetail.transcript?.available
+                                  ? "Transcript"
+                                  : "Transcript (not available yet)"}
+                              </summary>
+                              {messageDetail.transcript?.available ? (
+                                <pre
+                                  style={{
+                                    whiteSpace: "pre-wrap",
+                                    marginTop: 10,
+                                    marginBottom: 0,
+                                    maxHeight: 320,
+                                    overflow: "auto"
+                                  }}
+                                >
+                                  {messageDetail.transcript?.text ?? "Transcript could not be loaded."}
+                                </pre>
+                              ) : (
+                                <p style={{ marginTop: 10, marginBottom: 0, color: "var(--muted)" }}>
+                                  Transcript has not been attached to this call yet.
+                                </p>
+                              )}
+                            </details>
+                          </div>
                         ) : null}
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>

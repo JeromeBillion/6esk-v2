@@ -51,6 +51,14 @@ export async function GET(
     payload: Record<string, unknown> | null;
   }> = [];
   let callSessionId: string | null = null;
+  let callSession: {
+    fromPhone: string | null;
+    toPhone: string;
+    direction: string;
+    status: string;
+    durationSeconds: number | null;
+    createdBy: string;
+  } | null = null;
   let transcript: { available: boolean; text: string | null } | null = null;
   if (message.channel === "whatsapp") {
     const eventsResult = await db.query<{
@@ -81,9 +89,20 @@ export async function GET(
   if (message.channel === "voice") {
     const callSessionResult = await db.query<{
       id: string;
+      status: string;
+      from_phone: string | null;
+      to_phone: string;
+      direction: string;
+      duration_seconds: number | null;
+      started_at: Date | null;
+      ended_at: Date | null;
+      created_by: string;
       transcript_r2_key: string | null;
+      recording_url: string | null;
+      recording_r2_key: string | null;
     }>(
-      `SELECT id, transcript_r2_key
+      `SELECT id, status, from_phone, to_phone, direction, duration_seconds, 
+              started_at, ended_at, created_by, transcript_r2_key, recording_url, recording_r2_key
        FROM call_sessions
        WHERE message_id = $1
        ORDER BY updated_at DESC
@@ -93,6 +112,16 @@ export async function GET(
     const session = callSessionResult.rows[0];
     if (session) {
       callSessionId = session.id;
+      callSession = {
+        fromPhone: session.from_phone,
+        toPhone: session.to_phone,
+        direction: session.direction,
+        status: session.status,
+        durationSeconds: session.duration_seconds,
+        createdBy: session.created_by,
+        recordingUrl: session.recording_url,
+        recordingR2Key: session.recording_r2_key
+      };
       transcript = {
         available: Boolean(session.transcript_r2_key),
         text: null
@@ -105,6 +134,27 @@ export async function GET(
           transcript.text = null;
         }
       }
+      // Add voice-specific status events
+      const callEventsResult = await db.query<{
+        id: string;
+        event_type: string;
+        occurred_at: Date | null;
+        payload: Record<string, unknown> | null;
+      }>(
+        `SELECT id, event_type, occurred_at, payload
+         FROM call_events
+         WHERE call_session_id = $1
+         ORDER BY occurred_at ASC`,
+        [session.id]
+      );
+      statusEvents = callEventsResult.rows.map((row) => ({
+        id: row.id,
+        status: row.event_type,
+        occurred_at: row.occurred_at ? new Date(row.occurred_at).toISOString() : null,
+        externalMessageId: null,
+        source: row.payload && typeof row.payload.source === "string" ? row.payload.source : null,
+        payload: row.payload ?? null
+      }));
     }
   }
 
@@ -142,6 +192,7 @@ export async function GET(
       conversationId: message.conversation_id ?? null,
       provider: message.provider ?? null,
       callSessionId,
+      callSession,
       transcript,
       statusEvents,
       text,

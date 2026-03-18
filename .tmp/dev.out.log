@@ -1,0 +1,1151 @@
+
+> 6esk@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.12
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.101:3000
+   - Environments: .env
+
+ ✓ Starting...
+   next-swc build: wasm build @next/swc-wasm-nodejs
+ ⚠ Attempted to load @next/swc-win32-x64-msvc, but an error occurred: \\?\C:\Users\choma\Desktop\6esk\node_modules\@next\swc-win32-x64-msvc\next-swc.win32-x64-msvc.node is not a valid Win32 application.
+\\?\C:\Users\choma\Desktop\6esk\node_modules\@next\swc-win32-x64-msvc\next-swc.win32-x64-msvc.node
+ ✓ Ready in 14s
+ ○ Compiling /api/health ...
+ ✓ Compiled /api/health in 1621ms (281 modules)
+ GET /api/health 200 in 1777ms
+ ○ Compiling / ...
+ ✓ Compiled / in 5.3s (568 modules)
+ GET / 307 in 6189ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 1400ms (597 modules)
+ GET /login 200 in 1966ms
+ ✓ Compiled /api/auth/login in 436ms (613 modules)
+ POST /api/auth/login 200 in 1425ms
+ ○ Compiling /tickets ...
+ ✓ Compiled /tickets in 1511ms (680 modules)
+ GET /tickets 200 in 1809ms
+ ○ Compiling /api/tickets ...
+ ✓ Compiled /api/tickets in 685ms (688 modules)
+ GET /api/support/macros 200 in 890ms
+ GET /api/support/macros 200 in 63ms
+ GET /api/auth/me 200 in 965ms
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 1106ms
+ GET /api/auth/me 200 in 244ms
+ ○ Compiling /api/merge-reviews ...
+ ✓ Compiled /api/merge-reviews in 779ms (702 modules)
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 957ms
+error: invalid input value for enum message_channel: "voice"
+    at async listPendingDraftsForUser (src\server\agents\drafts.ts:153:18)
+    at async GET (src\app\api\ai-drafts\route.ts:19:18)
+  151 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  152 |
+> 153 |   const result = await db.query<DraftQueueItem>(
+      |                  ^
+  154 |     `SELECT d.id, d.integration_id, d.ticket_id, d.subject, d.body_text, d.body_html, d.confidence,
+  155 |             d.metadata, d.status, d.created_at, d.updated_at,
+  156 |             t.subject AS ticket_subject, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '668',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/ai-drafts? 500 in 1096ms
+error: relation "merge_review_tasks" does not exist
+    at async listMergeReviewTasksForUser (src\server\merge-reviews.ts:317:18)
+    at async GET (src\app\api\merge-reviews\route.ts:32:19)
+  315 |
+  316 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+> 317 |   const result = await db.query<MergeReviewQueueItem>(
+      |                  ^
+  318 |     `SELECT
+  319 |        mrt.id,
+  320 |        mrt.status, {
+  length: 119,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '2365',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/merge-reviews?status=pending&limit=100 500 in 1183ms
+ ○ Compiling /tickets/new ...
+ ✓ Compiled /tickets/new in 934ms (668 modules)
+ GET /tickets/new 200 in 1392ms
+ GET /tickets 200 in 161ms
+ ✓ Compiled /api/tickets in 296ms (422 modules)
+ ✓ Compiled (428 modules)
+ GET /api/support/macros 200 in 692ms
+ GET /api/auth/me 200 in 743ms
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 848ms
+ GET /api/support/macros 200 in 162ms
+ GET /api/auth/me 200 in 207ms
+ ✓ Compiled /api/merge-reviews in 275ms (431 modules)
+ ✓ Compiled (452 modules)
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 876ms
+error: invalid input value for enum message_channel: "voice"
+    at async listPendingDraftsForUser (src\server\agents\drafts.ts:153:18)
+    at async GET (src\app\api\ai-drafts\route.ts:19:18)
+  151 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  152 |
+> 153 |   const result = await db.query<DraftQueueItem>(
+      |                  ^
+  154 |     `SELECT d.id, d.integration_id, d.ticket_id, d.subject, d.body_text, d.body_html, d.confidence,
+  155 |             d.metadata, d.status, d.created_at, d.updated_at,
+  156 |             t.subject AS ticket_subject, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '668',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/ai-drafts? 500 in 1036ms
+error: relation "merge_review_tasks" does not exist
+    at async listMergeReviewTasksForUser (src\server\merge-reviews.ts:317:18)
+    at async GET (src\app\api\merge-reviews\route.ts:32:19)
+  315 |
+  316 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+> 317 |   const result = await db.query<MergeReviewQueueItem>(
+      |                  ^
+  318 |     `SELECT
+  319 |        mrt.id,
+  320 |        mrt.status, {
+  length: 119,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '2365',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/merge-reviews?status=pending&limit=100 500 in 1119ms
+ ○ Compiling /mail ...
+ ✓ Compiled /mail in 710ms (713 modules)
+ GET /mail 200 in 1000ms
+ ✓ Compiled /api/mailboxes in 412ms (715 modules)
+ GET /api/mailboxes 200 in 571ms
+ GET /api/mailboxes 200 in 74ms
+ ✓ Compiled /api/mailboxes/[mailboxId]/messages in 387ms (717 modules)
+ GET /api/mailboxes/ce6ced48-6eca-4418-9c2c-64468a991c43/messages 200 in 1033ms
+ ○ Compiling /analytics ...
+ ✓ Compiled /analytics in 784ms (725 modules)
+ GET /analytics 200 in 1117ms
+ ○ Compiling /api/analytics/volume ...
+ ✓ Compiled /api/analytics/volume in 1158ms (735 modules)
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=agent& 200 in 1378ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=tag& 200 in 1453ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=priority& 200 in 1455ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=agent& 200 in 80ms
+ GET /api/analytics/sla?start=2026-02-25&end=2026-03-04&whatsappSource=all 200 in 1472ms
+error: relation "call_sessions" does not exist
+    at async GET (src\app\api\analytics\volume\route.ts:79:23)
+  77 |   );
+  78 |
+> 79 |   const voiceResult = await db.query<VoiceVolumeRow>(
+     |                       ^
+  80 |     `SELECT
+  81 |        date_trunc('day', queued_at) AS day,
+  82 |        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound, {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '603',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/analytics/volume?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 1584ms
+error: invalid input value for enum message_channel: "voice"
+    at async GET (src\app\api\analytics\overview\route.ts:109:32)
+  107 |   );
+  108 |
+> 109 |   const channelSummaryResult = await db.query<ChannelSummaryRow>(
+      |                                ^
+  110 |     `SELECT
+  111 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'inbound')::int AS email_inbound,
+  112 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'outbound')::int AS email_outbound, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '456',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/analytics/overview?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 1692ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=tag& 200 in 332ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=priority& 200 in 413ms
+ GET /api/analytics/sla?start=2026-02-25&end=2026-03-04&whatsappSource=all 200 in 278ms
+error: relation "call_sessions" does not exist
+    at async GET (src\app\api\analytics\volume\route.ts:79:23)
+  77 |   );
+  78 |
+> 79 |   const voiceResult = await db.query<VoiceVolumeRow>(
+     |                       ^
+  80 |     `SELECT
+  81 |        date_trunc('day', queued_at) AS day,
+  82 |        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound, {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '603',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/analytics/volume?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 282ms
+error: invalid input value for enum message_channel: "voice"
+    at async GET (src\app\api\analytics\overview\route.ts:109:32)
+  107 |   );
+  108 |
+> 109 |   const channelSummaryResult = await db.query<ChannelSummaryRow>(
+      |                                ^
+  110 |     `SELECT
+  111 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'inbound')::int AS email_inbound,
+  112 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'outbound')::int AS email_outbound, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '456',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/analytics/overview?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 362ms
+ ○ Compiling /admin ...
+ ✓ Compiled /admin in 1161ms (703 modules)
+ GET /admin 200 in 1763ms
+ ○ Compiling /api/admin/inbound/failed ...
+ ✓ Compiled /api/admin/inbound/failed in 1347ms (733 modules)
+ GET /api/admin/audit-logs?limit=50 200 in 1714ms
+ GET /api/admin/users 200 in 1817ms
+ GET /api/admin/roles 200 in 1841ms
+ GET /api/admin/sla 200 in 1816ms
+ GET /api/admin/inbound/failed?limit=50 200 in 1816ms
+ GET /api/admin/spam-messages?limit=50 200 in 1818ms
+ ○ Compiling /api/admin/calls/rejections ...
+ ✓ Compiled /api/admin/calls/rejections in 1450ms (764 modules)
+error: relation "call_outbox_events" does not exist
+    at async getCallOutboxMetrics (src\server\calls\outbox.ts:229:25)
+    at async GET (src\app\api\admin\calls\outbox\route.ts:13:19)
+  227 | export async function getCallOutboxMetrics() {
+  228 |   const provider = getCallProvider();
+> 229 |   const summaryResult = await db.query<CallOutboxSummaryRow>(
+      |                         ^
+  230 |     `SELECT
+  231 |        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+  232 |        COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at <= now())::int AS due_now, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '749',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/outbox 500 in 2061ms
+error: relation "call_outbox_events" does not exist
+    at async listFailedCallOutboxEvents (src\server\calls\outbox.ts:288:18)
+    at async GET (src\app\api\admin\calls\failed\route.ts:16:18)
+  286 | export async function listFailedCallOutboxEvents(limit = 50) {
+  287 |   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+> 288 |   const result = await db.query<FailedCallOutboxEvent>(
+      |                  ^
+  289 |     `SELECT
+  290 |        id,
+  291 |        status, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '162',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/failed?limit=50 500 in 2134ms
+ GET /api/admin/inbound/settings 200 in 2140ms
+error: syntax error at or near "FILTER"
+    at async getInboundMetrics (src\server\email\inbound-metrics.ts:462:7)
+    at async GET (src\app\api\admin\inbound\metrics\route.ts:16:19)
+  460 |     lastAlertResult,
+  461 |     reasonResult
+> 462 |   ] = await Promise.all([
+      |       ^
+  463 |     db.query<InboundSummaryRow>(
+  464 |       `SELECT
+  465 |          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_queue, {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '1518',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/inbound/metrics?hours=24 500 in 2242ms
+ GET /api/admin/calls/rejections?hours=24&limit=50 200 in 2238ms
+ GET /api/admin/security 200 in 2360ms
+ GET /api/admin/audit-logs?limit=50 200 in 577ms
+ GET /api/admin/users 200 in 673ms
+ GET /api/admin/roles 200 in 669ms
+ GET /api/admin/sla 200 in 678ms
+ GET /api/admin/spam-messages?limit=50 200 in 671ms
+ GET /api/admin/inbound/failed?limit=50 200 in 683ms
+error: relation "call_outbox_events" does not exist
+    at async getCallOutboxMetrics (src\server\calls\outbox.ts:229:25)
+    at async GET (src\app\api\admin\calls\outbox\route.ts:13:19)
+  227 | export async function getCallOutboxMetrics() {
+  228 |   const provider = getCallProvider();
+> 229 |   const summaryResult = await db.query<CallOutboxSummaryRow>(
+      |                         ^
+  230 |     `SELECT
+  231 |        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+  232 |        COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at <= now())::int AS due_now, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '749',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/outbox 500 in 377ms
+error: relation "call_outbox_events" does not exist
+    at async listFailedCallOutboxEvents (src\server\calls\outbox.ts:288:18)
+    at async GET (src\app\api\admin\calls\failed\route.ts:16:18)
+  286 | export async function listFailedCallOutboxEvents(limit = 50) {
+  287 |   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+> 288 |   const result = await db.query<FailedCallOutboxEvent>(
+      |                  ^
+  289 |     `SELECT
+  290 |        id,
+  291 |        status, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '162',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/failed?limit=50 500 in 411ms
+ GET /api/admin/inbound/settings 200 in 417ms
+error: syntax error at or near "FILTER"
+    at async getInboundMetrics (src\server\email\inbound-metrics.ts:462:7)
+    at async GET (src\app\api\admin\inbound\metrics\route.ts:16:19)
+  460 |     lastAlertResult,
+  461 |     reasonResult
+> 462 |   ] = await Promise.all([
+      |       ^
+  463 |     db.query<InboundSummaryRow>(
+  464 |       `SELECT
+  465 |          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_queue, {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '1518',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/inbound/metrics?hours=24 500 in 487ms
+ GET /api/admin/calls/rejections?hours=24&limit=50 200 in 533ms
+ GET /api/admin/security 200 in 537ms
+ ○ Compiling /api/support/tags ...
+ ✓ Compiled /api/support/tags in 702ms (761 modules)
+ GET /api/support/tags 200 in 861ms
+ GET /api/support/tags 200 in 64ms
+ ○ Compiling /api/admin/spam-rules ...
+ ✓ Compiled /api/admin/spam-rules in 701ms (763 modules)
+ GET /api/admin/spam-rules 200 in 856ms
+ GET /api/admin/spam-rules 200 in 64ms
+ ○ Compiling /api/admin/agents ...
+ ✓ Compiled /api/admin/agents in 636ms (765 modules)
+ GET /api/admin/agents 200 in 862ms
+ GET /api/admin/agents 200 in 53ms
+ ○ Compiling /api/admin/whatsapp/templates ...
+ ✓ Compiled /api/admin/whatsapp/templates in 1539ms (773 modules)
+ GET /api/admin/whatsapp/outbox 200 in 1795ms
+ GET /api/admin/whatsapp/templates 200 in 1799ms
+ GET /api/admin/whatsapp 200 in 1804ms
+ GET /api/admin/whatsapp/outbox 200 in 84ms
+ GET /api/admin/whatsapp 200 in 101ms
+ GET /api/admin/whatsapp/templates 200 in 107ms
+ ✓ Compiled /api/admin/profile-lookup/metrics in 399ms (728 modules)
+error: syntax error at or near "FILTER"
+    at async GET (src\app\api\admin\profile-lookup\metrics\route.ts:81:41)
+  79 |     )`;
+  80 |
+> 81 |   const [summaryResult, seriesResult] = await Promise.all([
+     |                                         ^
+  82 |     db.query<LookupSummaryRow>(
+  83 |       `${scopedCte}
+  84 |        SELECT {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '2015',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/profile-lookup/metrics?days=14 500 in 700ms
+error: syntax error at or near "FILTER"
+    at async GET (src\app\api\admin\profile-lookup\metrics\route.ts:81:41)
+  79 |     )`;
+  80 |
+> 81 |   const [summaryResult, seriesResult] = await Promise.all([
+     |                                         ^
+  82 |     db.query<LookupSummaryRow>(
+  83 |       `${scopedCte}
+  84 |        SELECT {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '2015',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/profile-lookup/metrics?days=14 500 in 159ms
+ ○ Compiling /api/admin/calls/retry ...
+ ✓ Compiled /api/admin/calls/retry in 694ms (735 modules)
+ POST /api/admin/calls/retry?limit=25 500 in 930ms
+ ✓ Compiled /api/admin/spam-rules in 244ms (471 modules)
+ GET /api/admin/spam-rules 200 in 425ms
+ GET /api/admin/spam-rules 200 in 53ms
+ GET /analytics 200 in 217ms
+ ✓ Compiled /api/analytics/performance in 471ms (474 modules)
+ ✓ Compiled (481 modules)
+ GET /api/analytics/sla?start=2026-02-25&end=2026-03-04&whatsappSource=all 200 in 980ms
+error: relation "call_sessions" does not exist
+    at async GET (src\app\api\analytics\volume\route.ts:79:23)
+  77 |   );
+  78 |
+> 79 |   const voiceResult = await db.query<VoiceVolumeRow>(
+     |                       ^
+  80 |     `SELECT
+  81 |        date_trunc('day', queued_at) AS day,
+  82 |        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound, {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '603',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/analytics/volume?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 1132ms
+ GET /api/analytics/sla?start=2026-02-25&end=2026-03-04&whatsappSource=all 200 in 177ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=agent& 200 in 1151ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=priority& 200 in 1161ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=tag& 200 in 1163ms
+error: invalid input value for enum message_channel: "voice"
+    at async GET (src\app\api\analytics\overview\route.ts:109:32)
+  107 |   );
+  108 |
+> 109 |   const channelSummaryResult = await db.query<ChannelSummaryRow>(
+      |                                ^
+  110 |     `SELECT
+  111 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'inbound')::int AS email_inbound,
+  112 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'outbound')::int AS email_outbound, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '456',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/analytics/overview?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 1288ms
+error: relation "call_sessions" does not exist
+    at async GET (src\app\api\analytics\volume\route.ts:79:23)
+  77 |   );
+  78 |
+> 79 |   const voiceResult = await db.query<VoiceVolumeRow>(
+     |                       ^
+  80 |     `SELECT
+  81 |        date_trunc('day', queued_at) AS day,
+  82 |        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound, {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '603',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/analytics/volume?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 272ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=agent& 200 in 279ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=priority& 200 in 310ms
+ GET /api/analytics/performance?start=2026-02-25&end=2026-03-04&whatsappSource=all&groupBy=tag& 200 in 316ms
+error: invalid input value for enum message_channel: "voice"
+    at async GET (src\app\api\analytics\overview\route.ts:109:32)
+  107 |   );
+  108 |
+> 109 |   const channelSummaryResult = await db.query<ChannelSummaryRow>(
+      |                                ^
+  110 |     `SELECT
+  111 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'inbound')::int AS email_inbound,
+  112 |        COUNT(*) FILTER (WHERE channel = 'email' AND direction = 'outbound')::int AS email_outbound, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '456',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/analytics/overview?start=2026-02-25&end=2026-03-04&whatsappSource=all 500 in 295ms
+ GET /admin 200 in 198ms
+ ✓ Compiled /api/admin/inbound/failed in 452ms (483 modules)
+ ✓ Compiled (494 modules)
+ GET /api/admin/users 200 in 1230ms
+ GET /api/admin/audit-logs?limit=50 200 in 1234ms
+ GET /api/admin/inbound/failed?limit=50 200 in 1334ms
+ GET /api/admin/roles 200 in 1339ms
+ GET /api/admin/spam-messages?limit=50 200 in 1341ms
+ GET /api/admin/sla 200 in 1394ms
+ ✓ Compiled /api/admin/calls/rejections in 424ms (496 modules)
+ ✓ Compiled (509 modules)
+error: relation "call_outbox_events" does not exist
+    at async getCallOutboxMetrics (src\server\calls\outbox.ts:229:25)
+    at async GET (src\app\api\admin\calls\outbox\route.ts:13:19)
+  227 | export async function getCallOutboxMetrics() {
+  228 |   const provider = getCallProvider();
+> 229 |   const summaryResult = await db.query<CallOutboxSummaryRow>(
+      |                         ^
+  230 |     `SELECT
+  231 |        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+  232 |        COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at <= now())::int AS due_now, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '749',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/outbox 500 in 1109ms
+error: relation "call_outbox_events" does not exist
+    at async listFailedCallOutboxEvents (src\server\calls\outbox.ts:288:18)
+    at async GET (src\app\api\admin\calls\failed\route.ts:16:18)
+  286 | export async function listFailedCallOutboxEvents(limit = 50) {
+  287 |   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+> 288 |   const result = await db.query<FailedCallOutboxEvent>(
+      |                  ^
+  289 |     `SELECT
+  290 |        id,
+  291 |        status, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '162',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/failed?limit=50 500 in 1180ms
+error: syntax error at or near "FILTER"
+    at async getInboundMetrics (src\server\email\inbound-metrics.ts:462:7)
+    at async GET (src\app\api\admin\inbound\metrics\route.ts:16:19)
+  460 |     lastAlertResult,
+  461 |     reasonResult
+> 462 |   ] = await Promise.all([
+      |       ^
+  463 |     db.query<InboundSummaryRow>(
+  464 |       `SELECT
+  465 |          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_queue, {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '1518',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/inbound/metrics?hours=24 500 in 1370ms
+ GET /api/admin/inbound/settings 200 in 1265ms
+ GET /api/admin/calls/rejections?hours=24&limit=50 200 in 1242ms
+ GET /api/admin/security 200 in 1406ms
+ GET /api/admin/users 200 in 131ms
+ GET /api/admin/audit-logs?limit=50 200 in 199ms
+ GET /api/admin/inbound/failed?limit=50 200 in 208ms
+ GET /api/admin/roles 200 in 209ms
+ GET /api/admin/sla 200 in 208ms
+ GET /api/admin/spam-messages?limit=50 200 in 213ms
+error: relation "call_outbox_events" does not exist
+    at async getCallOutboxMetrics (src\server\calls\outbox.ts:229:25)
+    at async GET (src\app\api\admin\calls\outbox\route.ts:13:19)
+  227 | export async function getCallOutboxMetrics() {
+  228 |   const provider = getCallProvider();
+> 229 |   const summaryResult = await db.query<CallOutboxSummaryRow>(
+      |                         ^
+  230 |     `SELECT
+  231 |        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+  232 |        COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at <= now())::int AS due_now, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '749',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/outbox 500 in 268ms
+error: relation "call_outbox_events" does not exist
+    at async listFailedCallOutboxEvents (src\server\calls\outbox.ts:288:18)
+    at async GET (src\app\api\admin\calls\failed\route.ts:16:18)
+  286 | export async function listFailedCallOutboxEvents(limit = 50) {
+  287 |   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+> 288 |   const result = await db.query<FailedCallOutboxEvent>(
+      |                  ^
+  289 |     `SELECT
+  290 |        id,
+  291 |        status, {
+  length: 118,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '162',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/admin/calls/failed?limit=50 500 in 351ms
+error: syntax error at or near "FILTER"
+    at async getInboundMetrics (src\server\email\inbound-metrics.ts:462:7)
+    at async GET (src\app\api\admin\inbound\metrics\route.ts:16:19)
+  460 |     lastAlertResult,
+  461 |     reasonResult
+> 462 |   ] = await Promise.all([
+      |       ^
+  463 |     db.query<InboundSummaryRow>(
+  464 |       `SELECT
+  465 |          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_queue, {
+  length: 97,
+  severity: 'ERROR',
+  code: '42601',
+  detail: undefined,
+  hint: undefined,
+  position: '1518',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'scan.l',
+  line: '1240',
+  routine: 'scanner_yyerror'
+}
+ GET /api/admin/inbound/metrics?hours=24 500 in 425ms
+ GET /api/admin/inbound/settings 200 in 426ms
+ GET /api/admin/calls/rejections?hours=24&limit=50 200 in 452ms
+ GET /api/admin/security 200 in 456ms
+ GET /mail 200 in 384ms
+ ✓ Compiled /api/mailboxes in 432ms (511 modules)
+ GET /api/mailboxes 200 in 564ms
+ GET /api/mailboxes 200 in 98ms
+ ✓ Compiled /api/mailboxes/[mailboxId]/messages in 466ms (513 modules)
+ GET /api/mailboxes/ce6ced48-6eca-4418-9c2c-64468a991c43/messages 200 in 631ms
+ GET /mail 200 in 128ms
+ GET /tickets 200 in 116ms
+ ○ Compiling /api/support/macros ...
+ ✓ Compiled /api/support/macros in 759ms (515 modules)
+ ✓ Compiled (519 modules)
+ GET /api/auth/me 200 in 1412ms
+ GET /api/support/macros 200 in 1400ms
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 1489ms
+ GET /api/auth/me 200 in 187ms
+ ○ Compiling /api/ai-drafts ...
+ ✓ Compiled /api/ai-drafts in 519ms (523 modules)
+ ✓ Compiled (526 modules)
+ GET /api/support/macros 200 in 1157ms
+error: column t.customer_id does not exist
+    at async listTicketsForUser (src\server\tickets.ts:349:18)
+    at async GET (src\app\api\tickets\route.ts:22:19)
+  347 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  348 |
+> 349 |   const result = await db.query<TicketRecord>(
+      |                  ^
+  350 |     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+  351 |             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
+  352 |             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at, {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '28',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3827',
+  routine: 'errorMissingColumn'
+}
+ GET /api/tickets? 500 in 1220ms
+error: relation "merge_review_tasks" does not exist
+    at async listMergeReviewTasksForUser (src\server\merge-reviews.ts:317:18)
+    at async GET (src\app\api\merge-reviews\route.ts:32:19)
+  315 |
+  316 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+> 317 |   const result = await db.query<MergeReviewQueueItem>(
+      |                  ^
+  318 |     `SELECT
+  319 |        mrt.id,
+  320 |        mrt.status, {
+  length: 119,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '2365',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1469',
+  routine: 'parserOpenTable'
+}
+ GET /api/merge-reviews?status=pending&limit=100 500 in 1345ms
+error: invalid input value for enum message_channel: "voice"
+    at async listPendingDraftsForUser (src\server\agents\drafts.ts:153:18)
+    at async GET (src\app\api\ai-drafts\route.ts:19:18)
+  151 |   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  152 |
+> 153 |   const result = await db.query<DraftQueueItem>(
+      |                  ^
+  154 |     `SELECT d.id, d.integration_id, d.ticket_id, d.subject, d.body_text, d.body_html, d.confidence,
+  155 |             d.metadata, d.status, d.created_at, d.updated_at,
+  156 |             t.subject AS ticket_subject, {
+  length: 108,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '668',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'enum.c',
+  line: '133',
+  routine: 'enum_in'
+}
+ GET /api/ai-drafts? 500 in 1427ms
+ ✓ Compiled /api/health in 276ms (441 modules)
+ GET /api/health 200 in 337ms
