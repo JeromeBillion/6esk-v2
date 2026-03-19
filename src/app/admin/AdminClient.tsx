@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bot, Phone, RefreshCw, Shield, Users, Workflow } from "lucide-react";
 import AppShell from "@/app/components/AppShell";
+import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
 import { Badge } from "@/app/workspace/components/ui/badge";
 import { Button } from "@/app/workspace/components/ui/button";
 import {
@@ -92,6 +93,11 @@ import { Checkbox } from "@/app/workspace/components/ui/checkbox";
 
 type TabKey = "overview" | "workspace" | "automation" | "operations";
 type OperationsSectionKey = "inbound" | "inbound-settings" | "calls" | "call-rejections" | "audit-logs";
+type OperationsFilters = {
+  windowHours: number;
+  eventLimit: number;
+  auditLimit: number;
+};
 
 type ToastState = {
   tone: "success" | "error";
@@ -194,13 +200,6 @@ function generateOpaqueToken() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function toastClass(toast: ToastState) {
-  if (!toast) return "";
-  return toast.tone === "success"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-    : "border-red-200 bg-red-50 text-red-700";
-}
-
 function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-lg border border-neutral-200 p-3">
@@ -231,6 +230,31 @@ const OPERATIONS_SECTION_VALUES = new Set([
   "call-rejections",
   "audit-logs"
 ]);
+const DEFAULT_OPERATIONS_FILTERS: OperationsFilters = {
+  windowHours: 24,
+  eventLimit: 20,
+  auditLimit: 50
+};
+
+function clampInteger(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const rounded = Math.trunc(value);
+  return Math.min(max, Math.max(min, rounded));
+}
+
+function normalizeOperationsFilters(input: {
+  windowHours: number;
+  eventLimit: number;
+  auditLimit: number;
+}): OperationsFilters {
+  return {
+    windowHours: clampInteger(input.windowHours, 1, 168, DEFAULT_OPERATIONS_FILTERS.windowHours),
+    eventLimit: clampInteger(input.eventLimit, 5, 100, DEFAULT_OPERATIONS_FILTERS.eventLimit),
+    auditLimit: clampInteger(input.auditLimit, 10, 200, DEFAULT_OPERATIONS_FILTERS.auditLimit)
+  };
+}
 
 export default function AdminClient() {
   const router = useRouter();
@@ -306,6 +330,12 @@ export default function AdminClient() {
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
   const [eventActionBusyKey, setEventActionBusyKey] = useState<string | null>(null);
   const [reviewingRejectionId, setReviewingRejectionId] = useState<string | null>(null);
+  const [operationsFilters, setOperationsFilters] = useState<OperationsFilters>(DEFAULT_OPERATIONS_FILTERS);
+  const [operationsFilterDraft, setOperationsFilterDraft] = useState({
+    windowHours: String(DEFAULT_OPERATIONS_FILTERS.windowHours),
+    eventLimit: String(DEFAULT_OPERATIONS_FILTERS.eventLimit),
+    auditLimit: String(DEFAULT_OPERATIONS_FILTERS.auditLimit)
+  });
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
@@ -317,6 +347,13 @@ export default function AdminClient() {
         ? deadLetters
         : deadLetters.filter((event) => event.status === deadLetterStatusFilter),
     [deadLetterStatusFilter, deadLetters]
+  );
+  const hasOperationsFilterChanges = useMemo(
+    () =>
+      operationsFilterDraft.windowHours !== String(operationsFilters.windowHours) ||
+      operationsFilterDraft.eventLimit !== String(operationsFilters.eventLimit) ||
+      operationsFilterDraft.auditLimit !== String(operationsFilters.auditLimit),
+    [operationsFilterDraft, operationsFilters]
   );
 
   const replaceQueryState = useCallback(
@@ -394,6 +431,35 @@ export default function AdminClient() {
     setAgentForm((prev) => ({ ...prev, sharedSecret: generateOpaqueToken() }));
   }, []);
 
+  const applyOperationsFilters = useCallback(() => {
+    const nextFilters = normalizeOperationsFilters({
+      windowHours: Number(operationsFilterDraft.windowHours),
+      eventLimit: Number(operationsFilterDraft.eventLimit),
+      auditLimit: Number(operationsFilterDraft.auditLimit)
+    });
+    setOperationsFilters(nextFilters);
+    setOperationsFilterDraft({
+      windowHours: String(nextFilters.windowHours),
+      eventLimit: String(nextFilters.eventLimit),
+      auditLimit: String(nextFilters.auditLimit)
+    });
+    setLoaded((prev) => ({ ...prev, operations: false }));
+    pushSuccess(
+      `Operations filters applied (${nextFilters.windowHours}h, ${nextFilters.eventLimit} events, ${nextFilters.auditLimit} audit rows).`
+    );
+  }, [operationsFilterDraft, pushSuccess]);
+
+  const resetOperationsFilters = useCallback(() => {
+    setOperationsFilters(DEFAULT_OPERATIONS_FILTERS);
+    setOperationsFilterDraft({
+      windowHours: String(DEFAULT_OPERATIONS_FILTERS.windowHours),
+      eventLimit: String(DEFAULT_OPERATIONS_FILTERS.eventLimit),
+      auditLimit: String(DEFAULT_OPERATIONS_FILTERS.auditLimit)
+    });
+    setLoaded((prev) => ({ ...prev, operations: false }));
+    pushSuccess("Operations filters reset to defaults.");
+  }, [pushSuccess]);
+
   const resetTagForm = useCallback(() => {
     setTagForm({ name: "", description: "" });
     setTagEditingId(null);
@@ -458,12 +524,6 @@ export default function AdminClient() {
       setTemplateError("Template components JSON is invalid.");
     }
   }, [templateForm.componentsJson]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const loadOverview = useCallback(async () => {
     setLoading((prev) => ({ ...prev, overview: true }));
@@ -571,15 +631,15 @@ export default function AdminClient() {
         deadLetterRows,
         logs
       ] = await Promise.all([
-        getInboundMetrics(24),
+        getInboundMetrics(operationsFilters.windowHours),
         getInboundSettings(),
-        listFailedInboundEvents(20),
+        listFailedInboundEvents(operationsFilters.eventLimit),
         getCallOutboxMetrics(),
-        listFailedCallEvents(20),
-        getCallRejections(24, 20),
+        listFailedCallEvents(operationsFilters.eventLimit),
+        getCallRejections(operationsFilters.windowHours, operationsFilters.eventLimit),
         getDeadLetterSummary(),
-        listDeadLetterEvents({ limit: 25, status: "all" }),
-        listAuditLogs(50)
+        listDeadLetterEvents({ limit: operationsFilters.eventLimit, status: "all" }),
+        listAuditLogs(operationsFilters.auditLimit)
       ]);
       setInbound(inboundMetrics);
       setInboundSettings(inboundConfig.config);
@@ -596,7 +656,7 @@ export default function AdminClient() {
     } finally {
       setLoading((prev) => ({ ...prev, operations: false }));
     }
-  }, [pushError]);
+  }, [operationsFilters, pushError]);
 
   const refreshTab = useCallback(async () => {
     if (activeTab === "overview") await loadOverview();
@@ -910,10 +970,6 @@ export default function AdminClient() {
               Refresh Tab
             </Button>
           </div>
-
-          {toast ? (
-            <div className={`rounded-lg border px-4 py-3 text-sm ${toastClass(toast)}`}>{toast.message}</div>
-          ) : null}
 
           <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList>
@@ -1804,31 +1860,107 @@ export default function AdminClient() {
                   <CardTitle>Operations Shortcuts</CardTitle>
                   <CardDescription>Jump directly to operational sections and related queues.</CardDescription>
                 </CardHeader>
-                <CardContent className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound")}>
-                    Inbound
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound-settings")}>
-                    Inbound Settings
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("calls")}>
-                    Calls
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("call-rejections")}>
-                    Call Rejections
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("audit-logs")}>
-                    Audit Logs
-                  </Button>
-                  <Button asChild variant="ghost" size="sm">
-                    <Link href="/tickets?channel=voice">Open voice queue</Link>
-                  </Button>
-                  <Button asChild variant="ghost" size="sm">
-                    <Link href="/tickets?channel=email">Open email queue</Link>
-                  </Button>
-                  <Button asChild variant="ghost" size="sm">
-                    <Link href="/mail?view=spam">Open spam queue</Link>
-                  </Button>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound")}>
+                      Inbound
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound-settings")}>
+                      Inbound Settings
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("calls")}>
+                      Calls
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("call-rejections")}>
+                      Call Rejections
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("audit-logs")}>
+                      Audit Logs
+                    </Button>
+                    <Button asChild variant="ghost" size="sm">
+                      <Link href="/tickets?channel=voice">Open voice queue</Link>
+                    </Button>
+                    <Button asChild variant="ghost" size="sm">
+                      <Link href="/tickets?channel=email">Open email queue</Link>
+                    </Button>
+                    <Button asChild variant="ghost" size="sm">
+                      <Link href="/mail?view=spam">Open spam queue</Link>
+                    </Button>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 bg-white/70 p-3">
+                    <p className="text-xs text-neutral-600">
+                      Tune data depth for operations telemetry and event queues.
+                    </p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
+                      <label className="grid gap-1">
+                        Window (hours)
+                        <Input
+                          type="number"
+                          min={1}
+                          max={168}
+                          value={operationsFilterDraft.windowHours}
+                          onChange={(event) =>
+                            setOperationsFilterDraft((previous) => ({
+                              ...previous,
+                              windowHours: event.target.value
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        Event rows
+                        <Input
+                          type="number"
+                          min={5}
+                          max={100}
+                          value={operationsFilterDraft.eventLimit}
+                          onChange={(event) =>
+                            setOperationsFilterDraft((previous) => ({
+                              ...previous,
+                              eventLimit: event.target.value
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        Audit rows
+                        <Input
+                          type="number"
+                          min={10}
+                          max={200}
+                          value={operationsFilterDraft.auditLimit}
+                          onChange={(event) =>
+                            setOperationsFilterDraft((previous) => ({
+                              ...previous,
+                              auditLimit: event.target.value
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={applyOperationsFilters}
+                        disabled={!hasOperationsFilterChanges || loading.operations}
+                      >
+                        Apply Filters
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={resetOperationsFilters}
+                        disabled={loading.operations}
+                      >
+                        Reset Defaults
+                      </Button>
+                      <p className="text-xs text-neutral-500">
+                        Current: {operationsFilters.windowHours}h window, {operationsFilters.eventLimit} event rows,{" "}
+                        {operationsFilters.auditLimit} audit rows.
+                      </p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -1843,7 +1975,7 @@ export default function AdminClient() {
                       <Metric label="Failed Queue" value={inbound?.summary.failedQueue ?? 0} />
                       <Metric label="Due Retry" value={inbound?.summary.dueRetryNow ?? 0} />
                       <Metric label="Processing" value={inbound?.summary.processingNow ?? 0} />
-                      <Metric label="Processed 24h" value={inbound?.summary.processedWindow ?? 0} />
+                      <Metric label={`Processed ${operationsFilters.windowHours}h`} value={inbound?.summary.processedWindow ?? 0} />
                     </div>
                     <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
                       <p>
@@ -1862,7 +1994,7 @@ export default function AdminClient() {
                       </p>
                     </div>
                     <div className="flex gap-2 flex-wrap">
-                      <Button variant="outline" onClick={() => void retryInboundEvents(25).then(loadOperations)}>Retry Failed</Button>
+                      <Button variant="outline" onClick={() => void retryInboundEvents(operationsFilters.eventLimit).then(loadOperations)}>Retry Failed</Button>
                       <Button variant="outline" onClick={() => void runInboundAlertCheck().then(loadOperations)}>Run Alert</Button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -2037,8 +2169,8 @@ export default function AdminClient() {
                       <p>Legacy body signature: {calls?.webhookSecurity.legacyBodySignature ? "enabled" : "disabled"}</p>
                     </div>
                     <div className="flex gap-2 flex-wrap">
-                      <Button variant="outline" onClick={() => void runCallOutbox(25).then(loadOperations)}>Run Outbox</Button>
-                      <Button variant="outline" onClick={() => void retryFailedCallEvents(25).then(loadOperations)}>Retry Failed</Button>
+                      <Button variant="outline" onClick={() => void runCallOutbox(operationsFilters.eventLimit).then(loadOperations)}>Run Outbox</Button>
+                      <Button variant="outline" onClick={() => void retryFailedCallEvents(operationsFilters.eventLimit).then(loadOperations)}>Retry Failed</Button>
                       <Button variant="outline" onClick={() => void batchRecoverDeadLetters({ filter: { status: "failed" } }).then(loadOperations)}>Batch Recover</Button>
                       <select
                         className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
@@ -2203,6 +2335,14 @@ export default function AdminClient() {
           </Tabs>
         </div>
       </div>
+      <ActionFeedbackModal
+        open={Boolean(toast)}
+        onClose={() => setToast(null)}
+        tone={toast?.tone === "success" ? "success" : "error"}
+        title={toast?.tone === "success" ? "Admin update complete" : "Admin action failed"}
+        message={toast?.message ?? ""}
+        autoCloseMs={toast?.tone === "success" ? 1600 : undefined}
+      />
     </AppShell>
   );
 }
