@@ -2,56 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import { BarChart3, LogOut, Mail, Moon, Settings, Sun, Ticket } from "lucide-react";
+import { cn } from "@/app/workspace/components/ui/utils";
+import { Button } from "@/app/workspace/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/app/workspace/components/ui/dialog";
+import { useThemeMode } from "@/app/lib/theme";
 
-const NAV_ITEMS = [
-  { label: "Support", href: "/tickets", icon: SupportIcon },
-  { label: "Mail", href: "/mail", icon: MailIcon },
-  { label: "Analytics", href: "/analytics", icon: AnalyticsIcon },
-  { label: "Admin", href: "/admin", icon: AdminIcon }
-];
+const NAVIGATION = [
+  { name: "Support", href: "/tickets", icon: Ticket },
+  { name: "Mail", href: "/mail", icon: Mail },
+  { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Admin", href: "/admin", icon: Settings },
+] as const;
 
-type AppShellProps = {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-  children: ReactNode;
-};
-
-export default function AppShell({ title, subtitle, actions, children }: AppShellProps) {
+export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { theme, setThemeMode } = useThemeMode();
 
-  useEffect(() => {
-    try {
-      const value = window.localStorage.getItem("sixesk:sidebarCollapsed");
-      if (value === "1") {
-        setSidebarCollapsed(true);
-      }
-    } catch {
-      // Ignore localStorage access issues.
-    }
-  }, []);
-
-  function isActive(href: string) {
-    if (!pathname) return false;
-    return pathname === href || pathname.startsWith(`${href}/`);
-  }
-
-  function toggleSidebar() {
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem("sixesk:sidebarCollapsed", next ? "1" : "0");
-      } catch {
-        // Ignore localStorage access issues.
-      }
-      return next;
-    });
-  }
+  const activeRoute = useMemo(() => pathname ?? "", [pathname]);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -60,144 +32,92 @@ export default function AppShell({ title, subtitle, actions, children }: AppShel
   }
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-      <aside className={`app-sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
-        <div className="app-brand-row">
-          <div className="app-brand">
-            <BrandMark size={sidebarCollapsed ? 44 : 68} />
+    <>
+      <div className="h-screen flex bg-neutral-50">
+        <div className="w-16 bg-white border-r border-neutral-200 flex flex-col items-center py-4 gap-2">
+          <div className="mb-6 w-10 h-10 rounded-lg bg-neutral-900 flex items-center justify-center text-white font-semibold text-sm">
+            6E
           </div>
-          <button
-            type="button"
-            className="app-sidebar-toggle"
-            onClick={toggleSidebar}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={sidebarCollapsed ? "Expand" : "Collapse"}
-          >
-            <CollapseIcon collapsed={sidebarCollapsed} />
-          </button>
-        </div>
-        <nav className="app-nav">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`app-nav-link${isActive(item.href) ? " active" : ""}`}
-              title={sidebarCollapsed ? item.label : undefined}
-              aria-label={item.label}
+          <nav className="flex flex-col gap-1 w-full px-2">
+            {NAVIGATION.map((item) => {
+              const isActive =
+                activeRoute === item.href ||
+                activeRoute.startsWith(`${item.href}/`);
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={cn(
+                    "flex flex-col items-center justify-center h-12 rounded-lg transition-colors",
+                    isActive ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"
+                  )}
+                  title={item.name}
+                >
+                  <item.icon className="w-5 h-5" />
+                </Link>
+              );
+            })}
+          </nav>
+          <div className="mt-auto flex flex-col items-center gap-2 w-full px-2">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="flex flex-col items-center justify-center h-12 w-full rounded-lg transition-colors text-neutral-600 hover:bg-neutral-100"
+              title="Settings"
             >
-              <item.icon />
-              <span className="app-nav-label">{item.label}</span>
-            </Link>
-          ))}
-        </nav>
-        <div className="app-sidebar-footer">
-          <button
-            type="button"
-            onClick={handleSignOut}
-            disabled={signingOut}
-            className="app-signout app-signout-sidebar"
-            title={sidebarCollapsed ? "Sign out" : undefined}
-            aria-label="Sign out"
-          >
-            <SignOutIcon />
-            <span className="app-signout-label">{signingOut ? "Signing out..." : "Sign out"}</span>
-          </button>
-        </div>
-      </aside>
-      <div className="app-body">
-        <header className="app-header">
-          <div className="app-header-title">
-            <h1>{title}</h1>
-            {subtitle ? <p>{subtitle}</p> : null}
+              <Settings className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="flex flex-col items-center justify-center h-12 w-full rounded-lg transition-colors text-neutral-600 hover:bg-neutral-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              title="Sign out"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
           </div>
-          <div className="app-header-actions">{actions}</div>
-        </header>
-        <div className="app-main">{children}</div>
+        </div>
+        <div className="flex-1 overflow-hidden">{children}</div>
       </div>
-    </div>
-  );
-}
 
-function CollapseIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d={collapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function SupportIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 12a8 8 0 1 1 16 0v4a2 2 0 0 1-2 2h-2v-5h4M4 13h4v5H6a2 2 0 0 1-2-2v-3Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function MailIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 7h16v10H4V7Zm0 0 8 6 8-6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function AnalyticsIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 18h16M7 16v-4M12 16V8M17 16v-6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function AdminIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 14a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 6a7 7 0 0 1 14 0"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function SignOutIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3M16 17l5-5-5-5M21 12H10"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border border-neutral-200 rounded-lg p-4">
+              <div>
+                <p className="text-sm font-medium">Appearance</p>
+                <p className="text-xs text-neutral-600">Switch between light and dark mode.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant={theme === "light" ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => setThemeMode("light")}
+                >
+                  <Sun className="w-4 h-4" />
+                  Light
+                </Button>
+                <Button
+                  type="button"
+                  variant={theme === "dark" ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => setThemeMode("dark")}
+                >
+                  <Moon className="w-4 h-4" />
+                  Dark
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

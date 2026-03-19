@@ -1,20 +1,34 @@
 "use client";
 
 import { useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import PublicPageFrame from "@/app/components/PublicPageFrame";
+import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
+import { Button } from "@/app/workspace/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/app/workspace/components/ui/card";
+import { Input } from "@/app/workspace/components/ui/input";
+import { Textarea } from "@/app/workspace/components/ui/textarea";
 
 export default function SupportFormClient() {
   const [form, setForm] = useState({ email: "", subject: "", description: "" });
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [error, setError] = useState<string | null>(null);
   const [revokeForm, setRevokeForm] = useState({ email: "", phone: "" });
   const [revokeStatus, setRevokeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{
+    open: boolean;
+    tone: "success" | "error" | "info";
+    title: string;
+    message: string;
+    autoCloseMs?: number;
+  }>({
+    open: false,
+    tone: "info",
+    title: "",
+    message: ""
+  });
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("sending");
-    setError(null);
 
     const res = await fetch("/api/portal/tickets", {
       method: "POST",
@@ -28,13 +42,25 @@ export default function SupportFormClient() {
 
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
-      setError(payload.error ?? "Failed to submit ticket");
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "Ticket submission failed",
+        message: payload.error ?? "Failed to submit ticket"
+      });
       setStatus("error");
       return;
     }
 
     setStatus("sent");
     setForm({ email: "", subject: "", description: "" });
+    setFeedback({
+      open: true,
+      tone: "success",
+      title: "Ticket submitted",
+      message: "Your support request was received. We will reply soon.",
+      autoCloseMs: 1500
+    });
   }
 
   async function handleRevokeSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -42,13 +68,17 @@ export default function SupportFormClient() {
     const email = revokeForm.email.trim();
     const phone = revokeForm.phone.trim();
     if (!email && !phone) {
-      setRevokeError("Provide your email or callback phone number.");
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "Missing identity",
+        message: "Provide your email or callback phone number."
+      });
       setRevokeStatus("error");
       return;
     }
 
     setRevokeStatus("sending");
-    setRevokeError(null);
     const response = await fetch("/api/support/voice-consent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -62,133 +92,132 @@ export default function SupportFormClient() {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setRevokeError(payload.error ?? "Failed to update call consent");
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "Consent update failed",
+        message: payload.error ?? "Failed to update call consent"
+      });
       setRevokeStatus("error");
       return;
     }
 
     setRevokeStatus("sent");
     setRevokeForm({ email, phone: "" });
+    setFeedback({
+      open: true,
+      tone: "success",
+      title: "Voice consent revoked",
+      message: "Future outbound support call attempts will be blocked.",
+      autoCloseMs: 1500
+    });
   }
 
   return (
-    <main>
-      <div className="container" style={{ maxWidth: 520 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-          <BrandMark size={44} />
-          <div>
-            <h1>Contact Support</h1>
-            <p>Submit your question and our team will respond by email.</p>
-          </div>
-        </div>
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
-          <label>
-            Email
-            <input
-              type="email"
-              value={form.email}
-              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            Subject
-            <input
-              type="text"
-              value={form.subject}
-              onChange={(event) => setForm((prev) => ({ ...prev, subject: event.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            Message
-            <textarea
-              rows={6}
-              value={form.description}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, description: event.target.value }))
-              }
-              required
-            />
-          </label>
-          {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
-          {status === "sent" ? (
-            <p style={{ color: "var(--accent)" }}>Ticket submitted. We will reply soon.</p>
-          ) : null}
-          <button
-            type="submit"
-            disabled={status === "sending"}
-            style={{
-              padding: "12px 16px",
-              borderRadius: 10,
-              border: "none",
-              background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-              color: "#081018",
-              cursor: "pointer"
-            }}
-          >
-            {status === "sending" ? "Submitting..." : "Submit ticket"}
-          </button>
-        </form>
-        <section
-          style={{
-            marginTop: 22,
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 14,
-            background: "rgba(10, 12, 18, 0.45)"
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: 18 }}>Stop voice callbacks</h2>
-          <p style={{ marginTop: 8, color: "var(--muted)" }}>
-            Revoke consent for outbound support calls. Future call attempts will be blocked.
-          </p>
-          <form onSubmit={handleRevokeSubmit} style={{ display: "grid", gap: 10 }}>
-            <label>
-              Email (optional)
-              <input
-                type="email"
-                value={revokeForm.email}
-                onChange={(event) =>
-                  setRevokeForm((prev) => ({ ...prev, email: event.target.value }))
-                }
-                placeholder="you@example.com"
-              />
-            </label>
-            <label>
-              Callback phone (optional)
-              <input
-                type="tel"
-                value={revokeForm.phone}
-                onChange={(event) =>
-                  setRevokeForm((prev) => ({ ...prev, phone: event.target.value }))
-                }
-                placeholder="+15551234567"
-              />
-            </label>
-            {revokeError ? <p style={{ color: "var(--danger)", margin: 0 }}>{revokeError}</p> : null}
-            {revokeStatus === "sent" ? (
-              <p style={{ color: "var(--accent)", margin: 0 }}>
-                Voice callback consent revoked.
-              </p>
-            ) : null}
-            <button
-              type="submit"
-              disabled={revokeStatus === "sending"}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--surface-2)",
-                color: "var(--text)",
-                cursor: "pointer"
-              }}
-            >
-              {revokeStatus === "sending" ? "Updating..." : "Revoke call consent"}
-            </button>
-          </form>
-        </section>
+    <PublicPageFrame
+      title="Contact support"
+      description="Submit your issue and manage outbound voice-call consent from one place."
+      maxWidthClassName="max-w-3xl"
+    >
+      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+        <Card className="shadow-none">
+          <CardHeader>
+            <CardTitle>Submit a ticket</CardTitle>
+            <CardDescription>Our team will reply by email as soon as possible.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="grid gap-4">
+              <div className="grid gap-2">
+                <label htmlFor="support-email">Email</label>
+                <Input
+                  id="support-email"
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="support-subject">Subject</label>
+                <Input
+                  id="support-subject"
+                  type="text"
+                  value={form.subject}
+                  onChange={(event) => setForm((prev) => ({ ...prev, subject: event.target.value }))}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="support-message">Message</label>
+                <Textarea
+                  id="support-message"
+                  rows={8}
+                  value={form.description}
+                  onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                  required
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" disabled={status === "sending"}>
+                  {status === "sending" ? "Submitting..." : "Submit ticket"}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-none">
+          <CardHeader>
+            <CardTitle>Stop voice callbacks</CardTitle>
+            <CardDescription>
+              Revoke consent for outbound support calls. Future attempts will be blocked.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleRevokeSubmit} className="grid gap-4">
+              <div className="grid gap-2">
+                <label htmlFor="revoke-email">Email</label>
+                <Input
+                  id="revoke-email"
+                  type="email"
+                  value={revokeForm.email}
+                  onChange={(event) => setRevokeForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="revoke-phone">Callback phone</label>
+                <Input
+                  id="revoke-phone"
+                  type="tel"
+                  value={revokeForm.phone}
+                  onChange={(event) => setRevokeForm((prev) => ({ ...prev, phone: event.target.value }))}
+                  placeholder="+15551234567"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" variant="outline" disabled={revokeStatus === "sending"}>
+                  {revokeStatus === "sending" ? "Updating..." : "Revoke call consent"}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       </div>
-    </main>
+
+      <ActionFeedbackModal
+        open={feedback.open}
+        onClose={() =>
+          setFeedback((previous) => ({
+            ...previous,
+            open: false
+          }))
+        }
+        tone={feedback.tone}
+        title={feedback.title}
+        message={feedback.message}
+        autoCloseMs={feedback.autoCloseMs}
+      />
+    </PublicPageFrame>
   );
 }

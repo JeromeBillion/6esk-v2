@@ -1,1828 +1,2206 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Bot, Phone, RefreshCw, Shield, Users, Workflow } from "lucide-react";
 import AppShell from "@/app/components/AppShell";
-import TagsClient from "./TagsClient";
-import AgentIntegrationClient from "./AgentIntegrationClient";
-import SpamRulesClient from "./SpamRulesClient";
-import WhatsAppClient from "./WhatsAppClient";
-import ProfileLookupClient from "./ProfileLookupClient";
+import { Badge } from "@/app/workspace/components/ui/badge";
+import { Button } from "@/app/workspace/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/app/workspace/components/ui/card";
+import { Input } from "@/app/workspace/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/workspace/components/ui/tabs";
+import { Textarea } from "@/app/workspace/components/ui/textarea";
+import {
+  AgentIntegration,
+  AgentOutboxMetrics,
+  AdminUserRecord,
+  AuditLogRecord,
+  CallFailedEvent,
+  CallOutboxMetrics,
+  CallRejections,
+  DeadLetterEvent,
+  DeadLetterSummary,
+  InboundAlertConfig,
+  InboundFailedEvent,
+  InboundMetrics,
+  ProfileLookupMetrics,
+  RoleRecord,
+  SecuritySnapshot,
+  SpamMessageRecord,
+  SpamRuleRecord,
+  TagRecord,
+  WhatsAppTemplate,
+  WhatsAppOutboxMetrics,
+  batchRecoverDeadLetters,
+  createAgentIntegration,
+  createSpamRule,
+  createTag,
+  createUser,
+  createWhatsAppTemplate,
+  deleteSpamRule,
+  deleteTag,
+  deleteWhatsAppTemplate,
+  deliverAgentOutbox,
+  getAgentOutboxMetrics,
+  getCallRejections,
+  getCallOutboxMetrics,
+  getDeadLetterSummary,
+  getInboundSettings,
+  getInboundMetrics,
+  getProfileLookupMetrics,
+  getSecuritySnapshot,
+  getSlaConfig,
+  getWhatsAppAccount,
+  getWhatsAppOutboxMetrics,
+  listAgentIntegrations,
+  listAuditLogs,
+  listFailedCallEvents,
+  listFailedInboundEvents,
+  listDeadLetterEvents,
+  listRoles,
+  listSpamMessages,
+  listSpamRules,
+  listTags,
+  listUsers,
+  listWhatsAppTemplates,
+  patchDeadLetterEvent,
+  requestPasswordResetLink,
+  retryFailedCallEvents,
+  retryInboundEvents,
+  runCallOutbox,
+  runInboundAlertCheck,
+  runWhatsAppOutbox,
+  saveWhatsAppAccount,
+  setMessageSpamStatus,
+  updateAgentIntegration,
+  updateInboundSettings,
+  updateSlaConfig,
+  updateSpamRule,
+  updateTag,
+  updateUser,
+  updateWhatsAppTemplate
+} from "@/app/lib/api/admin";
+import { ApiError } from "@/app/lib/api/http";
+import { Checkbox } from "@/app/workspace/components/ui/checkbox";
 
-type Role = {
-  id: string;
-  name: string;
-  description?: string | null;
-};
+type TabKey = "overview" | "workspace" | "automation" | "operations";
+type OperationsSectionKey = "inbound" | "inbound-settings" | "calls" | "call-rejections" | "audit-logs";
 
-type User = {
-  id: string;
+type ToastState = {
+  tone: "success" | "error";
+  message: string;
+} | null;
+
+type UserForm = {
   email: string;
-  display_name: string;
-  role_name?: string | null;
-  role_id?: string | null;
-  is_active: boolean;
-  created_at: string;
+  displayName: string;
+  password: string;
+  roleId: string;
 };
 
-type SlaConfig = {
+type SlaForm = {
   firstResponseMinutes: number;
   resolutionMinutes: number;
 };
 
-type AuditLog = {
-  id: string;
-  action: string;
-  entity_type: string;
-  entity_id: string | null;
-  data: Record<string, unknown> | null;
-  created_at: string;
-  actor_name?: string | null;
-  actor_email?: string | null;
+type TagForm = {
+  name: string;
+  description: string;
 };
 
-type SpamMessage = {
-  id: string;
-  subject: string | null;
-  from_email: string;
-  received_at: string | null;
-  spam_reason: string | null;
-  mailbox_address: string;
+type SpamRuleForm = {
+  ruleType: "allow" | "block";
+  scope: "sender" | "domain" | "subject" | "body";
+  pattern: string;
 };
 
-type InboundFailure = {
-  id: string;
-  idempotency_key: string;
-  attempt_count: number;
-  last_error: string | null;
-  next_attempt_at: string | null;
-  created_at: string;
-};
-
-type InboundMetricsPoint = {
-  hour: string;
-  failed: number;
-  processed: number;
-  processing: number;
-  attempts: number;
-};
-
-type InboundFailureSeverity = "critical" | "high" | "medium" | "low";
-
-type InboundMetrics = {
-  generatedAt: string;
-  windowHours: number;
-  summary: {
-    failedQueue: number;
-    dueRetryNow: number;
-    processingNow: number;
-    processedWindow: number;
-    failedWindow: number;
-    attemptsWindow: number;
-    retryProcessedWindow: number;
-    retryFailedWindow: number;
-    highAttemptQueue: number;
-    maxFailedAttemptCount: number;
-    p95FailedAttemptCount: number;
-    oldestFailedAgeMinutes: number | null;
-  };
-  alert: {
-    source: "db" | "env";
-    webhookConfigured: boolean;
-    threshold: number;
-    windowMinutes: number;
-    cooldownMinutes: number;
-    currentFailures: number;
-    status: "below_threshold" | "cooldown" | "at_or_above_threshold";
-    cooldownRemainingMinutes: number;
-    lastSentAt: string | null;
-    wouldSendNow: boolean;
-    recommendation: {
-      suggestedMinThreshold: number;
-      suggestedMaxThreshold: number;
-      inRange: boolean;
-      reason: "insufficient_history" | "aligned" | "outside_range";
-      avgBucketFailures: number;
-      p95BucketFailures: number;
-      maxBucketFailures: number;
-      bucketCount: number;
-    };
-  };
-  failureReasons: Array<{
-    code:
-      | "invalid_payload"
-      | "attachment_error"
-      | "provider_timeout"
-      | "provider_unavailable"
-      | "provider_rate_limited"
-      | "auth_error"
-      | "config_error"
-      | "storage_error"
-      | "database_error"
-      | "duplicate_event"
-      | "unknown";
-    label: string;
-    severity: InboundFailureSeverity;
-    triageLabel: string;
-    triageHint: string;
-    count: number;
-    sampleError: string | null;
-  }>;
-  series: InboundMetricsPoint[];
-};
-
-type InboundAlertConfig = {
-  source: "db" | "env";
-  webhookUrl: string;
-  threshold: number;
-  windowMinutes: number;
-  cooldownMinutes: number;
-  updatedAt: string | null;
-};
-
-type CallOutboxMetrics = {
+type WhatsAppForm = {
   provider: string;
-  queue: {
-    queued: number;
-    dueNow: number;
-    processing: number;
-    failed: number;
-    sentTotal: number;
-    sent24h: number;
-    nextAttemptAt: string | null;
-    lastSentAt: string | null;
-    lastFailedAt: string | null;
-    lastError: string | null;
-  };
-  webhookSecurity: {
-    mode: "hmac" | "shared_secret" | "open";
-    timestampRequired: boolean;
-    maxSkewSeconds: number;
-  };
+  phoneNumber: string;
+  wabaId: string;
+  accessToken: string;
+  verifyToken: string;
+  status: "active" | "paused" | "inactive";
 };
 
-type CallFailedEvent = {
-  id: string;
-  status: string;
-  attempt_count: number;
-  last_error: string | null;
-  next_attempt_at: string | null;
-  created_at: string;
-  updated_at: string;
-  payload: Record<string, unknown>;
+type AgentForm = {
+  name: string;
+  provider: string;
+  baseUrl: string;
+  authType: string;
+  sharedSecret: string;
+  status: "active" | "paused";
+  policyMode: "draft_only" | "auto_send";
+  maxEventsPerRun: string;
+  allowMergeActions: boolean;
+  allowVoiceActions: boolean;
+  scopesJson: string;
+  policyJson: string;
 };
 
-type CallWebhookRejections = {
-  windowHours: number;
-  summary: Array<{
-    reason: string;
-    mode: string;
-    count: number;
-  }>;
-  recent: Array<{
-    id: string;
-    createdAt: string;
-    data: Record<string, unknown> | null;
-  }>;
-};
-
-type SecurityStatus = {
-  adminAllowlist: string[];
-  agentAllowlist: string[];
-  agentSecretKeyConfigured: boolean;
-  inboundSecretConfigured: boolean;
-  clientIp?: string | null;
-  agentIntegrationStats: {
-    total: number;
-    encrypted: number;
-    unencrypted: number;
-  };
-  whatsappTokenStats: {
-    total: number;
-    encrypted: number;
-    unencrypted: number;
-    missing: number;
-  };
-};
-
-const ADMIN_SECTIONS = [
-  { key: "users", label: "Users" },
-  { key: "create-user", label: "Create User" },
-  { key: "sla", label: "SLA Targets" },
-  { key: "tags", label: "Tags" },
-  { key: "spam-rules", label: "Spam Rules" },
-  { key: "agent", label: "AI Agent" },
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "profile-lookup", label: "Profile Lookup" },
-  { key: "security", label: "Security" },
-  { key: "call-ops", label: "Call Ops" },
-  { key: "inbound", label: "Inbound Failures" },
-  { key: "spam-review", label: "Spam Review" },
-  { key: "audit-log", label: "Audit Log" }
-];
-
-function getFailureSeverityStyles(severity: InboundFailureSeverity) {
-  switch (severity) {
-    case "critical":
-      return {
-        borderColor: "rgba(255, 112, 112, 0.7)",
-        background: "rgba(255, 112, 112, 0.14)",
-        color: "#ffb3b3"
-      };
-    case "high":
-      return {
-        borderColor: "rgba(255, 190, 99, 0.7)",
-        background: "rgba(255, 190, 99, 0.14)",
-        color: "#ffd9a8"
-      };
-    case "medium":
-      return {
-        borderColor: "rgba(139, 215, 255, 0.55)",
-        background: "rgba(139, 215, 255, 0.14)",
-        color: "#cdeeff"
-      };
-    default:
-      return {
-        borderColor: "rgba(104, 220, 160, 0.6)",
-        background: "rgba(104, 220, 160, 0.14)",
-        color: "#c8f6dc"
-      };
-  }
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 }
 
-export default function AdminClient() {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [activeSection, setActiveSection] = useState<string>("users");
-  const [userQuery, setUserQuery] = useState("");
-  const [sla, setSla] = useState<SlaConfig>({
-    firstResponseMinutes: 120,
-    resolutionMinutes: 1440
-  });
-  const [slaStatus, setSlaStatus] = useState<"idle" | "saving" | "saved" | "error">(
-    "idle"
+function mapAgentToForm(agent: AgentIntegration): AgentForm {
+  const maxEvents = Number(agent.capabilities?.max_events_per_run);
+  return {
+    name: agent.name,
+    provider: agent.provider,
+    baseUrl: agent.base_url,
+    authType: agent.auth_type,
+    sharedSecret: agent.shared_secret,
+    status: agent.status,
+    policyMode: agent.policy_mode,
+    maxEventsPerRun: Number.isFinite(maxEvents) && maxEvents > 0 ? String(maxEvents) : "",
+    allowMergeActions:
+      agent.capabilities?.allow_merge_actions === true || agent.capabilities?.allowMergeActions === true,
+    allowVoiceActions:
+      agent.capabilities?.allow_voice_actions === true || agent.capabilities?.allowVoiceActions === true,
+    scopesJson: JSON.stringify(agent.scopes ?? {}, null, 2),
+    policyJson: JSON.stringify(agent.policy ?? {}, null, 2)
+  };
+}
+
+function defaultAgentForm(): AgentForm {
+  return {
+    name: "6esk AI Agent",
+    provider: "elizaos",
+    baseUrl: "",
+    authType: "hmac",
+    sharedSecret: "",
+    status: "active",
+    policyMode: "draft_only",
+    maxEventsPerRun: "",
+    allowMergeActions: false,
+    allowVoiceActions: false,
+    scopesJson: "{}",
+    policyJson: "{}"
+  };
+}
+
+function generateOpaqueToken() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().replace(/-/g, "")
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function toastClass(toast: ToastState) {
+  if (!toast) return "";
+  return toast.tone === "success"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : "border-red-200 bg-red-50 text-red-700";
+}
+
+function Metric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 p-3">
+      <p className="text-xs text-neutral-600">{label}</p>
+      <p className="text-base font-semibold text-neutral-900">{value}</p>
+    </div>
   );
-  const [form, setForm] = useState({
-    email: "",
-    displayName: "",
-    password: "",
-    roleId: ""
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [resetLinks, setResetLinks] = useState<Record<string, string>>({});
-  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
-  const [resettingUserId, setResettingUserId] = useState<string | null>(null);
-  const [spamMessages, setSpamMessages] = useState<SpamMessage[]>([]);
-  const [inboundFailures, setInboundFailures] = useState<InboundFailure[]>([]);
-  const [inboundMetrics, setInboundMetrics] = useState<InboundMetrics | null>(null);
-  const [inboundMetricsError, setInboundMetricsError] = useState<string | null>(null);
-  const [inboundAlertConfig, setInboundAlertConfig] = useState<InboundAlertConfig | null>(null);
-  const [inboundAlertForm, setInboundAlertForm] = useState({
-    webhookUrl: "",
-    threshold: 5,
-    windowMinutes: 30,
-    cooldownMinutes: 60
-  });
-  const [savingInboundAlertConfig, setSavingInboundAlertConfig] = useState(false);
-  const [inboundAlertConfigError, setInboundAlertConfigError] = useState<string | null>(null);
-  const [retryingInbound, setRetryingInbound] = useState(false);
-  const [checkingAlerts, setCheckingAlerts] = useState(false);
-  const [triggeringCallOutbox, setTriggeringCallOutbox] = useState(false);
-  const [retryingCallOutbox, setRetryingCallOutbox] = useState(false);
-  const [security, setSecurity] = useState<SecurityStatus | null>(null);
-  const [securityError, setSecurityError] = useState<string | null>(null);
-  const [callOutboxMetrics, setCallOutboxMetrics] = useState<CallOutboxMetrics | null>(null);
-  const [callFailedEvents, setCallFailedEvents] = useState<CallFailedEvent[]>([]);
-  const [callWebhookRejections, setCallWebhookRejections] =
-    useState<CallWebhookRejections | null>(null);
-  const [callOpsError, setCallOpsError] = useState<string | null>(null);
-  const [callOpsResult, setCallOpsResult] = useState<string | null>(null);
-  const [inboundFailureSeverityFilter, setInboundFailureSeverityFilter] = useState<
-    "all" | InboundFailureSeverity
-  >("all");
+}
 
-  async function loadData() {
-    const [
-      rolesRes,
-      usersRes,
-      slaRes,
-      logsRes,
-      spamRes,
-      inboundRes,
-      securityRes,
-      inboundMetricsRes,
-      inboundSettingsRes,
-      callOutboxRes,
-      callFailedRes,
-      callRejectionsRes
-    ] =
-      await Promise.all([
-        fetch("/api/admin/roles"),
-        fetch("/api/admin/users"),
-        fetch("/api/admin/sla"),
-        fetch("/api/admin/audit-logs?limit=50"),
-        fetch("/api/admin/spam-messages?limit=50"),
-        fetch("/api/admin/inbound/failed?limit=50"),
-        fetch("/api/admin/security"),
-        fetch("/api/admin/inbound/metrics?hours=24"),
-        fetch("/api/admin/inbound/settings"),
-        fetch("/api/admin/calls/outbox"),
-        fetch("/api/admin/calls/failed?limit=50"),
-        fetch("/api/admin/calls/rejections?hours=24&limit=50")
-      ]);
+function getTemplateParamCount(template: WhatsAppTemplate) {
+  if (!template.components) return 0;
+  let count = 0;
+  for (const component of template.components) {
+    if (!component || typeof component !== "object") continue;
+    const params = (component as Record<string, unknown>).parameters;
+    if (Array.isArray(params)) {
+      count += params.length;
+    }
+  }
+  return count;
+}
 
-    if (rolesRes.ok) {
-      const payload = await rolesRes.json();
-      setRoles(payload.roles ?? []);
-      if (!form.roleId && payload.roles?.[0]) {
-        setForm((prev) => ({ ...prev, roleId: payload.roles[0].id }));
+const TAB_VALUES = new Set(["overview", "workspace", "automation", "operations"]);
+const OPERATIONS_SECTION_VALUES = new Set([
+  "inbound",
+  "inbound-settings",
+  "calls",
+  "call-rejections",
+  "audit-logs"
+]);
+
+export default function AdminClient() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const paramsKey = searchParams.toString();
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [loading, setLoading] = useState<Record<TabKey, boolean>>({
+    overview: false,
+    workspace: false,
+    automation: false,
+    operations: false
+  });
+  const [loaded, setLoaded] = useState<Record<TabKey, boolean>>({
+    overview: false,
+    workspace: false,
+    automation: false,
+    operations: false
+  });
+  const [toast, setToast] = useState<ToastState>(null);
+
+  const [roles, setRoles] = useState<RoleRecord[]>([]);
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [userForm, setUserForm] = useState<UserForm>({ email: "", displayName: "", password: "", roleId: "" });
+  const [sla, setSla] = useState<SlaForm>({ firstResponseMinutes: 120, resolutionMinutes: 1440 });
+  const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
+
+  const [tags, setTags] = useState<TagRecord[]>([]);
+  const [tagForm, setTagForm] = useState<TagForm>({ name: "", description: "" });
+  const [tagEditingId, setTagEditingId] = useState<string | null>(null);
+  const [spamRules, setSpamRules] = useState<SpamRuleRecord[]>([]);
+  const [ruleForm, setRuleForm] = useState<SpamRuleForm>({ ruleType: "block", scope: "sender", pattern: "" });
+  const [ruleEditingId, setRuleEditingId] = useState<string | null>(null);
+  const [spamMessages, setSpamMessages] = useState<SpamMessageRecord[]>([]);
+  const [whatsAppForm, setWhatsAppForm] = useState<WhatsAppForm>({
+    provider: "meta",
+    phoneNumber: "",
+    wabaId: "",
+    accessToken: "",
+    verifyToken: "",
+    status: "inactive"
+  });
+  const [whatsAppTemplates, setWhatsAppTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [whatsAppOutbox, setWhatsAppOutbox] = useState<WhatsAppOutboxMetrics | null>(null);
+  const [showWhatsAppAccessToken, setShowWhatsAppAccessToken] = useState(false);
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    language: "en_US",
+    category: "",
+    status: "active" as "active" | "paused",
+    componentsJson: ""
+  });
+  const [templateEditingId, setTemplateEditingId] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  const [agents, setAgents] = useState<AgentIntegration[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [agentForm, setAgentForm] = useState<AgentForm>(defaultAgentForm);
+  const [agentOutbox, setAgentOutbox] = useState<AgentOutboxMetrics | null>(null);
+  const [showAgentSecret, setShowAgentSecret] = useState(false);
+  const [profileDays, setProfileDays] = useState(14);
+  const [profile, setProfile] = useState<ProfileLookupMetrics | null>(null);
+
+  const [inbound, setInbound] = useState<InboundMetrics | null>(null);
+  const [inboundSettings, setInboundSettings] = useState<InboundAlertConfig | null>(null);
+  const [failedInboundEvents, setFailedInboundEvents] = useState<InboundFailedEvent[]>([]);
+  const [calls, setCalls] = useState<CallOutboxMetrics | null>(null);
+  const [failedCallEvents, setFailedCallEvents] = useState<CallFailedEvent[]>([]);
+  const [callRejections, setCallRejections] = useState<CallRejections | null>(null);
+  const [deadLetters, setDeadLetters] = useState<DeadLetterEvent[]>([]);
+  const [deadLetterSummary, setDeadLetterSummary] = useState<DeadLetterSummary | null>(null);
+  const [deadLetterStatusFilter, setDeadLetterStatusFilter] = useState<"all" | "failed" | "poison" | "quarantined">("all");
+  const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
+  const [eventActionBusyKey, setEventActionBusyKey] = useState<string | null>(null);
+  const [reviewingRejectionId, setReviewingRejectionId] = useState<string | null>(null);
+
+  const selectedAgent = useMemo(
+    () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId]
+  );
+  const filteredDeadLetters = useMemo(
+    () =>
+      deadLetterStatusFilter === "all"
+        ? deadLetters
+        : deadLetters.filter((event) => event.status === deadLetterStatusFilter),
+    [deadLetterStatusFilter, deadLetters]
+  );
+
+  const replaceQueryState = useCallback(
+    (tab: TabKey, section?: OperationsSectionKey | null) => {
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.set("tab", tab);
+      if (tab === "operations" && section) {
+        nextParams.set("section", section);
+      } else {
+        nextParams.delete("section");
       }
-    }
+      const query = nextParams.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
-    if (usersRes.ok) {
-      const payload = await usersRes.json();
-      setUsers(payload.users ?? []);
-    }
+  const handleTabChange = useCallback(
+    (value: string) => {
+      const nextTab = TAB_VALUES.has(value) ? (value as TabKey) : "overview";
+      setActiveTab(nextTab);
+      const sectionParam = searchParams.get("section");
+      const section =
+        nextTab === "operations" && sectionParam && OPERATIONS_SECTION_VALUES.has(sectionParam)
+          ? (sectionParam as OperationsSectionKey)
+          : null;
+      replaceQueryState(nextTab, section);
+    },
+    [replaceQueryState, searchParams]
+  );
 
-    if (slaRes.ok) {
-      const payload = await slaRes.json();
-      setSla({
-        firstResponseMinutes: payload.firstResponseMinutes ?? 120,
-        resolutionMinutes: payload.resolutionMinutes ?? 1440
+  const jumpToOperationsSection = useCallback(
+    (section: OperationsSectionKey) => {
+      setActiveTab("operations");
+      replaceQueryState("operations", section);
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(`ops-${section}`);
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
-    }
+    },
+    [replaceQueryState]
+  );
 
-    if (logsRes.ok) {
-      const payload = await logsRes.json();
-      setAuditLogs(payload.logs ?? []);
+  const pushSuccess = useCallback((message: string) => setToast({ tone: "success", message }), []);
+  const pushError = useCallback((error: unknown, fallback: string) => {
+    if (error instanceof ApiError) {
+      setToast({ tone: "error", message: error.message || fallback });
+      return;
     }
-
-    if (spamRes.ok) {
-      const payload = await spamRes.json();
-      setSpamMessages(payload.messages ?? []);
+    if (error instanceof Error) {
+      setToast({ tone: "error", message: error.message || fallback });
+      return;
     }
+    setToast({ tone: "error", message: fallback });
+  }, []);
 
-    if (inboundRes.ok) {
-      const payload = await inboundRes.json();
-      setInboundFailures(payload.events ?? []);
+  const copyToClipboard = useCallback(async (value: string, label: string) => {
+    if (!value) {
+      setToast({ tone: "error", message: `No ${label.toLowerCase()} available.` });
+      return;
     }
-
-    if (securityRes.ok) {
-      const payload = await securityRes.json();
-      setSecurity(payload);
-      setSecurityError(null);
-    } else {
-      setSecurityError("Failed to load security status.");
+    try {
+      await navigator.clipboard.writeText(value);
+      setToast({ tone: "success", message: `${label} copied` });
+    } catch {
+      setToast({ tone: "error", message: `Could not copy ${label.toLowerCase()}.` });
     }
+  }, []);
 
-    if (inboundMetricsRes.ok) {
-      const payload = await inboundMetricsRes.json();
-      setInboundMetrics(payload);
-      setInboundMetricsError(null);
-    } else {
-      setInboundMetrics(null);
-      setInboundMetricsError("Failed to load inbound trend metrics.");
+  const generateVerifyToken = useCallback(() => {
+    setWhatsAppForm((prev) => ({ ...prev, verifyToken: generateOpaqueToken() }));
+  }, []);
+
+  const generateAgentSecret = useCallback(() => {
+    setAgentForm((prev) => ({ ...prev, sharedSecret: generateOpaqueToken() }));
+  }, []);
+
+  const resetTagForm = useCallback(() => {
+    setTagForm({ name: "", description: "" });
+    setTagEditingId(null);
+  }, []);
+
+  const startTagEdit = useCallback((tag: TagRecord) => {
+    setTagForm({
+      name: tag.name,
+      description: tag.description ?? ""
+    });
+    setTagEditingId(tag.id);
+  }, []);
+
+  const resetRuleForm = useCallback(() => {
+    setRuleForm({ ruleType: "block", scope: "sender", pattern: "" });
+    setRuleEditingId(null);
+  }, []);
+
+  const startRuleEdit = useCallback((rule: SpamRuleRecord) => {
+    setRuleForm({
+      ruleType: rule.rule_type,
+      scope: rule.scope,
+      pattern: rule.pattern
+    });
+    setRuleEditingId(rule.id);
+  }, []);
+
+  const resetTemplateForm = useCallback(() => {
+    setTemplateForm({
+      name: "",
+      language: "en_US",
+      category: "",
+      status: "active",
+      componentsJson: ""
+    });
+    setTemplateEditingId(null);
+    setTemplateError(null);
+  }, []);
+
+  const startTemplateEdit = useCallback((template: WhatsAppTemplate) => {
+    setTemplateForm({
+      name: template.name,
+      language: template.language,
+      category: template.category ?? "",
+      status: template.status,
+      componentsJson: template.components ? JSON.stringify(template.components, null, 2) : ""
+    });
+    setTemplateEditingId(template.id);
+    setTemplateError(null);
+  }, []);
+
+  const formatComponentsJson = useCallback(() => {
+    if (!templateForm.componentsJson.trim()) return;
+    try {
+      const parsed = JSON.parse(templateForm.componentsJson);
+      setTemplateForm((prev) => ({
+        ...prev,
+        componentsJson: JSON.stringify(parsed, null, 2)
+      }));
+      setTemplateError(null);
+    } catch {
+      setTemplateError("Template components JSON is invalid.");
     }
+  }, [templateForm.componentsJson]);
 
-    if (inboundSettingsRes.ok) {
-      const payload = await inboundSettingsRes.json();
-      const config = payload.config as InboundAlertConfig | undefined;
-      if (config) {
-        setInboundAlertConfig(config);
-        setInboundAlertForm({
-          webhookUrl: config.webhookUrl ?? "",
-          threshold: config.threshold ?? 5,
-          windowMinutes: config.windowMinutes ?? 30,
-          cooldownMinutes: config.cooldownMinutes ?? 60
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const loadOverview = useCallback(async () => {
+    setLoading((prev) => ({ ...prev, overview: true }));
+    try {
+      const [nextRoles, nextUsers, nextSla, nextSecurity] = await Promise.all([
+        listRoles(),
+        listUsers(),
+        getSlaConfig(),
+        getSecuritySnapshot()
+      ]);
+      setRoles(nextRoles);
+      setUsers(nextUsers);
+      setSla(nextSla);
+      setSecurity(nextSecurity);
+      setUserForm((prev) => ({ ...prev, roleId: prev.roleId || nextRoles[0]?.id || "" }));
+      setLoaded((prev) => ({ ...prev, overview: true }));
+    } catch (error) {
+      pushError(error, "Failed loading overview");
+    } finally {
+      setLoading((prev) => ({ ...prev, overview: false }));
+    }
+  }, [pushError]);
+
+  const loadWorkspace = useCallback(async () => {
+    setLoading((prev) => ({ ...prev, workspace: true }));
+    try {
+      const [tagRows, ruleRows, spamRows, accountPayload, templates, outbox] = await Promise.all([
+        listTags(),
+        listSpamRules(),
+        listSpamMessages(25),
+        getWhatsAppAccount(),
+        listWhatsAppTemplates(),
+        getWhatsAppOutboxMetrics()
+      ]);
+      setTags(tagRows);
+      setSpamRules(ruleRows);
+      setSpamMessages(spamRows);
+      if (accountPayload.account) {
+        setWhatsAppForm({
+          provider: accountPayload.account.provider,
+          phoneNumber: accountPayload.account.phoneNumber,
+          wabaId: accountPayload.account.wabaId ?? "",
+          accessToken: accountPayload.account.accessToken ?? "",
+          verifyToken: accountPayload.account.verifyToken ?? "",
+          status: accountPayload.account.status
         });
-        setInboundAlertConfigError(null);
+      } else {
+        setWhatsAppForm({
+          provider: "meta",
+          phoneNumber: "",
+          wabaId: "",
+          accessToken: "",
+          verifyToken: "",
+          status: "inactive"
+        });
       }
-    } else {
-      setInboundAlertConfig(null);
-      setInboundAlertConfigError("Failed to load inbound alert settings.");
+      setWhatsAppTemplates(templates);
+      setWhatsAppOutbox(outbox);
+      setLoaded((prev) => ({ ...prev, workspace: true }));
+    } catch (error) {
+      pushError(error, "Failed loading messaging tab");
+    } finally {
+      setLoading((prev) => ({ ...prev, workspace: false }));
     }
+  }, [pushError]);
 
-    const callErrors: string[] = [];
-    if (callOutboxRes.ok) {
-      const payload = (await callOutboxRes.json()) as CallOutboxMetrics;
-      setCallOutboxMetrics(payload);
-    } else {
-      setCallOutboxMetrics(null);
-      callErrors.push("Failed to load call outbox metrics.");
+  const loadAutomation = useCallback(async () => {
+    setLoading((prev) => ({ ...prev, automation: true }));
+    try {
+      const [agentRows, metrics] = await Promise.all([
+        listAgentIntegrations(),
+        getProfileLookupMetrics(profileDays)
+      ]);
+      setAgents(agentRows);
+      setProfile(metrics);
+      const nextAgent = agentRows.find((agent) => agent.id === selectedAgentId) ?? agentRows[0] ?? null;
+      setSelectedAgentId(nextAgent?.id ?? "");
+      if (nextAgent) {
+        setAgentForm(mapAgentToForm(nextAgent));
+        const outbox = await getAgentOutboxMetrics(nextAgent.id).catch(() => null);
+        setAgentOutbox(outbox);
+      } else {
+        setAgentForm(defaultAgentForm());
+        setAgentOutbox(null);
+      }
+      setLoaded((prev) => ({ ...prev, automation: true }));
+    } catch (error) {
+      pushError(error, "Failed loading automation tab");
+    } finally {
+      setLoading((prev) => ({ ...prev, automation: false }));
     }
+  }, [profileDays, pushError, selectedAgentId]);
 
-    if (callFailedRes.ok) {
-      const payload = await callFailedRes.json();
-      setCallFailedEvents((payload.events ?? []) as CallFailedEvent[]);
-    } else {
-      setCallFailedEvents([]);
-      callErrors.push("Failed to load failed call events.");
+  const loadOperations = useCallback(async () => {
+    setLoading((prev) => ({ ...prev, operations: true }));
+    try {
+      const [
+        inboundMetrics,
+        inboundConfig,
+        inboundFailedRows,
+        callMetrics,
+        failedCalls,
+        rejectionMetrics,
+        deadLetterPayload,
+        deadLetterRows,
+        logs
+      ] = await Promise.all([
+        getInboundMetrics(24),
+        getInboundSettings(),
+        listFailedInboundEvents(20),
+        getCallOutboxMetrics(),
+        listFailedCallEvents(20),
+        getCallRejections(24, 20),
+        getDeadLetterSummary(),
+        listDeadLetterEvents({ limit: 25, status: "all" }),
+        listAuditLogs(50)
+      ]);
+      setInbound(inboundMetrics);
+      setInboundSettings(inboundConfig.config);
+      setFailedInboundEvents(inboundFailedRows);
+      setCalls(callMetrics);
+      setFailedCallEvents(failedCalls);
+      setCallRejections(rejectionMetrics);
+      setDeadLetterSummary(deadLetterPayload.summary);
+      setDeadLetters(deadLetterRows);
+      setAuditLogs(logs);
+      setLoaded((prev) => ({ ...prev, operations: true }));
+    } catch (error) {
+      pushError(error, "Failed loading operations tab");
+    } finally {
+      setLoading((prev) => ({ ...prev, operations: false }));
     }
+  }, [pushError]);
 
-    if (callRejectionsRes.ok) {
-      const payload = (await callRejectionsRes.json()) as CallWebhookRejections;
-      setCallWebhookRejections(payload);
-    } else {
-      setCallWebhookRejections(null);
-      callErrors.push("Failed to load webhook rejection metrics.");
-    }
+  const refreshTab = useCallback(async () => {
+    if (activeTab === "overview") await loadOverview();
+    if (activeTab === "workspace") await loadWorkspace();
+    if (activeTab === "automation") await loadAutomation();
+    if (activeTab === "operations") await loadOperations();
+  }, [activeTab, loadAutomation, loadOperations, loadOverview, loadWorkspace]);
 
-    setCallOpsError(callErrors.length ? callErrors.join(" ") : null);
+  const whatsAppWebhookUrl =
+    typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/inbound` : "";
+  const whatsAppStatusWarnings: string[] = [];
+  if (whatsAppForm.status === "active" && !whatsAppForm.accessToken.trim()) {
+    whatsAppStatusWarnings.push("Access token is required while the account is Active.");
+  }
+  if (whatsAppForm.provider === "meta" && !whatsAppForm.verifyToken.trim()) {
+    whatsAppStatusWarnings.push("Verify token is empty. Meta webhook verification will fail.");
   }
 
   useEffect(() => {
-    void loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const tabParam = searchParams.get("tab");
+    if (!tabParam || !TAB_VALUES.has(tabParam)) return;
+    setActiveTab(tabParam as TabKey);
+  }, [paramsKey, searchParams]);
 
-  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (activeTab !== "operations") return;
+    const sectionParam = searchParams.get("section");
+    if (!sectionParam || !OPERATIONS_SECTION_VALUES.has(sectionParam)) return;
+    const section = sectionParam as OperationsSectionKey;
+    const target = document.getElementById(`ops-${section}`);
+    if (!target) return;
+    window.setTimeout(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }, [activeTab, loaded.operations, paramsKey, searchParams]);
 
-    const response = await fetch("/api/admin/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form)
-    });
+  useEffect(() => {
+    if (activeTab === "overview" && !loaded.overview) {
+      void loadOverview();
+      return;
+    }
+    if (activeTab === "workspace" && !loaded.workspace) {
+      void loadWorkspace();
+      return;
+    }
+    if (activeTab === "automation" && !loaded.automation) {
+      void loadAutomation();
+      return;
+    }
+    if (activeTab === "operations" && !loaded.operations) {
+      void loadOperations();
+    }
+  }, [activeTab, loadAutomation, loadOperations, loadOverview, loadWorkspace, loaded]);
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      setError(payload.error ?? "Failed to create user");
-      setLoading(false);
+  async function saveUser() {
+    if (!userForm.email || !userForm.displayName || !userForm.password || !userForm.roleId) {
+      setToast({ tone: "error", message: "Complete all user fields." });
+      return;
+    }
+    try {
+      await createUser(userForm);
+      setUserForm({ email: "", displayName: "", password: "", roleId: roles[0]?.id ?? "" });
+      pushSuccess("User saved");
+      await loadOverview();
+    } catch (error) {
+      pushError(error, "Could not save user");
+    }
+  }
+
+  async function saveSla() {
+    try {
+      await updateSlaConfig(sla);
+      pushSuccess("SLA updated");
+      await loadOverview();
+    } catch (error) {
+      pushError(error, "Could not update SLA");
+    }
+  }
+
+  async function saveTag() {
+    if (!tagForm.name.trim()) {
+      setToast({ tone: "error", message: "Tag name is required." });
+      return;
+    }
+    try {
+      if (tagEditingId) {
+        await updateTag(tagEditingId, {
+          name: tagForm.name.trim(),
+          description: tagForm.description.trim() || null
+        });
+        pushSuccess("Tag updated");
+      } else {
+        await createTag({
+          name: tagForm.name.trim(),
+          description: tagForm.description.trim() || null
+        });
+        pushSuccess("Tag created");
+      }
+      resetTagForm();
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not save tag");
+    }
+  }
+
+  async function saveSpamRule() {
+    if (!ruleForm.pattern.trim()) {
+      setToast({ tone: "error", message: "Spam rule pattern is required." });
+      return;
+    }
+    try {
+      if (ruleEditingId) {
+        await updateSpamRule(ruleEditingId, {
+          pattern: ruleForm.pattern.trim()
+        });
+        pushSuccess("Spam rule updated");
+      } else {
+        await createSpamRule({
+          ruleType: ruleForm.ruleType,
+          scope: ruleForm.scope,
+          pattern: ruleForm.pattern.trim()
+        });
+        pushSuccess("Spam rule created");
+      }
+      resetRuleForm();
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not save spam rule");
+    }
+  }
+
+  async function saveWhatsAppSettings() {
+    if (!whatsAppForm.provider || !whatsAppForm.phoneNumber) {
+      setToast({ tone: "error", message: "WhatsApp provider and phone fields are required." });
+      return;
+    }
+    try {
+      await saveWhatsAppAccount({
+        provider: whatsAppForm.provider,
+        phoneNumber: whatsAppForm.phoneNumber,
+        wabaId: whatsAppForm.wabaId || null,
+        accessToken: whatsAppForm.accessToken || null,
+        verifyToken: whatsAppForm.verifyToken || null,
+        status: whatsAppForm.status
+      });
+      pushSuccess("WhatsApp settings saved");
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not save WhatsApp settings");
+    }
+  }
+
+  async function saveWhatsAppTemplateForm() {
+    setTemplateError(null);
+
+    let components: Array<Record<string, unknown>> | null = null;
+    if (templateForm.componentsJson.trim()) {
+      try {
+        const parsed = JSON.parse(templateForm.componentsJson);
+        components = Array.isArray(parsed) ? parsed : null;
+      } catch {
+        setTemplateError("Template components JSON is invalid.");
+        return;
+      }
+    }
+
+    const payload = {
+      provider: whatsAppForm.provider || "meta",
+      name: templateForm.name.trim(),
+      language: templateForm.language.trim() || "en_US",
+      category: templateForm.category.trim() || null,
+      status: templateForm.status,
+      components
+    };
+
+    if (!payload.name) {
+      setTemplateError("Template name is required.");
       return;
     }
 
-    setForm((prev) => ({ ...prev, email: "", displayName: "", password: "" }));
-    await loadData();
-    setLoading(false);
-  }
-
-  async function updateUser(userId: string, updates: { roleId?: string; isActive?: boolean }) {
-    setUpdatingUserId(userId);
-    await fetch(`/api/admin/users/${userId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates)
-    });
-    await loadData();
-    setUpdatingUserId(null);
-  }
-
-  async function resetPassword(userId: string) {
-    setResettingUserId(userId);
-    const res = await fetch(`/api/admin/users/${userId}/password-reset`, { method: "POST" });
-    if (res.ok) {
-      const payload = await res.json();
-      setResetLinks((prev) => ({ ...prev, [userId]: payload.resetLink }));
+    try {
+      if (templateEditingId) {
+        await updateWhatsAppTemplate(templateEditingId, payload);
+      } else {
+        await createWhatsAppTemplate(payload);
+      }
+      pushSuccess(templateEditingId ? "Template updated" : "Template created");
+      resetTemplateForm();
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not save template");
     }
-    setResettingUserId(null);
   }
 
-  async function retryInbound() {
-    setRetryingInbound(true);
-    await fetch("/api/admin/inbound/retry?limit=25", { method: "POST" });
-    await loadData();
-    setRetryingInbound(false);
-  }
-
-  async function checkInboundAlerts() {
-    setCheckingAlerts(true);
-    await fetch("/api/admin/inbound/alerts", { method: "POST" });
-    await loadData();
-    setCheckingAlerts(false);
-  }
-
-  async function runCallOutbox() {
-    setTriggeringCallOutbox(true);
-    setCallOpsResult(null);
-    const res = await fetch("/api/admin/calls/outbox?limit=25", { method: "POST" });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setCallOpsResult(payload.error ?? "Failed to run call outbox.");
-      setTriggeringCallOutbox(false);
+  async function saveAgent() {
+    if (!agentForm.name || !agentForm.baseUrl || !agentForm.sharedSecret) {
+      setToast({ tone: "error", message: "Agent name, URL and secret are required." });
       return;
     }
-    setCallOpsResult(
-      `Outbox run completed. Delivered ${payload.delivered ?? 0}, skipped ${
-        payload.skipped ?? 0
-      } (${payload.provider ?? "unknown"}).`
-    );
-    await loadData();
-    setTriggeringCallOutbox(false);
-  }
-
-  async function retryCallOutbox() {
-    setRetryingCallOutbox(true);
-    setCallOpsResult(null);
-    const res = await fetch("/api/admin/calls/retry?limit=25", { method: "POST" });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setCallOpsResult(payload.error ?? "Failed to retry failed call events.");
-      setRetryingCallOutbox(false);
+    let policy: Record<string, unknown> | undefined;
+    let scopes: Record<string, unknown> | undefined;
+    try {
+      policy = JSON.parse(agentForm.policyJson || "{}");
+    } catch {
+      setToast({ tone: "error", message: "Agent policy JSON is invalid." });
       return;
     }
-    setCallOpsResult(`Retry request completed. Requeued ${payload.retried ?? 0} failed events.`);
-    await loadData();
-    setRetryingCallOutbox(false);
-  }
-
-  async function saveInboundAlertSettings(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSavingInboundAlertConfig(true);
-    setInboundAlertConfigError(null);
-
-    const res = await fetch("/api/admin/inbound/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(inboundAlertForm)
-    });
-
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      setInboundAlertConfigError(payload.error ?? "Failed to save inbound alert settings.");
-      setSavingInboundAlertConfig(false);
+    try {
+      scopes = JSON.parse(agentForm.scopesJson || "{}");
+    } catch {
+      setToast({ tone: "error", message: "Agent scopes JSON is invalid." });
       return;
     }
-
-    await loadData();
-    setSavingInboundAlertConfig(false);
-  }
-
-  async function unspamMessage(messageId: string) {
-    await fetch(`/api/messages/${messageId}/spam`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isSpam: false, reason: null })
-    });
-    await loadData();
-  }
-
-  const roleNameById = new Map(roles.map((role) => [role.id, role.name]));
-  const normalizedUserQuery = userQuery.trim().toLowerCase();
-  const filteredUsers = normalizedUserQuery
-    ? users.filter((user) =>
-        `${user.display_name} ${user.email}`.toLowerCase().includes(normalizedUserQuery)
-      )
-    : users;
-
-  const adminAllowlist = security?.adminAllowlist ?? [];
-  const agentAllowlist = security?.agentAllowlist ?? [];
-  const encryptionEnabled = security?.agentSecretKeyConfigured ?? false;
-  const inboundSecretEnabled = security?.inboundSecretConfigured ?? false;
-  const allowlistSnippet = [
-    `ADMIN_IP_ALLOWLIST=${adminAllowlist.length ? adminAllowlist.join(",") : "1.2.3.4,5.6.7.8"}`,
-    `AGENT_IP_ALLOWLIST=${agentAllowlist.length ? agentAllowlist.join(",") : "1.2.3.4,5.6.7.8"}`
-  ].join("\n");
-
-  function getSectionCount(key: string) {
-    switch (key) {
-      case "users":
-        return users.length;
-      case "spam-review":
-        return spamMessages.length;
-      case "call-ops":
-        return callFailedEvents.length;
-      case "inbound":
-        return inboundFailures.length;
-      case "audit-log":
-        return auditLogs.length;
-      default:
-        return null;
+    const capabilities: Record<string, unknown> = { ...(selectedAgent?.capabilities ?? {}) };
+    if (agentForm.maxEventsPerRun.trim()) {
+      const parsedLimit = Number(agentForm.maxEventsPerRun);
+      if (!Number.isFinite(parsedLimit) || parsedLimit < 1) {
+        setToast({ tone: "error", message: "Max events per run must be a positive number." });
+        return;
+      }
+      capabilities.max_events_per_run = Math.max(1, Math.min(50, Math.trunc(parsedLimit)));
+    } else {
+      delete capabilities.max_events_per_run;
+    }
+    capabilities.allow_merge_actions = agentForm.allowMergeActions;
+    capabilities.allow_voice_actions = agentForm.allowVoiceActions;
+    try {
+      if (selectedAgent) {
+        await updateAgentIntegration(selectedAgent.id, {
+          name: agentForm.name,
+          provider: agentForm.provider,
+          baseUrl: agentForm.baseUrl,
+          authType: agentForm.authType,
+          sharedSecret: agentForm.sharedSecret,
+          status: agentForm.status,
+          policyMode: agentForm.policyMode,
+          scopes,
+          capabilities,
+          policy
+        });
+      } else {
+        await createAgentIntegration({
+          name: agentForm.name,
+          provider: agentForm.provider,
+          baseUrl: agentForm.baseUrl,
+          authType: agentForm.authType,
+          sharedSecret: agentForm.sharedSecret,
+          status: agentForm.status,
+          policyMode: agentForm.policyMode,
+          scopes,
+          capabilities,
+          policy
+        });
+      }
+      pushSuccess("Agent integration saved");
+      await loadAutomation();
+    } catch (error) {
+      pushError(error, "Could not save agent integration");
     }
   }
 
-  const inboundSeries = inboundMetrics?.series ?? [];
-  const inboundFailureReasons = inboundMetrics?.failureReasons ?? [];
-  const visibleInboundFailureReasons =
-    inboundFailureSeverityFilter === "all"
-      ? inboundFailureReasons
-      : inboundFailureReasons.filter((reason) => reason.severity === inboundFailureSeverityFilter);
-  const inboundWindowHours = inboundMetrics?.windowHours ?? 24;
-  const inboundAlert = inboundMetrics?.alert ?? null;
-  const inboundAlertRecommendation = inboundAlert?.recommendation ?? null;
-  const inboundAlertStatusColor =
-    inboundAlert?.status === "at_or_above_threshold"
-      ? "#ff7070"
-      : inboundAlert?.status === "cooldown"
-        ? "#ffbe63"
-        : "#68dca0";
-  const inboundAlertStatusLabel =
-    inboundAlert?.status === "at_or_above_threshold"
-      ? "Threshold exceeded"
-      : inboundAlert?.status === "cooldown"
-        ? `Cooldown (${inboundAlert.cooldownRemainingMinutes}m remaining)`
-        : "Below threshold";
-  const maxInboundBarValue = Math.max(
-    1,
-    ...inboundSeries.map((point) => point.failed + point.processed + point.processing)
-  );
+  async function retryInboundEventNow(eventId: string) {
+    const busyKey = `inbound:${eventId}`;
+    setEventActionBusyKey(busyKey);
+    try {
+      const result = await retryInboundEvents(1, [eventId]);
+      if (result.retried > 0) {
+        pushSuccess("Inbound event queued for retry");
+      } else {
+        setToast({ tone: "error", message: "Inbound event is no longer retryable." });
+      }
+      await loadOperations();
+    } catch (error) {
+      pushError(error, "Could not retry inbound event");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
+
+  async function retryFailedCallEventNow(eventId: string) {
+    const busyKey = `call:${eventId}`;
+    setEventActionBusyKey(busyKey);
+    try {
+      const result = await retryFailedCallEvents(1, [eventId]);
+      if (result.retried > 0) {
+        pushSuccess("Call outbox event queued for retry");
+      } else {
+        setToast({ tone: "error", message: "Call event is no longer retryable." });
+      }
+      await loadOperations();
+    } catch (error) {
+      pushError(error, "Could not retry call event");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
 
   return (
-    <AppShell title="Admin Panel" subtitle="Create users, assign roles, and provision mailboxes.">
-      <div className="app-content admin-layout">
-        <div className="panel admin-nav">
-          {ADMIN_SECTIONS.map((section) => {
-            const count = getSectionCount(section.key);
-            return (
-              <button
-                key={section.key}
-                type="button"
-                onClick={() => setActiveSection(section.key)}
-                className={`admin-nav-button${activeSection === section.key ? " active" : ""}`}
-              >
-                <span>{section.label}</span>
-                {typeof count === "number" ? (
-                  <span className="admin-nav-count">{count}</span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="admin-panel">
-          {activeSection === "create-user" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Create User</h2>
-              <form onSubmit={handleCreate} style={{ display: "grid", gap: 12 }}>
-                <label>
-                  Email
-                  <input
-                    type="email"
-                    value={form.email}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, email: event.target.value }))
-                    }
-                    required
-                  />
-                </label>
-                <label>
-                  Display name
-                  <input
-                    type="text"
-                    value={form.displayName}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, displayName: event.target.value }))
-                    }
-                    required
-                  />
-                </label>
-                <label>
-                  Temporary password
-                  <input
-                    type="password"
-                    value={form.password}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, password: event.target.value }))
-                    }
-                    required
-                    minLength={8}
-                  />
-                </label>
-                <label>
-                  Role
-                  <select
-                    value={form.roleId}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, roleId: event.target.value }))
-                    }
-                  >
-                    {roles.map((role) => (
-                      <option key={role.id} value={role.id}>
-                        {role.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    padding: "12px 16px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-                    color: "#081018",
-                    cursor: "pointer"
-                  }}
-                >
-                  {loading ? "Creating..." : "Create user"}
-                </button>
-              </form>
-            </section>
-          ) : null}
-
-          {activeSection === "sla" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>SLA Targets</h2>
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  setSlaStatus("saving");
-                  const res = await fetch("/api/admin/sla", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(sla)
-                  });
-                  if (!res.ok) {
-                    setSlaStatus("error");
-                    return;
-                  }
-                  setSlaStatus("saved");
-                  setTimeout(() => setSlaStatus("idle"), 2000);
-                }}
-                style={{ display: "grid", gap: 12 }}
-              >
-                <label>
-                  First response target (minutes)
-                  <input
-                    type="number"
-                    min={1}
-                    value={sla.firstResponseMinutes}
-                    onChange={(event) =>
-                      setSla((prev) => ({
-                        ...prev,
-                        firstResponseMinutes: Number(event.target.value)
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Resolution target (minutes)
-                  <input
-                    type="number"
-                    min={1}
-                    value={sla.resolutionMinutes}
-                    onChange={(event) =>
-                      setSla((prev) => ({
-                        ...prev,
-                        resolutionMinutes: Number(event.target.value)
-                      }))
-                    }
-                  />
-                </label>
-                {slaStatus === "error" ? (
-                  <p style={{ color: "var(--danger)" }}>Failed to save SLA targets.</p>
-                ) : null}
-                {slaStatus === "saved" ? (
-                  <p style={{ color: "var(--accent)" }}>SLA targets updated.</p>
-                ) : null}
-                <button
-                  type="submit"
-                  disabled={slaStatus === "saving"}
-                  style={{
-                    padding: "12px 16px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-                    color: "#081018",
-                    cursor: "pointer"
-                  }}
-                >
-                  {slaStatus === "saving" ? "Saving..." : "Save SLA targets"}
-                </button>
-              </form>
-            </section>
-          ) : null}
-
-          {activeSection === "tags" ? (
-            <div className="panel">
-              <TagsClient compact />
-            </div>
-          ) : null}
-
-          {activeSection === "spam-rules" ? (
-            <div className="panel">
-              <SpamRulesClient compact />
-            </div>
-          ) : null}
-
-          {activeSection === "agent" ? (
-            <div className="panel">
-              <AgentIntegrationClient compact />
-            </div>
-          ) : null}
-
-          {activeSection === "whatsapp" ? (
-            <div className="panel">
-              <WhatsAppClient compact />
-            </div>
-          ) : null}
-
-          {activeSection === "profile-lookup" ? (
-            <div className="panel">
-              <ProfileLookupClient compact />
-            </div>
-          ) : null}
-
-          {activeSection === "security" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Security</h2>
-              <p style={{ color: "var(--muted)" }}>
-                Runtime controls are configured via environment variables. This view shows current
-                status and recommendations.
+    <AppShell>
+      <div className="h-full bg-neutral-50 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-6 space-y-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold text-neutral-900">Admin</h1>
+              <p className="text-sm text-neutral-600 mt-1">
+                Reconnected admin surfaces for users, messaging controls, automation, and operations.
               </p>
-              {securityError ? <p style={{ color: "var(--danger)" }}>{securityError}</p> : null}
-              {!security ? (
-                <p>Loading security status...</p>
-              ) : (
-                <div style={{ display: "grid", gap: 16 }}>
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <h3 style={{ marginTop: 0 }}>Secrets at Rest</h3>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      AGENT_SECRET_KEY: {encryptionEnabled ? "Configured" : "Missing"}
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      Agent integrations encrypted: {security.agentIntegrationStats.encrypted}/
-                      {security.agentIntegrationStats.total}
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      WhatsApp access tokens encrypted: {security.whatsappTokenStats.encrypted}/
-                      {security.whatsappTokenStats.total}
-                      {security.whatsappTokenStats.missing
-                        ? ` · Missing: ${security.whatsappTokenStats.missing}`
-                        : ""}
-                    </div>
-                    {!encryptionEnabled ? (
-                      <p style={{ color: "var(--danger)", fontSize: 12 }}>
-                        Set AGENT_SECRET_KEY to encrypt agent secrets and WhatsApp tokens at rest.
-                      </p>
-                    ) : null}
-                    {encryptionEnabled &&
-                    (security.agentIntegrationStats.unencrypted > 0 ||
-                      security.whatsappTokenStats.unencrypted > 0) ? (
-                      <p style={{ color: "var(--muted)", fontSize: 12 }}>
-                        Some secrets were saved before encryption. Re-save them in Admin to encrypt.
-                      </p>
-                    ) : null}
-                  </div>
+            </div>
+            <Button variant="outline" className="gap-2" onClick={() => void refreshTab()}>
+              <RefreshCw className={loading[activeTab] ? "w-4 h-4 animate-spin" : "w-4 h-4"} />
+              Refresh Tab
+            </Button>
+          </div>
 
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <h3 style={{ marginTop: 0 }}>Inbound Security</h3>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      INBOUND_SHARED_SECRET: {inboundSecretEnabled ? "Configured" : "Missing"}
-                    </div>
-                    {!inboundSecretEnabled ? (
-                      <p style={{ color: "var(--danger)", fontSize: 12 }}>
-                        Set INBOUND_SHARED_SECRET to protect inbound webhooks and retries.
-                      </p>
-                    ) : null}
-                  </div>
+          {toast ? (
+            <div className={`rounded-lg border px-4 py-3 text-sm ${toastClass(toast)}`}>{toast.message}</div>
+          ) : null}
 
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <h3 style={{ marginTop: 0 }}>IP Allowlists</h3>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      Admin allowlist:{" "}
-                      {adminAllowlist.length ? adminAllowlist.join(", ") : "None (open)"}
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      Agent allowlist:{" "}
-                      {agentAllowlist.length ? agentAllowlist.join(", ") : "None (open)"}
-                    </div>
-                    {security.clientIp ? (
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
-                        Your current IP: {security.clientIp}
-                      </div>
-                    ) : null}
-                    <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-                      Update allowlists in `.env` and restart the app:
-                    </p>
-                    <pre
-                      style={{
-                        margin: 0,
-                        padding: 10,
-                        borderRadius: 10,
-                        border: "1px solid var(--border)",
-                        background: "rgba(10, 12, 18, 0.7)",
-                        fontSize: 12,
-                        whiteSpace: "pre-wrap"
-                      }}
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
+            <TabsList>
+              <TabsTrigger value="overview" className="gap-2">
+                <Shield className="w-4 h-4" />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="workspace" className="gap-2">
+                <Workflow className="w-4 h-4" />
+                Messaging
+              </TabsTrigger>
+              <TabsTrigger value="automation" className="gap-2">
+                <Bot className="w-4 h-4" />
+                Automation
+              </TabsTrigger>
+              <TabsTrigger value="operations" className="gap-2">
+                <Phone className="w-4 h-4" />
+                Operations
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="overview" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Users & Roles</CardTitle>
+                  <CardDescription>Create users and manage status/role assignments.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <Input
+                      placeholder="Email"
+                      value={userForm.email}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, email: event.target.value }))}
+                    />
+                    <Input
+                      placeholder="Display name"
+                      value={userForm.displayName}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, displayName: event.target.value }))}
+                    />
+                    <Input
+                      type="password"
+                      placeholder="Password"
+                      value={userForm.password}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, password: event.target.value }))}
+                    />
+                    <select
+                      className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                      value={userForm.roleId}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, roleId: event.target.value }))}
                     >
-                      {allowlistSnippet}
-                    </pre>
-                  </div>
-                </div>
-              )}
-            </section>
-          ) : null}
-
-          {activeSection === "users" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Users</h2>
-              <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-                <input
-                  type="text"
-                  placeholder="Search name or email..."
-                  value={userQuery}
-                  onChange={(event) => setUserQuery(event.target.value)}
-                />
-              </div>
-              <div style={{ display: "grid", gap: 12 }}>
-                {filteredUsers.length === 0 ? (
-                  <p>No users match your search.</p>
-                ) : (
-                  filteredUsers.map((user) => {
-                    const roleLabel = (
-                      user.role_name ?? roleNameById.get(user.role_id ?? "") ?? "unknown"
-                    ).toLowerCase();
-                    const safeRole = roleLabel.replace(/[^a-z0-9_-]/g, "");
-                    return (
-                      <div
-                        key={user.id}
-                        style={{
-                          border: "1px solid var(--border)",
-                          borderRadius: 12,
-                          padding: 12,
-                          background: "rgba(10, 12, 18, 0.6)"
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <strong>{user.display_name}</strong>
-                          <span className={`role-badge role-${safeRole}`}>{roleLabel}</span>
-                        </div>
-                        <p>{user.email}</p>
-                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      <label>
-                        Role
-                        <select
-                          value={user.role_id ?? ""}
-                          onChange={(event) =>
-                            updateUser(user.id, { roleId: event.target.value })
-                          }
-                          style={{ marginLeft: 8, padding: "6px 8px" }}
-                        >
-                          {roles.map((role) => (
-                            <option key={role.id} value={role.id}>
-                              {role.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Status
-                        <select
-                          value={user.is_active ? "active" : "inactive"}
-                          onChange={(event) =>
-                            updateUser(user.id, { isActive: event.target.value === "active" })
-                          }
-                          style={{ marginLeft: 8, padding: "6px 8px" }}
-                        >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        onClick={() => resetPassword(user.id)}
-                        disabled={resettingUserId === user.id}
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "var(--surface-2)",
-                          color: "var(--text)",
-                          cursor: "pointer"
-                        }}
-                      >
-                        {resettingUserId === user.id ? "Generating..." : "Reset password"}
-                      </button>
-                      {updatingUserId === user.id ? (
-                        <span style={{ fontSize: 12, color: "var(--muted)" }}>Saving...</span>
-                      ) : null}
-                    </div>
-                    {resetLinks[user.id] ? (
-                      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-                        Reset link: <span style={{ color: "var(--text)" }}>{resetLinks[user.id]}</span>
-                      </p>
-                    ) : null}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </section>
-          ) : null}
-
-          {activeSection === "call-ops" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Call Ops</h2>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  onClick={runCallOutbox}
-                  disabled={triggeringCallOutbox}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "var(--surface-2)",
-                    color: "var(--text)",
-                    cursor: "pointer"
-                  }}
-                >
-                  {triggeringCallOutbox ? "Running..." : "Run call outbox"}
-                </button>
-                <button
-                  type="button"
-                  onClick={retryCallOutbox}
-                  disabled={retryingCallOutbox}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--text)",
-                    cursor: "pointer"
-                  }}
-                >
-                  {retryingCallOutbox ? "Retrying..." : "Retry failed calls"}
-                </button>
-              </div>
-              {callOpsResult ? (
-                <p style={{ color: "var(--muted)", marginTop: 0 }}>{callOpsResult}</p>
-              ) : null}
-              {callOpsError ? <p style={{ color: "var(--danger)", marginTop: 0 }}>{callOpsError}</p> : null}
-
-              {callOutboxMetrics ? (
-                <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      padding: 10,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <strong>Outbox Health</strong>
-                    <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
-                      Provider: {callOutboxMetrics.provider} · Queue {callOutboxMetrics.queue.queued} ·
-                      Due now {callOutboxMetrics.queue.dueNow} · Processing{" "}
-                      {callOutboxMetrics.queue.processing} · Failed {callOutboxMetrics.queue.failed}
-                    </p>
-                    <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13 }}>
-                      Sent 24h {callOutboxMetrics.queue.sent24h} · Last sent{" "}
-                      {callOutboxMetrics.queue.lastSentAt
-                        ? new Date(callOutboxMetrics.queue.lastSentAt).toLocaleString()
-                        : "—"}{" "}
-                      · Last failed{" "}
-                      {callOutboxMetrics.queue.lastFailedAt
-                        ? new Date(callOutboxMetrics.queue.lastFailedAt).toLocaleString()
-                        : "—"}
-                    </p>
-                    {callOutboxMetrics.queue.lastError ? (
-                      <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 12 }}>
-                        Last error: {callOutboxMetrics.queue.lastError}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      padding: 10,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <strong>Webhook Security</strong>
-                    <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
-                      Mode: {callOutboxMetrics.webhookSecurity.mode} · Timestamp required:{" "}
-                      {callOutboxMetrics.webhookSecurity.timestampRequired ? "Yes" : "No"} · Max skew:{" "}
-                      {callOutboxMetrics.webhookSecurity.maxSkewSeconds}s
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <div
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "rgba(10, 12, 18, 0.6)"
-                  }}
-                >
-                  <strong>Webhook Rejections (last {callWebhookRejections?.windowHours ?? 24}h)</strong>
-                  {callWebhookRejections?.summary?.length ? (
-                    <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                      {callWebhookRejections.summary.map((item) => (
-                        <div key={`${item.mode}-${item.reason}`} style={{ fontSize: 13, color: "var(--muted)" }}>
-                          {item.reason} · mode {item.mode} · {item.count}
-                        </div>
+                      <option value="">Select role</option>
+                      {roles.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.name}
+                        </option>
                       ))}
-                    </div>
-                  ) : (
-                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
-                      No grouped rejection data.
-                    </p>
-                  )}
-                  {callWebhookRejections?.recent?.length ? (
-                    <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                      <strong style={{ fontSize: 13 }}>Recent Rejections</strong>
-                      {callWebhookRejections.recent.slice(0, 10).map((item) => {
-                        const reason =
-                          typeof item.data?.reason === "string" ? item.data.reason : "unknown";
-                        const mode = typeof item.data?.mode === "string" ? item.data.mode : "unknown";
-                        const endpoint =
-                          typeof item.data?.endpoint === "string" ? item.data.endpoint : "unknown";
-                        return (
-                          <div
-                            key={item.id}
-                            style={{
-                              border: "1px solid var(--border)",
-                              borderRadius: 8,
-                              padding: 8,
-                              background: "rgba(10, 12, 18, 0.45)",
-                              fontSize: 12,
-                              color: "var(--muted)"
-                            }}
-                          >
-                            {new Date(item.createdAt).toLocaleString()} · {reason} · mode {mode} ·{" "}
-                            {endpoint}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
-                      No recent rejection events.
-                    </p>
-                  )}
-                </div>
+                    </select>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => void saveUser()}>Create / Update User</Button>
+                  </div>
+                  <div className="overflow-x-auto rounded-lg border border-neutral-200">
+                    <table className="w-full text-sm">
+                      <thead className="bg-neutral-100/70">
+                        <tr>
+                          <th className="text-left px-3 py-2">User</th>
+                          <th className="text-left px-3 py-2">Role</th>
+                          <th className="text-left px-3 py-2">Status</th>
+                          <th className="text-left px-3 py-2">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map((user) => (
+                          <tr key={user.id} className="border-t border-neutral-200">
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-neutral-900">{user.display_name}</div>
+                              <div className="text-xs text-neutral-600">{user.email}</div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <select
+                                className="h-8 rounded-md border border-neutral-200 bg-white px-2 text-xs"
+                                value={user.role_id ?? ""}
+                                onChange={(event) =>
+                                  void updateUser(user.id, { roleId: event.target.value })
+                                    .then(loadOverview)
+                                    .catch((error) => pushError(error, "Could not update user role"))
+                                }
+                              >
+                                {roles.map((role) => (
+                                  <option key={role.id} value={role.id}>
+                                    {role.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Button
+                                variant={user.is_active ? "outline" : "secondary"}
+                                size="sm"
+                                onClick={() =>
+                                  void updateUser(user.id, { isActive: !user.is_active })
+                                    .then(loadOverview)
+                                    .catch((error) => pushError(error, "Could not update user status"))
+                                }
+                              >
+                                {user.is_active ? "Active" : "Inactive"}
+                              </Button>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  void requestPasswordResetLink(user.id)
+                                    .then(async (payload) => {
+                                      try {
+                                        await navigator.clipboard.writeText(payload.resetLink);
+                                        pushSuccess("Password reset link copied");
+                                      } catch {
+                                        pushSuccess(`Password reset link ready: ${payload.resetLink}`);
+                                      }
+                                    })
+                                    .catch((error) => pushError(error, "Could not generate reset link"))
+                                }
+                              >
+                                Reset link
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
 
-                <div
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "rgba(10, 12, 18, 0.6)"
-                  }}
-                >
-                  <strong>Failed Call Outbox Events</strong>
-                  {callFailedEvents.length === 0 ? (
-                    <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
-                      No failed call outbox events.
-                    </p>
-                  ) : (
-                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      {callFailedEvents.map((event) => (
-                        <div
-                          key={event.id}
-                          style={{
-                            border: "1px solid var(--border)",
-                            borderRadius: 8,
-                            padding: 8,
-                            background: "rgba(10, 12, 18, 0.45)",
-                            fontSize: 13
-                          }}
-                        >
-                          <div style={{ color: "var(--muted)" }}>
-                            Attempts: {event.attempt_count} · Next:{" "}
-                            {event.next_attempt_at
-                              ? new Date(event.next_attempt_at).toLocaleString()
-                              : "—"}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>SLA Targets</CardTitle>
+                    <CardDescription>Set first response and resolution targets.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={sla.firstResponseMinutes}
+                      onChange={(event) => setSla((prev) => ({ ...prev, firstResponseMinutes: Number(event.target.value) }))}
+                    />
+                    <Input
+                      type="number"
+                      min={1}
+                      value={sla.resolutionMinutes}
+                      onChange={(event) => setSla((prev) => ({ ...prev, resolutionMinutes: Number(event.target.value) }))}
+                    />
+                    <Button onClick={() => void saveSla()}>Save SLA</Button>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Security Snapshot</CardTitle>
+                    <CardDescription>Environment and secret posture checks.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <Metric label="Client IP" value={security?.clientIp ?? "unknown"} />
+                      <Metric label="Agent Integrations" value={security?.agentIntegrationStats.total ?? 0} />
+                      <Metric label="Encrypted Agent Secrets" value={security?.agentIntegrationStats.encrypted ?? 0} />
+                      <Metric label="Encrypted WA Tokens" value={security?.whatsappTokenStats.encrypted ?? 0} />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={security?.agentSecretKeyConfigured ? "secondary" : "outline"}>
+                        Agent secret key {security?.agentSecretKeyConfigured ? "configured" : "missing"}
+                      </Badge>
+                      <Badge variant={security?.inboundSecretConfigured ? "secondary" : "outline"}>
+                        Inbound secret {security?.inboundSecretConfigured ? "configured" : "missing"}
+                      </Badge>
+                      <Badge variant="outline">
+                        Unencrypted agent secrets {security?.agentIntegrationStats.unencrypted ?? 0}
+                      </Badge>
+                      <Badge variant="outline">
+                        Missing WA tokens {security?.whatsappTokenStats.missing ?? 0}
+                      </Badge>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-2">
+                      <p>Admin allowlist: {(security?.adminAllowlist ?? []).join(", ") || "not configured"}</p>
+                      <p>Agent allowlist: {(security?.agentAllowlist ?? []).join(", ") || "not configured"}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="workspace" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Tags</CardTitle>
+                    <CardDescription>Create, describe, and maintain reusable support tags.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">
+                            {tagEditingId ? "Edit tag" : "New tag"}
+                          </p>
+                          <p className="text-xs text-neutral-600">
+                            Keep naming and description standards in Admin instead of ad hoc prompts.
+                          </p>
+                        </div>
+                        {tagEditingId ? (
+                          <Button variant="ghost" size="sm" onClick={resetTagForm}>
+                            Cancel
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-[0.85fr_1.15fr] gap-2">
+                        <Input
+                          value={tagForm.name}
+                          onChange={(event) =>
+                            setTagForm((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                          placeholder="vip-customer"
+                        />
+                        <Input
+                          value={tagForm.description}
+                          onChange={(event) =>
+                            setTagForm((prev) => ({ ...prev, description: event.target.value }))
+                          }
+                          placeholder="Description shown to admins and agents"
+                        />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button onClick={() => void saveTag()}>
+                          {tagEditingId ? "Save Tag" : "Create Tag"}
+                        </Button>
+                        {!tagEditingId ? (
+                          <Button variant="outline" onClick={resetTagForm}>
+                            Reset
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {tags.map((tag) => (
+                        <div key={tag.id} className="flex items-start justify-between rounded-lg border border-neutral-200 p-3 gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-neutral-900">{tag.name}</p>
+                            <p className="mt-1 text-xs text-neutral-600">
+                              {tag.description?.trim() ? tag.description : "No description yet."}
+                            </p>
                           </div>
-                          <div style={{ color: "var(--muted)" }}>
-                            {event.last_error ?? "Unknown error"}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => startTagEdit(tag)}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                void deleteTag(tag.id)
+                                  .then(() => {
+                                    if (tagEditingId === tag.id) {
+                                      resetTagForm();
+                                    }
+                                    return loadWorkspace();
+                                  })
+                                  .catch((error) => pushError(error, "Could not delete tag"))
+                              }
+                            >
+                              Delete
+                            </Button>
                           </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          ) : null}
+                  </CardContent>
+                </Card>
 
-          {activeSection === "inbound" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Inbound Failures</h2>
-              <form
-                onSubmit={saveInboundAlertSettings}
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  padding: 12,
-                  background: "rgba(10, 12, 18, 0.6)",
-                  marginBottom: 12
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <strong>Alert Settings</strong>
-                  <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                    Source: {inboundAlertConfig?.source ?? "unknown"}
-                  </span>
-                </div>
-                <label>
-                  Webhook URL
-                  <input
-                    type="url"
-                    placeholder="https://hooks.slack.com/services/..."
-                    value={inboundAlertForm.webhookUrl}
-                    onChange={(event) =>
-                      setInboundAlertForm((prev) => ({
-                        ...prev,
-                        webhookUrl: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <div
-                  style={{
-                    display: "grid",
-                    gap: 10,
-                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))"
-                  }}
-                >
-                  <label>
-                    Threshold
-                    <input
-                      type="number"
-                      min={1}
-                      value={inboundAlertForm.threshold}
-                      onChange={(event) =>
-                        setInboundAlertForm((prev) => ({
-                          ...prev,
-                          threshold: Number(event.target.value) || 1
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Window (minutes)
-                    <input
-                      type="number"
-                      min={1}
-                      value={inboundAlertForm.windowMinutes}
-                      onChange={(event) =>
-                        setInboundAlertForm((prev) => ({
-                          ...prev,
-                          windowMinutes: Number(event.target.value) || 1
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Cooldown (minutes)
-                    <input
-                      type="number"
-                      min={1}
-                      value={inboundAlertForm.cooldownMinutes}
-                      onChange={(event) =>
-                        setInboundAlertForm((prev) => ({
-                          ...prev,
-                          cooldownMinutes: Number(event.target.value) || 1
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-                {inboundAlertConfig?.updatedAt ? (
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    Last updated: {new Date(inboundAlertConfig.updatedAt).toLocaleString()}
-                  </div>
-                ) : null}
-                {inboundAlertConfigError ? (
-                  <p style={{ color: "var(--danger)", margin: 0 }}>{inboundAlertConfigError}</p>
-                ) : null}
-                <button
-                  type="submit"
-                  disabled={savingInboundAlertConfig}
-                  style={{
-                    justifySelf: "start",
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "var(--surface-2)",
-                    color: "var(--text)",
-                    cursor: "pointer"
-                  }}
-                >
-                  {savingInboundAlertConfig ? "Saving..." : "Save alert settings"}
-                </button>
-              </form>
-              <button
-                type="button"
-                onClick={retryInbound}
-                disabled={retryingInbound}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: "var(--surface-2)",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  marginBottom: 12
-                }}
-              >
-                {retryingInbound ? "Retrying..." : "Retry failed inbound"}
-              </button>
-              <button
-                type="button"
-                onClick={checkInboundAlerts}
-                disabled={checkingAlerts}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  marginLeft: 8
-                }}
-              >
-                {checkingAlerts ? "Checking..." : "Send alert check"}
-              </button>
-              {inboundMetricsError ? (
-                <p style={{ color: "var(--danger)", marginTop: 10 }}>{inboundMetricsError}</p>
-              ) : null}
-              {inboundMetrics ? (
-                <div style={{ display: "grid", gap: 12, marginTop: 12, marginBottom: 14 }}>
-                  {inboundAlert && inboundAlertRecommendation ? (
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 12,
-                        background: "rgba(10, 12, 18, 0.6)",
-                        display: "grid",
-                        gap: 8
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                        <strong>Alert Health ({inboundAlert.windowMinutes}m window)</strong>
-                        <span style={{ color: inboundAlertStatusColor, fontWeight: 700 }}>{inboundAlertStatusLabel}</span>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Spam Rules</CardTitle>
+                    <CardDescription>Create and toggle spam filtering patterns.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">
+                            {ruleEditingId ? "Edit spam rule" : "New spam rule"}
+                          </p>
+                          <p className="text-xs text-neutral-600">
+                            Tune allow/block patterns without leaving the unified Admin surface.
+                          </p>
+                        </div>
+                        {ruleEditingId ? (
+                          <Button variant="ghost" size="sm" onClick={resetRuleForm}>
+                            Cancel
+                          </Button>
+                        ) : null}
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Failures now: {inboundAlert.currentFailures} / threshold {inboundAlert.threshold} · Cooldown{" "}
-                        {inboundAlert.cooldownMinutes}m · Source {inboundAlert.source}
+                      <div className="grid grid-cols-3 gap-2">
+                        <select
+                          className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                          value={ruleForm.ruleType}
+                          onChange={(event) => setRuleForm((prev) => ({ ...prev, ruleType: event.target.value as "allow" | "block" }))}
+                        >
+                          <option value="block">Block</option>
+                          <option value="allow">Allow</option>
+                        </select>
+                        <select
+                          className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                          value={ruleForm.scope}
+                          onChange={(event) => setRuleForm((prev) => ({ ...prev, scope: event.target.value as "sender" | "domain" | "subject" | "body" }))}
+                        >
+                          <option value="sender">Sender</option>
+                          <option value="domain">Domain</option>
+                          <option value="subject">Subject</option>
+                          <option value="body">Body</option>
+                        </select>
+                        <Input value={ruleForm.pattern} onChange={(event) => setRuleForm((prev) => ({ ...prev, pattern: event.target.value }))} placeholder="pattern" />
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Webhook {inboundAlert.webhookConfigured ? "configured" : "missing"} · Last sent{" "}
-                        {inboundAlert.lastSentAt ? new Date(inboundAlert.lastSentAt).toLocaleString() : "never"}
+                      <div className="flex gap-2">
+                        <Button onClick={() => void saveSpamRule()}>
+                          {ruleEditingId ? "Save Rule" : "Create Rule"}
+                        </Button>
+                        {!ruleEditingId ? (
+                          <Button variant="outline" onClick={resetRuleForm}>
+                            Reset
+                          </Button>
+                        ) : null}
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Suggested threshold range: {inboundAlertRecommendation.suggestedMinThreshold}-
-                        {inboundAlertRecommendation.suggestedMaxThreshold} (avg{" "}
-                        {inboundAlertRecommendation.avgBucketFailures.toFixed(2)}, p95{" "}
-                        {inboundAlertRecommendation.p95BucketFailures.toFixed(2)}, sample windows{" "}
-                        {inboundAlertRecommendation.bucketCount})
-                      </div>
-                      {!inboundAlertRecommendation.inRange ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setInboundAlertForm((prev) => ({
+                    </div>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {spamRules.map((rule) => (
+                        <div key={rule.id} className="rounded-lg border border-neutral-200 p-2 text-sm flex items-center justify-between gap-2">
+                          <span>{rule.rule_type}:{rule.scope} · {rule.pattern}</span>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startRuleEdit(rule)}>Edit</Button>
+                            <Button variant="outline" size="sm" onClick={() => void updateSpamRule(rule.id, { isActive: !rule.is_active }).then(loadWorkspace)}>Toggle</Button>
+                            <Button variant="ghost" size="sm" onClick={() => void deleteSpamRule(rule.id).then(loadWorkspace)}>Delete</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>WhatsApp & Spam Queue</CardTitle>
+                  <CardDescription>Outbound setup, templates, and spam review.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <select
+                          className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                          value={whatsAppForm.provider}
+                          onChange={(event) =>
+                            setWhatsAppForm((prev) => ({ ...prev, provider: event.target.value }))
+                          }
+                        >
+                          <option value="meta">Meta Cloud API</option>
+                          <option value="twilio">Twilio</option>
+                          <option value="messagebird">MessageBird</option>
+                        </select>
+                        <Input
+                          value={whatsAppForm.phoneNumber}
+                          onChange={(event) =>
+                            setWhatsAppForm((prev) => ({ ...prev, phoneNumber: event.target.value }))
+                          }
+                          placeholder={whatsAppForm.provider === "meta" ? "phone number ID" : "phone number"}
+                        />
+                        <select
+                          className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                          value={whatsAppForm.status}
+                          onChange={(event) =>
+                            setWhatsAppForm((prev) => ({
                               ...prev,
-                              threshold: inboundAlertRecommendation.suggestedMaxThreshold
+                              status: event.target.value as "active" | "paused" | "inactive"
                             }))
                           }
-                          style={{
-                            justifySelf: "start",
-                            padding: "7px 10px",
-                            borderRadius: 8,
-                            border: "1px solid var(--border)",
-                            background: "var(--surface-2)",
-                            color: "var(--text)",
-                            cursor: "pointer"
-                          }}
                         >
-                          Use suggested threshold ({inboundAlertRecommendation.suggestedMaxThreshold})
-                        </button>
+                          <option value="inactive">Inactive</option>
+                          <option value="active">Active</option>
+                          <option value="paused">Paused</option>
+                        </select>
+                        <Input
+                          value={whatsAppForm.wabaId}
+                          onChange={(event) =>
+                            setWhatsAppForm((prev) => ({ ...prev, wabaId: event.target.value }))
+                          }
+                          placeholder="WABA ID"
+                        />
+                        <div className="md:col-span-2 flex gap-2">
+                          <Input
+                            type={showWhatsAppAccessToken ? "text" : "password"}
+                            value={whatsAppForm.accessToken}
+                            onChange={(event) =>
+                              setWhatsAppForm((prev) => ({ ...prev, accessToken: event.target.value }))
+                            }
+                            placeholder="Access token"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={() => setShowWhatsAppAccessToken((prev) => !prev)}
+                          >
+                            {showWhatsAppAccessToken ? "Hide" : "Show"}
+                          </Button>
+                        </div>
+                        <div className="md:col-span-2 flex gap-2">
+                          <Input
+                            value={whatsAppForm.verifyToken}
+                            onChange={(event) =>
+                              setWhatsAppForm((prev) => ({ ...prev, verifyToken: event.target.value }))
+                            }
+                            placeholder="Verify token"
+                          />
+                          <Button variant="outline" onClick={generateVerifyToken}>
+                            Generate
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => void copyToClipboard(whatsAppForm.verifyToken, "Verify token")}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                        <div className="md:col-span-3 flex gap-2">
+                          <Input value={whatsAppWebhookUrl} readOnly placeholder="Webhook URL" />
+                          <Button
+                            variant="outline"
+                            onClick={() => void copyToClipboard(whatsAppWebhookUrl, "Webhook URL")}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
+
+                      {whatsAppStatusWarnings.length > 0 ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                          {whatsAppStatusWarnings.map((warning) => (
+                            <p key={warning}>{warning}</p>
+                          ))}
+                        </div>
                       ) : null}
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => void saveWhatsAppSettings()}>Save WhatsApp</Button>
+                        <Button variant="outline" onClick={() => void runWhatsAppOutbox(25).then(loadWorkspace)}>
+                          Run WA Outbox
+                        </Button>
+                        <Button variant="outline" onClick={() => void loadWorkspace()}>
+                          Refresh WA
+                        </Button>
+                        {whatsAppOutbox?.account?.id ? (
+                          <Badge variant="outline">Account {whatsAppOutbox.account.id}</Badge>
+                        ) : null}
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <Metric label="Queued" value={whatsAppOutbox?.queue.queued ?? 0} />
+                        <Metric label="Due Now" value={whatsAppOutbox?.queue.dueNow ?? 0} />
+                        <Metric label="Processing" value={whatsAppOutbox?.queue.processing ?? 0} />
+                        <Metric label="Failed" value={whatsAppOutbox?.queue.failed ?? 0} />
+                      </div>
+
+                      <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
+                        <p>Provider: {whatsAppOutbox?.account?.provider ?? whatsAppForm.provider}</p>
+                        <p>Last sent: {formatDate(whatsAppOutbox?.queue.lastSentAt ?? null)}</p>
+                        <p>Next attempt: {formatDate(whatsAppOutbox?.queue.nextAttemptAt ?? null)}</p>
+                        {whatsAppOutbox?.queue.lastError ? (
+                          <p className="text-red-600">Last outbox error: {whatsAppOutbox.queue.lastError}</p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-neutral-900">
+                              {templateEditingId ? "Edit template" : "New template"}
+                            </p>
+                            <p className="text-xs text-neutral-600">
+                              Maintain active WhatsApp templates without leaving Admin.
+                            </p>
+                          </div>
+                          {templateEditingId ? (
+                            <Button variant="ghost" size="sm" onClick={resetTemplateForm}>
+                              Cancel
+                            </Button>
+                          ) : null}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <Input
+                            value={templateForm.name}
+                            onChange={(event) =>
+                              setTemplateForm((prev) => ({ ...prev, name: event.target.value }))
+                            }
+                            placeholder="Template name"
+                          />
+                          <Input
+                            value={templateForm.language}
+                            onChange={(event) =>
+                              setTemplateForm((prev) => ({ ...prev, language: event.target.value }))
+                            }
+                            placeholder="Language"
+                          />
+                          <Input
+                            value={templateForm.category}
+                            onChange={(event) =>
+                              setTemplateForm((prev) => ({ ...prev, category: event.target.value }))
+                            }
+                            placeholder="Category"
+                          />
+                          <select
+                            className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                            value={templateForm.status}
+                            onChange={(event) =>
+                              setTemplateForm((prev) => ({
+                                ...prev,
+                                status: event.target.value as "active" | "paused"
+                              }))
+                            }
+                          >
+                            <option value="active">Active</option>
+                            <option value="paused">Paused</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-medium text-neutral-600">Components JSON</label>
+                            <Button variant="ghost" size="sm" onClick={formatComponentsJson}>
+                              Format JSON
+                            </Button>
+                          </div>
+                          <Textarea
+                            rows={6}
+                            className="font-mono text-xs"
+                            value={templateForm.componentsJson}
+                            onChange={(event) =>
+                              setTemplateForm((prev) => ({ ...prev, componentsJson: event.target.value }))
+                            }
+                            placeholder='[{"type":"body","parameters":[{"type":"text","text":"{{1}}"}]}]'
+                          />
+                        </div>
+
+                        {templateError ? <p className="text-xs text-red-600">{templateError}</p> : null}
+
+                        <div className="flex gap-2">
+                          <Button onClick={() => void saveWhatsAppTemplateForm()}>
+                            {templateEditingId ? "Update Template" : "Create Template"}
+                          </Button>
+                          {!templateEditingId ? (
+                            <Button variant="outline" onClick={resetTemplateForm}>
+                              Reset
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {whatsAppTemplates.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">
+                          No WhatsApp templates saved yet.
+                        </div>
+                      ) : (
+                        whatsAppTemplates.map((template) => (
+                          <div key={template.id} className="rounded-lg border border-neutral-200 p-3 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-medium text-neutral-900">
+                                  {template.name} ({template.language})
+                                </p>
+                                <p className="mt-1 text-xs text-neutral-600">
+                                  {template.category ? `Category: ${template.category} · ` : ""}
+                                  Status: {template.status}
+                                  {template.components ? ` · Params: ${getTemplateParamCount(template)}` : ""}
+                                </p>
+                              </div>
+                              <Badge variant="outline">{template.status}</Badge>
+                            </div>
+                            <div className="mt-3 flex gap-2">
+                              <Button variant="outline" size="sm" onClick={() => startTemplateEdit(template)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  void updateWhatsAppTemplate(template.id, {
+                                    status: template.status === "active" ? "paused" : "active"
+                                  })
+                                    .then(() => {
+                                      pushSuccess("Template status updated");
+                                      return loadWorkspace();
+                                    })
+                                    .catch((error) => pushError(error, "Could not update template"))
+                                }
+                              >
+                                Toggle
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  void deleteWhatsAppTemplate(template.id)
+                                    .then(() => {
+                                      pushSuccess("Template deleted");
+                                      return loadWorkspace();
+                                    })
+                                    .catch((error) => pushError(error, "Could not delete template"))
+                                }
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {spamMessages.map((message) => (
+                        <div key={message.id} className="rounded-md border border-neutral-200 p-3 text-xs">
+                          <p className="font-medium text-neutral-900">{message.subject ?? "(no subject)"}</p>
+                          <p className="mt-1 text-neutral-600">{message.from_email}</p>
+                          <p className="mt-1 text-neutral-500">{message.mailbox_address}</p>
+                          {message.spam_reason ? (
+                            <p className="mt-2 text-red-600">{message.spam_reason}</p>
+                          ) : null}
+                          <div className="mt-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                void setMessageSpamStatus(message.id, { isSpam: false })
+                                  .then(() => {
+                                    pushSuccess("Message removed from spam");
+                                    return loadWorkspace();
+                                  })
+                                  .catch((error) => pushError(error, "Could not update spam status"))
+                              }
+                            >
+                              Mark Not Spam
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="automation" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Agent Integration</CardTitle>
+                  <CardDescription>Configure AI runtime and outbox throughput.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2 flex-wrap">
+                    <select className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm" value={selectedAgentId} onChange={(event) => {
+                      const id = event.target.value;
+                      setSelectedAgentId(id);
+                      const agent = agents.find((item) => item.id === id);
+                      setAgentForm(agent ? mapAgentToForm(agent) : defaultAgentForm());
+                    }}>
+                      <option value="">Create new</option>
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>{agent.name}</option>
+                      ))}
+                    </select>
+                    <Button variant="outline" onClick={() => { setSelectedAgentId(""); setAgentForm(defaultAgentForm()); }}>New</Button>
+                    {selectedAgent ? <Badge variant="outline">{selectedAgent.status}</Badge> : null}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <Input value={agentForm.name} onChange={(event) => setAgentForm((prev) => ({ ...prev, name: event.target.value }))} placeholder="name" />
+                    <select
+                      className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                      value={agentForm.provider}
+                      onChange={(event) => setAgentForm((prev) => ({ ...prev, provider: event.target.value }))}
+                    >
+                      <option value="elizaos">ElizaOS</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                    <select
+                      className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                      value={agentForm.authType}
+                      onChange={(event) => setAgentForm((prev) => ({ ...prev, authType: event.target.value }))}
+                    >
+                      <option value="hmac">HMAC</option>
+                      <option value="shared_secret">Shared secret</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr] gap-2">
+                    <Input value={agentForm.baseUrl} onChange={(event) => setAgentForm((prev) => ({ ...prev, baseUrl: event.target.value }))} placeholder="base url" />
+                    <div className="flex gap-2">
+                      <Input
+                        type={showAgentSecret ? "text" : "password"}
+                        value={agentForm.sharedSecret}
+                        onChange={(event) => setAgentForm((prev) => ({ ...prev, sharedSecret: event.target.value }))}
+                        placeholder="secret"
+                      />
+                      <Button variant="outline" onClick={() => setShowAgentSecret((prev) => !prev)}>
+                        {showAgentSecret ? "Hide" : "Show"}
+                      </Button>
+                      <Button variant="outline" onClick={generateAgentSecret}>
+                        Generate
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <select
+                      className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                      value={agentForm.policyMode}
+                      onChange={(event) =>
+                        setAgentForm((prev) => ({
+                          ...prev,
+                          policyMode: event.target.value as "draft_only" | "auto_send"
+                        }))
+                      }
+                    >
+                      <option value="draft_only">Draft only</option>
+                      <option value="auto_send">Auto-send</option>
+                    </select>
+                    <select
+                      className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                      value={agentForm.status}
+                      onChange={(event) =>
+                        setAgentForm((prev) => ({
+                          ...prev,
+                          status: event.target.value as "active" | "paused"
+                        }))
+                      }
+                    >
+                      <option value="active">Active</option>
+                      <option value="paused">Paused</option>
+                    </select>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={agentForm.maxEventsPerRun}
+                      onChange={(event) =>
+                        setAgentForm((prev) => ({ ...prev, maxEventsPerRun: event.target.value }))
+                      }
+                      placeholder="max events per run"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-neutral-200 p-3">
+                    <label className="flex items-start gap-3">
+                      <Checkbox
+                        checked={agentForm.allowMergeActions}
+                        onCheckedChange={(checked) =>
+                          setAgentForm((prev) => ({ ...prev, allowMergeActions: checked === true }))
+                        }
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-neutral-900">Allow merge actions</span>
+                        <span className="block text-xs text-neutral-600">
+                          Enables direct AI ticket/customer merges when policy and confidence allow it.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-3">
+                      <Checkbox
+                        checked={agentForm.allowVoiceActions}
+                        onCheckedChange={(checked) =>
+                          setAgentForm((prev) => ({ ...prev, allowVoiceActions: checked === true }))
+                        }
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-neutral-900">Allow voice actions</span>
+                        <span className="block text-xs text-neutral-600">
+                          Enables AI-initiated call option and outbound voice actions.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
+                    <p>
+                      Webhook URL:{" "}
+                      {agentForm.baseUrl
+                        ? `${agentForm.baseUrl.replace(/\/+$/, "")}/hooks/6esk/events`
+                        : "Set a base URL to generate the webhook path."}
+                    </p>
+                    <p>Provider / auth: {agentForm.provider} · {agentForm.authType}</p>
+                    <p>Mailbox scopes: {selectedAgent?.scopes && Array.isArray(selectedAgent.scopes.mailbox_ids) ? selectedAgent.scopes.mailbox_ids.length : 0}</p>
+                    <p>
+                      Effective throughput cap:{" "}
+                      {agentOutbox?.throughput.effectiveLimit ??
+                        (agentForm.maxEventsPerRun.trim() || "default")}
+                    </p>
+                    {selectedAgent ? (
+                      <p>
+                        Last updated: {formatDate(selectedAgent.updated_at)} · Created {formatDate(selectedAgent.created_at)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-neutral-600">Scopes JSON</label>
+                      <Textarea rows={5} value={agentForm.scopesJson} onChange={(event) => setAgentForm((prev) => ({ ...prev, scopesJson: event.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-neutral-600">Policy JSON</label>
+                      <Textarea rows={5} value={agentForm.policyJson} onChange={(event) => setAgentForm((prev) => ({ ...prev, policyJson: event.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button onClick={() => void saveAgent()}>Save Agent</Button>
+                    {agentForm.baseUrl ? (
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          void copyToClipboard(
+                            `${agentForm.baseUrl.replace(/\/+$/, "")}/hooks/6esk/events`,
+                            "Agent webhook URL"
+                          )
+                        }
+                      >
+                        Copy Webhook
+                      </Button>
+                    ) : null}
+                    {selectedAgent ? <Button variant="outline" onClick={() => void deliverAgentOutbox(selectedAgent.id, 25).then(loadAutomation)}>Deliver Outbox</Button> : null}
+                    {agentOutbox ? <Badge variant="secondary">Pending {agentOutbox.queue.pending} · Failed {agentOutbox.queue.failed}</Badge> : null}
+                  </div>
+                  {agentOutbox ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <Metric label="Pending" value={agentOutbox.queue.pending} />
+                      <Metric label="Due Now" value={agentOutbox.queue.dueNow} />
+                      <Metric label="Delivered 24h" value={agentOutbox.queue.delivered24h} />
+                      <Metric label="Failed" value={agentOutbox.queue.failed} />
                     </div>
                   ) : null}
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: 10,
-                      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))"
-                    }}
-                  >
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Failed Queue</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.failedQueue}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Due Retry Now</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.dueRetryNow}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Processed ({inboundWindowHours}h)</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.processedWindow}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Attempts ({inboundWindowHours}h)</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.attemptsWindow}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Retry Processed ({inboundWindowHours}h)</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.retryProcessedWindow}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Retry Failed ({inboundWindowHours}h)</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.retryFailedWindow}</strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>Oldest Failed Age</div>
-                      <strong style={{ fontSize: 22 }}>
-                        {inboundMetrics.summary.oldestFailedAgeMinutes === null
-                          ? "—"
-                          : `${inboundMetrics.summary.oldestFailedAgeMinutes}m`}
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)"
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>High Attempt Queue (&gt;=5)</div>
-                      <strong style={{ fontSize: 22 }}>{inboundMetrics.summary.highAttemptQueue}</strong>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Max {inboundMetrics.summary.maxFailedAttemptCount} · p95{" "}
-                        {inboundMetrics.summary.p95FailedAttemptCount}
-                      </div>
-                    </div>
-                  </div>
+                </CardContent>
+              </Card>
 
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <strong>Top Failure Reasons ({inboundWindowHours}h)</strong>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          flexWrap: "wrap",
-                          justifyContent: "flex-end"
-                        }}
-                      >
-                        <label
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 8,
-                            fontSize: 12,
-                            color: "var(--muted)"
-                          }}
-                        >
-                          Severity
-                          <select
-                            value={inboundFailureSeverityFilter}
-                            onChange={(event) =>
-                              setInboundFailureSeverityFilter(
-                                event.target.value as "all" | InboundFailureSeverity
-                              )
-                            }
-                            style={{ marginTop: 0, width: "auto", minWidth: 130 }}
-                          >
-                            <option value="all">All</option>
-                            <option value="critical">Critical</option>
-                            <option value="high">High</option>
-                            <option value="medium">Medium</option>
-                            <option value="low">Low</option>
-                          </select>
-                        </label>
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                          Classification + triage from `last_error`
-                        </span>
-                      </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Profile Lookup</CardTitle>
+                  <CardDescription>Operational lookup quality over time.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2">
+                    <select className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm" value={profileDays} onChange={(event) => setProfileDays(Number(event.target.value))}>
+                      <option value={7}>7d</option>
+                      <option value={14}>14d</option>
+                      <option value={30}>30d</option>
+                      <option value={60}>60d</option>
+                    </select>
+                    <Button variant="outline" onClick={() => void loadAutomation()}>Refresh</Button>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+                    <Metric label="Total" value={profile?.summary.total ?? 0} />
+                    <Metric label="Matched" value={profile?.summary.matched ?? 0} />
+                    <Metric label="Cache" value={profile?.summary.matchedCache ?? 0} />
+                    <Metric label="Missed" value={profile?.summary.missed ?? 0} />
+                    <Metric label="Errors" value={profile?.summary.errored ?? 0} />
+                    <Metric label="Timeout" value={profile?.summary.timeoutErrors ?? 0} />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="operations" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Operations Shortcuts</CardTitle>
+                  <CardDescription>Jump directly to operational sections and related queues.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound")}>
+                    Inbound
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound-settings")}>
+                    Inbound Settings
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("calls")}>
+                    Calls
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("call-rejections")}>
+                    Call Rejections
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("audit-logs")}>
+                    Audit Logs
+                  </Button>
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href="/tickets?channel=voice">Open voice queue</Link>
+                  </Button>
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href="/tickets?channel=email">Open email queue</Link>
+                  </Button>
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href="/mail?view=spam">Open spam queue</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card id="ops-inbound" className="scroll-mt-24">
+                  <CardHeader>
+                    <CardTitle>Inbound</CardTitle>
+                    <CardDescription>Retry and alert controls for inbound failures.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <Metric label="Failed Queue" value={inbound?.summary.failedQueue ?? 0} />
+                      <Metric label="Due Retry" value={inbound?.summary.dueRetryNow ?? 0} />
+                      <Metric label="Processing" value={inbound?.summary.processingNow ?? 0} />
+                      <Metric label="Processed 24h" value={inbound?.summary.processedWindow ?? 0} />
                     </div>
-                    {visibleInboundFailureReasons.length === 0 ? (
-                      <p style={{ margin: 0, color: "var(--muted)" }}>
-                        {inboundFailureReasons.length === 0
-                          ? "No failed events in this window."
-                          : "No failures match the selected severity filter."}
+                    <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
+                      <p>
+                        Alert status: {inbound?.alert.status ?? "unknown"} · Webhook{" "}
+                        {inbound?.alert.webhookConfigured ? "configured" : "missing"}
                       </p>
-                    ) : (
-                      <div style={{ display: "grid", gap: 8 }}>
-                        {visibleInboundFailureReasons.map((reason) => (
-                          <div
-                            key={reason.code}
-                            style={{
-                              border: "1px solid var(--border)",
-                              borderRadius: 8,
-                              padding: 8,
-                              background: "rgba(10, 12, 18, 0.45)"
-                            }}
-                          >
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                <strong>{reason.label}</strong>
-                                <span
-                                  style={{
-                                    padding: "2px 8px",
-                                    borderRadius: 999,
-                                    border: "1px solid",
-                                    fontSize: 10,
-                                    textTransform: "uppercase",
-                                    letterSpacing: "0.04em",
-                                    ...getFailureSeverityStyles(reason.severity)
-                                  }}
-                                >
-                                  {reason.severity}
-                                </span>
-                                <span style={{ color: "var(--muted)", fontSize: 11 }}>
-                                  {reason.triageLabel}
-                                </span>
-                              </div>
-                              <span style={{ color: "var(--muted)", fontSize: 12 }}>{reason.count}</span>
-                            </div>
-                            <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
-                              Next action: {reason.triageHint}
-                            </div>
-                            {reason.sampleError ? (
-                              <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
-                                {reason.sampleError}
-                              </div>
-                            ) : null}
+                      <p>
+                        Threshold {inbound?.alert.threshold ?? 0} in {inbound?.alert.windowMinutes ?? 0} min ·
+                        cooldown {inbound?.alert.cooldownMinutes ?? 0} min
+                      </p>
+                      <p>Last alert: {formatDate(inbound?.alert.lastSentAt)}</p>
+                      <p>
+                        Recommendation: {inbound?.alert.recommendation.reason ?? "unknown"} · suggested range{" "}
+                        {inbound?.alert.recommendation.suggestedMinThreshold ?? 0}-
+                        {inbound?.alert.recommendation.suggestedMaxThreshold ?? 0}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button variant="outline" onClick={() => void retryInboundEvents(25).then(loadOperations)}>Retry Failed</Button>
+                      <Button variant="outline" onClick={() => void runInboundAlertCheck().then(loadOperations)}>Run Alert</Button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {(inbound?.failureReasons ?? []).slice(0, 4).map((reason) => (
+                        <div key={reason.code} className="rounded-lg border border-neutral-200 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-neutral-900">{reason.label}</p>
+                            <Badge variant="outline">{reason.severity}</Badge>
                           </div>
+                          <p className="mt-1 text-xs text-neutral-600">{reason.count} failures · {reason.triageLabel}</p>
+                          <p className="mt-1 text-xs text-neutral-500">{reason.triageHint}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card id="ops-inbound-settings" className="scroll-mt-24">
+                  <CardHeader>
+                    <CardTitle>Inbound Alert Settings</CardTitle>
+                    <CardDescription>Control alert thresholds and webhook escalation.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <Input
+                        value={inboundSettings?.webhookUrl ?? ""}
+                        placeholder="Webhook URL"
+                        onChange={(event) =>
+                          setInboundSettings((previous) =>
+                            previous ? { ...previous, webhookUrl: event.target.value } : previous
+                          )
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        value={inboundSettings?.threshold ?? 0}
+                        onChange={(event) =>
+                          setInboundSettings((previous) =>
+                            previous ? { ...previous, threshold: Number(event.target.value) } : previous
+                          )
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        value={inboundSettings?.windowMinutes ?? 0}
+                        onChange={(event) =>
+                          setInboundSettings((previous) =>
+                            previous ? { ...previous, windowMinutes: Number(event.target.value) } : previous
+                          )
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        value={inboundSettings?.cooldownMinutes ?? 0}
+                        onChange={(event) =>
+                          setInboundSettings((previous) =>
+                            previous ? { ...previous, cooldownMinutes: Number(event.target.value) } : previous
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          inboundSettings
+                            ? void updateInboundSettings({
+                                webhookUrl: inboundSettings.webhookUrl,
+                                threshold: inboundSettings.threshold,
+                                windowMinutes: inboundSettings.windowMinutes,
+                                cooldownMinutes: inboundSettings.cooldownMinutes
+                              })
+                                .then(() => {
+                                  pushSuccess("Inbound settings saved");
+                                  return loadOperations();
+                                })
+                                .catch((error) => pushError(error, "Could not save inbound settings"))
+                            : undefined
+                        }
+                        disabled={!inboundSettings}
+                      >
+                        Re-save Settings
+                      </Button>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
+                      <p>Source: {inboundSettings?.source ?? "unknown"}</p>
+                      <p>Updated: {formatDate(inboundSettings?.updatedAt)}</p>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {failedInboundEvents.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                          No failed inbound events in queue.
+                        </div>
+                      ) : (
+                        failedInboundEvents.map((event) => {
+                          const busyKey = `inbound:${event.id}`;
+                          const isBusy = eventActionBusyKey === busyKey;
+                          return (
+                            <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                              <p className="font-medium text-neutral-900">{event.idempotency_key}</p>
+                              <p className="text-neutral-600">
+                                Attempts {event.attempt_count} • Next {formatDate(event.next_attempt_at)}
+                              </p>
+                              <p className="mt-1 text-neutral-500">{event.last_error ?? "No error detail"}</p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={isBusy}
+                                  onClick={() => void retryInboundEventNow(event.id)}
+                                >
+                                  {isBusy ? "Retrying..." : "Retry now"}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void copyToClipboard(event.id, "Inbound event ID")}
+                                >
+                                  Copy ID
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card id="ops-calls" className="scroll-mt-24">
+                  <CardHeader>
+                    <CardTitle>Calls</CardTitle>
+                    <CardDescription>Outbox delivery and dead-letter recovery.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Metric label="Queued" value={calls?.queue.queued ?? 0} />
+                      <Metric label="Failed" value={calls?.queue.failed ?? 0} />
+                      <Metric label="Dead letters" value={deadLetterSummary?.total ?? 0} />
+                      <Metric label="Rejected webhooks" value={callRejections?.summary.reduce((sum, item) => sum + item.count, 0) ?? 0} />
+                    </div>
+                    {deadLetterSummary ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline">Failed {deadLetterSummary.byStatus.failed}</Badge>
+                        <Badge variant="outline">Poison {deadLetterSummary.byStatus.poison}</Badge>
+                        <Badge variant="outline">Quarantined {deadLetterSummary.byStatus.quarantined}</Badge>
+                        {deadLetterSummary.oldestEvent ? (
+                          <Badge variant="secondary">
+                            Oldest {deadLetterSummary.oldestEvent.id.slice(0, 8)} · {deadLetterSummary.oldestEvent.age_minutes} min
+                          </Badge>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {deadLetterSummary?.byErrorCode?.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {deadLetterSummary.byErrorCode.slice(0, 4).map((entry) => (
+                          <Badge key={entry.code} variant="outline">
+                            {entry.code}: {entry.count}
+                          </Badge>
                         ))}
                       </div>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      padding: 12,
-                      background: "rgba(10, 12, 18, 0.6)"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <strong>Inbound Trend ({inboundWindowHours}h)</strong>
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        Updated {new Date(inboundMetrics.generatedAt).toLocaleTimeString()}
-                      </span>
+                    ) : null}
+                    <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-1">
+                      <p>Webhook mode: {calls?.webhookSecurity.mode ?? "unknown"}</p>
+                      <p>
+                        Timestamp required: {calls?.webhookSecurity.timestampRequired ? "yes" : "no"} · max skew{" "}
+                        {calls?.webhookSecurity.maxSkewSeconds ?? 0}s
+                      </p>
+                      <p>Legacy body signature: {calls?.webhookSecurity.legacyBodySignature ? "enabled" : "disabled"}</p>
                     </div>
-                    {inboundSeries.length === 0 ? (
-                      <p style={{ margin: 0, color: "var(--muted)" }}>No inbound activity in this window.</p>
-                    ) : (
-                      <>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: `repeat(${inboundSeries.length}, minmax(0, 1fr))`,
-                            gap: 4,
-                            alignItems: "end",
-                            height: 124
-                          }}
-                        >
-                          {inboundSeries.map((point) => {
-                            const failedHeight = (point.failed / maxInboundBarValue) * 100;
-                            const processedHeight = (point.processed / maxInboundBarValue) * 100;
-                            const processingHeight = (point.processing / maxInboundBarValue) * 100;
+                    <div className="flex gap-2 flex-wrap">
+                      <Button variant="outline" onClick={() => void runCallOutbox(25).then(loadOperations)}>Run Outbox</Button>
+                      <Button variant="outline" onClick={() => void retryFailedCallEvents(25).then(loadOperations)}>Retry Failed</Button>
+                      <Button variant="outline" onClick={() => void batchRecoverDeadLetters({ filter: { status: "failed" } }).then(loadOperations)}>Batch Recover</Button>
+                      <select
+                        className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                        value={deadLetterStatusFilter}
+                        onChange={(event) =>
+                          setDeadLetterStatusFilter(
+                            event.target.value as "all" | "failed" | "poison" | "quarantined"
+                          )
+                        }
+                      >
+                        <option value="all">All statuses</option>
+                        <option value="failed">Failed</option>
+                        <option value="poison">Poison</option>
+                        <option value="quarantined">Quarantined</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto">
+                      {filteredDeadLetters.map((event) => (
+                        <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                          <p className="font-medium text-neutral-900">{event.id}</p>
+                          <p className="text-neutral-600">{event.status} · {event.direction} · attempts {event.attempt_count}/{event.max_attempts}</p>
+                          <p className="mt-1 text-neutral-500">{event.last_error ?? event.reason ?? "no detail"}</p>
+                          <p className="mt-1 text-neutral-500">Next attempt {formatDate(event.next_attempt_at)} · Updated {formatDate(event.updated_at)}</p>
+                          <div className="flex gap-2 mt-2">
+                            <Button variant="outline" size="sm" onClick={() => void patchDeadLetterEvent({ eventId: event.id, action: "recover" }).then(loadOperations)}>Recover</Button>
+                            <Button variant="outline" size="sm" onClick={() => void patchDeadLetterEvent({ eventId: event.id, action: "quarantine" }).then(loadOperations)}>Quarantine</Button>
+                            <Button variant="ghost" size="sm" onClick={() => void patchDeadLetterEvent({ eventId: event.id, action: "discard" }).then(loadOperations)}>Discard</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card id="ops-call-rejections" className="scroll-mt-24">
+                  <CardHeader>
+                    <CardTitle>Call Rejections</CardTitle>
+                    <CardDescription>Recent webhook rejection reasons and failed call attempts.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {(callRejections?.summary ?? []).map((item) => (
+                        <div key={`${item.reason}-${item.mode}`} className="rounded-lg border border-neutral-200 p-3">
+                          <p className="text-xs text-neutral-500">{item.mode}</p>
+                          <p className="text-sm font-medium text-neutral-900">{item.reason}</p>
+                          <p className="text-xs text-neutral-600">{item.count} events</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {(callRejections?.recent ?? []).length === 0 ? (
+                          <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                            No recent webhook rejections in the selected window.
+                          </div>
+                        ) : (
+                          (callRejections?.recent ?? []).map((event) => (
+                            <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-medium text-neutral-900">{String(event.data?.reason ?? "unknown")}</p>
+                                <span className="text-neutral-500">{formatDate(event.createdAt)}</span>
+                              </div>
+                              <p className="mt-1 text-neutral-600">
+                                {String(event.data?.mode ?? "unknown")} · {String(event.data?.endpoint ?? "unknown endpoint")}
+                              </p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setReviewingRejectionId((prev) => (prev === event.id ? null : event.id))
+                                  }
+                                >
+                                  {reviewingRejectionId === event.id ? "Hide review" : "Review"}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void copyToClipboard(event.id, "Rejection event ID")}
+                                >
+                                  Copy ID
+                                </Button>
+                              </div>
+                              {reviewingRejectionId === event.id ? (
+                                <pre className="mt-2 overflow-x-auto rounded-md bg-neutral-100 p-2 text-[11px] text-neutral-600">
+                                  {JSON.stringify(event.data ?? {}, null, 2)}
+                                </pre>
+                              ) : null}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {failedCallEvents.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                            No failed call outbox events.
+                          </div>
+                        ) : (
+                          failedCallEvents.map((event) => {
+                            const busyKey = `call:${event.id}`;
+                            const isBusy = eventActionBusyKey === busyKey;
                             return (
-                              <div
-                                key={point.hour}
-                                title={`${new Date(point.hour).toLocaleString()} | failed: ${point.failed}, processed: ${point.processed}, processing: ${point.processing}`}
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  justifyContent: "flex-end",
-                                  gap: 2,
-                                  height: "100%"
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    height: `${Math.max(0, failedHeight)}%`,
-                                    minHeight: point.failed ? 3 : 0,
-                                    borderRadius: 4,
-                                    background: "rgba(255, 112, 112, 0.9)"
-                                  }}
-                                />
-                                <div
-                                  style={{
-                                    height: `${Math.max(0, processingHeight)}%`,
-                                    minHeight: point.processing ? 3 : 0,
-                                    borderRadius: 4,
-                                    background: "rgba(255, 190, 99, 0.9)"
-                                  }}
-                                />
-                                <div
-                                  style={{
-                                    height: `${Math.max(0, processedHeight)}%`,
-                                    minHeight: point.processed ? 3 : 0,
-                                    borderRadius: 4,
-                                    background: "rgba(104, 220, 160, 0.9)"
-                                  }}
-                                />
+                              <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                                <p className="font-medium text-neutral-900">{event.id}</p>
+                                <p className="text-neutral-600">
+                                  {event.status} • Attempts {event.attempt_count} • Next {formatDate(event.next_attempt_at)}
+                                </p>
+                                <p className="mt-1 text-neutral-500">{event.last_error ?? "No error detail"}</p>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isBusy}
+                                    onClick={() => void retryFailedCallEventNow(event.id)}
+                                  >
+                                    {isBusy ? "Retrying..." : "Retry now"}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void copyToClipboard(event.id, "Call event ID")}
+                                  >
+                                    Copy ID
+                                  </Button>
+                                </div>
                               </div>
                             );
-                          })}
-                        </div>
-                        <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-                          <span>Red: Failed</span>
-                          <span>Amber: Processing</span>
-                          <span>Green: Processed</span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              {inboundFailures.length === 0 ? (
-                <p>No failed inbound events.</p>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {inboundFailures.map((event) => (
-                    <div
-                      key={event.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)",
-                        fontSize: 13
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)" }}>
-                        Attempts: {event.attempt_count} · Next:{" "}
-                        {event.next_attempt_at
-                          ? new Date(event.next_attempt_at).toLocaleString()
-                          : "—"}
-                      </div>
-                      <div style={{ color: "var(--muted)" }}>
-                        {event.last_error ?? "Unknown error"}
+                          })
+                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          ) : null}
+                  </CardContent>
+                </Card>
+              </div>
 
-          {activeSection === "spam-review" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Spam Review</h2>
-              {spamMessages.length === 0 ? (
-                <p>No spam messages flagged.</p>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {spamMessages.map((message) => (
-                    <div
-                      key={message.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)",
-                        fontSize: 13
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)" }}>
-                        {message.mailbox_address} · {message.received_at ?? "—"}
-                      </div>
-                      <div>
-                        <strong>{message.subject ?? "(no subject)"}</strong>
-                      </div>
-                      <div style={{ color: "var(--muted)" }}>
-                        From: {message.from_email} · Reason: {message.spam_reason ?? "manual"}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => unspamMessage(message.id)}
-                        style={{
-                          marginTop: 8,
-                          padding: "6px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: "var(--surface-2)",
-                          color: "var(--text)",
-                          cursor: "pointer"
-                        }}
-                      >
-                        Not spam
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          ) : null}
-
-          {activeSection === "audit-log" ? (
-            <section className="panel">
-              <h2 style={{ marginBottom: 12 }}>Audit Log</h2>
-              {auditLogs.length === 0 ? (
-                <p>No audit entries yet.</p>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
+              <Card id="ops-audit-logs" className="scroll-mt-24">
+                <CardHeader>
+                  <CardTitle>Audit Logs</CardTitle>
+                  <CardDescription>Latest admin/system events.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 max-h-80 overflow-y-auto">
                   {auditLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        padding: 10,
-                        background: "rgba(10, 12, 18, 0.6)",
-                        fontSize: 13
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)" }}>
-                        {new Date(log.created_at).toLocaleString()}
+                    <div key={log.id} className="rounded-lg border border-neutral-200 p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-neutral-900">{log.action}</span>
+                        <span className="text-xs text-neutral-500">{formatDate(log.created_at)}</span>
                       </div>
-                      <div>
-                        <strong>{log.action}</strong> · {log.entity_type}
-                      </div>
-                      <div style={{ color: "var(--muted)" }}>
-                        {log.actor_name ?? log.actor_email ?? "System"}
-                      </div>
+                      <p className="text-xs text-neutral-600 mt-1">
+                        {log.entity_type}{log.entity_id ? ` · ${log.entity_id}` : ""}
+                        {log.actor_email ? ` · ${log.actor_email}` : log.actor_name ? ` · ${log.actor_name}` : ""}
+                      </p>
+                      {log.data ? (
+                        <pre className="mt-2 overflow-x-auto rounded-md bg-neutral-100 p-2 text-[11px] text-neutral-600">
+                          {JSON.stringify(log.data, null, 2)}
+                        </pre>
+                      ) : null}
                     </div>
                   ))}
-                </div>
-              )}
-            </section>
-          ) : null}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </AppShell>

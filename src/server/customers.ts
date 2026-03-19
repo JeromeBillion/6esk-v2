@@ -39,6 +39,13 @@ export type CustomerHistoryPage = {
   nextCursor: string | null;
 };
 
+export class CustomerIdentityConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CustomerIdentityConflictError";
+  }
+}
+
 async function upsertCustomerIdentity({
   customerId,
   identityType,
@@ -324,6 +331,185 @@ export async function getCustomerById(customerId: string) {
     [customerId]
   );
   return result.rows[0] ?? null;
+}
+
+export async function updateCustomerProfile(
+  customerId: string,
+  input: {
+    displayName?: string | null;
+    primaryEmail?: string | null;
+    primaryPhone?: string | null;
+  }
+) {
+  const displayNameProvided = Object.prototype.hasOwnProperty.call(input, "displayName");
+  const emailProvided = Object.prototype.hasOwnProperty.call(input, "primaryEmail");
+  const phoneProvided = Object.prototype.hasOwnProperty.call(input, "primaryPhone");
+
+  if (!displayNameProvided && !emailProvided && !phoneProvided) {
+    return getCustomerById(customerId);
+  }
+
+  const normalizedEmail = emailProvided
+    ? normalizeLinkEmail(input.primaryEmail ?? undefined)
+    : undefined;
+  const normalizedPhone = phoneProvided
+    ? normalizeLinkPhone(input.primaryPhone ?? undefined)
+    : undefined;
+  const normalizedDisplayName = displayNameProvided
+    ? (input.displayName?.trim() || null)
+    : undefined;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const customerResult = await client.query<CustomerRecord>(
+      `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+              merged_into_customer_id,
+              merged_at
+       FROM customers
+       WHERE id = $1
+       FOR UPDATE`,
+      [customerId]
+    );
+    const customer = customerResult.rows[0];
+    if (!customer) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (customer.merged_into_customer_id) {
+      await client.query("ROLLBACK");
+      throw new Error("Cannot edit a merged customer profile.");
+    }
+
+    if (emailProvided && normalizedEmail) {
+      const conflict = await client.query<{ customer_id: string }>(
+        `SELECT customer_id
+         FROM customer_identities
+         WHERE identity_type = 'email'
+           AND identity_value = $1
+         LIMIT 1`,
+        [normalizedEmail]
+      );
+      if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
+        await client.query("ROLLBACK");
+        throw new CustomerIdentityConflictError("Email already belongs to a different customer.");
+      }
+    }
+
+    if (phoneProvided && normalizedPhone) {
+      const conflict = await client.query<{ customer_id: string }>(
+        `SELECT customer_id
+         FROM customer_identities
+         WHERE identity_type = 'phone'
+           AND identity_value = $1
+         LIMIT 1`,
+        [normalizedPhone]
+      );
+      if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
+        await client.query("ROLLBACK");
+        throw new CustomerIdentityConflictError("Phone number already belongs to a different customer.");
+      }
+    }
+
+    const fields: string[] = [];
+    const values: Array<string | null> = [];
+    let index = 1;
+
+    if (displayNameProvided) {
+      fields.push(`display_name = $${index++}`);
+      values.push(normalizedDisplayName ?? null);
+    }
+    if (emailProvided) {
+      fields.push(`primary_email = $${index++}`);
+      values.push(normalizedEmail ?? null);
+    }
+    if (phoneProvided) {
+      fields.push(`primary_phone = $${index++}`);
+      values.push(normalizedPhone ?? null);
+    }
+
+    if (fields.length > 0) {
+      values.push(customerId);
+      await client.query(
+        `UPDATE customers
+         SET ${fields.join(", ")},
+             updated_at = now()
+         WHERE id = $${index}`,
+        values
+      );
+    }
+
+    if (emailProvided) {
+      await client.query(
+        `UPDATE customer_identities
+         SET is_primary = false,
+             updated_at = now()
+         WHERE customer_id = $1
+           AND identity_type = 'email'`,
+        [customerId]
+      );
+      if (normalizedEmail) {
+        await client.query(
+          `INSERT INTO customer_identities (
+             customer_id,
+             identity_type,
+             identity_value,
+             is_primary,
+             source,
+             updated_at
+           ) VALUES ($1, 'email', $2, true, 'manual_profile_edit', now())
+           ON CONFLICT (identity_type, identity_value)
+           DO UPDATE SET
+             customer_id = EXCLUDED.customer_id,
+             is_primary = true,
+             source = EXCLUDED.source,
+             updated_at = now()`,
+          [customerId, normalizedEmail]
+        );
+      }
+    }
+
+    if (phoneProvided) {
+      await client.query(
+        `UPDATE customer_identities
+         SET is_primary = false,
+             updated_at = now()
+         WHERE customer_id = $1
+           AND identity_type = 'phone'`,
+        [customerId]
+      );
+      if (normalizedPhone) {
+        await client.query(
+          `INSERT INTO customer_identities (
+             customer_id,
+             identity_type,
+             identity_value,
+             is_primary,
+             source,
+             updated_at
+           ) VALUES ($1, 'phone', $2, true, 'manual_profile_edit', now())
+           ON CONFLICT (identity_type, identity_value)
+           DO UPDATE SET
+             customer_id = EXCLUDED.customer_id,
+             is_primary = true,
+             source = EXCLUDED.source,
+             updated_at = now()`,
+          [customerId, normalizedPhone]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    return getCustomerById(customerId);
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function listCustomerIdentities(customerId: string) {

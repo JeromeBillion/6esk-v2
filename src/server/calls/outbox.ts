@@ -305,33 +305,54 @@ export async function listFailedCallOutboxEvents(limit = 50) {
   return result.rows;
 }
 
-export async function retryFailedCallOutboxEvents(limit = 25) {
-  const normalizedLimit = Math.min(Math.max(limit, 1), 100);
+type RetryFailedCallOutboxInput = {
+  limit?: number;
+  eventIds?: string[];
+};
+
+export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxInput = {}) {
+  const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+  const eventIds = Array.from(
+    new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
+  ).slice(0, 100);
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const result = await client.query<{ id: string }>(
-      `WITH failed AS (
-         SELECT id
-         FROM call_outbox_events
-         WHERE direction = 'outbound'
-           AND status = 'failed'
-         ORDER BY updated_at ASC
-         LIMIT $1
-         FOR UPDATE SKIP LOCKED
-       )
-       UPDATE call_outbox_events evt
-       SET status = 'queued',
-           next_attempt_at = now(),
-           updated_at = now()
-       FROM failed
-       WHERE evt.id = failed.id
-       RETURNING evt.id`,
-      [normalizedLimit]
-    );
+    const result =
+      eventIds.length > 0
+        ? await client.query<{ id: string }>(
+            `UPDATE call_outbox_events
+             SET status = 'queued',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             WHERE direction = 'outbound'
+               AND status = 'failed'
+               AND id::text = ANY($1::text[])
+             RETURNING id`,
+            [eventIds]
+          )
+        : await client.query<{ id: string }>(
+            `WITH failed AS (
+               SELECT id
+               FROM call_outbox_events
+               WHERE direction = 'outbound'
+                 AND status = 'failed'
+               ORDER BY updated_at ASC
+               LIMIT $1
+               FOR UPDATE SKIP LOCKED
+             )
+             UPDATE call_outbox_events evt
+             SET status = 'queued',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             FROM failed
+             WHERE evt.id = failed.id
+             RETURNING evt.id`,
+            [normalizedLimit]
+          );
     await client.query("COMMIT");
     return {
-      requested: normalizedLimit,
+      requested: eventIds.length > 0 ? eventIds.length : normalizedLimit,
       retried: result.rows.length,
       ids: result.rows.map((row) => row.id)
     };

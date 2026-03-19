@@ -2,19 +2,32 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import PublicPageFrame from "@/app/components/PublicPageFrame";
+import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
+import { Button } from "@/app/workspace/components/ui/button";
+import { Input } from "@/app/workspace/components/ui/input";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    open: boolean;
+    tone: "success" | "error" | "info";
+    title: string;
+    message: string;
+    autoCloseMs?: number;
+  }>({
+    open: false,
+    tone: "info",
+    title: "",
+    message: ""
+  });
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
-    setError(null);
 
     const response = await fetch("/api/auth/login", {
       method: "POST",
@@ -24,7 +37,12 @@ export default function LoginPage() {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error ?? "Login failed");
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "Sign in failed",
+        message: payload.error ?? "Login failed"
+      });
       setLoading(false);
       return;
     }
@@ -33,53 +51,51 @@ export default function LoginPage() {
   }
 
   return (
-    <main>
-      <div className="container">
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-          <BrandMark size={48} priority />
-          <div>
-            <h1>Sign in</h1>
-            <p>Lead Admin creates accounts in the admin panel.</p>
-          </div>
+    <PublicPageFrame
+      title="Sign in"
+      description="Use your 6esk account to enter the support workspace."
+    >
+      <form onSubmit={handleSubmit} className="grid gap-5">
+        <div className="grid gap-2">
+          <label htmlFor="email">Email</label>
+          <Input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+          />
         </div>
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: "grid", gap: 12, marginTop: 24 }}>
-            <label>
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </label>
-            {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: "12px 16px",
-                borderRadius: 10,
-                border: "none",
-                background: "linear-gradient(135deg, var(--accent-strong), var(--accent))",
-                color: "#081018",
-                cursor: "pointer"
-              }}
-            >
-              {loading ? "Signing in..." : "Sign in"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </main>
+        <div className="grid gap-2">
+          <label htmlFor="password">Password</label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-neutral-500">Lead Admin accounts are provisioned from the admin workspace.</p>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+          </Button>
+        </div>
+      </form>
+      <ActionFeedbackModal
+        open={feedback.open}
+        onClose={() =>
+          setFeedback((previous) => ({
+            ...previous,
+            open: false
+          }))
+        }
+        tone={feedback.tone}
+        title={feedback.title}
+        message={feedback.message}
+        autoCloseMs={feedback.autoCloseMs}
+      />
+    </PublicPageFrame>
   );
 }

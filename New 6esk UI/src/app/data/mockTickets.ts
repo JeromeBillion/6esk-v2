@@ -1,0 +1,228 @@
+// Mock data for support tickets
+export interface Ticket {
+  id: string;
+  requester_email: string;
+  requester_name: string;
+  subject: string;
+  category: string;
+  metadata: Record<string, any>;
+  tags: string[];
+  status: 'open' | 'pending' | 'resolved' | 'closed';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  assigned_user_id: string | null;
+  assigned_user_name: string | null;
+  has_whatsapp: boolean;
+  has_voice: boolean;
+  created_at: string;
+  updated_at: string;
+  preview: string;
+  unread: boolean;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: 'lead_admin' | 'agent' | 'viewer';
+  avatar?: string;
+}
+
+export const mockUsers: User[] = [
+  { id: '1', name: 'Sarah Chen', email: 'sarah@6esk.com', role: 'lead_admin' },
+  { id: '2', name: 'Marcus Reid', email: 'marcus@6esk.com', role: 'agent' },
+  { id: '3', name: 'Elena Rodriguez', email: 'elena@6esk.com', role: 'agent' },
+  { id: '4', name: 'James Park', email: 'james@6esk.com', role: 'agent' },
+];
+
+export const mockTickets: Ticket[] = [
+  {
+    id: 'TKT-1847',
+    requester_email: 'john.davidson@techcorp.com',
+    requester_name: 'John Davidson',
+    subject: 'Unable to access dashboard after latest update',
+    category: 'Technical Issue',
+    metadata: { browser: 'Chrome 121', os: 'Windows 11' },
+    tags: ['bug', 'dashboard', 'urgent'],
+    status: 'open',
+    priority: 'urgent',
+    assigned_user_id: '1',
+    assigned_user_name: 'Sarah Chen',
+    has_whatsapp: true,
+    has_voice: false,
+    created_at: '2026-03-18T09:24:00Z',
+    updated_at: '2026-03-18T09:24:00Z',
+    preview: 'Hi, I\'ve been trying to log into my dashboard since the update went live this morning...',
+    unread: true,
+  },
+  {
+    id: 'TKT-1846',
+    requester_email: 'maria.santos@globex.io',
+    requester_name: 'Maria Santos',
+    subject: 'Billing discrepancy on March invoice',
+    category: 'Billing',
+    metadata: { account_type: 'enterprise' },
+    tags: ['billing', 'invoice'],
+    status: 'pending',
+    priority: 'high',
+    assigned_user_id: '2',
+    assigned_user_name: 'Marcus Reid',
+    has_whatsapp: false,
+    has_voice: true,
+    created_at: '2026-03-18T08:15:00Z',
+    updated_at: '2026-03-18T10:32:00Z',
+    preview: 'I noticed our March invoice shows charges for features we haven\'t activated yet...',
+    unread: false,
+  },
+  {
+    id: 'TKT-1845',
+    requester_email: 'alex.thompson@startup.ventures',
+    requester_name: 'Alex Thompson',
+    subject: 'Feature request: Export data to CSV',
+    category: 'Feature Request',
+    metadata: { plan: 'pro' },
+    tags: ['feature-request', 'export'],
+    status: 'open',
+    priority: 'medium',
+    assigned_user_id: '3',
+    assigned_user_name: 'Elena Rodriguez',
+    has_whatsapp: true,
+    has_voice: true,
+    created_at: '2026-03-18T07:42:00Z',
+    updated_at: '2026-03-18T07:42:00Z',
+    preview: 'Would love to see an option to export our analytics data to CSV format for external reporting...',
+    unread: true,
+  },
+  {
+    id: 'TKT-1844',
+    requester_email: 'lisa.nguyen@enterprise.com',
+    requester_name: 'Lisa Nguyen',
+    subject: 'Integration not syncing with Salesforce',
+    category: 'Integration',
+    metadata: { integration: 'salesforce', version: '2.1' },
+    tags: ['integration', 'salesforce', 'sync-issue'],
+    status: 'pending',
+    priority: 'high',
+    assigned_user_id: '1',
+    assigned_user_name: 'Sarah Chen',
+    has_whatsapp: false,
+    has_voice: false,
+    created_at: '2026-03-17T16:20:00Z',
+    updated_at: '2026-03-18T09:15:00Z',
+    preview: 'The Salesforce integration stopped syncing yesterday afternoon. Last successful sync was at 3:45 PM...',
+    unread: false,
+  },
+  {
+    id: 'TKT-1843',
+    requester_email: 'david.kumar@solutions.co',
+    requester_name: 'David Kumar',
+    subject: 'How to set up SSO for team members?',
+    category: 'Question',
+    metadata: { plan: 'enterprise' },
+    tags: ['sso', 'setup', 'question'],
+    status: 'open',
+    priority: 'medium',
+    assigned_user_id: '4',
+    assigned_user_name: 'James Park',
+    has_whatsapp: true,
+    has_voice: false,
+    created_at: '2026-03-17T14:55:00Z',
+    updated_at: '2026-03-17T14:55:00Z',
+    preview: 'We recently upgraded to Enterprise and I\'m trying to configure SSO. I followed the docs but...',
+    unread: true,
+  },
+  {
+    id: 'TKT-1842',
+    requester_email: 'rachel.foster@agency.digital',
+    requester_name: 'Rachel Foster',
+    subject: 'Account deletion request',
+    category: 'Account',
+    metadata: { gdpr_request: true },
+    tags: ['account', 'deletion', 'gdpr'],
+    status: 'open',
+    priority: 'high',
+    assigned_user_id: '2',
+    assigned_user_name: 'Marcus Reid',
+    has_whatsapp: false,
+    has_voice: false,
+    created_at: '2026-03-17T13:10:00Z',
+    updated_at: '2026-03-17T13:10:00Z',
+    preview: 'I would like to request deletion of my account and all associated data per GDPR...',
+    unread: true,
+  },
+  {
+    id: 'TKT-1841',
+    requester_email: 'tom.wilson@consulting.biz',
+    requester_name: 'Tom Wilson',
+    subject: 'Webhook notifications not being received',
+    category: 'Technical Issue',
+    metadata: { webhook_url: 'https://api.client.com/hooks' },
+    tags: ['webhook', 'api', 'notifications'],
+    status: 'resolved',
+    priority: 'medium',
+    assigned_user_id: '3',
+    assigned_user_name: 'Elena Rodriguez',
+    has_whatsapp: false,
+    has_voice: true,
+    created_at: '2026-03-17T11:30:00Z',
+    updated_at: '2026-03-18T08:45:00Z',
+    preview: 'Our webhook endpoint is configured correctly but we haven\'t received any notifications...',
+    unread: false,
+  },
+  {
+    id: 'TKT-1840',
+    requester_email: 'emily.zhang@saas.company',
+    requester_name: 'Emily Zhang',
+    subject: 'Mobile app keeps crashing on iOS',
+    category: 'Technical Issue',
+    metadata: { device: 'iPhone 15 Pro', ios_version: '17.3' },
+    tags: ['mobile', 'ios', 'crash', 'urgent'],
+    status: 'open',
+    priority: 'urgent',
+    assigned_user_id: '1',
+    assigned_user_name: 'Sarah Chen',
+    has_whatsapp: true,
+    has_voice: false,
+    created_at: '2026-03-17T10:15:00Z',
+    updated_at: '2026-03-17T10:15:00Z',
+    preview: 'The mobile app crashes immediately after opening on my iPhone 15 Pro. I\'ve tried reinstalling...',
+    unread: true,
+  },
+  {
+    id: 'TKT-1839',
+    requester_email: 'carlos.mendez@retail.shop',
+    requester_name: 'Carlos Mendez',
+    subject: 'Team member access permissions',
+    category: 'Access',
+    metadata: { team_size: 12 },
+    tags: ['permissions', 'team', 'access'],
+    status: 'resolved',
+    priority: 'low',
+    assigned_user_id: '4',
+    assigned_user_name: 'James Park',
+    has_whatsapp: false,
+    has_voice: false,
+    created_at: '2026-03-16T15:40:00Z',
+    updated_at: '2026-03-17T09:20:00Z',
+    preview: 'I need to adjust permissions for one of our team members who recently changed roles...',
+    unread: false,
+  },
+  {
+    id: 'TKT-1838',
+    requester_email: 'amanda.lee@fintech.ai',
+    requester_name: 'Amanda Lee',
+    subject: 'API rate limit seems too restrictive',
+    category: 'API',
+    metadata: { plan: 'pro', current_limit: '1000/hour' },
+    tags: ['api', 'rate-limit', 'feedback'],
+    status: 'pending',
+    priority: 'medium',
+    assigned_user_id: '2',
+    assigned_user_name: 'Marcus Reid',
+    has_whatsapp: true,
+    has_voice: true,
+    created_at: '2026-03-16T14:25:00Z',
+    updated_at: '2026-03-17T11:10:00Z',
+    preview: 'We\'re hitting the API rate limit frequently during our peak hours. Is there a way to increase this?',
+    unread: false,
+  },
+];

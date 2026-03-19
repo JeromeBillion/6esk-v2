@@ -25,6 +25,12 @@ type VoiceVolumeRow = {
   avg_duration_seconds: number | string | null;
 };
 
+type EmailVolumeRow = {
+  day: Date;
+  inbound: number | string | null;
+  outbound: number | string | null;
+};
+
 function toInt(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -56,6 +62,19 @@ export async function GET(request: Request) {
      FROM tickets
      WHERE solved_at IS NOT NULL
        AND solved_at >= $1 AND solved_at < $2
+     GROUP BY day
+     ORDER BY day`,
+    [start, end]
+  );
+
+  const emailResult = await db.query<EmailVolumeRow>(
+    `SELECT
+       date_trunc('day', created_at) AS day,
+       COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
+       COUNT(*) FILTER (WHERE direction = 'outbound')::int AS outbound
+     FROM messages
+     WHERE channel = 'email'
+       AND created_at >= $1 AND created_at < $2
      GROUP BY day
      ORDER BY day`,
     [start, end]
@@ -104,6 +123,11 @@ export async function GET(request: Request) {
     range: { start: start.toISOString(), end: end.toISOString() },
     created: formatRows(createdResult.rows),
     solved: formatRows(solvedResult.rows),
+    email: emailResult.rows.map((row) => ({
+      day: row.day.toISOString(),
+      inbound: toInt(row.inbound),
+      outbound: toInt(row.outbound)
+    })),
     voice: voiceResult.rows.map((row) => ({
       day: row.day.toISOString(),
       inbound: toInt(row.inbound),

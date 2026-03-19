@@ -58,6 +58,8 @@ export async function GET(
     status: string;
     durationSeconds: number | null;
     createdBy: string;
+    recordingUrl?: string | null;
+    recordingR2Key?: string | null;
   } | null = null;
   let transcript: { available: boolean; text: string | null } | null = null;
   if (message.channel === "whatsapp") {
@@ -240,7 +242,7 @@ export async function PATCH(
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const payload = body as { isStarred?: boolean; isPinned?: boolean };
+  const payload = body as { isStarred?: boolean; isPinned?: boolean; isRead?: boolean };
   const updates: string[] = [];
   const values: Array<boolean | string> = [];
   let index = 1;
@@ -253,6 +255,11 @@ export async function PATCH(
   if (typeof payload.isPinned === "boolean") {
     updates.push(`is_pinned = $${index++}`);
     values.push(payload.isPinned);
+  }
+
+  if (typeof payload.isRead === "boolean") {
+    updates.push(`is_read = $${index++}`);
+    values.push(payload.isRead);
   }
 
   if (updates.length === 0) {
