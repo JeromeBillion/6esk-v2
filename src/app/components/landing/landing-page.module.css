@@ -619,8 +619,7 @@
   padding: 1rem 0 0.75rem;
 }
 
-.chartCurve span,
-.previewBars i {
+.chartCurve span {
   display: block;
   width: 100%;
   border-radius: 999px 999px 0 0;
@@ -751,194 +750,48 @@
   color: var(--landing-ink);
 }
 
-.previewSupport {
-  display: grid;
-  grid-template-columns: 0.85fr 1.2fr 0.78fr;
-  gap: 0.9rem;
-  height: 100%;
-}
-
-.previewQueue,
-.previewThread,
-.previewProfile,
-.previewMailSidebar,
-.previewMailMain,
-.previewChartSurface,
-.previewTable,
-.previewIncidentCard {
-  border-radius: 1.15rem;
+.snapshotPreview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  min-height: 20rem;
+  overflow: hidden;
+  border-radius: 1.4rem;
   border: 1px solid rgba(16, 18, 22, 0.08);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 64px rgba(13, 16, 24, 0.1);
+  isolation: isolate;
 }
 
-.previewQueue,
-.previewProfile {
-  padding: 0.9rem;
-  display: grid;
-  align-content: start;
-  gap: 0.65rem;
+.snapshotPreviewLight {
+  border-color: rgba(17, 20, 27, 0.08);
+  background: rgba(255, 255, 255, 0.96);
 }
 
-.previewThread {
-  padding: 0.9rem;
-  display: grid;
-  align-content: start;
-  gap: 0.7rem;
+.snapshotPreviewDark {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #0c0f14;
+  box-shadow: 0 26px 72px rgba(4, 7, 12, 0.28);
 }
 
-.previewPill,
-.previewChip,
-.previewChipLong,
-.previewAvatar,
-.previewDetailBlock,
-.previewComposer,
-.previewMessageLeft,
-.previewMessageRight,
-.previewCounterBand span,
-.previewAttachmentStrip span,
-.previewTagRow i {
-  display: block;
-  border-radius: 999px;
-  background: rgba(18, 21, 29, 0.08);
+.snapshotImage {
+  object-fit: cover;
+  object-position: center top;
 }
 
-.previewPill,
-.previewChip {
-  width: 3.2rem;
-  height: 0.75rem;
+.snapshotTone {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
 }
 
-.previewChipLong {
-  width: 6.2rem;
-  height: 0.75rem;
+.snapshotPreviewLight .snapshotTone {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(17, 20, 27, 0.05));
 }
 
-.previewAvatar {
-  width: 2.6rem;
-  height: 2.6rem;
-  border-radius: 999px;
-  background: rgba(90, 131, 255, 0.18);
-}
-
-.previewRow,
-.previewRowWide {
-  display: block;
-  height: 0.72rem;
-  border-radius: 999px;
-  background: rgba(17, 20, 27, 0.12);
-}
-
-.previewRow {
-  width: 72%;
-}
-
-.previewRowStrong {
-  width: 82%;
-  background: rgba(17, 20, 27, 0.18);
-}
-
-.previewRowWide {
-  width: 92%;
-}
-
-.previewTagRow {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.previewTagRow i {
-  width: 2.1rem;
-  height: 0.62rem;
-}
-
-.previewMessageLeft,
-.previewMessageRight {
-  height: 3.8rem;
-  border-radius: 1.1rem;
-}
-
-.previewMessageLeft {
-  width: 82%;
-}
-
-.previewMessageRight {
-  width: 72%;
-  justify-self: end;
-  background: rgba(90, 131, 255, 0.18);
-}
-
-.previewComposer {
-  margin-top: auto;
-  width: 100%;
-  height: 3rem;
-  border-radius: 1rem;
-}
-
-.previewDetailBlock {
-  width: 100%;
-  height: 4.1rem;
-  border-radius: 1rem;
-}
-
-.previewMail {
-  display: grid;
-  grid-template-columns: 0.74fr 1.26fr;
-  gap: 0.95rem;
-  height: 100%;
-}
-
-.previewMailSidebar,
-.previewMailMain {
-  padding: 0.9rem;
-  display: grid;
-  align-content: start;
-  gap: 0.7rem;
-}
-
-.previewMailToolbar,
-.previewAttachmentStrip,
-.previewCounterBand,
-.previewAdminRail {
-  display: flex;
-  gap: 0.45rem;
-}
-
-.previewAnalytics,
-.previewAdmin {
-  display: grid;
-  gap: 0.95rem;
-  height: 100%;
-}
-
-.previewCounterBand span {
-  width: 100%;
-  height: 5rem;
-  border-radius: 1.05rem;
-}
-
-.previewChartSurface,
-.previewTable {
-  padding: 1rem;
-}
-
-.previewBars {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  align-items: end;
-  gap: 0.6rem;
-  min-height: 11rem;
-}
-
-.previewAdminBody {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.95rem;
-}
-
-.previewIncidentCard {
-  padding: 1rem;
-  display: grid;
-  gap: 0.8rem;
+.snapshotPreviewDark .snapshotTone {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.18));
 }
 
 @keyframes float {
@@ -1007,10 +860,7 @@
   .lawGrid,
   .channelGrid,
   .counterGrid,
-  .sequenceGrid,
-  .previewSupport,
-  .previewMail,
-  .previewAdminBody {
+  .sequenceGrid {
     grid-template-columns: 1fr;
   }
 

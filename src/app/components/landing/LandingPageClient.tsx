@@ -1,5 +1,6 @@
 "use client";
 
+import Image, { type StaticImageData } from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -16,6 +17,14 @@ import {
 import BrandMark from "@/app/components/BrandMark";
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
+import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
+import adminLightSnapshot from "@/app/assets/landing-snapshots/admin-light.png";
+import channelDarkSnapshot from "@/app/assets/landing-snapshots/channel-dark.png";
+import channelLightSnapshot from "@/app/assets/landing-snapshots/channel-light.png";
+import mailDarkSnapshot from "@/app/assets/landing-snapshots/mail-dark.png";
+import mailLightSnapshot from "@/app/assets/landing-snapshots/mail-light.png";
+import supportDarkSnapshot from "@/app/assets/landing-snapshots/support-dark.png";
+import supportLightSnapshot from "@/app/assets/landing-snapshots/support-light.png";
 import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
@@ -181,32 +190,108 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
   const showcaseItems = useMemo(
     () => [
       {
-        id: "support",
+        id: "support-dark",
         eyebrow: "Support Workspace",
         title: "Omnichannel timelines",
         summary: "Queue, conversation, and customer context in one dense working surface.",
-        preview: <SupportPreview />
+        preview: (
+          <SnapshotPreview
+            src={supportDarkSnapshot}
+            alt="Dark support workspace view showing ticket list, conversation timeline, and customer details."
+            theme="dark"
+          />
+        )
       },
       {
-        id: "mail",
+        id: "support-light",
+        eyebrow: "Support Workspace",
+        title: "Omnichannel timelines",
+        summary: "The same operator surface in a light treatment for teams running a brighter workspace theme.",
+        preview: (
+          <SnapshotPreview
+            src={supportLightSnapshot}
+            alt="Light support workspace view showing ticket list, conversation timeline, and customer details."
+            theme="light"
+          />
+        )
+      },
+      {
+        id: "mail-dark",
         eyebrow: "Mail Surface",
         title: "Shared inbox control",
         summary: "Pinned threads, attachment handling, and reply flows without leaving the operating view.",
-        preview: <MailPreview />
+        preview: (
+          <SnapshotPreview
+            src={mailDarkSnapshot}
+            alt="Dark shared inbox view showing thread list and billing discrepancy conversation."
+            theme="dark"
+          />
+        )
       },
       {
-        id: "analytics",
-        eyebrow: "Analytics",
-        title: "Operational telemetry",
-        summary: "Watch throughput, delivery health, and support quality from the same product plane.",
-        preview: <AnalyticsPreview />
+        id: "mail-light",
+        eyebrow: "Mail Surface",
+        title: "Shared inbox control",
+        summary: "The same inbox composition in a light treatment with thread selection and reply state visible.",
+        preview: (
+          <SnapshotPreview
+            src={mailLightSnapshot}
+            alt="Light shared inbox view showing thread list and billing discrepancy conversation."
+            theme="light"
+          />
+        )
       },
       {
-        id: "admin",
+        id: "channel-dark",
+        eyebrow: "Channel Drilldown",
+        title: "Daily pattern visibility",
+        summary: "Track inbound load, outbound share, and response movement inside a focused operational read.",
+        preview: (
+          <SnapshotPreview
+            src={channelDarkSnapshot}
+            alt="Dark channel drilldown view with inbound and outbound trend charts."
+            theme="dark"
+          />
+        )
+      },
+      {
+        id: "channel-light",
+        eyebrow: "Channel Drilldown",
+        title: "Daily pattern visibility",
+        summary: "The same channel metrics view in a light treatment for quick comparative reading.",
+        preview: (
+          <SnapshotPreview
+            src={channelLightSnapshot}
+            alt="Light channel drilldown view with inbound and outbound trend charts."
+            theme="light"
+          />
+        )
+      },
+      {
+        id: "admin-dark",
         eyebrow: "Admin + Ops",
         title: "Guardrails and recovery",
-        summary: "Audit history, outbox retries, spam rules, and inbound health modeled as first-class operations.",
-        preview: <AdminPreview />
+        summary: "Permissions, SLA settings, and security posture modeled as first-class operational controls.",
+        preview: (
+          <SnapshotPreview
+            src={adminDarkSnapshot}
+            alt="Dark admin view showing users and roles, SLA targets, and security snapshot."
+            theme="dark"
+          />
+        )
+      },
+      {
+        id: "admin-light",
+        eyebrow: "Admin + Ops",
+        title: "Guardrails and recovery",
+        summary: "The same admin surface in a light treatment with role management and security posture in view.",
+        preview: (
+          <SnapshotPreview
+            src={adminLightSnapshot}
+            alt="Light admin view showing users and roles, SLA targets, and security snapshot."
+            theme="light"
+          />
+        )
       }
     ],
     []
@@ -568,119 +653,23 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
   );
 }
 
-function SupportPreview() {
-  return (
-    <div className={styles.previewSupport}>
-      <aside className={styles.previewQueue}>
-        <span className={styles.previewPill} />
-        <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewTagRow}>
-          <i />
-          <i />
-          <i />
-        </span>
-      </aside>
-      <div className={styles.previewThread}>
-        <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-        <span className={styles.previewMessageLeft} />
-        <span className={styles.previewMessageRight} />
-        <span className={styles.previewComposer} />
-      </div>
-      <aside className={styles.previewProfile}>
-        <span className={styles.previewAvatar} />
-        <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewDetailBlock} />
-        <span className={styles.previewDetailBlock} />
-      </aside>
-    </div>
-  );
-}
+type SnapshotPreviewProps = {
+  src: StaticImageData;
+  alt: string;
+  theme: "dark" | "light";
+};
 
-function MailPreview() {
+function SnapshotPreview({ src, alt, theme }: SnapshotPreviewProps) {
   return (
-    <div className={styles.previewMail}>
-      <div className={styles.previewMailSidebar}>
-        <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-      </div>
-      <div className={styles.previewMailMain}>
-        <div className={styles.previewMailToolbar}>
-          <span className={styles.previewChip} />
-          <span className={styles.previewChipLong} />
-          <span className={styles.previewChip} />
-        </div>
-        <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRowWide} />
-        <div className={styles.previewAttachmentStrip}>
-          <span />
-          <span />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AnalyticsPreview() {
-  return (
-    <div className={styles.previewAnalytics}>
-      <div className={styles.previewCounterBand}>
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className={styles.previewChartSurface}>
-        <div className={styles.previewBars}>
-          <i style={{ height: "36%" }} />
-          <i style={{ height: "62%" }} />
-          <i style={{ height: "54%" }} />
-          <i style={{ height: "80%" }} />
-          <i style={{ height: "65%" }} />
-          <i style={{ height: "78%" }} />
-          <i style={{ height: "58%" }} />
-        </div>
-      </div>
-      <div className={styles.previewTable}>
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-        <span className={styles.previewRow} />
-      </div>
-    </div>
-  );
-}
-
-function AdminPreview() {
-  return (
-    <div className={styles.previewAdmin}>
-      <div className={styles.previewAdminRail}>
-        <span className={styles.previewChipLong} />
-        <span className={styles.previewChip} />
-      </div>
-      <div className={styles.previewAdminBody}>
-        <div className={styles.previewIncidentCard}>
-          <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-          <span className={styles.previewRow} />
-          <div className={styles.previewTagRow}>
-            <i />
-            <i />
-          </div>
-        </div>
-        <div className={styles.previewIncidentCard}>
-          <span className={`${styles.previewRow} ${styles.previewRowStrong}`} />
-          <span className={styles.previewRowWide} />
-          <div className={styles.previewTagRow}>
-            <i />
-            <i />
-            <i />
-          </div>
-        </div>
-      </div>
+    <div className={`${styles.snapshotPreview} ${theme === "dark" ? styles.snapshotPreviewDark : styles.snapshotPreviewLight}`}>
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        sizes="(max-width: 780px) 92vw, (max-width: 1120px) 80vw, 720px"
+        className={styles.snapshotImage}
+      />
+      <span className={styles.snapshotTone} aria-hidden="true" />
     </div>
   );
 }

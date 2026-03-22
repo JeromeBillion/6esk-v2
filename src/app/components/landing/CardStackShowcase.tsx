@@ -48,7 +48,7 @@ export default function CardStackShowcase({ items, className }: CardStackShowcas
     return () => window.clearInterval(timer);
   }, [items.length, paused]);
 
-  const visibleItems = useMemo(() => items.slice(0, Math.min(items.length, SLOT_STYLES.length)), [items]);
+  const visibleOrder = useMemo(() => order.slice(0, Math.min(order.length, SLOT_STYLES.length)), [order]);
 
   return (
     <div
@@ -60,9 +60,13 @@ export default function CardStackShowcase({ items, className }: CardStackShowcas
         setTilt({ x: 0, y: 0 });
       }}
     >
-      {visibleItems.map((item, index) => {
-        const slotIndex = order.indexOf(index);
-        const slot = SLOT_STYLES[Math.max(0, slotIndex)];
+      {items.map((item, index) => {
+        const slotIndex = visibleOrder.indexOf(index);
+        if (slotIndex === -1) {
+          return null;
+        }
+
+        const slot = SLOT_STYLES[slotIndex];
         const isFront = slotIndex === 0;
         const rotateX = isFront ? tilt.x : 0;
         const rotateY = isFront ? tilt.y : 0;
