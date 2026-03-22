@@ -3,17 +3,27 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getTicketAssignment, hasMailboxAccess } from "@/server/messages";
+import { resolveMockAttachment } from "@/app/lib/mock-attachments";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ attachmentId: string }> }
 ) {
+  const { attachmentId } = await params;
+  const mockAttachment = resolveMockAttachment(attachmentId);
+  if (mockAttachment) {
+    return new Response(mockAttachment.body, {
+      headers: {
+        "Content-Type": mockAttachment.contentType,
+        "Content-Disposition": `attachment; filename="${mockAttachment.filename}"`
+      }
+    });
+  }
+
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  const { attachmentId } = await params;
   const result = await db.query(
     `SELECT a.id, a.filename, a.content_type, a.r2_key, m.mailbox_id, m.ticket_id
      FROM attachments a

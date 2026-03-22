@@ -110,6 +110,7 @@ export type CustomerHistoryResponse = {
     display_name: string | null;
     primary_email: string | null;
     primary_phone: string | null;
+    address?: string | null;
     merged_into_customer_id: string | null;
     merged_at: string | null;
     identities: Array<{
@@ -132,6 +133,7 @@ export type CustomerProfilePatchInput = {
   displayName?: string | null;
   primaryEmail?: string | null;
   primaryPhone?: string | null;
+  address?: string | null;
   ticketId?: string | null;
 };
 

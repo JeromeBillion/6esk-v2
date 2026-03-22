@@ -15,13 +15,15 @@ const patchSchema = z
     displayName: z.string().max(200).optional().nullable(),
     primaryEmail: z.string().max(320).optional().nullable(),
     primaryPhone: z.string().max(40).optional().nullable(),
+    address: z.string().max(500).optional().nullable(),
     ticketId: z.string().uuid().optional().nullable()
   })
   .refine(
     (data) =>
       Object.prototype.hasOwnProperty.call(data, "displayName") ||
       Object.prototype.hasOwnProperty.call(data, "primaryEmail") ||
-      Object.prototype.hasOwnProperty.call(data, "primaryPhone"),
+      Object.prototype.hasOwnProperty.call(data, "primaryPhone") ||
+      Object.prototype.hasOwnProperty.call(data, "address"),
     { message: "At least one customer profile field must be provided." }
   );
 
@@ -106,6 +108,7 @@ export async function PATCH(
     displayName?: string | null;
     primaryEmail?: string | null;
     primaryPhone?: string | null;
+    address?: string | null;
   } = {};
 
   if (Object.prototype.hasOwnProperty.call(parsed.data, "displayName")) {
@@ -116,6 +119,9 @@ export async function PATCH(
   }
   if (Object.prototype.hasOwnProperty.call(parsed.data, "primaryPhone")) {
     updateInput.primaryPhone = normalizeOptionalString(parsed.data.primaryPhone);
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed.data, "address")) {
+    updateInput.address = normalizeOptionalString(parsed.data.address);
   }
 
   try {
@@ -144,6 +150,13 @@ export async function PATCH(
       const after = updatedCustomer.primary_phone ?? null;
       if (before !== after) {
         changes.primaryPhone = { from: before, to: after };
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(updateInput, "address")) {
+      const before = existingCustomer.address ?? null;
+      const after = updatedCustomer.address ?? null;
+      if (before !== after) {
+        changes.address = { from: before, to: after };
       }
     }
 

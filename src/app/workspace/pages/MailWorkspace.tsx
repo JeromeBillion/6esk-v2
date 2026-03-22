@@ -23,6 +23,7 @@ import { cn } from "../components/ui/utils";
 import { ActionFeedbackModal } from "../components/ActionFeedbackModal";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { MacroPickerModal } from "../components/MacroPickerModal";
+import { useDemoMode } from "@/app/lib/demo-mode";
 import {
   ApiMailbox,
   ApiMailboxMessage,
@@ -36,6 +37,7 @@ import {
   patchThreadStar,
   sendMail
 } from "@/app/lib/api/mail";
+import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { listSupportMacros, type SupportMacro } from "@/app/lib/api/support";
 import { encodeAttachments, formatFileSize, type EncodedAttachment } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
@@ -107,10 +109,12 @@ function stripHtml(value: string) {
 export function MailWorkspace() {
   const searchParams = useSearchParams();
   const paramsKey = searchParams.toString();
+  const { demoModeEnabled } = useDemoMode();
   const [currentView, setCurrentView] = useState<MailView>("inbox");
   const [searchQuery, setSearchQuery] = useState("");
   const [mailboxes, setMailboxes] = useState<ApiMailbox[]>([]);
   const [activeMailboxId, setActiveMailboxId] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
   const [messages, setMessages] = useState<ApiMailboxMessage[]>([]);
   const [messageDetails, setMessageDetails] = useState<Record<string, ApiMessageDetail>>({});
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -149,18 +153,17 @@ export function MailWorkspace() {
     }
   }, [paramsKey, searchParams]);
 
-  useEffect(() => {
-    const mailboxParam = searchParams.get("mailbox");
-    if (!mailboxParam || mailboxes.length === 0) return;
-    if (mailboxes.some((mailbox) => mailbox.id === mailboxParam)) {
-      setActiveMailboxId(mailboxParam);
-    }
-  }, [mailboxes, paramsKey, searchParams]);
-
   const activeMailbox = useMemo(
     () => mailboxes.find((mailbox) => mailbox.id === activeMailboxId) ?? null,
     [activeMailboxId, mailboxes]
   );
+
+  const displayedInboxEmail = useMemo(() => {
+    if (demoModeEnabled) {
+      return "support@6esk.com";
+    }
+    return currentUser?.email ?? activeMailbox?.address ?? "support@6esk.com";
+  }, [activeMailbox?.address, currentUser?.email, demoModeEnabled]);
 
   const loadMailboxes = useCallback(async () => {
     try {
@@ -190,6 +193,24 @@ export function MailWorkspace() {
   useEffect(() => {
     void loadMailboxes();
   }, [loadMailboxes]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentSessionUser()
+      .then((user) => {
+        if (!cancelled) {
+          setCurrentUser(user);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCurrentUser(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -494,8 +515,8 @@ export function MailWorkspace() {
     [activeMailbox?.address, activeMailboxId, loadMessages, openFeedback]
   );
 
-  const unreadCount = useMemo(
-    () => threads.filter((thread) => thread.unread && !thread.messages.some((message) => message.is_spam)).length,
+  const inboxCount = useMemo(
+    () => threads.filter((thread) => !thread.messages.some((message) => message.is_spam)).length,
     [threads]
   );
 
@@ -533,7 +554,7 @@ export function MailWorkspace() {
             <Inbox className="w-4 h-4" />
             <span>Inbox</span>
             <Badge variant="secondary" className="ml-auto text-xs">
-              {unreadCount}
+              {inboxCount}
             </Badge>
           </button>
 
@@ -584,27 +605,17 @@ export function MailWorkspace() {
       <div className="w-[420px] border-r border-neutral-200 bg-white flex flex-col">
         <div className="border-b border-neutral-200 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-semibold capitalize">{currentView}</h1>
-            {mailboxes.length > 1 ? (
-              <select
-                className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
-                value={activeMailboxId ?? ""}
-                onChange={(event) => setActiveMailboxId(event.target.value || null)}
-              >
-                {mailboxes.map((mailbox) => (
-                  <option key={mailbox.id} value={mailbox.id}>
-                    {mailbox.address}
-                  </option>
-                ))}
-              </select>
-            ) : null}
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-lg font-semibold capitalize">{currentView}</h1>
+              <span className="text-sm text-neutral-500">{displayedInboxEmail}</span>
+            </div>
           </div>
 
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
             <Input
               placeholder="Search mail..."
-              className="pl-9"
+              className="h-8 pr-9"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
             />

@@ -12,6 +12,7 @@ export type CustomerRecord = {
   display_name: string | null;
   primary_email: string | null;
   primary_phone: string | null;
+  address: string | null;
   merged_into_customer_id: string | null;
   merged_at: string | null;
 };
@@ -324,6 +325,7 @@ export async function getCustomerByTicketId(ticketId: string) {
 export async function getCustomerById(customerId: string) {
   const result = await db.query<CustomerRecord>(
     `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+            address,
             merged_into_customer_id,
             merged_at
      FROM customers
@@ -339,13 +341,15 @@ export async function updateCustomerProfile(
     displayName?: string | null;
     primaryEmail?: string | null;
     primaryPhone?: string | null;
+    address?: string | null;
   }
 ) {
   const displayNameProvided = Object.prototype.hasOwnProperty.call(input, "displayName");
   const emailProvided = Object.prototype.hasOwnProperty.call(input, "primaryEmail");
   const phoneProvided = Object.prototype.hasOwnProperty.call(input, "primaryPhone");
+  const addressProvided = Object.prototype.hasOwnProperty.call(input, "address");
 
-  if (!displayNameProvided && !emailProvided && !phoneProvided) {
+  if (!displayNameProvided && !emailProvided && !phoneProvided && !addressProvided) {
     return getCustomerById(customerId);
   }
 
@@ -358,6 +362,7 @@ export async function updateCustomerProfile(
   const normalizedDisplayName = displayNameProvided
     ? (input.displayName?.trim() || null)
     : undefined;
+  const normalizedAddress = addressProvided ? (input.address?.trim() || null) : undefined;
 
   const client = await db.connect();
   try {
@@ -365,6 +370,7 @@ export async function updateCustomerProfile(
 
     const customerResult = await client.query<CustomerRecord>(
       `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+              address,
               merged_into_customer_id,
               merged_at
        FROM customers
@@ -427,6 +433,10 @@ export async function updateCustomerProfile(
     if (phoneProvided) {
       fields.push(`primary_phone = $${index++}`);
       values.push(normalizedPhone ?? null);
+    }
+    if (addressProvided) {
+      fields.push(`address = $${index++}`);
+      values.push(normalizedAddress ?? null);
     }
 
     if (fields.length > 0) {

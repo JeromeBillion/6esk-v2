@@ -184,7 +184,7 @@ export default function NewTicketClient() {
             <div>
               <h1 className="mb-1 text-2xl font-semibold">Create Ticket</h1>
               <p className="text-sm text-neutral-600">
-                Start an email-based support ticket or queue an outbound call from the same form.
+                Start an email support ticket or initiate a standalone outbound-call ticket from the same form.
               </p>
             </div>
             <Card className="min-w-56">
@@ -231,7 +231,7 @@ export default function NewTicketClient() {
                       className="h-11 rounded-md border border-neutral-200 bg-white px-3 text-sm"
                     >
                       <option value="email">Email</option>
-                      <option value="call">Call</option>
+                      <option value="call">Initiate Call</option>
                     </select>
                   </label>
 

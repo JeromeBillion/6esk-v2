@@ -1,3 +1,6 @@
+import { isDemoModeEnabled } from "@/app/lib/demo-mode";
+import { mockApiFetch } from "@/app/lib/mock-data";
+
 export class ApiError extends Error {
   status: number;
   payload: unknown;
@@ -40,6 +43,10 @@ function errorMessageFromPayload(payload: unknown) {
 }
 
 export async function apiFetch<T>(url: string, init?: RequestInit) {
+  if (isDemoModeEnabled()) {
+    return mockApiFetch<T>(url, init);
+  }
+
   const response = await fetch(url, init);
   const payload = await parseJson(response);
 

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search,
@@ -73,6 +81,7 @@ import {
   queueOutboundCall,
   resendWhatsAppMessage,
   sendTicketReply,
+  type TicketDetailsResponse,
   type SupportSavedView,
   type SupportMacro,
   type TicketCallOptions
@@ -108,7 +117,9 @@ type TicketView = {
 
 type ConversationMessage = {
   id: string;
+  ticketId: string;
   channel: "email" | "whatsapp" | "voice";
+  threadId?: string | null;
   direction: "inbound" | "outbound";
   from: { name: string; email?: string; phone?: string };
   to: { name: string; email?: string; phone?: string };
@@ -170,6 +181,7 @@ type CustomerProfileView = {
   displayName: string | null;
   primaryEmail: string | null;
   primaryPhone: string | null;
+  address?: string | null;
   identities: Array<{
     type: "email" | "phone";
     value: string;
@@ -218,8 +230,116 @@ const STATUS_FILTER_VALUES = new Set(["all", "open", "pending", "resolved", "clo
 const PRIORITY_FILTER_VALUES = new Set(["all", "low", "medium", "high", "urgent"]);
 const CHANNEL_FILTER_VALUES = new Set(["all", "email", "whatsapp", "voice"]);
 const ASSIGNED_FILTER_VALUES = new Set(["mine", "any"]);
+const SUPPORT_QUEUE_WIDTH_STORAGE_KEY = "sixesk:support:queue-width";
+const SUPPORT_DETAIL_SIDEBAR_WIDTH_STORAGE_KEY = "sixesk:support:detail-sidebar-width";
+const SUPPORT_COMPOSER_HEIGHT_STORAGE_KEY = "sixesk:support:composer-height";
+const SUPPORT_QUEUE_WIDTH_DEFAULT = 480;
+const SUPPORT_DETAIL_SIDEBAR_WIDTH_DEFAULT = 320;
+const SUPPORT_COMPOSER_HEIGHT_DEFAULT = 240;
+const SUPPORT_QUEUE_WIDTH_MIN = 360;
+const SUPPORT_QUEUE_WIDTH_MAX = 680;
+const SUPPORT_DETAIL_SIDEBAR_WIDTH_MIN = 280;
+const SUPPORT_DETAIL_SIDEBAR_WIDTH_MAX = 440;
+const SUPPORT_COMPOSER_HEIGHT_MIN = 180;
+const SUPPORT_COMPOSER_HEIGHT_MAX = 420;
 
 type SavedViewFilters = SupportSavedView["filters"];
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function readStoredPaneSize(storageKey: string, fallback: number) {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(storageKey);
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function usePersistentPaneSize(storageKey: string, fallback: number) {
+  const [value, setValue] = useState(fallback);
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    const storedValue = readStoredPaneSize(storageKey, fallback);
+    setValue(storedValue);
+    hydratedRef.current = true;
+  }, [fallback, storageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hydratedRef.current) {
+      return;
+    }
+    window.localStorage.setItem(storageKey, String(Math.round(value)));
+  }, [storageKey, value]);
+
+  return [value, setValue] as const;
+}
+
+function startPointerResize(
+  event: ReactPointerEvent<HTMLElement>,
+  options: {
+    cursor: "col-resize" | "row-resize";
+    onMove: (deltaX: number, deltaY: number) => void;
+  }
+) {
+  event.preventDefault();
+
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const previousUserSelect = document.body.style.userSelect;
+  const previousCursor = document.body.style.cursor;
+
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = options.cursor;
+
+  const handlePointerMove = (moveEvent: PointerEvent) => {
+    options.onMove(moveEvent.clientX - startX, moveEvent.clientY - startY);
+  };
+
+  const cleanup = () => {
+    document.body.style.userSelect = previousUserSelect;
+    document.body.style.cursor = previousCursor;
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
+  };
+
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerup", cleanup);
+  window.addEventListener("pointercancel", cleanup);
+}
+
+function ResizeHandle({
+  orientation,
+  onPointerDown
+}: {
+  orientation: "vertical" | "horizontal";
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const isVertical = orientation === "vertical";
+
+  return (
+    <div
+      role="separator"
+      aria-orientation={orientation}
+      onPointerDown={onPointerDown}
+      className={cn(
+        "group relative shrink-0 touch-none select-none bg-transparent",
+        isVertical ? "h-full w-2 cursor-col-resize" : "h-2 w-full cursor-row-resize"
+      )}
+    >
+      <div
+        className={cn(
+          "absolute rounded-full bg-neutral-200 transition-colors group-hover:bg-blue-300 group-active:bg-blue-400",
+          isVertical ? "bottom-0 left-1/2 top-0 w-px -translate-x-1/2" : "left-0 right-0 top-1/2 h-px -translate-y-1/2"
+        )}
+      />
+    </div>
+  );
+}
 
 function normalizeSavedViewFilters(filters?: SavedViewFilters) {
   return {
@@ -266,6 +386,53 @@ function normalizeAddress(value: string) {
     return value.replace(/^voice:/, "");
   }
   return value;
+}
+
+function readMetadataText(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function deriveCustomerAddress(
+  customerAddress: string | null | undefined,
+  metadata: Record<string, unknown> | null | undefined
+) {
+  if (typeof customerAddress === "string" && customerAddress.trim()) {
+    return customerAddress.trim();
+  }
+
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const directMatch = readMetadataText(metadata, ["address", "streetAddress", "mailingAddress"]);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const addressRecord =
+    metadata.address && typeof metadata.address === "object" && !Array.isArray(metadata.address)
+      ? (metadata.address as Record<string, unknown>)
+      : null;
+
+  if (!addressRecord) {
+    return null;
+  }
+
+  const lineOne = readMetadataText(addressRecord, ["line1", "street", "street1"]);
+  const lineTwo = readMetadataText(addressRecord, ["line2", "suite", "street2"]);
+  const locality = readMetadataText(addressRecord, ["city", "locality"]);
+  const region = readMetadataText(addressRecord, ["state", "region", "province"]);
+  const postalCode = readMetadataText(addressRecord, ["postalCode", "zip", "zipCode"]);
+  const country = readMetadataText(addressRecord, ["country"]);
+
+  const parts = [lineOne, lineTwo, locality, region, postalCode, country].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
 }
 
 function deriveNameFromIdentity(value: string) {
@@ -385,6 +552,160 @@ function inferPrimaryChannel(ticket: TicketView, messages: ConversationMessage[]
   return messages[0]?.channel ?? "email";
 }
 
+type ConversationTimelineItem =
+  | {
+      kind: "email-thread";
+      id: string;
+      ticketId: string;
+      channel: "email";
+      messages: ConversationMessage[];
+    }
+  | {
+      kind: "message";
+      id: string;
+      ticketId: string;
+      channel: ConversationMessage["channel"];
+      message: ConversationMessage;
+    };
+
+function normalizeEmailThreadKey(message: ConversationMessage) {
+  if (message.channel !== "email") return null;
+  const ticketPrefix = `${message.ticketId}::`;
+  if (message.threadId?.trim()) {
+    return `${ticketPrefix}${message.threadId.trim()}`;
+  }
+  if (message.subject?.trim()) {
+    return `${ticketPrefix}${message.subject.replace(/^re:\s*/i, "").trim().toLowerCase()}`;
+  }
+  return `${ticketPrefix}email:${message.id}`;
+}
+
+function buildConversationTimeline(messages: ConversationMessage[]): ConversationTimelineItem[] {
+  const items: ConversationTimelineItem[] = [];
+  let pendingEmailGroup:
+    | {
+        id: string;
+        messages: ConversationMessage[];
+      }
+    | null = null;
+
+  const flushEmailGroup = () => {
+    if (!pendingEmailGroup) return;
+    items.push({
+      kind: "email-thread",
+      id: `email-thread:${pendingEmailGroup.id}:${pendingEmailGroup.messages[0]?.id ?? "unknown"}`,
+      ticketId: pendingEmailGroup.messages[0]?.ticketId ?? "",
+      channel: "email",
+      messages: pendingEmailGroup.messages
+    });
+    pendingEmailGroup = null;
+  };
+
+  for (const message of messages) {
+    if (message.channel !== "email") {
+      flushEmailGroup();
+      items.push({
+        kind: "message",
+        id: message.id,
+        ticketId: message.ticketId,
+        channel: message.channel,
+        message
+      });
+      continue;
+    }
+
+    const threadKey = normalizeEmailThreadKey(message);
+    if (!pendingEmailGroup || pendingEmailGroup.id !== threadKey) {
+      flushEmailGroup();
+      pendingEmailGroup = {
+        id: threadKey ?? `email:${message.id}`,
+        messages: [message]
+      };
+      continue;
+    }
+
+    pendingEmailGroup.messages.push(message);
+  }
+
+  flushEmailGroup();
+  return items;
+}
+
+async function buildConversationMessages(
+  details: TicketDetailsResponse,
+  signal?: AbortSignal
+): Promise<ConversationMessage[]> {
+  const detailRows = await Promise.all(
+    details.messages.map(async (message) => {
+      try {
+        return await getMessageDetail(message.id, signal);
+      } catch {
+        return null;
+      }
+    })
+  );
+  const messageDetailById = new Map(
+    detailRows.filter(Boolean).map((row) => [row!.message.id, row!])
+  );
+
+  return details.messages
+    .map((message) => {
+      const messageDetail = messageDetailById.get(message.id);
+      const body =
+        messageDetail?.message.text ??
+        (messageDetail?.message.html ? stripHtml(messageDetail.message.html) : null) ??
+        message.preview_text ??
+        "";
+      const fromValue = messageDetail?.message.from ?? normalizeAddress(message.from_email);
+      const toValue = messageDetail?.message.to?.[0] ?? message.to_emails?.[0] ?? "support@6esk.com";
+      return {
+        id: message.id,
+        ticketId: details.ticket.id,
+        channel: message.channel,
+        threadId: messageDetail?.message.conversationId ?? null,
+        direction: message.direction,
+        subject: message.subject,
+        from: {
+          name: deriveNameFromIdentity(fromValue),
+          email: fromValue.includes("@") ? fromValue : undefined,
+          phone: fromValue.includes("@") ? undefined : fromValue
+        },
+        to: {
+          name: deriveNameFromIdentity(toValue),
+          email: toValue.includes("@") ? toValue : undefined,
+          phone: toValue.includes("@") ? undefined : toValue
+        },
+        body,
+        timestamp:
+          messageDetail?.message.sentAt ??
+          messageDetail?.message.receivedAt ??
+          message.sent_at ??
+          message.received_at ??
+          new Date().toISOString(),
+        whatsapp_status: messageDetail?.message.waStatus ?? message.wa_status ?? null,
+        is_template: Boolean(
+          messageDetail?.message.aiMeta &&
+            (messageDetail.message.aiMeta.template || messageDetail.message.aiMeta.template_name)
+        ),
+        attachments: (messageDetail?.attachments ?? []).map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.filename,
+          contentType: attachment.content_type,
+          sizeBytes: attachment.size_bytes
+        })),
+        call_duration: messageDetail?.message.callSession?.durationSeconds ?? undefined,
+        call_status: messageDetail?.message.callSession?.status ?? null,
+        call_outcome:
+          messageDetail?.message.statusEvents?.slice(-1)[0]?.status && messageDetail?.message.callSession
+            ? toTitleCase(messageDetail.message.statusEvents.slice(-1)[0]?.status ?? "")
+            : null,
+        transcript: messageDetail?.message.transcript?.text ?? null,
+        recording_url: messageDetail?.message.callSession?.recordingUrl ?? null
+      } satisfies ConversationMessage;
+    })
+    .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
+}
+
 function mapTicketEvent(event: ApiTicketEvent): HistoryTicketEvent {
   const payload = event.data ?? {};
   const actor = event.actor_user_id ? `User ${event.actor_user_id.slice(0, 8)}` : "System";
@@ -432,6 +753,7 @@ export function SupportWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramsKey = searchParams.toString();
+  const workspaceLayoutRef = useRef<HTMLDivElement | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
   const [assigneeOptions, setAssigneeOptions] = useState<AdminUserRecord[]>([]);
   const [supportMacros, setSupportMacros] = useState<SupportMacro[]>([]);
@@ -466,6 +788,7 @@ export function SupportWorkspace() {
   const [bulkRemoveTagsInput, setBulkRemoveTagsInput] = useState("");
 
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [selectedTicketMessages, setSelectedTicketMessages] = useState<ConversationMessage[]>([]);
   const [ticketEvents, setTicketEvents] = useState<HistoryTicketEvent[]>([]);
   const [auditEvents, setAuditEvents] = useState<HistoryAuditEvent[]>([]);
   const [customerProfile, setCustomerProfile] = useState<CustomerProfileView | null>(null);
@@ -488,12 +811,36 @@ export function SupportWorkspace() {
   const [selectedCallCandidateId, setSelectedCallCandidateId] = useState("");
   const [manualCallPhone, setManualCallPhone] = useState("");
   const [callReason, setCallReason] = useState("");
+  const [queuePaneWidth, setQueuePaneWidth] = usePersistentPaneSize(
+    SUPPORT_QUEUE_WIDTH_STORAGE_KEY,
+    SUPPORT_QUEUE_WIDTH_DEFAULT
+  );
   const [feedback, setFeedback] = useState<FeedbackState>({
     open: false,
     tone: "info",
     title: "",
     message: ""
   });
+
+  const startQueueResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const startWidth = queuePaneWidth;
+      const layoutWidth =
+        workspaceLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+      startPointerResize(event, {
+        cursor: "col-resize",
+        onMove: (deltaX) => {
+          const maxWidth = Math.min(
+            SUPPORT_QUEUE_WIDTH_MAX,
+            Math.max(SUPPORT_QUEUE_WIDTH_MIN, layoutWidth - 640)
+          );
+          setQueuePaneWidth(clampNumber(startWidth + deltaX, SUPPORT_QUEUE_WIDTH_MIN, maxWidth));
+        }
+      });
+    },
+    [queuePaneWidth, setQueuePaneWidth]
+  );
 
   useEffect(() => {
     const status = searchParams.get("status") ?? "all";
@@ -691,78 +1038,9 @@ export function SupportWorkspace() {
     setReplyError(null);
     try {
       const details = await getTicketDetails(ticketId, signal);
-      const detailRows = await Promise.all(
-        details.messages.map(async (message) => {
-          try {
-            return await getMessageDetail(message.id, signal);
-          } catch {
-            return null;
-          }
-        })
-      );
-      const messageDetailById = new Map(
-        detailRows.filter(Boolean).map((row) => [row!.message.id, row!])
-      );
+      const mappedSelectedTicketMessages = await buildConversationMessages(details, signal);
 
-      const mappedMessages = details.messages
-        .map((message) => {
-          const messageDetail = messageDetailById.get(message.id);
-          const body =
-            messageDetail?.message.text ??
-            (messageDetail?.message.html ? stripHtml(messageDetail.message.html) : null) ??
-            message.preview_text ??
-            "";
-          const fromValue = messageDetail?.message.from ?? normalizeAddress(message.from_email);
-          const toValue = messageDetail?.message.to?.[0] ?? message.to_emails?.[0] ?? "support@6esk.com";
-          return {
-            id: message.id,
-            channel: message.channel,
-            direction: message.direction,
-            subject: message.subject,
-            from: {
-              name: deriveNameFromIdentity(fromValue),
-              email: fromValue.includes("@") ? fromValue : undefined,
-              phone: fromValue.includes("@") ? undefined : fromValue
-            },
-            to: {
-              name: deriveNameFromIdentity(toValue),
-              email: toValue.includes("@") ? toValue : undefined,
-              phone: toValue.includes("@") ? undefined : toValue
-            },
-            body,
-            timestamp:
-              messageDetail?.message.sentAt ??
-              messageDetail?.message.receivedAt ??
-              message.sent_at ??
-              message.received_at ??
-              new Date().toISOString(),
-            whatsapp_status: messageDetail?.message.waStatus ?? message.wa_status ?? null,
-            is_template: Boolean(
-              messageDetail?.message.aiMeta &&
-                (messageDetail.message.aiMeta.template || messageDetail.message.aiMeta.template_name)
-            ),
-            attachments: (messageDetail?.attachments ?? []).map((attachment) => ({
-              id: attachment.id,
-              filename: attachment.filename,
-              contentType: attachment.content_type,
-              sizeBytes: attachment.size_bytes
-            })),
-            call_duration: messageDetail?.message.callSession?.durationSeconds ?? undefined,
-            call_status: messageDetail?.message.callSession?.status ?? null,
-            call_outcome:
-              messageDetail?.message.statusEvents?.slice(-1)[0]?.status && messageDetail?.message.callSession
-                ? toTitleCase(messageDetail.message.statusEvents.slice(-1)[0]?.status ?? "")
-                : null,
-            transcript: messageDetail?.message.transcript?.text ?? null,
-            recording_url: messageDetail?.message.callSession?.recordingUrl ?? null
-          } satisfies ConversationMessage;
-        })
-        .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
-
-      const currentTicket = mapTicket(details.ticket);
-      const primaryChannel = inferPrimaryChannel(currentTicket, mappedMessages);
-      const primaryMessages = mappedMessages.filter((message) => message.channel === primaryChannel);
-      setConversationMessages(primaryMessages.length > 0 ? primaryMessages : mappedMessages);
+      setSelectedTicketMessages(mappedSelectedTicketMessages);
       setTicketEvents(details.events.map(mapTicketEvent));
       setAuditEvents(
         (details.auditLogs ?? []).map((log) => ({
@@ -783,6 +1061,7 @@ export function SupportWorkspace() {
               displayName: historyResponse.customer.display_name,
               primaryEmail: historyResponse.customer.primary_email,
               primaryPhone: historyResponse.customer.primary_phone,
+              address: historyResponse.customer.address ?? null,
               identities:
                 historyResponse.customer.identities?.map((identity) => ({
                   type: identity.type,
@@ -804,6 +1083,39 @@ export function SupportWorkspace() {
         .sort((left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime());
       setCustomerTicketHistory(mappedHistory);
 
+      const relatedTicketIds = Array.from(
+        new Set(
+          mappedHistory
+            .map((item) => item.ticketId)
+            .filter((historyTicketId) => historyTicketId && historyTicketId !== ticketId)
+        )
+      );
+      const relatedTicketDetails = await Promise.all(
+        relatedTicketIds.map(async (historyTicketId) => {
+          try {
+            return await getTicketDetails(historyTicketId, signal);
+          } catch {
+            return null;
+          }
+        })
+      );
+      const relatedTimelineGroups = await Promise.all(
+        relatedTicketDetails
+          .filter((detail): detail is TicketDetailsResponse => Boolean(detail))
+          .map(async (detail) => {
+            try {
+              return await buildConversationMessages(detail, signal);
+            } catch {
+              return [];
+            }
+          })
+      );
+      setConversationMessages(
+        [...mappedSelectedTicketMessages, ...relatedTimelineGroups.flat()].sort(
+          (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
+        )
+      );
+
       const pendingDraft = details.drafts
         .filter((draft) => draft.status === "pending")
         .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
@@ -823,6 +1135,7 @@ export function SupportWorkspace() {
       if (isAbortError(error)) return;
       setDetailError(error instanceof Error ? error.message : "Failed to load ticket details");
       setConversationMessages([]);
+      setSelectedTicketMessages([]);
       setTicketEvents([]);
       setAuditEvents([]);
       setCustomerProfile(null);
@@ -852,6 +1165,7 @@ export function SupportWorkspace() {
   useEffect(() => {
     if (!selectedTicketId) {
       setConversationMessages([]);
+      setSelectedTicketMessages([]);
       setTicketEvents([]);
       setAuditEvents([]);
       setCustomerProfile(null);
@@ -1091,7 +1405,7 @@ export function SupportWorkspace() {
         metadata: Record<string, unknown>;
       }>
     ) => {
-      if (!selectedTicketId) return;
+      if (!selectedTicketId) return false;
       setTicketUpdating(true);
       setReplyError(null);
       try {
@@ -1100,6 +1414,7 @@ export function SupportWorkspace() {
           previous.map((ticket) => (ticket.id === selectedTicketId ? mapTicket(payload.ticket) : ticket))
         );
         await loadTicketDetails(selectedTicketId);
+        return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update ticket";
         setReplyError(message);
@@ -1108,6 +1423,7 @@ export function SupportWorkspace() {
           title: "Ticket update failed",
           message
         });
+        return false;
       } finally {
         setTicketUpdating(false);
       }
@@ -1295,34 +1611,71 @@ export function SupportWorkspace() {
 
   return (
     <>
-      <div className="h-full flex">
+      <div ref={workspaceLayoutRef} className="h-full flex min-w-0">
         {/* Ticket Queue */}
-        <div className="w-[480px] border-r border-neutral-200 bg-white flex flex-col">
+        <div
+          className="shrink-0 border-r border-neutral-200 bg-white flex flex-col"
+          style={{ width: queuePaneWidth }}
+        >
           {/* Header */}
           <div className="border-b border-neutral-200 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <h1 className="text-lg font-semibold">Support</h1>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/tickets/merge-reviews")}>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <GitMerge className="w-4 h-4" />
+                      Merge
+                      <ChevronDown className="w-3 h-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setMergeType("ticket");
+                        setShowMergeModal(true);
+                      }}
+                    >
+                      Merge Tickets
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setMergeType("customer");
+                        setShowMergeModal(true);
+                      }}
+                    >
+                      Merge Customers
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => router.push("/tickets/merge-reviews")}
+                >
                   <GitMerge className="w-4 h-4" />
                   Reviews
-                </Button>
-                <Button size="sm" className="gap-2" onClick={() => router.push("/tickets/new")}>
-                  <Plus className="w-4 h-4" />
-                  New Ticket
                 </Button>
               </div>
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-              <Input
-                placeholder="Search tickets..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+                <Input
+                  placeholder="Search tickets..."
+                  className="h-8 pr-9"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <Button size="sm" className="gap-2 shrink-0" onClick={() => router.push("/tickets/new")}>
+                <Plus className="w-4 h-4" />
+                New Ticket
+              </Button>
             </div>
 
             {/* Filters */}
@@ -1414,34 +1767,6 @@ export function SupportWorkspace() {
               >
                 Saved Views{activeSavedViewId ? " • Active" : ""}
               </Button>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <GitMerge className="w-4 h-4" />
-                    Merge
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setMergeType("ticket");
-                      setShowMergeModal(true);
-                    }}
-                  >
-                    Merge Tickets
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setMergeType("customer");
-                      setShowMergeModal(true);
-                    }}
-                  >
-                    Merge Customers
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
 
               {selectedTickets.size > 0 && (
                 <div className="flex items-center gap-2">
@@ -1561,12 +1886,15 @@ export function SupportWorkspace() {
           </div>
         </div>
 
+        <ResizeHandle orientation="vertical" onPointerDown={startQueueResize} />
+
         {/* Ticket Detail */}
-        <div className="flex-1 bg-neutral-50 flex items-center justify-center">
+        <div className="min-w-0 flex-1 bg-neutral-50 flex items-center justify-center">
           {selectedTicket ? (
             <TicketDetail
               ticket={selectedTicket}
               messages={conversationMessages}
+              selectedTicketMessages={selectedTicketMessages}
               events={ticketEvents}
               auditEvents={auditEvents}
               customerProfile={customerProfile}
@@ -1590,7 +1918,7 @@ export function SupportWorkspace() {
                 void updateTicket({ priority: API_PRIORITY_BY_DISPLAY[priority] })
               }
               onTicketPatch={async (patch) => {
-                await updateTicket(patch);
+                return updateTicket(patch);
               }}
               onSaveCustomerProfile={async (input) => {
                 if (!selectedTicketId || !customerProfile) return false;
@@ -2017,6 +2345,7 @@ export function SupportWorkspace() {
 function TicketDetail({
   ticket,
   messages,
+  selectedTicketMessages,
   events,
   auditEvents,
   customerProfile,
@@ -2050,6 +2379,7 @@ function TicketDetail({
 }: {
   ticket: TicketView;
   messages: ConversationMessage[];
+  selectedTicketMessages: ConversationMessage[];
   events: HistoryTicketEvent[];
   auditEvents: HistoryAuditEvent[];
   customerProfile: CustomerProfileView | null;
@@ -2074,11 +2404,12 @@ function TicketDetail({
     assignedUserId?: string | null;
     category?: string;
     metadata?: Record<string, unknown>;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   onSaveCustomerProfile: (input: {
     displayName?: string | null;
     primaryEmail?: string | null;
     primaryPhone?: string | null;
+    address?: string | null;
   }) => Promise<boolean>;
   onAddTag: (tag: string) => Promise<void>;
   onRemoveTag: (tag: string) => Promise<void>;
@@ -2103,10 +2434,13 @@ function TicketDetail({
   onResendWhatsApp: (messageId: string) => Promise<void>;
   onSelectHistoryTicket: (ticketId: string) => void;
 }) {
+  const detailLayoutRef = useRef<HTMLDivElement | null>(null);
+  const mainColumnRef = useRef<HTMLDivElement | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [showAIDraft, setShowAIDraft] = useState(true);
-  const [categoryInput, setCategoryInput] = useState(ticket.category ?? "");
+  const [customerEditorOpen, setCustomerEditorOpen] = useState(false);
+  const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
   const [metadataInput, setMetadataInput] = useState(
     JSON.stringify(ticket.metadata ?? {}, null, 2)
   );
@@ -2119,19 +2453,78 @@ function TicketDetail({
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [waTemplateParams, setWaTemplateParams] = useState("");
   const [selectedRecipient, setSelectedRecipient] = useState("");
+  const [recipientOverrideOpen, setRecipientOverrideOpen] = useState(false);
+  const [recipientOverrideInput, setRecipientOverrideInput] = useState("");
   const [selectedAssigneeId, setSelectedAssigneeId] = useState(ticket.assigned_user_id ?? "");
   const [customerDisplayNameInput, setCustomerDisplayNameInput] = useState("");
   const [customerPrimaryEmailInput, setCustomerPrimaryEmailInput] = useState("");
   const [customerPrimaryPhoneInput, setCustomerPrimaryPhoneInput] = useState("");
+  const [customerAddressInput, setCustomerAddressInput] = useState("");
   const [customerProfileError, setCustomerProfileError] = useState<string | null>(null);
+  const [detailSidebarWidth, setDetailSidebarWidth] = usePersistentPaneSize(
+    SUPPORT_DETAIL_SIDEBAR_WIDTH_STORAGE_KEY,
+    SUPPORT_DETAIL_SIDEBAR_WIDTH_DEFAULT
+  );
+  const [composerHeight, setComposerHeight] = usePersistentPaneSize(
+    SUPPORT_COMPOSER_HEIGHT_STORAGE_KEY,
+    SUPPORT_COMPOSER_HEIGHT_DEFAULT
+  );
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const timelineItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const pendingTimelineFocusTicketIdRef = useRef<string | null>(ticket.id);
+  const pendingTimelineFocusBehaviorRef = useRef<ScrollBehavior>("auto");
+  const [activeTimelineTicketId, setActiveTimelineTicketId] = useState<string>(ticket.id);
+  const [activeTimelineChannel, setActiveTimelineChannel] = useState<ConversationMessage["channel"] | null>(null);
+
+  const startDetailSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const startWidth = detailSidebarWidth;
+      const layoutWidth = detailLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+      startPointerResize(event, {
+        cursor: "col-resize",
+        onMove: (deltaX) => {
+          const maxWidth = Math.min(
+            SUPPORT_DETAIL_SIDEBAR_WIDTH_MAX,
+            Math.max(SUPPORT_DETAIL_SIDEBAR_WIDTH_MIN, layoutWidth - 520)
+          );
+          setDetailSidebarWidth(
+            clampNumber(startWidth - deltaX, SUPPORT_DETAIL_SIDEBAR_WIDTH_MIN, maxWidth)
+          );
+        }
+      });
+    },
+    [detailSidebarWidth, setDetailSidebarWidth]
+  );
+
+  const startComposerResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const startHeight = composerHeight;
+      const columnHeight = mainColumnRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+
+      startPointerResize(event, {
+        cursor: "row-resize",
+        onMove: (_deltaX, deltaY) => {
+          const maxHeight = Math.min(
+            SUPPORT_COMPOSER_HEIGHT_MAX,
+            Math.max(SUPPORT_COMPOSER_HEIGHT_MIN, columnHeight - 260)
+          );
+          setComposerHeight(
+            clampNumber(startHeight - deltaY, SUPPORT_COMPOSER_HEIGHT_MIN, maxHeight)
+          );
+        }
+      });
+    },
+    [composerHeight, setComposerHeight]
+  );
 
   useEffect(() => {
     setReplyText("");
     setShowAIDraft(true);
-    setCategoryInput(ticket.category ?? "");
     setMetadataInput(JSON.stringify(ticket.metadata ?? {}, null, 2));
     setMetadataError(null);
+    setCustomerEditorOpen(false);
+    setMetadataEditorOpen(false);
     setNewTag("");
     setComposerError(null);
     setShowMacroPicker(false);
@@ -2139,6 +2532,8 @@ function TicketDetail({
     setReplyAttachments([]);
     setSelectedTemplateId("");
     setWaTemplateParams("");
+    setRecipientOverrideOpen(false);
+    setRecipientOverrideInput("");
     setSelectedAssigneeId(ticket.assigned_user_id ?? "");
     setCustomerDisplayNameInput(customerProfile?.displayName?.trim() ?? ticket.requester_name);
     setCustomerPrimaryEmailInput(
@@ -2150,9 +2545,11 @@ function TicketDetail({
           ? normalizeAddress(ticket.requester_email)
           : "")
     );
+    setCustomerAddressInput((customerProfile?.address ?? deriveCustomerAddress(customerProfile?.address, ticket.metadata) ?? "").trim());
     setCustomerProfileError(null);
   }, [
     customerProfile?.id,
+    customerProfile?.address,
     customerProfile?.displayName,
     customerProfile?.primaryEmail,
     customerProfile?.primaryPhone,
@@ -2193,15 +2590,76 @@ function TicketDetail({
     return null;
   }, [customerProfile?.primaryPhone, ticket.requester_email]);
 
-  const customerIdentityRows = useMemo(() => {
-    const rows = customerProfile?.identities ?? [];
-    return rows.slice(0, 8);
-  }, [customerProfile?.identities]);
+  const customerDisplayAddress = useMemo(() => {
+    return deriveCustomerAddress(customerProfile?.address, ticket.metadata);
+  }, [customerProfile?.address, ticket.metadata]);
 
   const primaryChannel = useMemo(
-    () => inferPrimaryChannel(ticket, messages),
-    [messages, ticket]
+    () => inferPrimaryChannel(ticket, selectedTicketMessages),
+    [selectedTicketMessages, ticket]
   );
+
+  const conversationTimeline = useMemo(
+    () => buildConversationTimeline(messages),
+    [messages]
+  );
+
+  const registerTimelineItem = useCallback((itemId: string, node: HTMLDivElement | null) => {
+    if (node) {
+      timelineItemRefs.current.set(itemId, node);
+      return;
+    }
+    timelineItemRefs.current.delete(itemId);
+  }, []);
+
+  const scrollTimelineToTicketId = useCallback(
+    (ticketId: string, behavior: ScrollBehavior = "smooth") => {
+      const targetItem = conversationTimeline.find((item) => item.ticketId === ticketId);
+      const container = conversationScrollRef.current;
+      if (!targetItem || !container) return false;
+      const node = timelineItemRefs.current.get(targetItem.id);
+      if (!node) return false;
+      container.scrollTo({
+        top: Math.max(0, node.offsetTop - 12),
+        behavior
+      });
+      setActiveTimelineTicketId(targetItem.ticketId);
+      setActiveTimelineChannel(targetItem.channel);
+      return true;
+    },
+    [conversationTimeline]
+  );
+
+  const syncActiveTimelineFromScroll = useCallback(() => {
+    if (conversationTimeline.length === 0) {
+      setActiveTimelineTicketId(ticket.id);
+      setActiveTimelineChannel(primaryChannel);
+      return;
+    }
+
+    const container = conversationScrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    const anchorOffset = 96;
+    let activeItem = conversationTimeline[0];
+
+    for (const item of conversationTimeline) {
+      const node = timelineItemRefs.current.get(item.id);
+      if (!node) continue;
+      const topOffset = node.getBoundingClientRect().top - containerTop;
+      if (topOffset <= anchorOffset) {
+        activeItem = item;
+        continue;
+      }
+      break;
+    }
+
+    setActiveTimelineTicketId(activeItem.ticketId);
+    setActiveTimelineChannel(activeItem.channel);
+  }, [conversationTimeline, primaryChannel, ticket.id]);
+
+  const activeTimelineTicketIdValue = activeTimelineTicketId || ticket.id;
+  const activeTimelineChannelValue = activeTimelineChannel ?? primaryChannel;
 
   const interactionHistoryRows = useMemo(() => {
     const byTicketId = new Map<string, CustomerTicketHistoryItem>();
@@ -2269,7 +2727,7 @@ function TicketDetail({
           addOption(identity.value, "Customer identity", identity.isPrimary);
         }
       }
-      for (const message of messages) {
+      for (const message of selectedTicketMessages) {
         addOption(message.from.phone, message.direction === "inbound" ? "Inbound contact" : "Known contact");
         addOption(message.to.phone, "Known contact");
       }
@@ -2287,7 +2745,7 @@ function TicketDetail({
           addOption(identity.value, "Customer identity", identity.isPrimary);
         }
       }
-      for (const message of messages) {
+      for (const message of selectedTicketMessages) {
         addOption(message.from.email, message.direction === "inbound" ? "Inbound contact" : "Known contact");
         addOption(message.to.email, "Known contact");
       }
@@ -2298,8 +2756,8 @@ function TicketDetail({
     customerProfile?.identities,
     customerProfile?.primaryEmail,
     customerProfile?.primaryPhone,
-    messages,
     primaryChannel,
+    selectedTicketMessages,
     ticket.requester_email
   ]);
 
@@ -2318,8 +2776,32 @@ function TicketDetail({
   }, [primaryChannel, replyRecipientOptions, ticket.id]);
 
   useEffect(() => {
-    conversationScrollRef.current?.scrollTo({ top: 0 });
-  }, [ticket.id]);
+    pendingTimelineFocusTicketIdRef.current = ticket.id;
+    pendingTimelineFocusBehaviorRef.current = "auto";
+    setActiveTimelineTicketId(ticket.id);
+    setActiveTimelineChannel(primaryChannel);
+  }, [primaryChannel, ticket.id]);
+
+  useEffect(() => {
+    if (conversationTimeline.length === 0) {
+      setActiveTimelineTicketId(ticket.id);
+      setActiveTimelineChannel(primaryChannel);
+      return;
+    }
+
+    const focusTicketId = pendingTimelineFocusTicketIdRef.current ?? ticket.id;
+    const focusBehavior = pendingTimelineFocusBehaviorRef.current;
+    const frame = window.requestAnimationFrame(() => {
+      if (!scrollTimelineToTicketId(focusTicketId, focusBehavior)) {
+        conversationScrollRef.current?.scrollTo({ top: 0, behavior: focusBehavior });
+        syncActiveTimelineFromScroll();
+      }
+      pendingTimelineFocusTicketIdRef.current = null;
+      pendingTimelineFocusBehaviorRef.current = "auto";
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [conversationTimeline, primaryChannel, scrollTimelineToTicketId, syncActiveTimelineFromScroll, ticket.id]);
 
   const selectedTemplate = useMemo(
     () => whatsAppTemplates.find((template) => template.id === selectedTemplateId) ?? null,
@@ -2346,7 +2828,7 @@ function TicketDetail({
 
   const whatsappWindow = useMemo(() => {
     if (primaryChannel !== "whatsapp") return null;
-    const inboundTimes = messages
+    const inboundTimes = selectedTicketMessages
       .filter((message) => message.channel === "whatsapp" && message.direction === "inbound")
       .map((message) => Date.parse(message.timestamp))
       .filter((value) => !Number.isNaN(value));
@@ -2361,7 +2843,7 @@ function TicketDetail({
       isOpen,
       minutesRemaining: isOpen ? Math.max(0, Math.ceil((expiresAt - now) / 60000)) : 0
     } satisfies WhatsAppWindowState;
-  }, [messages, primaryChannel]);
+  }, [primaryChannel, selectedTicketMessages]);
 
   const tagSuggestions = useMemo(() => {
     const normalized = newTag.trim().toLowerCase();
@@ -2373,25 +2855,76 @@ function TicketDetail({
 
   const displayReplyError = composerError ?? replyError;
 
+  const recipientSuggestions = useMemo(() => {
+    const query = recipientOverrideInput.trim().toLowerCase();
+    const candidates = query
+      ? replyRecipientOptions.filter(
+          (option) =>
+            option.value.toLowerCase().includes(query) || option.label.toLowerCase().includes(query)
+        )
+      : replyRecipientOptions;
+    return candidates.slice(0, 5);
+  }, [recipientOverrideInput, replyRecipientOptions]);
+
+  const defaultRecipientOption = useMemo(
+    () => replyRecipientOptions.find((option) => option.value === selectedRecipient) ?? null,
+    [replyRecipientOptions, selectedRecipient]
+  );
+
   const customerProfileDirty = useMemo(() => {
     if (!customerProfile) return false;
     const nextDisplayName = customerDisplayNameInput.trim();
     const nextPrimaryEmail = customerPrimaryEmailInput.trim().toLowerCase();
     const nextPrimaryPhone = customerPrimaryPhoneInput.trim();
+    const nextAddress = customerAddressInput.trim();
     const currentDisplayName = customerProfile.displayName?.trim() ?? "";
     const currentPrimaryEmail = customerProfile.primaryEmail?.trim().toLowerCase() ?? "";
     const currentPrimaryPhone = customerProfile.primaryPhone?.trim() ?? "";
+    const currentAddress = (customerProfile.address ?? customerDisplayAddress ?? "").trim();
     return (
       nextDisplayName !== currentDisplayName ||
       nextPrimaryEmail !== currentPrimaryEmail ||
-      nextPrimaryPhone !== currentPrimaryPhone
+      nextPrimaryPhone !== currentPrimaryPhone ||
+      nextAddress !== currentAddress
     );
   }, [
+    customerAddressInput,
+    customerDisplayAddress,
     customerDisplayNameInput,
     customerPrimaryEmailInput,
     customerPrimaryPhoneInput,
     customerProfile
   ]);
+
+  const openCustomerEditor = useCallback(() => {
+    setCustomerDisplayNameInput(customerProfile?.displayName?.trim() ?? ticket.requester_name);
+    setCustomerPrimaryEmailInput(
+      customerProfile?.primaryEmail ?? (ticket.requester_email.includes("@") ? ticket.requester_email : "")
+    );
+    setCustomerPrimaryPhoneInput(
+      customerProfile?.primaryPhone ??
+        (ticket.requester_email.startsWith("whatsapp:") || ticket.requester_email.startsWith("voice:")
+          ? normalizeAddress(ticket.requester_email)
+          : "")
+    );
+    setCustomerAddressInput((customerProfile?.address ?? customerDisplayAddress ?? "").trim());
+    setCustomerProfileError(null);
+    setCustomerEditorOpen(true);
+  }, [
+    customerDisplayAddress,
+    customerProfile?.address,
+    customerProfile?.displayName,
+    customerProfile?.primaryEmail,
+    customerProfile?.primaryPhone,
+    ticket.requester_email,
+    ticket.requester_name
+  ]);
+
+  const openMetadataEditor = useCallback(() => {
+    setMetadataInput(JSON.stringify(ticket.metadata ?? {}, null, 2));
+    setMetadataError(null);
+    setMetadataEditorOpen(true);
+  }, [ticket.metadata]);
 
   const submitReply = async () => {
     setComposerError(null);
@@ -2401,7 +2934,25 @@ function TicketDetail({
       return;
     }
 
-    if (replyRecipientOptions.length === 0) {
+    const manualRecipientRaw = recipientOverrideInput.trim();
+    const manualRecipient = manualRecipientRaw
+      ? primaryChannel === "whatsapp"
+        ? normalizeRecipientPhone(manualRecipientRaw)
+        : normalizeRecipientEmail(manualRecipientRaw)
+      : null;
+
+    if (manualRecipientRaw && !manualRecipient) {
+      setComposerError(
+        primaryChannel === "whatsapp"
+          ? "Enter a valid phone number for the recipient override."
+          : "Enter a valid email address for the recipient override."
+      );
+      return;
+    }
+
+    const resolvedRecipient = manualRecipient ?? selectedRecipient;
+
+    if (!resolvedRecipient) {
       setComposerError("No valid recipient found for this channel.");
       return;
     }
@@ -2465,7 +3016,7 @@ function TicketDetail({
 
     const success = await onSendReply({
       text: text || null,
-      recipient: selectedRecipient || null,
+      recipient: resolvedRecipient || null,
       template,
       attachments: attachmentPayload.length ? attachmentPayload : null
     });
@@ -2474,6 +3025,8 @@ function TicketDetail({
       setReplyAttachments([]);
       setSelectedTemplateId("");
       setWaTemplateParams("");
+      setRecipientOverrideOpen(false);
+      setRecipientOverrideInput("");
       setComposerError(null);
     }
   };
@@ -2502,14 +3055,17 @@ function TicketDetail({
     const nextDisplayName = customerDisplayNameInput.trim();
     const nextPrimaryEmail = customerPrimaryEmailInput.trim().toLowerCase();
     const nextPrimaryPhone = customerPrimaryPhoneInput.trim();
+    const nextAddress = customerAddressInput.trim();
     const currentDisplayName = customerProfile.displayName?.trim() ?? "";
     const currentPrimaryEmail = customerProfile.primaryEmail?.trim().toLowerCase() ?? "";
     const currentPrimaryPhone = customerProfile.primaryPhone?.trim() ?? "";
+    const currentAddress = (customerProfile.address ?? customerDisplayAddress ?? "").trim();
 
     const patch: {
       displayName?: string | null;
       primaryEmail?: string | null;
       primaryPhone?: string | null;
+      address?: string | null;
     } = {};
 
     if (nextDisplayName !== currentDisplayName) {
@@ -2520,6 +3076,9 @@ function TicketDetail({
     }
     if (nextPrimaryPhone !== currentPrimaryPhone) {
       patch.primaryPhone = nextPrimaryPhone || null;
+    }
+    if (nextAddress !== currentAddress) {
+      patch.address = nextAddress || null;
     }
 
     if (Object.keys(patch).length === 0) {
@@ -2533,6 +3092,7 @@ function TicketDetail({
       return;
     }
     setCustomerProfileError(null);
+    setCustomerEditorOpen(false);
   };
 
   const addTag = async (value: string) => {
@@ -2574,8 +3134,8 @@ function TicketDetail({
 
   return (
     <>
-      <div className="w-full h-full flex">
-        <div className="flex-1 bg-white border-r border-neutral-200 flex flex-col">
+      <div ref={detailLayoutRef} className="w-full h-full flex min-w-0">
+        <div className="min-w-0 flex-1 bg-white flex flex-col">
           <div className="border-b border-neutral-200 p-6">
             <div className="flex items-start justify-between mb-4">
               <div className="flex-1">
@@ -2583,9 +3143,9 @@ function TicketDetail({
                   <Button variant="ghost" size="sm" className="gap-2 -ml-2" onClick={() => setShowHistory(true)}>
                     <Clock className="w-4 h-4" />
                   </Button>
-                  <span className="text-sm font-medium text-neutral-600">{ticket.id}</span>
+                  <span className="text-sm font-medium text-neutral-600">{activeTimelineTicketIdValue}</span>
                   <Badge variant="outline" className="text-xs">
-                    {toTitleCase(primaryChannel)}
+                    {toTitleCase(activeTimelineChannelValue)}
                   </Badge>
                 </div>
                 <h2 className="text-xl font-semibold mb-2">{ticket.subject}</h2>
@@ -2631,30 +3191,46 @@ function TicketDetail({
             </div>
           </div>
 
-          <div ref={conversationScrollRef} className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-3xl mx-auto space-y-4">
-              {detailLoading ? <p className="text-sm text-neutral-600">Loading conversation...</p> : null}
-              {detailError ? <p className="text-sm text-red-600">{detailError}</p> : null}
-              {!detailLoading && !detailError
-                ? messages.map((message) => (
-                    <ConversationMessageItem
-                      key={message.id}
-                      message={message}
-                      onResendWhatsApp={onResendWhatsApp}
-                      resending={resendingMessageId === message.id}
-                    />
-                  ))
-                : null}
-              {!detailLoading && !detailError && messages.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-xs text-neutral-500">No messages yet</p>
-                </div>
-              ) : null}
+          <div ref={mainColumnRef} className="flex-1 min-h-0 flex flex-col">
+            <div
+              ref={conversationScrollRef}
+              className="flex-1 min-h-0 overflow-y-auto p-6"
+              onScroll={syncActiveTimelineFromScroll}
+            >
+              <div className="mx-auto w-full max-w-[1120px] space-y-4">
+                {detailLoading ? <p className="text-sm text-neutral-600">Loading conversation...</p> : null}
+                {detailError ? <p className="text-sm text-red-600">{detailError}</p> : null}
+                {!detailLoading && !detailError
+                  ? conversationTimeline.map((item) =>
+                      <div key={item.id} ref={(node) => registerTimelineItem(item.id, node)}>
+                        {item.kind === "email-thread" ? (
+                          <EmailThreadGroup messages={item.messages} />
+                        ) : (
+                          <ConversationMessageItem
+                            message={item.message}
+                            onResendWhatsApp={onResendWhatsApp}
+                            resending={resendingMessageId === item.message.id}
+                          />
+                        )}
+                      </div>
+                    )
+                  : null}
+                {!detailLoading && !detailError && messages.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-xs text-neutral-500">No messages yet</p>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
 
-          <div className="border-t border-neutral-200 p-4">
-            <div className="max-w-3xl mx-auto">
+            <ResizeHandle orientation="horizontal" onPointerDown={startComposerResize} />
+
+            <div
+              className="shrink-0 border-t border-neutral-200 bg-white"
+              style={{ height: composerHeight }}
+            >
+              <div className="h-full overflow-y-auto p-4">
+                <div className="mx-auto w-full max-w-[1120px]">
               {draft && showAIDraft ? (
                 <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
                   <div className="flex items-start gap-3">
@@ -2730,21 +3306,67 @@ function TicketDetail({
                     </div>
                   ) : null}
 
-                  <div className="grid gap-2">
-                    <label className="text-xs font-medium text-neutral-600">Recipient</label>
-                    <select
-                      className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
-                      value={selectedRecipient}
-                      onChange={(event) => setSelectedRecipient(event.target.value)}
+                  <div className="rounded-lg border border-neutral-200 bg-white">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                      onClick={() => setRecipientOverrideOpen((current) => !current)}
                     >
-                      {replyRecipientOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label} • {option.value}
-                        </option>
-                      ))}
-                    </select>
-                    {replyRecipientOptions.length === 0 ? (
-                      <p className="text-xs text-red-600">No valid recipient found for this channel.</p>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-neutral-700">Recipient override</p>
+                        <p className="truncate text-[11px] text-neutral-500">
+                          {defaultRecipientOption
+                            ? `Default: ${defaultRecipientOption.value}`
+                            : "No default recipient available"}
+                        </p>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 shrink-0 text-neutral-400 transition-transform",
+                          recipientOverrideOpen && "rotate-180"
+                        )}
+                      />
+                    </button>
+
+                    {recipientOverrideOpen ? (
+                      <div className="border-t border-neutral-200 px-3 py-3">
+                        <div className="grid gap-2">
+                          <Input
+                            className="h-8 text-xs"
+                            value={recipientOverrideInput}
+                            onChange={(event) => {
+                              setRecipientOverrideInput(event.target.value);
+                              setComposerError(null);
+                            }}
+                            placeholder={
+                              primaryChannel === "whatsapp"
+                                ? "+15551234567"
+                                : "customer@example.com"
+                            }
+                          />
+                          <p className="text-[11px] text-neutral-500">
+                            Leave blank to use the default recipient for this ticket.
+                          </p>
+                        </div>
+
+                        {recipientSuggestions.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {recipientSuggestions.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-700 transition-colors hover:bg-neutral-100"
+                                onClick={() => {
+                                  setRecipientOverrideInput(option.value);
+                                  setComposerError(null);
+                                }}
+                              >
+                                {option.label} • {option.value}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
 
@@ -2851,7 +3473,7 @@ function TicketDetail({
                   disabled={
                     replySending ||
                     primaryChannel === "voice" ||
-                    replyRecipientOptions.length === 0
+                    (replyRecipientOptions.length === 0 && !recipientOverrideInput.trim())
                   }
                   onClick={() => void submitReply()}
                 >
@@ -2863,275 +3485,74 @@ function TicketDetail({
                 </Button>
               </div>
               {displayReplyError ? <p className="mt-2 text-xs text-red-600">{displayReplyError}</p> : null}
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="w-80 bg-white overflow-y-auto p-6">
-          <h3 className="font-semibold mb-4">Customer Details</h3>
+        <ResizeHandle orientation="vertical" onPointerDown={startDetailSidebarResize} />
 
-          <div className="mb-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-medium">
-                {customerDisplayName.charAt(0)}
-              </div>
-              <div className="flex-1">
-                <p className="font-medium text-sm">{customerDisplayName}</p>
-                {customerDisplayEmail ? (
-                  <p className="text-xs text-neutral-600 break-all">{customerDisplayEmail}</p>
-                ) : null}
-                {customerDisplayPhone ? (
-                  <p className="text-xs text-neutral-600 break-all">{customerDisplayPhone}</p>
-                ) : null}
-              </div>
-            </div>
-            {customerProfile?.kind ? (
-              <Badge variant="outline" className="h-5 text-[10px]">
-                {customerProfile.kind === "registered" ? "Registered profile" : "Unregistered profile"}
-              </Badge>
-            ) : null}
-            <div className="mt-3 space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600">Name</label>
-                <Input
-                  value={customerDisplayNameInput}
-                  onChange={(event) => setCustomerDisplayNameInput(event.target.value)}
-                  placeholder="Customer name"
-                  disabled={customerProfileUpdating || !customerProfile}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600">Primary email</label>
-                <Input
-                  value={customerPrimaryEmailInput}
-                  onChange={(event) => setCustomerPrimaryEmailInput(event.target.value)}
-                  placeholder="customer@example.com"
-                  disabled={customerProfileUpdating || !customerProfile}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600">Primary phone</label>
-                <Input
-                  value={customerPrimaryPhoneInput}
-                  onChange={(event) => setCustomerPrimaryPhoneInput(event.target.value)}
-                  placeholder="+15551234567"
-                  disabled={customerProfileUpdating || !customerProfile}
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  disabled={customerProfileUpdating || !customerProfile || !customerProfileDirty}
-                  onClick={() => {
-                    void saveCustomerProfile();
-                  }}
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  {customerProfileUpdating ? "Saving..." : "Save Profile"}
-                </Button>
-              </div>
-              {!customerProfile ? (
-                <p className="text-xs text-neutral-500">
-                  Customer profile is not linked yet.
-                </p>
-              ) : null}
-              {customerProfileError ? <p className="text-xs text-red-600">{customerProfileError}</p> : null}
-            </div>
-            {customerIdentityRows.length > 0 ? (
-              <div className="mt-3 space-y-1.5">
-                <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-neutral-500">Known identities</p>
-                {customerIdentityRows.map((identity) => (
-                  <div key={`${identity.type}-${identity.value}`} className="flex items-center justify-between text-xs">
-                    <span className="text-neutral-600">
-                      {identity.type === "email" ? "Email" : "Phone"}
-                    </span>
-                    <span className="max-w-[170px] truncate text-neutral-900">{identity.value}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
+        <div
+          className="shrink-0 bg-white overflow-y-auto p-6"
+          style={{ width: detailSidebarWidth }}
+        >
+          <h3 className="mb-4 font-semibold">Customer Details</h3>
 
-          <div className="mb-6">
-            <div className="mb-2 flex items-center gap-2">
-              <Tag className="h-4 w-4 text-neutral-400" />
-              <h4 className="text-xs font-medium text-neutral-600">Tags</h4>
-            </div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {ticket.tags.length > 0 ? (
-                ticket.tags.map((tag) => (
-                  <div
-                    key={tag}
-                    className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs"
-                  >
-                    <span>{tag}</span>
-                    <button
-                      type="button"
-                      className="text-neutral-400 transition-colors hover:text-neutral-900"
-                      onClick={() => {
-                        void onRemoveTag(tag);
-                      }}
-                      disabled={ticketUpdating}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <span className="text-xs text-neutral-500">No tags</span>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={newTag}
-                onChange={(event) => setNewTag(event.target.value)}
-                placeholder="Add tag"
-                disabled={ticketUpdating}
-              />
+          <div className="mb-6 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 font-medium text-blue-700">
+                  {customerDisplayName.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-neutral-900">{customerDisplayName}</p>
+                  {customerProfile?.kind ? (
+                    <Badge variant="outline" className="mt-2 h-5 text-[10px]">
+                      {customerProfile.kind === "registered" ? "Registered profile" : "Unregistered profile"}
+                    </Badge>
+                  ) : null}
+                </div>
+              </div>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={ticketUpdating || !newTag.trim()}
-                onClick={() => {
-                  void addTag(newTag);
-                }}
+                className="h-8 px-3 text-xs"
+                disabled={!customerProfile}
+                onClick={openCustomerEditor}
               >
-                Add
+                Edit
               </Button>
             </div>
-            {tagSuggestions.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {tagSuggestions.map((candidate) => (
-                  <Button
-                    key={candidate.id}
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => {
-                      void addTag(candidate.name);
-                    }}
-                  >
-                    {candidate.name}
-                  </Button>
-                ))}
+            <div className="mt-4 border-t border-neutral-200 pt-4">
+              <h4 className="mb-2 text-xs font-medium text-neutral-600">Contact Details</h4>
+              <div className="space-y-2">
+                <div className="flex items-start justify-between gap-3 text-xs">
+                  <span className="text-neutral-500">Email</span>
+                  <span className="max-w-[170px] break-words text-right text-neutral-900">
+                    {customerDisplayEmail ?? "No email"}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3 text-xs">
+                  <span className="text-neutral-500">Phone</span>
+                  <span className="max-w-[170px] break-words text-right text-neutral-900">
+                    {customerDisplayPhone ?? "No phone"}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3 text-xs">
+                  <span className="text-neutral-500">Address</span>
+                  <span className="max-w-[170px] break-words text-right text-neutral-900">
+                    {customerDisplayAddress ?? "No address"}
+                  </span>
+                </div>
               </div>
+            </div>
+            {!customerProfile ? (
+              <p className="mt-3 text-xs text-neutral-500">Customer profile is not linked yet.</p>
             ) : null}
           </div>
 
           <div className="mb-6">
-            <div className="mb-2 flex items-center gap-2">
-              <UserRound className="h-4 w-4 text-neutral-400" />
-              <h4 className="text-xs font-medium text-neutral-600">Ownership</h4>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-600">Category</label>
-                <div className="flex gap-2">
-                  <Input
-                    value={categoryInput}
-                    onChange={(event) => setCategoryInput(event.target.value)}
-                    placeholder="General"
-                    disabled={ticketUpdating}
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={ticketUpdating}
-                    onClick={() => {
-                      void onTicketPatch({ category: categoryInput.trim() });
-                    }}
-                  >
-                    <Save className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              {currentUser?.role_name === "lead_admin" ? (
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-neutral-600">Assigned user</label>
-                  <div className="flex gap-2">
-                    <select
-                      className="h-9 flex-1 rounded-md border border-neutral-200 bg-white px-3 text-sm"
-                      value={selectedAssigneeId}
-                      onChange={(event) => setSelectedAssigneeId(event.target.value)}
-                      disabled={ticketUpdating}
-                    >
-                      <option value="">Unassigned</option>
-                      {assigneeOptions.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.display_name} ({user.email})
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={ticketUpdating}
-                      onClick={() => {
-                        void onTicketPatch({ assignedUserId: selectedAssigneeId || null });
-                      }}
-                    >
-                      <Save className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ) : ticket.assigned_user_name ? (
-                <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
-                  Assigned to {ticket.assigned_user_name}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mb-6">
-            <h4 className="text-xs font-medium text-neutral-600 mb-2">Metadata</h4>
-            <div className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-              {metadataEntries.length > 0 ? (
-                metadataEntries.map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-xs gap-4">
-                    <span className="text-neutral-600">{key}:</span>
-                    <span className="text-neutral-900 text-right">{String(value)}</span>
-                  </div>
-                ))
-              ) : (
-                <span className="text-xs text-neutral-500">No metadata</span>
-              )}
-            </div>
-            <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-neutral-600">Edit JSON</label>
-              <Textarea
-                rows={8}
-                className="font-mono text-xs"
-                value={metadataInput}
-                onChange={(event) => setMetadataInput(event.target.value)}
-                disabled={ticketUpdating}
-              />
-              {metadataError ? <p className="mt-2 text-xs text-red-600">{metadataError}</p> : null}
-              <div className="mt-2 flex justify-end">
-                <Button size="sm" variant="outline" disabled={ticketUpdating} onClick={() => void saveMetadata()}>
-                  Save Metadata
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-medium text-neutral-600 mb-2">Recent Activity</h4>
-            <div className="space-y-3">
-              <div className="text-xs">
-                <p className="text-neutral-600 mb-1">Ticket created</p>
-                <p className="text-neutral-500">{new Date(ticket.created_at).toLocaleString()}</p>
-              </div>
-              <div className="text-xs">
-                <p className="text-neutral-600 mb-1">Last updated</p>
-                <p className="text-neutral-500">{new Date(ticket.updated_at).toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6">
             <h4 className="mb-2 text-xs font-medium text-neutral-600">Interaction History</h4>
             <div className="space-y-2">
               {interactionHistoryRows.length === 0 ? (
@@ -3140,7 +3561,7 @@ function TicketDetail({
                 </div>
               ) : (
                 interactionHistoryRows.map((historyItem) => {
-                  const isCurrentTicket = historyItem.ticketId === ticket.id;
+                  const isCurrentTicket = historyItem.ticketId === activeTimelineTicketIdValue;
                   return (
                     <button
                       key={historyItem.ticketId}
@@ -3152,8 +3573,10 @@ function TicketDetail({
                           : "border-neutral-200 bg-white hover:bg-neutral-50"
                       )}
                       onClick={() => {
-                        if (isCurrentTicket) {
-                          conversationScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                        pendingTimelineFocusTicketIdRef.current = historyItem.ticketId;
+                        pendingTimelineFocusBehaviorRef.current = "smooth";
+                        if (historyItem.ticketId === ticket.id) {
+                          scrollTimelineToTicketId(historyItem.ticketId, "smooth");
                           return;
                         }
                         onSelectHistoryTicket(historyItem.ticketId);
@@ -3190,8 +3613,243 @@ function TicketDetail({
               )}
             </div>
           </div>
+
+          <div className="mb-6">
+            <div className="mb-2 flex items-center gap-2">
+              <Tag className="h-4 w-4 text-neutral-400" />
+              <h4 className="text-xs font-medium text-neutral-600">Tags</h4>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {ticket.tags.length > 0 ? (
+                ticket.tags.map((tag) => (
+                  <div
+                    key={tag}
+                    className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-1.5 py-0.5 text-[10px]"
+                  >
+                    <span>{tag}</span>
+                    <button
+                      type="button"
+                      className="text-neutral-400 transition-colors hover:text-neutral-900"
+                      onClick={() => {
+                        void onRemoveTag(tag);
+                      }}
+                      disabled={ticketUpdating}
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <span className="text-xs text-neutral-500">No tags</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                className="h-7 text-[11px]"
+                value={newTag}
+                onChange={(event) => setNewTag(event.target.value)}
+                placeholder="Add tag"
+                disabled={ticketUpdating}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px]"
+                disabled={ticketUpdating || !newTag.trim()}
+                onClick={() => {
+                  void addTag(newTag);
+                }}
+              >
+                Add
+              </Button>
+            </div>
+            {tagSuggestions.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {tagSuggestions.map((candidate) => (
+                  <Button
+                    key={candidate.id}
+                    variant="outline"
+                    size="sm"
+                    className="h-5 px-2 text-[10px]"
+                    onClick={() => {
+                      void addTag(candidate.name);
+                    }}
+                  >
+                    {candidate.name}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mb-6">
+            <div className="mb-2 flex items-center gap-2">
+              <UserRound className="h-4 w-4 text-neutral-400" />
+              <h4 className="text-xs font-medium text-neutral-600">Ownership</h4>
+            </div>
+            {currentUser?.role_name === "lead_admin" ? (
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-neutral-600">Assigned user</label>
+                <select
+                  className="h-8 w-full rounded-md border border-neutral-200 bg-white px-3 text-[11px]"
+                  value={selectedAssigneeId}
+                  onChange={async (event) => {
+                    const nextAssigneeId = event.target.value;
+                    setSelectedAssigneeId(nextAssigneeId);
+                    if (nextAssigneeId === (ticket.assigned_user_id ?? "")) {
+                      return;
+                    }
+                    const success = await onTicketPatch({ assignedUserId: nextAssigneeId || null });
+                    if (!success) {
+                      setSelectedAssigneeId(ticket.assigned_user_id ?? "");
+                    }
+                  }}
+                  disabled={ticketUpdating}
+                >
+                  <option value="">Unassigned</option>
+                  {assigneeOptions.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.display_name} ({user.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-neutral-500">Assigned user</p>
+                <p className="mt-1 text-[11px] text-neutral-700">{ticket.assigned_user_name ?? "Unassigned"}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="mb-6">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h4 className="text-xs font-medium text-neutral-600">Metadata</h4>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={openMetadataEditor}
+              >
+                Edit Metadata
+              </Button>
+            </div>
+            <div className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+              {metadataEntries.length > 0 ? (
+                metadataEntries.map(([key, value]) => (
+                  <div key={key} className="flex justify-between gap-4 text-xs">
+                    <span className="text-neutral-600">{key}:</span>
+                    <span className="text-right text-neutral-900">{String(value)}</span>
+                  </div>
+                ))
+              ) : (
+                <span className="text-xs text-neutral-500">No metadata</span>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="mb-2 text-xs font-medium text-neutral-600">Recent Activity</h4>
+            <div className="space-y-3">
+              <div className="text-xs">
+                <p className="mb-1 text-neutral-600">Ticket created</p>
+                <p className="text-neutral-500">{new Date(ticket.created_at).toLocaleString()}</p>
+              </div>
+              <div className="text-xs">
+                <p className="mb-1 text-neutral-600">Last updated</p>
+                <p className="text-neutral-500">{new Date(ticket.updated_at).toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+
+      <Dialog open={customerEditorOpen} onOpenChange={setCustomerEditorOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update Info</DialogTitle>
+            <DialogDescription>Update the linked customer profile for this conversation.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Name</label>
+              <Input
+                value={customerDisplayNameInput}
+                onChange={(event) => setCustomerDisplayNameInput(event.target.value)}
+                placeholder="Customer name"
+                disabled={customerProfileUpdating || !customerProfile}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Primary email</label>
+              <Input
+                value={customerPrimaryEmailInput}
+                onChange={(event) => setCustomerPrimaryEmailInput(event.target.value)}
+                placeholder="customer@example.com"
+                disabled={customerProfileUpdating || !customerProfile}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Primary phone</label>
+              <Input
+                value={customerPrimaryPhoneInput}
+                onChange={(event) => setCustomerPrimaryPhoneInput(event.target.value)}
+                placeholder="+15551234567"
+                disabled={customerProfileUpdating || !customerProfile}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Address</label>
+              <Textarea
+                rows={3}
+                value={customerAddressInput}
+                onChange={(event) => setCustomerAddressInput(event.target.value)}
+                placeholder="Customer address"
+                disabled={customerProfileUpdating || !customerProfile}
+              />
+            </div>
+            {customerProfileError ? <p className="text-xs text-red-600">{customerProfileError}</p> : null}
+          </div>
+          <DialogFooter>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={customerProfileUpdating || !customerProfile || !customerProfileDirty}
+              onClick={() => {
+                void saveCustomerProfile();
+              }}
+            >
+              <Save className="h-3.5 w-3.5" />
+              {customerProfileUpdating ? "Saving..." : "Save Profile"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={metadataEditorOpen} onOpenChange={setMetadataEditorOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Metadata</DialogTitle>
+            <DialogDescription>Adjust the raw ticket metadata JSON for this conversation.</DialogDescription>
+          </DialogHeader>
+          <div>
+            <Textarea
+              rows={12}
+              className="font-mono text-xs"
+              value={metadataInput}
+              onChange={(event) => setMetadataInput(event.target.value)}
+              disabled={ticketUpdating}
+            />
+            {metadataError ? <p className="mt-2 text-xs text-red-600">{metadataError}</p> : null}
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" disabled={ticketUpdating} onClick={() => void saveMetadata()}>
+              Save Metadata
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <HistoryModal
         open={showHistory}
@@ -3232,47 +3890,7 @@ function ConversationMessageItem({
     (message.whatsapp_status ?? "").toLowerCase() === "failed";
 
   if (message.channel === "email") {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="mb-3 flex items-start gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-medium text-blue-700">
-            {message.from.name.charAt(0)}
-          </div>
-          <div className="flex-1">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-sm font-medium">{message.from.name}</span>
-              {message.from.email ? (
-                <span className="text-xs text-neutral-500">{message.from.email}</span>
-              ) : null}
-              <Badge variant="outline" className="text-xs">
-                Email
-              </Badge>
-            </div>
-            <p className="text-xs text-neutral-500">{formatDateRelative(message.timestamp)}</p>
-          </div>
-        </div>
-
-        <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">{message.body}</div>
-
-        {attachments.length > 0 ? (
-          <div className="mt-4 space-y-2 border-t border-neutral-200 pt-3">
-            {attachments.map((attachment) => (
-              <a
-                key={attachment.id}
-                href={`/api/attachments/${attachment.id}`}
-                className="flex items-center gap-3 rounded-lg border border-neutral-200 px-3 py-2 transition-colors hover:bg-neutral-50"
-              >
-                <Paperclip className="h-4 w-4 text-neutral-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium text-neutral-900">{attachment.filename}</p>
-                  <p className="text-xs text-neutral-500">{formatFileSize(attachment.sizeBytes)}</p>
-                </div>
-              </a>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
+    return <EmailThreadGroup messages={[message]} />;
   }
 
   if (message.channel === "whatsapp") {
@@ -3280,10 +3898,10 @@ function ConversationMessageItem({
       <div className={cn("flex", message.direction === "outbound" ? "justify-end" : "justify-start")}>
         <div
           className={cn(
-            "max-w-[70%] rounded-lg p-3",
+            "max-w-[88%] rounded-lg p-3",
             message.direction === "outbound"
-              ? "bg-blue-500 text-white"
-              : "border border-neutral-200 bg-white"
+              ? "border border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-50"
+              : "border border-green-300 bg-white text-neutral-900 dark:border-green-500/70 dark:bg-neutral-950 dark:text-neutral-50"
           )}
         >
           <div className="mb-1 flex items-center gap-2">
@@ -3293,8 +3911,8 @@ function ConversationMessageItem({
               className={cn(
                 "text-xs",
                 message.direction === "outbound"
-                  ? "border-blue-300 text-blue-100"
-                  : "border-neutral-300"
+                  ? "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-200"
+                  : "border-green-300 text-green-700 dark:border-green-500/70 dark:text-green-200"
               )}
             >
               WhatsApp
@@ -3305,8 +3923,8 @@ function ConversationMessageItem({
                 className={cn(
                   "text-xs",
                   message.direction === "outbound"
-                    ? "border-blue-300 text-blue-100"
-                    : "border-neutral-300"
+                    ? "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-200"
+                    : "border-green-300 text-green-700 dark:border-green-500/70 dark:text-green-200"
                 )}
               >
                 Template
@@ -3325,8 +3943,8 @@ function ConversationMessageItem({
                   className={cn(
                     "flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors",
                     message.direction === "outbound"
-                      ? "border-blue-300/60 bg-blue-400/20 text-blue-50 hover:bg-blue-400/30"
-                      : "border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100"
+                      ? "border-neutral-200 bg-transparent text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800/60"
+                      : "border-green-200 bg-transparent text-green-700 hover:bg-green-50 dark:border-green-500/60 dark:text-green-200 dark:hover:bg-green-500/10"
                   )}
                 >
                   <Paperclip className="h-3 w-3" />
@@ -3368,7 +3986,7 @@ function ConversationMessageItem({
 
   if (message.channel === "voice") {
     return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="w-full rounded-lg border border-neutral-200 bg-white p-4">
         <div className="mb-3 flex items-start gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
             <PhoneCall className="h-4 w-4 text-green-700" />
@@ -3382,7 +4000,10 @@ function ConversationMessageItem({
                 Voice
               </Badge>
               {message.call_status ? (
-                <Badge variant="outline" className="bg-green-50 text-xs">
+                <Badge
+                  variant="outline"
+                  className="border-green-200 bg-green-50 text-xs text-green-700 dark:border-green-500/40 dark:bg-green-500/10 dark:text-green-200"
+                >
                   {toTitleCase(message.call_status)}
                 </Badge>
               ) : null}
@@ -3446,4 +4067,67 @@ function ConversationMessageItem({
   }
 
   return null;
+}
+
+function EmailThreadGroup({ messages }: { messages: ConversationMessage[] }) {
+  return (
+    <div className="w-full rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="space-y-4">
+        {messages.map((message, index) => (
+          <div
+            key={message.id}
+            className={cn(index > 0 ? "border-t border-neutral-200 pt-4" : undefined)}
+          >
+            <EmailThreadMessage message={message} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmailThreadMessage({ message }: { message: ConversationMessage }) {
+  const attachments = message.attachments ?? [];
+
+  return (
+    <>
+      <div className="mb-3 flex items-start gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-medium text-blue-700">
+          {message.from.name.charAt(0)}
+        </div>
+        <div className="flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-sm font-medium">{message.from.name}</span>
+            {message.from.email ? (
+              <span className="text-xs text-neutral-500">{message.from.email}</span>
+            ) : null}
+            <Badge variant="outline" className="text-xs">
+              Email
+            </Badge>
+          </div>
+          <p className="text-xs text-neutral-500">{formatDateRelative(message.timestamp)}</p>
+        </div>
+      </div>
+
+      <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">{message.body}</div>
+
+      {attachments.length > 0 ? (
+        <div className="mt-4 space-y-2 border-t border-neutral-200 pt-3">
+          {attachments.map((attachment) => (
+            <a
+              key={attachment.id}
+              href={`/api/attachments/${attachment.id}`}
+              className="flex items-center gap-3 rounded-lg border border-neutral-200 px-3 py-2 transition-colors hover:bg-neutral-50"
+            >
+              <Paperclip className="h-4 w-4 text-neutral-400" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-neutral-900">{attachment.filename}</p>
+                <p className="text-xs text-neutral-500">{formatFileSize(attachment.sizeBytes)}</p>
+              </div>
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
 }
