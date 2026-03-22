@@ -4,7 +4,9 @@ This directory is intentionally compact and only keeps implementation-critical d
 
 ## Keep
 - `docs/figma-ai-crm-ui-target-state.md`
-  - Current frontend target-state spec for the CRM/support UI
+  - Frontend product/UX target-state spec for the CRM/support UI
+- `docs/frontend-ui-system.md`
+  - Current frontend implementation guide: styling, shared interaction rules, branding, theme, demo mode, and route ownership
 - `docs/email-setup.md`
   - Current email runbook and payload contracts (`/api/email/inbound`, `/api/email/send`, `/api/tickets/create`)
 - `docs/platform-support-requirements.md`
@@ -39,5 +41,4 @@ Removed as stale/duplicative:
 - `docs/ui-overhaul-roadmap.md`
 - `EXPLORATION_FINDINGS.md`
 - `Landing/`
-- `New 6esk UI/src/imports/crm-ui-overhaul-brief.md`
-- `New 6esk UI/src/imports/figma-ai-crm-ui-target-state.md`
+- `New 6esk UI/`

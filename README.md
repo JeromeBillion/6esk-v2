@@ -42,3 +42,5 @@ Visit `http://localhost:3000/api/health`.
 ## Docs
 
 Primary docs index: `docs/README.md`.
+
+Frontend UI/design-system guide: `docs/frontend-ui-system.md`.

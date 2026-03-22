@@ -8,6 +8,12 @@ Treat this as the source of truth for the new frontend direction, even where the
 
 This is not a summary of current implementation. It is the desired end state.
 
+Implementation note as of 2026-03-22:
+
+- the live app has already absorbed this redesign direction
+- current implementation details now live in `docs/frontend-ui-system.md`
+- do not use archived prototype folders as the frontend source of truth
+
 ## Visual Direction
 
 The design direction is:
@@ -194,4 +200,3 @@ The redesign should emphasize:
 When the frontend implementation is updated later, the code should be made to align to this target state.
 
 If the current implementation differs, this document wins for the redesign direction.
-
