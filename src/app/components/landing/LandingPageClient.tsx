@@ -34,29 +34,6 @@ type LandingPageClientProps = {
   workspaceHref: string;
 };
 
-const OPERATING_LAWS = [
-  {
-    number: "01",
-    title: "Context first",
-    body: "Every ticket, call, message, transcript, and follow-up sits in one operational thread instead of hiding in separate tools."
-  },
-  {
-    number: "02",
-    title: "Operator density",
-    body: "Three-pane workspaces, fast bulk actions, saved views, and decision surfaces designed for teams handling real queue volume."
-  },
-  {
-    number: "03",
-    title: "Assist, not interrupt",
-    body: "AI drafts, merge review cues, and signal routing appear inside the workflow where an agent can act immediately."
-  },
-  {
-    number: "04",
-    title: "Operational visibility",
-    body: "Analytics and admin controls sit beside the work itself, so delivery issues and support performance stay visible."
-  }
-] as const;
-
 const CHANNELS = [
   {
     name: "Email",
@@ -417,44 +394,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             <div data-reveal className={styles.platformVisual}>
               <CardStackShowcase items={showcaseItems} />
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.statementSection}>
-        <div className={styles.container}>
-          <div data-reveal className={styles.sectionLabel}>
-            <span className={landingMonoFont.className}>Operational philosophy</span>
-          </div>
-          <div className={styles.statementGrid}>
-            <div data-reveal className={styles.statementLead}>
-              <h2 className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
-                Calm on the surface.
-                <br />
-                Relentless underneath.
-              </h2>
-            </div>
-            <div data-reveal className={styles.statementBody}>
-              <p>
-                The landing experience keeps the same design intent as the product itself: editorial restraint,
-                dense information, and motion that clarifies instead of decorating. The interface should feel like
-                an operations room, not a toy.
-              </p>
-            </div>
-          </div>
-          <div className={styles.lawGrid}>
-            {OPERATING_LAWS.map((law, index) => (
-              <article
-                key={law.number}
-                data-reveal
-                className={styles.lawCard}
-                style={{ transitionDelay: `${index * 90}ms` }}
-              >
-                <p className={`${styles.lawNumber} ${landingMonoFont.className}`}>{law.number}</p>
-                <h3 className={styles.lawTitle}>{law.title}</h3>
-                <p className={styles.lawBody}>{law.body}</p>
-              </article>
-            ))}
           </div>
         </div>
       </section>
