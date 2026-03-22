@@ -3,6 +3,8 @@
 This directory is intentionally compact and only keeps implementation-critical docs.
 
 ## Keep
+- `docs/figma-ai-crm-ui-target-state.md`
+  - Current frontend target-state spec for the CRM/support UI
 - `docs/email-setup.md`
   - Current email runbook and payload contracts (`/api/email/inbound`, `/api/email/send`, `/api/tickets/create`)
 - `docs/platform-support-requirements.md`
@@ -21,7 +23,9 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Staging E2E harness for CRM call orchestration checklist validation
 - `docs/privacy-retention-policy.md`
   - Voice consent source-of-truth and recording/transcript retention wording
-- `Venus-Voice.md` (repo root)
+- `docs/voice-pilot-runbook.md`
+  - Current pilot/rollout checklist for the voice feature
+- `docs/Venus-Voice.md`
   - Venus-to-6esk AI voice integration contract and safety model
 
 ## Culled
@@ -31,3 +35,9 @@ Removed as stale/duplicative:
 - `docs/PRD.md`
 - `docs/R&D.md`
 - `docs/roadmap.md`
+- `docs/VOICE-075-pilot-runbook.md`
+- `docs/ui-overhaul-roadmap.md`
+- `EXPLORATION_FINDINGS.md`
+- `Landing/`
+- `New 6esk UI/src/imports/crm-ui-overhaul-brief.md`
+- `New 6esk UI/src/imports/figma-ai-crm-ui-target-state.md`
