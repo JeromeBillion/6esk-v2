@@ -44,20 +44,35 @@ const CHANNELS = [
   {
     name: "Email",
     Icon: Mail,
-    body: "Shared inbox control with thread context, macros, attachment handling, and forward/reply flows built into the same operator surface.",
-    points: ["Threaded history", "Attachment previews", "Pinned and routed mail", "Mailbox switching"]
+    body: "Full inbox control - threads, attachments, macros, and routing - without ever leaving the queue.",
+    points: [
+      "Never lose a prior exchange",
+      "Open files without leaving the ticket",
+      "Route to the right agent, automatically",
+      "Manage multiple inboxes from one view"
+    ]
   },
   {
     name: "WhatsApp",
     Icon: MessageCircleMore,
-    body: "Delivery-aware messaging with resend logic, templates, 24-hour window handling, and customer context beside every exchange.",
-    points: ["Sent, delivered, read states", "Template flows", "Media support", "Window-aware actions"]
+    body: "WhatsApp that actually respects the 24-hour window. Templates, delivery states, and full customer context - built in, not bolted on.",
+    points: [
+      "Know exactly when a message lands",
+      "Send compliant WhatsApp messages in one click",
+      "Share media and files in the same thread",
+      "Never miss the 24hr reply window"
+    ]
   },
   {
     name: "Voice",
     Icon: PhoneCall,
-    body: "Live call status, recordings, transcripts, outcomes, and outbound-call workflows that stay attached to the customer record.",
-    points: ["Call progress states", "Transcripts and recordings", "Outcome tracking", "Outbound selection flows"]
+    body: "Every call logged, transcribed, and tied to the customer record automatically. Nothing lives in a separate dialer ever again.",
+    points: [
+      "See live call status across the team",
+      "Full call record attached to every ticket",
+      "Log what happened - without a follow-up task",
+      "Place outbound calls from the same operator view"
+    ]
   }
 ] as const;
 
@@ -543,13 +558,13 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
           </div>
           <div className={styles.channelsHeader}>
             <h2 data-reveal className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
-              Where customers speak,
+              Every channel they use.
               <br />
-              your team is already present.
+              One place you never leave.
             </h2>
             <p data-reveal className={styles.sectionIntro}>
-              Each channel keeps its native behaviors, but the operator never loses context. That is the entire
-              point of an omnichannel support product.
+              Each channel behaves exactly as customers expect. Your team never loses the thread - regardless of
+              where the conversation started.
             </p>
           </div>
           <div className={styles.channelGrid}>
