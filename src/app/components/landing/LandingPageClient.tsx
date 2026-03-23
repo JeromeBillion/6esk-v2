@@ -49,7 +49,8 @@ const CHANNELS = [
       "Never lose a prior exchange",
       "Open files without leaving the ticket",
       "Route to the right agent, automatically",
-      "Manage multiple inboxes from one view"
+      "Manage multiple inboxes from one view",
+      "AI drafts, routes, and resolves without a human in the loop"
     ]
   },
   {
@@ -60,7 +61,8 @@ const CHANNELS = [
       "Know exactly when a message lands",
       "Send compliant WhatsApp messages in one click",
       "Share media and files in the same thread",
-      "Never miss the 24hr reply window"
+      "Never miss the 24hr reply window",
+      "AI manages the 24-hour window and sends templates automatically"
     ]
   },
   {
@@ -71,7 +73,19 @@ const CHANNELS = [
       "See live call status across the team",
       "Full call record attached to every ticket",
       "Log what happened - without a follow-up task",
-      "Place outbound calls from the same operator view"
+      "Place outbound calls from the same operator view",
+      "AI transcribes, summarises, and logs outcomes in real time"
+    ]
+  },
+  {
+    name: "AI Agent",
+    Icon: Bot,
+    body: "Not a chatbot. A full operator. 6esk's AI reads context, drafts replies, sends messages, escalates when needed, and closes tickets — across every channel, autonomously.",
+    points: [
+      "Autonomous end-to-end resolution",
+      "Cross-channel context awareness",
+      "Human escalation with full handoff notes",
+      "Full audit trail on every AI action"
     ]
   }
 ] as const;
@@ -554,17 +568,17 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         </div>
         <div className={styles.container}>
           <div data-reveal className={styles.sectionLabel}>
-            <span className={landingMonoFont.className}>One customer, one chronology</span>
+            <span className={landingMonoFont.className}>AI-NATIVE. EVERY CHANNEL.</span>
           </div>
           <div className={styles.channelsHeader}>
             <h2 data-reveal className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
               Every channel they use.
               <br />
-              One place you never leave.
+              One AI that never leaves.
             </h2>
             <p data-reveal className={styles.sectionIntro}>
-              Each channel behaves exactly as customers expect. Your team never loses the thread - regardless of
-              where the conversation started.
+              Each channel behaves exactly as customers expect. Your AI handles it end-to-end — or steps back the
+              moment you want in.
             </p>
           </div>
           <div className={styles.channelGrid}>
