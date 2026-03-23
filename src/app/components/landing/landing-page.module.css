@@ -88,6 +88,19 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
+.brandWordmarkLockup {
+  display: inline-flex;
+  align-items: center;
+  width: clamp(4.85rem, 8vw, 6.85rem);
+}
+
+.brandWordmarkImage {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+
 .brandWordmark {
   font-size: 1.55rem;
   line-height: 1;
@@ -128,8 +141,9 @@
 
 .hero {
   position: relative;
-  min-height: 100vh;
-  padding: 8.5rem 2rem 4.5rem;
+  min-height: 100svh;
+  height: 100svh;
+  padding: 0 2rem;
   background: #000;
   color: #fff;
   overflow: hidden;
@@ -161,16 +175,65 @@
 .heroInner {
   position: relative;
   z-index: 2;
-  max-width: 1180px;
+  max-width: 1320px;
+  height: 100%;
   margin: 0 auto;
+  padding-top: 6.6rem;
+}
+
+.heroVisualWrap {
+  position: absolute;
+  left: -16rem;
+  bottom: -1rem;
+  display: flex;
+  align-items: end;
+  justify-content: flex-start;
+  width: min(60vw, 48rem);
+  min-height: 0;
+  pointer-events: none;
+}
+
+.heroVisualFrame {
+  position: relative;
+  width: 100%;
+  transform: translateX(-8.35rem) scale(1.52);
+  transform-origin: bottom left;
+}
+
+.heroVisualFrame::before {
+  content: "";
+  position: absolute;
+  inset: 10% 8% 2%;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18), transparent 70%);
+  filter: blur(28px);
+  opacity: 0.9;
+}
+
+.heroVisual {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  object-position: bottom left;
+  filter: drop-shadow(0 46px 84px rgba(0, 0, 0, 0.42));
+}
+
+.heroContent {
+  position: relative;
+  z-index: 3;
   display: grid;
-  gap: 1.4rem;
+  gap: 0.9rem;
+  width: min(100%, 56rem);
+  margin-left: auto;
+  padding-top: 1.2rem;
+  padding-right: 0.5rem;
 }
 
 .heroEyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 0.85rem;
   color: rgba(255, 255, 255, 0.54);
   font-size: 0.72rem;
   letter-spacing: 0.22em;
@@ -178,56 +241,118 @@
 }
 
 .heroEyebrow::before {
-  content: "";
-  width: 2rem;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.28);
+  display: none;
 }
 
 .heroHeadlineGroup {
+  position: relative;
   display: grid;
-  gap: 0.3rem;
+  gap: 0.08rem;
+  width: min(100%, 54rem);
+  max-width: 100%;
+  margin-left: auto;
+  padding-right: min(16vw, 11rem);
 }
 
 .heroLine {
   margin: 0;
-  font-size: clamp(4rem, 9vw, 8.8rem);
-  line-height: 0.93;
+  width: max-content;
+  max-width: 100%;
+  font-size: clamp(4.3rem, 7.3vw, 8.25rem);
+  line-height: 0.92;
   letter-spacing: -0.05em;
   color: #fff;
+  white-space: nowrap;
+}
+
+.heroLineTop {
+  font-size: clamp(4.55rem, 7.6vw, 8.45rem);
+  margin-left: clamp(0.8rem, 1.9vw, 2.4rem);
+}
+
+.heroLineMiddle {
+  font-size: clamp(4.25rem, 7vw, 7.8rem);
+  margin-top: -0.72rem;
+  margin-left: clamp(-0.8rem, -0.8vw, -0.2rem);
+}
+
+.heroLineBottom {
+  font-size: clamp(4.35rem, 7.1vw, 7.95rem);
+  margin-top: -0.95rem;
+  margin-left: clamp(4.1rem, 5.8vw, 6.8rem);
 }
 
 .heroLineMuted {
   color: #fff;
 }
 
+.heroHeadlineSupport {
+  position: absolute;
+  top: 0.1rem;
+  right: clamp(-8.5rem, -7vw, -4rem);
+  width: min(14.8rem, 26vw);
+  padding: 0.9rem 0.95rem;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(18px);
+}
+
+.heroHeadlineSupportLabel {
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.64rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.heroHeadlineSupportRows {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.heroHeadlineSupportRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.15rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.82rem;
+}
+
+.heroHeadlineSupportIcon {
+  width: 0.82rem;
+  height: 0.82rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.heroHeadlineSupportState {
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: right;
+}
+
 .heroBodyRow {
   display: grid;
-  grid-template-columns: minmax(0, 640px) minmax(220px, 320px);
-  align-items: end;
-  gap: 2rem;
+  gap: 0.35rem;
+  width: min(100%, 32rem);
+  margin-top: 0.2rem;
+  margin-left: auto;
 }
 
 .heroBody {
   margin: 0;
   font-size: 1.05rem;
-  line-height: 1.9;
+  line-height: 1.75;
   color: rgba(255, 255, 255, 0.72);
-  max-width: 42rem;
-}
-
-.heroCapsule {
-  justify-self: end;
-  max-width: 18rem;
-  padding: 1rem 1.1rem;
-  border-radius: 1.35rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 0.72rem;
-  line-height: 1.8;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  max-width: 32rem;
 }
 
 .heroActions,
@@ -235,6 +360,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.9rem;
+}
+
+.heroActions {
+  width: min(100%, 35rem);
+  margin-left: auto;
+  margin-right: clamp(-2.15rem, -2.4vw, -0.9rem);
+  margin-top: 0.15rem;
 }
 
 .primaryAction,
@@ -291,7 +423,10 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
-  margin-top: 1rem;
+  width: min(100%, 38rem);
+  margin-left: auto;
+  margin-right: clamp(-2.15rem, -2.4vw, -0.9rem);
+  margin-top: 0.4rem;
 }
 
 .heroMetricCard {
@@ -315,6 +450,129 @@
   line-height: 1.5;
 }
 
+.bookingDialog {
+  max-width: 34rem !important;
+  gap: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 1.55rem !important;
+  background: linear-gradient(180deg, rgba(11, 13, 17, 0.98), rgba(8, 10, 14, 0.98)) !important;
+  color: #fff !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(22px);
+}
+
+.bookingDialogHeader {
+  gap: 0.75rem !important;
+  padding-right: 2rem;
+}
+
+.bookingDialogTitle {
+  font-size: clamp(2rem, 4vw, 3rem) !important;
+  line-height: 0.96 !important;
+  letter-spacing: -0.05em !important;
+  color: #fff !important;
+}
+
+.bookingDialogDescription {
+  color: rgba(255, 255, 255, 0.62) !important;
+  font-size: 0.96rem !important;
+  line-height: 1.75 !important;
+}
+
+.bookingForm {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.bookingField {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.bookingFieldLabel {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.66rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.bookingRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.bookingInput {
+  width: 100%;
+  min-height: 3rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  padding: 0.85rem 0.95rem;
+  font-size: 0.96rem;
+  line-height: 1.4;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.bookingInput::placeholder {
+  color: rgba(255, 255, 255, 0.36);
+}
+
+.bookingInput:focus {
+  border-color: rgba(90, 131, 255, 0.8);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 3px rgba(90, 131, 255, 0.14);
+}
+
+.bookingActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+}
+
+.bookingPrimaryAction,
+.bookingGhostAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.95rem;
+  padding: 0.85rem 1.2rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.bookingPrimaryAction {
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: #fff;
+  color: #0b0d11;
+}
+
+.bookingGhostAction {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.bookingPrimaryAction:hover,
+.bookingGhostAction:hover {
+  transform: translateY(-1px);
+}
+
 .scrollHint {
   position: absolute;
   right: 2rem;
@@ -331,6 +589,71 @@
 
 .scrollIcon {
   animation: float 2.8s ease-in-out infinite;
+}
+
+.startupRibbonSection {
+  position: relative;
+  z-index: 2;
+  margin-top: -1px;
+  padding: 1.15rem 0 1.3rem;
+  background:
+    linear-gradient(180deg, rgba(3, 4, 7, 0.98), rgba(9, 11, 15, 0.98)),
+    radial-gradient(circle at top center, rgba(90, 131, 255, 0.08), transparent 42%);
+  color: #fff;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.startupRibbonLabel {
+  display: block;
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.startupMarqueeShell {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+}
+
+.startupMarquee {
+  position: relative;
+  overflow: hidden;
+  padding-inline: 1.75rem;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, black 2%, black 98%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, black 2%, black 98%, transparent 100%);
+}
+
+.startupMarqueeTrack {
+  display: flex;
+  align-items: center;
+  gap: 2.3rem;
+  width: max-content;
+  min-width: 100%;
+  animation: startupMarquee 30s linear infinite;
+  padding-right: 2.3rem;
+}
+
+.startupMarqueeItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.3rem;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: clamp(1.15rem, 1.9vw, 1.85rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.startupMarqueeDot {
+  width: 0.34rem;
+  height: 0.34rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(90, 131, 255, 0.86);
+  box-shadow: 0 0 0 5px rgba(90, 131, 255, 0.08);
 }
 
 .container,
@@ -804,6 +1127,15 @@
   }
 }
 
+@keyframes startupMarquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
 @media (max-width: 1120px) {
   .lawGrid,
   .channelGrid,
@@ -815,8 +1147,7 @@
   .metricsGrid,
   .statementGrid,
   .channelsHeader,
-  .metricsHeader,
-  .heroBodyRow {
+  .metricsHeader {
     grid-template-columns: 1fr;
   }
 
@@ -825,12 +1156,58 @@
     top: 0;
   }
 
-  .heroCapsule {
-    justify-self: start;
+  .heroVisualWrap {
+    width: min(54vw, 38rem);
+    left: -9rem;
+    bottom: -0.75rem;
+  }
+
+  .heroContent {
+    width: min(100%, 45rem);
+  }
+
+  .heroLine {
+    font-size: clamp(3.95rem, 7vw, 6.7rem);
+  }
+
+  .heroLineTop {
+    font-size: clamp(4.1rem, 7.2vw, 6.8rem);
+    margin-left: 0.8rem;
+  }
+
+  .heroLineMiddle {
+    font-size: clamp(3.8rem, 6.5vw, 6.2rem);
+    margin-left: -0.2rem;
+  }
+
+  .heroLineBottom {
+    font-size: clamp(3.95rem, 6.7vw, 6.35rem);
+    margin-left: 2.5rem;
+  }
+
+  .heroHeadlineGroup {
+    width: min(100%, 48rem);
+    padding-right: 9.75rem;
+  }
+
+  .heroHeadlineSupport {
+    top: 0.15rem;
+    right: -3rem;
+    width: 12.2rem;
   }
 
   .heroMetrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-right: -0.75rem;
+  }
+
+  .bookingDialog {
+    max-width: 31rem !important;
+  }
+
+  .startupMarqueeTrack,
+  .startupMarqueeItem {
+    gap: 1.65rem;
   }
 }
 
@@ -844,7 +1221,9 @@
   }
 
   .hero {
-    padding: 7rem 1rem 3.5rem;
+    height: auto;
+    min-height: 100svh;
+    padding: 0 1rem 3rem;
   }
 
   .container,
@@ -852,8 +1231,74 @@
     width: min(100%, calc(100% - 1rem));
   }
 
+  .heroVisualWrap {
+    position: relative;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    justify-content: center;
+    margin-top: 1rem;
+  }
+
+  .heroVisualFrame {
+    width: min(100%, 22rem);
+    transform: none;
+  }
+
+  .heroInner {
+    display: grid;
+    align-content: start;
+    gap: 1.5rem;
+    padding-top: 6.6rem;
+  }
+
+  .heroContent {
+    width: 100%;
+    margin-left: 0;
+    padding-top: 0;
+    padding-right: 0;
+  }
+
+  .heroHeadlineGroup {
+    gap: 0.25rem;
+    width: 100%;
+    margin-left: 0;
+    padding-right: 0;
+  }
+
   .heroLine {
     font-size: clamp(3.2rem, 15vw, 4.8rem);
+    width: auto;
+    max-width: none;
+    text-wrap: balance;
+    white-space: normal;
+  }
+
+  .heroLineTop,
+  .heroLineMiddle,
+  .heroLineBottom {
+    margin-left: 0;
+    margin-top: 0;
+    max-width: none;
+  }
+
+  .heroBodyRow,
+  .heroActions,
+  .heroMetrics {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .bookingRow {
+    grid-template-columns: 1fr;
+  }
+
+  .bookingActions {
+    flex-direction: column-reverse;
+  }
+
+  .heroHeadlineSupport {
+    display: none;
   }
 
   .heroMetrics,
@@ -881,6 +1326,19 @@
   .sequenceSection,
   .ctaSection {
     padding: 5rem 0;
+  }
+
+  .startupRibbonSection {
+    padding: 1rem 0 1.15rem;
+  }
+
+  .startupMarqueeTrack,
+  .startupMarqueeItem {
+    gap: 1.1rem;
+  }
+
+  .startupMarqueeItem {
+    font-size: 0.96rem;
   }
 
   .lawCard,

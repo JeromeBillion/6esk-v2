@@ -2,10 +2,11 @@
 
 import Image, { type StaticImageData } from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BarChart3,
+  Bot,
   ChevronDown,
   Mail,
   MessageCircleMore,
@@ -15,6 +16,13 @@ import {
   Workflow
 } from "lucide-react";
 import BrandMark from "@/app/components/BrandMark";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from "@/app/workspace/components/ui/dialog";
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
 import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
@@ -28,6 +36,8 @@ import supportLightSnapshot from "@/app/assets/landing-snapshots/support-light.p
 import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
+import heroVisual from "@/app/assets/1000130704-removebg-preview.png";
+import landingWordmark from "@/app/assets/landing-wordmark.png";
 
 type LandingPageClientProps = {
   authenticated: boolean;
@@ -56,16 +66,34 @@ const CHANNELS = [
 ] as const;
 
 const PLATFORM_METRICS = [
-  { label: "Avg. first response", value: 18, suffix: " min" },
+  { label: "Avg. first response", value: 1, suffix: " min" },
   { label: "Resolution rate", value: 94, suffix: "%" },
   { label: "CSAT signal", value: 4.8, suffix: "/5" },
   { label: "Channels unified", value: 3, suffix: "" }
+] as const;
+
+const SOUTH_AFRICA_STARTUPS = [
+  "Yoco",
+  "Stitch",
+  "Paymenow",
+  "Omniscient",
+  "TurnStay",
+  "Sticitt",
+  "UsPlus",
+  "Tata-iMali"
 ] as const;
 
 export default function LandingPageClient({ authenticated, workspaceHref }: LandingPageClientProps) {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [navScrolled, setNavScrolled] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [bookCallOpen, setBookCallOpen] = useState(false);
+  const [bookingForm, setBookingForm] = useState({
+    email: "",
+    phone: "",
+    date: "",
+    time: ""
+  });
 
   useEffect(() => {
     const root = document.documentElement;
@@ -163,6 +191,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
   }, []);
 
   const workspaceLabel = authenticated ? "Open Workspace" : "Sign In";
+  const navCtaLabel = "Sign In";
 
   const showcaseItems = useMemo(
     () => [
@@ -274,6 +303,32 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
     []
   );
 
+  const startupMarqueeItems = useMemo(
+    () => [...SOUTH_AFRICA_STARTUPS, ...SOUTH_AFRICA_STARTUPS],
+    []
+  );
+
+  const handleBookingFieldChange = (field: keyof typeof bookingForm, value: string) => {
+    setBookingForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleBookCallSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const subject = "Book a call - 6esk";
+    const body = [
+      "Booking request",
+      "",
+      `Email: ${bookingForm.email}`,
+      `Phone: ${bookingForm.phone}`,
+      `Preferred date: ${bookingForm.date}`,
+      `Preferred time: ${bookingForm.time}`
+    ].join("\n");
+
+    window.location.href = `mailto:support@6esk.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setBookCallOpen(false);
+  };
+
   return (
     <div ref={pageRef} className={`${styles.page} ${landingBodyFont.className}`}>
       <div className={styles.progressRail} aria-hidden="true">
@@ -282,8 +337,14 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
 
       <nav className={`${styles.nav} ${navScrolled ? styles.navScrolled : ""}`}>
         <a href="#top" className={styles.brandLockup}>
-          <span className={styles.brandMark}>
-            <BrandMark size={28} priority />
+          <span className={styles.brandWordmarkLockup}>
+            <Image
+              src={landingWordmark}
+              alt="6esk"
+              priority
+              className={styles.brandWordmarkImage}
+              sizes="(max-width: 780px) 132px, 170px"
+            />
           </span>
         </a>
         <div className={styles.navLinks}>
@@ -291,7 +352,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
           <a href="#platform">Platform</a>
           <a href="#metrics">Metrics</a>
           <Link href={workspaceHref} className={styles.navCta}>
-            {workspaceLabel}
+            {navCtaLabel}
           </Link>
         </div>
       </nav>
@@ -309,49 +370,92 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         <div className={styles.heroNoise} />
         <div className={styles.heroGradient} />
         <div className={styles.heroInner}>
-          <div data-reveal className={styles.heroEyebrow}>
-            <span className={landingMonoFont.className}>Support CRM for teams who operate in public</span>
-          </div>
-          <div className={styles.heroHeadlineGroup}>
-            <BlurRevealText
-              text="Every signal."
-              className={`${styles.heroLine} ${landingDisplayFont.className}`}
-              delayMs={110}
-            />
-            <BlurRevealText
-              text="One operating surface."
-              className={`${styles.heroLine} ${styles.heroLineMuted} ${landingDisplayFont.className}`}
-              delayMs={115}
-            />
-          </div>
-          <div data-reveal className={styles.heroBodyRow}>
-            <p className={styles.heroBody}>
-              6esk brings email, WhatsApp, voice, AI drafts, merge reviews, analytics, and admin recovery
-              into a single product surface for support teams that cannot afford drift.
-            </p>
-            <div className={styles.heroCapsule}>
-              <span className={landingMonoFont.className}>Built for dense queues, high context, clean action.</span>
+          <div data-reveal className={styles.heroVisualWrap}>
+            <div className={styles.heroVisualFrame}>
+              <Image
+                src={heroVisual}
+                alt="6esk hero product mark"
+                priority
+                className={styles.heroVisual}
+                sizes="(max-width: 780px) 82vw, (max-width: 1120px) 54vw, 46vw"
+              />
             </div>
           </div>
-          <div data-reveal className={styles.heroActions}>
-            <a href="#platform" className={styles.primaryAction}>
-              Explore the product
-              <ArrowRight className={styles.inlineIcon} />
-            </a>
-            <Link href={workspaceHref} className={styles.secondaryAction}>
-              {workspaceLabel}
-            </Link>
-          </div>
-          <div data-reveal className={styles.heroMetrics}>
-            {PLATFORM_METRICS.map((metric) => (
-              <div key={metric.label} className={styles.heroMetricCard}>
-                <div className={`${styles.heroMetricValue} ${landingDisplayFont.className}`}>
-                  {metric.value}
-                  {metric.suffix}
+          <div className={styles.heroContent}>
+            <div data-reveal className={styles.heroEyebrow}>
+              <span className={landingMonoFont.className}>Support CRM for teams running every customer channel</span>
+            </div>
+            <div data-reveal className={styles.heroHeadlineSupport} aria-hidden="true">
+              <div className={`${styles.heroHeadlineSupportLabel} ${landingMonoFont.className}`}>Live context</div>
+              <div className={styles.heroHeadlineSupportRows}>
+                <div className={styles.heroHeadlineSupportRow}>
+                  <Mail className={styles.heroHeadlineSupportIcon} />
+                  <span>Email</span>
+                  <span className={`${styles.heroHeadlineSupportState} ${landingMonoFont.className}`}>threaded</span>
                 </div>
-                <div className={styles.heroMetricLabel}>{metric.label}</div>
+                <div className={styles.heroHeadlineSupportRow}>
+                  <MessageCircleMore className={styles.heroHeadlineSupportIcon} />
+                  <span>WhatsApp</span>
+                  <span className={`${styles.heroHeadlineSupportState} ${landingMonoFont.className}`}>live</span>
+                </div>
+                <div className={styles.heroHeadlineSupportRow}>
+                  <PhoneCall className={styles.heroHeadlineSupportIcon} />
+                  <span>Voice</span>
+                  <span className={`${styles.heroHeadlineSupportState} ${landingMonoFont.className}`}>recorded</span>
+                </div>
+                <div className={styles.heroHeadlineSupportRow}>
+                  <Bot className={styles.heroHeadlineSupportIcon} />
+                  <span>AI Agent</span>
+                  <span className={`${styles.heroHeadlineSupportState} ${landingMonoFont.className}`}>FULL-AUTO</span>
+                </div>
               </div>
-            ))}
+            </div>
+            <div className={styles.heroHeadlineGroup}>
+              <BlurRevealText
+                text="Every signal."
+                className={`${styles.heroLine} ${styles.heroLineTop} ${landingDisplayFont.className}`}
+                delayMs={110}
+                wrap={false}
+              />
+              <BlurRevealText
+                text="One operating"
+                className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineMiddle} ${landingDisplayFont.className}`}
+                delayMs={115}
+                wrap={false}
+              />
+              <BlurRevealText
+                text="surface."
+                className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineBottom} ${landingDisplayFont.className}`}
+                delayMs={120}
+                wrap={false}
+              />
+            </div>
+            <div data-reveal className={styles.heroBodyRow}>
+              <p className={styles.heroBody}>
+                Email, WhatsApp, Voice, and Tickets in one operating queue. Run it yourself, hand
+                routine work to AI, or split control without losing context.
+              </p>
+            </div>
+            <div data-reveal className={styles.heroActions}>
+              <Link href={workspaceHref} className={styles.primaryAction}>
+                See the unified workspace
+                <ArrowRight className={styles.inlineIcon} />
+              </Link>
+              <button type="button" className={styles.secondaryAction} onClick={() => setBookCallOpen(true)}>
+                Book a call
+              </button>
+            </div>
+            <div data-reveal className={styles.heroMetrics}>
+              {PLATFORM_METRICS.map((metric) => (
+                <div key={metric.label} className={styles.heroMetricCard}>
+                  <div className={`${styles.heroMetricValue} ${landingDisplayFont.className}`}>
+                    {metric.value}
+                    {metric.suffix}
+                  </div>
+                  <div className={styles.heroMetricLabel}>{metric.label}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className={styles.scrollHint}>
@@ -360,12 +464,100 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         </div>
       </section>
 
+      <Dialog open={bookCallOpen} onOpenChange={setBookCallOpen}>
+        <DialogContent className={styles.bookingDialog}>
+          <DialogHeader className={styles.bookingDialogHeader}>
+            <DialogTitle className={`${styles.bookingDialogTitle} ${landingDisplayFont.className}`}>
+              Book a call
+            </DialogTitle>
+            <DialogDescription className={styles.bookingDialogDescription}>
+              Leave your email, phone number, and preferred date and time. We&apos;ll open your email
+              client with the request prefilled.
+            </DialogDescription>
+          </DialogHeader>
+          <form className={styles.bookingForm} onSubmit={handleBookCallSubmit}>
+            <label className={styles.bookingField}>
+              <span className={`${styles.bookingFieldLabel} ${landingMonoFont.className}`}>Email</span>
+              <input
+                type="email"
+                required
+                value={bookingForm.email}
+                onChange={(event) => handleBookingFieldChange("email", event.target.value)}
+                className={styles.bookingInput}
+                placeholder="you@company.com"
+              />
+            </label>
+            <label className={styles.bookingField}>
+              <span className={`${styles.bookingFieldLabel} ${landingMonoFont.className}`}>Phone number</span>
+              <input
+                type="tel"
+                required
+                value={bookingForm.phone}
+                onChange={(event) => handleBookingFieldChange("phone", event.target.value)}
+                className={styles.bookingInput}
+                placeholder="+27 00 000 0000"
+              />
+            </label>
+            <div className={styles.bookingRow}>
+              <label className={styles.bookingField}>
+                <span className={`${styles.bookingFieldLabel} ${landingMonoFont.className}`}>Preferred date</span>
+                <input
+                  type="date"
+                  required
+                  value={bookingForm.date}
+                  onChange={(event) => handleBookingFieldChange("date", event.target.value)}
+                  className={styles.bookingInput}
+                />
+              </label>
+              <label className={styles.bookingField}>
+                <span className={`${styles.bookingFieldLabel} ${landingMonoFont.className}`}>Preferred time</span>
+                <input
+                  type="time"
+                  required
+                  value={bookingForm.time}
+                  onChange={(event) => handleBookingFieldChange("time", event.target.value)}
+                  className={styles.bookingInput}
+                />
+              </label>
+            </div>
+            <div className={styles.bookingActions}>
+              <button type="button" className={styles.bookingGhostAction} onClick={() => setBookCallOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={styles.bookingPrimaryAction}>
+                Send booking request
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <section className={styles.startupRibbonSection}>
+        <div className={styles.containerWide}>
+          <div data-reveal className={styles.startupRibbonLabel}>
+            <span className={landingMonoFont.className}>South African startups that trust us</span>
+          </div>
+        </div>
+        <div data-reveal className={styles.startupMarqueeShell}>
+          <div className={styles.startupMarquee} aria-label="Selected South African startup names">
+            <div className={styles.startupMarqueeTrack}>
+              {startupMarqueeItems.map((name, index) => (
+                <span key={`${name}-${index}`} className={styles.startupMarqueeItem}>
+                  <span>{name}</span>
+                  <span className={styles.startupMarqueeDot} aria-hidden="true" />
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="platform" className={styles.platformSection}>
         <div className={styles.containerWide}>
           <div className={styles.platformGrid}>
             <div className={styles.platformCopy}>
               <div data-reveal className={styles.sectionLabel}>
-                <span className={landingMonoFont.className}>Platform surfaces</span>
+                <span className={landingMonoFont.className}>BUILT TO STAY OUT OF YOUR WAY</span>
               </div>
               <h2 data-reveal className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
                 The product does not scatter.
@@ -373,21 +565,20 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
                 It stacks.
               </h2>
               <p data-reveal className={styles.sectionIntro}>
-                Support, mail, analytics, and admin all feel like different rooms inside the same building. The
-                rotating stack on the right previews the exact product surfaces that keep operators moving.
+                Every tool you need is one click away - not buried in a tab you forgot existed.
               </p>
               <div data-reveal className={styles.featureBullets}>
                 <div>
                   <Workflow size={18} />
-                  <span>Merge reviews stay close to the queue, not buried in an admin graveyard.</span>
+                  <span>Review and merge tickets without leaving the queue. No tab-switching, no lost context.</span>
                 </div>
                 <div>
                   <Sparkles size={18} />
-                  <span>AI suggestions appear inside the reply box, where the next action actually happens.</span>
+                  <span>AI drafts the reply - or sends it. Full auto across every channel, or just a nudge when you need it. You decide how much it does.</span>
                 </div>
                 <div>
                   <ShieldCheck size={18} />
-                  <span>Outbox failures, retries, and audit trails remain visible to operators who own the system.</span>
+                  <span>Nothing sends silently. Failures, retries, and every sent message are visible to whoever runs the system.</span>
                 </div>
               </div>
             </div>

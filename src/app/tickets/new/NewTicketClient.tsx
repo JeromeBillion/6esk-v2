@@ -19,7 +19,7 @@ const CATEGORY_OPTIONS = ["payments", "markets", "account", "kyc", "security", "
 export default function NewTicketClient() {
   const [availableTags, setAvailableTags] = useState<TagRecord[]>([]);
   const [form, setForm] = useState({
-    contactMode: "email" as "email" | "call",
+    contactMode: "email" as "email" | "whatsapp" | "call",
     to: "",
     toPhone: "",
     subject: "",
@@ -32,7 +32,7 @@ export default function NewTicketClient() {
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<EncodedAttachment[]>([]);
   const [createdTicketId, setCreatedTicketId] = useState<string | null>(null);
-  const [createdChannel, setCreatedChannel] = useState<"email" | "voice">("email");
+  const [createdChannel, setCreatedChannel] = useState<"email" | "whatsapp" | "voice">("email");
   const [feedback, setFeedback] = useState<{
     open: boolean;
     tone: "success" | "error" | "info";
@@ -69,6 +69,7 @@ export default function NewTicketClient() {
       .filter((tag) => !existing.has(tag.name.toLowerCase()))
       .slice(0, 8);
   }, [availableTags, parsedTagList]);
+  const activeAttachmentCount = form.contactMode === "call" ? 0 : attachments.length;
 
   function addTag(name: string) {
     const normalized = name.trim().toLowerCase();
@@ -83,7 +84,22 @@ export default function NewTicketClient() {
     if (files.length === 0) return;
     try {
       const encoded = await encodeAttachments(files);
-      setAttachments((previous) => [...previous, ...encoded]);
+      if (form.contactMode === "whatsapp") {
+        const firstAttachment = encoded[0] ?? null;
+        if (!firstAttachment) return;
+        setAttachments([firstAttachment]);
+        if (encoded.length > 1 || attachments.length > 0) {
+          setFeedback({
+            open: true,
+            tone: "info",
+            title: "WhatsApp attachment limited",
+            message: "Only one attachment is supported for the first WhatsApp message. Kept the most recent file.",
+            autoCloseMs: 1800
+          });
+        }
+      } else {
+        setAttachments((previous) => [...previous, ...encoded]);
+      }
     } catch {
       setFeedback({
         open: true,
@@ -129,7 +145,7 @@ export default function NewTicketClient() {
       tags: parsedTagList,
       metadata,
       attachments:
-        form.contactMode === "email"
+        form.contactMode !== "call"
           ? attachments.map((attachment) => ({
               filename: attachment.filename,
               contentType: attachment.contentType,
@@ -141,7 +157,11 @@ export default function NewTicketClient() {
     try {
       const response = await createTicket(payload);
       const nextCreatedChannel =
-        response.channel === "voice" || form.contactMode === "call" ? "voice" : "email";
+        response.channel === "voice"
+          ? "voice"
+          : response.channel === "whatsapp" || form.contactMode === "whatsapp"
+            ? "whatsapp"
+            : "email";
       setCreatedTicketId(typeof response.ticketId === "string" ? response.ticketId : null);
       setCreatedChannel(nextCreatedChannel);
       setStatus("idle");
@@ -160,7 +180,9 @@ export default function NewTicketClient() {
         title:
           nextCreatedChannel === "voice"
             ? "Ticket created and call queued"
-            : "Ticket created and email sent",
+            : nextCreatedChannel === "whatsapp"
+              ? "Ticket created and WhatsApp queued"
+              : "Ticket created and email sent",
         message: "The ticket is now available in Support.",
         autoCloseMs: 1500
       });
@@ -184,14 +206,20 @@ export default function NewTicketClient() {
             <div>
               <h1 className="mb-1 text-2xl font-semibold">Create Ticket</h1>
               <p className="text-sm text-neutral-600">
-                Start an email support ticket or initiate a standalone outbound-call ticket from the same form.
+                Start an email support ticket, open a WhatsApp conversation, or initiate a standalone outbound-call ticket from the same form.
               </p>
             </div>
             <Card className="min-w-56">
               <CardContent className="grid grid-cols-2 gap-4 pt-6 text-sm">
                 <div>
                   <p className="text-xs text-neutral-500">Mode</p>
-                  <p className="font-semibold text-neutral-900">{form.contactMode === "call" ? "Voice" : "Email"}</p>
+                  <p className="font-semibold text-neutral-900">
+                    {form.contactMode === "call"
+                      ? "Voice"
+                      : form.contactMode === "whatsapp"
+                        ? "WhatsApp"
+                        : "Email"}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-neutral-500">Category</p>
@@ -203,7 +231,7 @@ export default function NewTicketClient() {
                 </div>
                 <div>
                   <p className="text-xs text-neutral-500">Attachments</p>
-                  <p className="font-semibold text-neutral-900">{attachments.length}</p>
+                  <p className="font-semibold text-neutral-900">{activeAttachmentCount}</p>
                 </div>
               </CardContent>
             </Card>
@@ -225,12 +253,18 @@ export default function NewTicketClient() {
                       onChange={(event) =>
                         setForm((prev) => ({
                           ...prev,
-                          contactMode: event.target.value === "call" ? "call" : "email",
+                          contactMode:
+                            event.target.value === "call"
+                              ? "call"
+                              : event.target.value === "whatsapp"
+                                ? "whatsapp"
+                                : "email",
                         }))
                       }
                       className="h-11 rounded-md border border-neutral-200 bg-white px-3 text-sm"
                     >
                       <option value="email">Email</option>
+                      <option value="whatsapp">WhatsApp</option>
                       <option value="call">Initiate Call</option>
                     </select>
                   </label>
@@ -243,6 +277,19 @@ export default function NewTicketClient() {
                         required
                         value={form.to}
                         onChange={(event) => setForm((prev) => ({ ...prev, to: event.target.value }))}
+                      />
+                    </label>
+                  ) : form.contactMode === "whatsapp" ? (
+                    <label className="grid gap-2">
+                      WhatsApp to
+                      <Input
+                        type="tel"
+                        required
+                        placeholder="+15551234567"
+                        value={form.toPhone}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, toPhone: event.target.value }))
+                        }
                       />
                     </label>
                   ) : (
@@ -316,11 +363,22 @@ export default function NewTicketClient() {
 
                 <div className="grid gap-2 lg:col-span-2">
                   <label>
-                    {form.contactMode === "call" ? "Call reason" : "Description"}
+                    {form.contactMode === "call"
+                      ? "Call reason (optional)"
+                      : form.contactMode === "whatsapp"
+                        ? "Initial message"
+                        : "Description"}
                   </label>
                   <Textarea
                     rows={7}
-                    required={form.contactMode === "email"}
+                    required={form.contactMode === "email" || (form.contactMode === "whatsapp" && attachments.length === 0)}
+                    placeholder={
+                      form.contactMode === "call"
+                        ? "Optional summary for the agent placing the call."
+                        : form.contactMode === "whatsapp"
+                          ? "Write the first WhatsApp message."
+                          : undefined
+                    }
                     value={form.description}
                     onChange={(event) =>
                       setForm((prev) => ({ ...prev, description: event.target.value }))
@@ -328,7 +386,7 @@ export default function NewTicketClient() {
                   />
                 </div>
 
-                {form.contactMode === "email" ? (
+                {form.contactMode !== "call" ? (
                   <div className="grid gap-3 lg:col-span-2">
                     <label className="grid gap-2">
                       Attachments
@@ -348,6 +406,11 @@ export default function NewTicketClient() {
                           </span>
                         </label>
                       </div>
+                      {form.contactMode === "whatsapp" ? (
+                        <p className="m-0 text-xs text-neutral-500">
+                          WhatsApp supports one attachment for the first outbound message.
+                        </p>
+                      ) : null}
                     </label>
                     {attachments.length > 0 ? (
                       <div className="space-y-2">
@@ -399,14 +462,21 @@ export default function NewTicketClient() {
                       ? "Creating..."
                       : form.contactMode === "call"
                         ? "Create ticket and queue call"
-                        : "Create ticket and send email"}
+                        : form.contactMode === "whatsapp"
+                          ? "Create ticket and queue WhatsApp"
+                          : "Create ticket and send email"}
                   </Button>
                 </div>
 
                 {createdTicketId ? (
                   <div className="flex items-center gap-2 lg:col-span-2">
                     <Badge variant="outline">
-                      {createdChannel === "voice" ? "Voice" : "Email"} {createdTicketId}
+                      {createdChannel === "voice"
+                        ? "Voice"
+                        : createdChannel === "whatsapp"
+                          ? "WhatsApp"
+                          : "Email"}{" "}
+                      {createdTicketId}
                     </Badge>
                     <Button asChild type="button" variant="ghost" size="sm">
                       <Link href={`/tickets?query=${encodeURIComponent(createdTicketId)}`}>

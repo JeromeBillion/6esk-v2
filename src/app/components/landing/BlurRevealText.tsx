@@ -8,6 +8,7 @@ type BlurRevealTextProps = {
   animateBy?: "words" | "letters";
   delayMs?: number;
   direction?: "top" | "bottom";
+  wrap?: boolean;
 };
 
 export default function BlurRevealText({
@@ -15,7 +16,8 @@ export default function BlurRevealText({
   className,
   animateBy = "words",
   delayMs = 120,
-  direction = "top"
+  direction = "top",
+  wrap = true
 }: BlurRevealTextProps) {
   const ref = useRef<HTMLParagraphElement | null>(null);
   const [visible, setVisible] = useState(false);
@@ -45,7 +47,12 @@ export default function BlurRevealText({
     <p
       ref={ref}
       className={className}
-      style={{ display: "flex", flexWrap: "wrap", gap: animateBy === "words" ? "0.22em" : "0.02em" }}
+      style={{
+        display: "flex",
+        flexWrap: wrap ? "wrap" : "nowrap",
+        whiteSpace: wrap ? undefined : "nowrap",
+        gap: animateBy === "words" ? "0.22em" : "0.02em"
+      }}
     >
       {segments.map((segment, index) => (
         <span

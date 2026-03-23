@@ -14,7 +14,6 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
-import { sendTicketReply } from "@/server/email/replies";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 import type { PredictionProfile } from "@/server/integrations/prediction-profile";
 import { normalizeCallPhone, queueOutboundCall } from "@/server/calls/service";
@@ -27,9 +26,11 @@ import {
   evaluateVoiceCallPolicy,
   getHumanVoicePolicyFromEnv
 } from "@/server/calls/policy";
+import { queueWhatsAppSend } from "@/server/whatsapp/send";
+import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 
 const createTicketSchema = z.object({
-  contactMode: z.enum(["email", "call"]).optional(),
+  contactMode: z.enum(["email", "whatsapp", "call"]).optional(),
   to: z.string().email().optional(),
   from: z.string().email().optional(),
   toPhone: z.string().optional().nullable(),
@@ -172,7 +173,12 @@ export async function POST(request: Request) {
     data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
   const descriptionText = data.description?.replace(/\s+/g, " ").trim() ?? "";
   const previewText = descriptionText.slice(0, 200);
-  const contactMode = data.contactMode === "call" ? "call" : "email";
+  const contactMode =
+    data.contactMode === "call"
+      ? "call"
+      : data.contactMode === "whatsapp"
+        ? "whatsapp"
+        : "email";
 
   // Support agents creating tickets from CRM send outbound first contact.
   if (sessionUser) {
@@ -284,6 +290,105 @@ export async function POST(request: Request) {
       });
     }
 
+    if (contactMode === "whatsapp") {
+      const toPhone = normalizeCallPhone(data.toPhone ?? null);
+      if (!toPhone) {
+        return Response.json({ error: "Valid WhatsApp phone number is required" }, { status: 400 });
+      }
+      if (!descriptionText && !(data.attachments?.length ?? 0)) {
+        return Response.json(
+          { error: "WhatsApp message or attachment is required" },
+          { status: 400 }
+        );
+      }
+
+      const customerResolution = await resolveOrCreateCustomerForInbound({
+        inboundPhone: toPhone
+      });
+      const whatsappTicketMetadata = {
+        source: "manual_outbound_whatsapp",
+        createdByUserId: sessionUser.id,
+        toPhone,
+        ...(data.metadata ?? {})
+      } as Record<string, unknown>;
+      await syncVoiceConsentFromMetadata({
+        metadata: whatsappTicketMetadata,
+        customerId: customerResolution?.customerId ?? null,
+        fallbackPhone: toPhone,
+        defaultSource: "manual_outbound_whatsapp",
+        consentTermsVersion: process.env.CALLS_CONSENT_TERMS_VERSION ?? null,
+        context: {
+          route: "/api/tickets/create",
+          contactMode: "whatsapp",
+          actorUserId: sessionUser.id
+        }
+      });
+
+      const ticketId = await createTicket({
+        mailboxId: mailbox.id,
+        customerId: customerResolution?.customerId ?? null,
+        requesterEmail: `whatsapp:${toPhone}`,
+        subject: data.subject,
+        category,
+        metadata: whatsappTicketMetadata
+      });
+
+      await recordTicketEvent({
+        ticketId,
+        eventType: "ticket_created",
+        actorUserId: sessionUser.id
+      });
+
+      if (inferredTags.length) {
+        await addTagsToTicket(ticketId, inferredTags);
+        await recordTicketEvent({
+          ticketId,
+          eventType: "tags_assigned",
+          actorUserId: sessionUser.id,
+          data: { tags: inferredTags }
+        });
+      }
+
+      const queuedMessage = await queueWhatsAppSend({
+        ticketId,
+        to: toPhone,
+        text: descriptionText || undefined,
+        attachments: data.attachments ?? null,
+        actorUserId: sessionUser.id,
+        origin: "human"
+      });
+
+      const threadId = queuedMessage.messageId ?? null;
+      const ticketEvent = buildAgentEvent({
+        eventType: "ticket.created",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: previewText || data.subject,
+        threadId
+      });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+
+      if (queuedMessage.messageId) {
+        const messageEvent = buildAgentEvent({
+          eventType: "ticket.message.created",
+          ticketId,
+          messageId: queuedMessage.messageId,
+          mailboxId: mailbox.id,
+          excerpt: previewText || data.subject,
+          threadId
+        });
+        await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+      }
+
+      void deliverPendingAgentEvents().catch(() => {});
+      return Response.json({
+        status: "created",
+        ticketId,
+        messageId: queuedMessage.messageId ?? null,
+        channel: "whatsapp"
+      });
+    }
+
     const toEmail = normalizeAddressList(data.to ?? data.from ?? "")[0];
     if (!toEmail) {
       return Response.json({ error: "Email to is required" }, { status: 400 });
@@ -291,90 +396,36 @@ export async function POST(request: Request) {
     if (!descriptionText) {
       return Response.json({ error: "Description is required" }, { status: 400 });
     }
-    const customerResolution = await resolveOrCreateCustomerForInbound({
-      inboundEmail: toEmail
-    });
     const emailTicketMetadata = {
       source: "manual_outbound",
       createdByUserId: sessionUser.id,
       ...(data.metadata ?? {})
     } as Record<string, unknown>;
-    await syncVoiceConsentFromMetadata({
-      metadata: emailTicketMetadata,
-      customerId: customerResolution?.customerId ?? null,
-      fallbackEmail: toEmail,
-      defaultSource: "manual_outbound",
-      consentTermsVersion: process.env.CALLS_CONSENT_TERMS_VERSION ?? null,
-      context: {
-        route: "/api/tickets/create",
-        contactMode: "email",
-        actorUserId: sessionUser.id
-      }
-    });
-
-    const ticketId = await createTicket({
-      mailboxId: mailbox.id,
-      customerId: customerResolution?.customerId ?? null,
-      requesterEmail: toEmail,
-      subject: data.subject,
-      category,
-      metadata: emailTicketMetadata
-    });
-
-    await recordTicketEvent({
-      ticketId,
-      eventType: "ticket_created",
-      actorUserId: sessionUser.id
-    });
-
-    if (inferredTags.length) {
-      await addTagsToTicket(ticketId, inferredTags);
-      await recordTicketEvent({
-        ticketId,
-        eventType: "tags_assigned",
-        actorUserId: sessionUser.id,
-        data: { tags: inferredTags }
-      });
-    }
-
-    const sendResult = await sendTicketReply({
-      ticketId,
+    const created = await createOutboundEmailTicket({
+      actorUserId: sessionUser.id,
+      toEmail,
       subject: data.subject,
       text: descriptionText,
       html: data.descriptionHtml ?? null,
+      category,
+      tags: inferredTags,
+      metadata: emailTicketMetadata,
       attachments: data.attachments ?? null,
-      actorUserId: sessionUser.id,
-      origin: "human"
+      contextRoute: "/api/tickets/create"
     });
 
-    const messageId = sendResult.messageId ?? null;
-    const threadId = messageId;
-    const ticketEvent = buildAgentEvent({
-      eventType: "ticket.created",
-      ticketId,
-      mailboxId: mailbox.id,
-      excerpt: previewText,
-      threadId
-    });
-    await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
-
-    if (messageId) {
-      const messageEvent = buildAgentEvent({
-        eventType: "ticket.message.created",
-        ticketId,
-        messageId,
-        mailboxId: mailbox.id,
-        excerpt: previewText,
-        threadId
-      });
-      await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
-    }
-
-    void deliverPendingAgentEvents().catch(() => {});
+    const ticketId = created.ticketId;
+    const messageId = created.messageId;
     return Response.json({ status: "created", ticketId, messageId });
   }
 
   // External platform callers create inbound tickets (end-user initiated).
+  if (contactMode !== "email") {
+    return Response.json(
+      { error: "Only email ticket creation is supported for external callers" },
+      { status: 400 }
+    );
+  }
   const fromEmail = normalizeAddressList(data.from ?? data.to ?? "")[0];
   if (!fromEmail) {
     return Response.json({ error: "Invalid sender address" }, { status: 400 });

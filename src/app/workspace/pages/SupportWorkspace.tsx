@@ -12,6 +12,7 @@ import {
   Search,
   Filter,
   Plus,
+  Mail,
   ChevronDown,
   MoreHorizontal,
   Clock,
@@ -41,6 +42,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "../components/ui/dropdown-menu";
 import {
@@ -68,6 +73,7 @@ import {
   getTicketCallOptions,
   getTicketCustomerHistory,
   getTicketDetails,
+  createBulkEmailTickets,
   createSupportSavedView,
   deleteSupportSavedView,
   listTickets,
@@ -89,6 +95,7 @@ import {
 import { listActiveWhatsAppTemplates, type ActiveWhatsAppTemplate } from "@/app/lib/api/whatsapp";
 import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { listTags, listUsers, type AdminUserRecord, type TagRecord } from "@/app/lib/api/admin";
+import { useDemoMode } from "@/app/lib/demo-mode";
 import { encodeAttachments, formatFileSize } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
 
@@ -111,7 +118,7 @@ type TicketView = {
   has_voice: boolean;
   created_at: string;
   updated_at: string;
-  preview: string;
+  preview: string | null;
   unread: boolean;
 };
 
@@ -532,9 +539,13 @@ function mapTicket(ticket: ApiTicket): TicketView {
     has_voice: Boolean(ticket.has_voice),
     created_at: ticket.created_at,
     updated_at: ticket.updated_at,
-    preview: subject,
+    preview: null,
     unread: false
   };
+}
+
+function normalizeQueuePreviewValue(value: string | null | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function mapHistoryStatus(status: string): TicketStatusDisplay {
@@ -752,6 +763,7 @@ function mapTicketEvent(event: ApiTicketEvent): HistoryTicketEvent {
 export function SupportWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { demoModeEnabled } = useDemoMode();
   const paramsKey = searchParams.toString();
   const workspaceLayoutRef = useRef<HTMLDivElement | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
@@ -759,6 +771,7 @@ export function SupportWorkspace() {
   const [supportMacros, setSupportMacros] = useState<SupportMacro[]>([]);
   const [whatsAppTemplates, setWhatsAppTemplates] = useState<ActiveWhatsAppTemplate[]>([]);
   const [tickets, setTickets] = useState<TicketView[]>([]);
+  const [queueCounts, setQueueCounts] = useState({ all: 0, mine: 0 });
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [selectedTickets, setSelectedTickets] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -786,6 +799,11 @@ export function SupportWorkspace() {
   const [bulkAssigneeValue, setBulkAssigneeValue] = useState("__nochange");
   const [bulkAddTagsInput, setBulkAddTagsInput] = useState("");
   const [bulkRemoveTagsInput, setBulkRemoveTagsInput] = useState("");
+  const [bulkEmailOpen, setBulkEmailOpen] = useState(false);
+  const [bulkEmailSending, setBulkEmailSending] = useState(false);
+  const [bulkEmailSubject, setBulkEmailSubject] = useState("");
+  const [bulkEmailBody, setBulkEmailBody] = useState("");
+  const [bulkEmailAttachments, setBulkEmailAttachments] = useState<ReplyAttachment[]>([]);
 
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
   const [selectedTicketMessages, setSelectedTicketMessages] = useState<ConversationMessage[]>([]);
@@ -984,17 +1002,26 @@ export function SupportWorkspace() {
       setQueueError(null);
 
       try {
-        const nextTickets = (
-          await listTickets({
-            status: statusFilter === "all" ? undefined : (statusFilter as "open" | "pending" | "resolved" | "closed"),
-            priority: priorityFilter === "all" ? undefined : priorityFilter,
-            tag: tagFilter === "all" ? undefined : tagFilter,
-            channel: channelFilter === "all" ? undefined : channelFilter,
-            assigned: assignedMine ? "mine" : undefined,
-            query: searchQuery.trim() || undefined,
-            signal
-          })
-        ).map(mapTicket);
+        const baseFilters = {
+          status: statusFilter === "all" ? undefined : (statusFilter as "open" | "pending" | "resolved" | "closed"),
+          priority: priorityFilter === "all" ? undefined : priorityFilter,
+          tag: tagFilter === "all" ? undefined : tagFilter,
+          channel: channelFilter === "all" ? undefined : channelFilter,
+          query: searchQuery.trim() || undefined,
+          signal
+        } as const;
+
+        const [allQueueRows, mineQueueRows] = await Promise.all([
+          listTickets(baseFilters),
+          listTickets({ ...baseFilters, assigned: "mine" })
+        ]);
+
+        setQueueCounts({
+          all: allQueueRows.length,
+          mine: mineQueueRows.length
+        });
+
+        const nextTickets = (assignedMine ? mineQueueRows : allQueueRows).map(mapTicket);
         setTickets(nextTickets);
 
         setSelectedTickets((previous) => {
@@ -1161,6 +1188,52 @@ export function SupportWorkspace() {
     const matching = savedViews.find((view) => areSavedViewFiltersEqual(view.filters, currentFilters));
     setActiveSavedViewId(matching?.id ?? null);
   }, [currentFilters, savedViews]);
+
+  const activeSavedView = useMemo(
+    () => savedViews.find((view) => view.id === activeSavedViewId) ?? null,
+    [activeSavedViewId, savedViews]
+  );
+
+  const activeQueueFilters = useMemo(
+    () =>
+      [
+        statusFilter !== "all"
+          ? { key: "status" as const, label: `Status: ${toTitleCase(statusFilter)}` }
+          : null,
+        priorityFilter !== "all"
+          ? { key: "priority" as const, label: `Priority: ${toTitleCase(priorityFilter)}` }
+          : null,
+        channelFilter !== "all"
+          ? { key: "channel" as const, label: `Channel: ${toTitleCase(channelFilter)}` }
+          : null,
+        tagFilter !== "all" ? { key: "tag" as const, label: `Tag: ${tagFilter}` } : null
+      ].filter((value): value is { key: "status" | "priority" | "channel" | "tag"; label: string } => Boolean(value)),
+    [channelFilter, priorityFilter, statusFilter, tagFilter]
+  );
+
+  const clearQueueFilter = useCallback((key: "status" | "priority" | "channel" | "tag") => {
+    switch (key) {
+      case "status":
+        setStatusFilter("all");
+        return;
+      case "priority":
+        setPriorityFilter("all");
+        return;
+      case "channel":
+        setChannelFilter("all");
+        return;
+      case "tag":
+        setTagFilter("all");
+        return;
+    }
+  }, []);
+
+  const clearAllQueueFilters = useCallback(() => {
+    setStatusFilter("all");
+    setPriorityFilter("all");
+    setChannelFilter("all");
+    setTagFilter("all");
+  }, []);
 
   useEffect(() => {
     if (!selectedTicketId) {
@@ -1395,6 +1468,127 @@ export function SupportWorkspace() {
     selectedTickets
   ]);
 
+  const resetBulkEmailComposer = useCallback(() => {
+    setBulkEmailSubject("");
+    setBulkEmailBody("");
+    setBulkEmailAttachments([]);
+    setBulkEmailSending(false);
+  }, []);
+
+  const handleBulkEmailAttachmentChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      if (files.length === 0) return;
+
+      try {
+        const prepared = await encodeAttachments(files);
+        setBulkEmailAttachments((previous) => [...previous, ...prepared]);
+      } catch {
+        openFeedback({
+          tone: "error",
+          title: "Attachment error",
+          message: "Failed to read one or more files for the bulk email."
+        });
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [openFeedback]
+  );
+
+  const submitBulkEmail = useCallback(async () => {
+    const ticketIds = Array.from(selectedTickets);
+    if (ticketIds.length === 0) return;
+    if (!bulkEmailSubject.trim() || !bulkEmailBody.trim()) {
+      openFeedback({
+        tone: "info",
+        title: "Subject and message required",
+        message: "Add both a subject and an email body before sending."
+      });
+      return;
+    }
+    if (demoModeEnabled) {
+      openFeedback({
+        tone: "info",
+        title: "Live data required",
+        message: "Switch Sample Data off in Settings to send real bulk email tickets."
+      });
+      return;
+    }
+
+    setBulkEmailSending(true);
+    try {
+      const response = await createBulkEmailTickets({
+        ticketIds,
+        subject: bulkEmailSubject.trim(),
+        text: bulkEmailBody.trim(),
+        attachments: bulkEmailAttachments.map((attachment) => ({
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          contentBase64: attachment.contentBase64
+        }))
+      });
+
+      if (response.createdCount > 0) {
+        setBulkEmailOpen(false);
+        resetBulkEmailComposer();
+        setSelectedTickets(new Set());
+        await loadTickets();
+        if (selectedTicketId && ticketIds.includes(selectedTicketId)) {
+          await loadTicketDetails(selectedTicketId);
+        }
+      }
+
+      const firstIssue = response.results.find((result) => result.status !== "created" && result.detail)?.detail;
+      const summary = [
+        response.createdCount > 0
+          ? `Created ${response.createdCount} outbound email ticket${response.createdCount === 1 ? "" : "s"}.`
+          : "No outbound email tickets were created.",
+        response.skippedCount > 0
+          ? `Skipped ${response.skippedCount} selection${response.skippedCount === 1 ? "" : "s"}.`
+          : null,
+        response.failedCount > 0
+          ? `${response.failedCount} send${response.failedCount === 1 ? "" : "s"} failed.`
+          : null,
+        firstIssue ? `First issue: ${firstIssue}` : null
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      openFeedback({
+        tone:
+          response.createdCount === 0 ? "error" : response.status === "partial" ? "info" : "success",
+        title:
+          response.createdCount === 0
+            ? "Bulk email not sent"
+            : response.status === "partial"
+              ? "Bulk email partially sent"
+              : "Bulk email sent",
+        message: summary,
+        autoCloseMs: response.createdCount > 0 && response.status === "created" ? 1800 : undefined
+      });
+    } catch (error) {
+      openFeedback({
+        tone: "error",
+        title: "Bulk email failed",
+        message: error instanceof Error ? error.message : "Failed to create bulk email tickets."
+      });
+    } finally {
+      setBulkEmailSending(false);
+    }
+  }, [
+    bulkEmailAttachments,
+    bulkEmailBody,
+    bulkEmailSubject,
+    demoModeEnabled,
+    loadTicketDetails,
+    loadTickets,
+    openFeedback,
+    resetBulkEmailComposer,
+    selectedTicketId,
+    selectedTickets
+  ]);
+
   const updateTicket = useCallback(
     async (
       patch: Partial<{
@@ -1614,11 +1808,11 @@ export function SupportWorkspace() {
       <div ref={workspaceLayoutRef} className="h-full flex min-w-0">
         {/* Ticket Queue */}
         <div
-          className="shrink-0 border-r border-neutral-200 bg-white flex flex-col"
+          className="shrink-0 border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 flex flex-col"
           style={{ width: queuePaneWidth }}
         >
           {/* Header */}
-          <div className="border-b border-neutral-200 p-4 space-y-3">
+          <div className="border-b border-neutral-200 bg-white p-4 space-y-3 dark:border-neutral-800 dark:bg-neutral-950">
             <div className="flex items-center justify-between gap-3">
               <h1 className="text-lg font-semibold">Support</h1>
               <div className="flex items-center gap-2">
@@ -1661,9 +1855,8 @@ export function SupportWorkspace() {
               </div>
             </div>
 
-            {/* Search */}
             <div className="flex items-center gap-2">
-              <div className="relative flex-1">
+              <div className="relative min-w-0 flex-1">
                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
                 <Input
                   placeholder="Search tickets..."
@@ -1672,115 +1865,223 @@ export function SupportWorkspace() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              <Button size="sm" className="gap-2 shrink-0" onClick={() => router.push("/tickets/new")}>
-                <Plus className="w-4 h-4" />
-                New Ticket
-              </Button>
-            </div>
-
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Filter className="w-4 h-4" />
-                    Status: {statusFilter === 'all' ? 'All' : statusFilter}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setStatusFilter('all')}>All</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setStatusFilter('open')}>Open</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setStatusFilter('pending')}>
-                    Pending
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setStatusFilter('resolved')}>
-                    Resolved
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setStatusFilter('closed')}>
-                    Closed
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    Priority: {priorityFilter === "all" ? "All" : priorityFilter}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setPriorityFilter("all")}>All</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setPriorityFilter("low")}>Low</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setPriorityFilter("medium")}>Medium</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setPriorityFilter("high")}>High</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setPriorityFilter("urgent")}>Urgent</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    Channel: {channelFilter === "all" ? "All" : toTitleCase(channelFilter)}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setChannelFilter("all")}>All</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setChannelFilter("email")}>Email</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setChannelFilter("whatsapp")}>WhatsApp</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setChannelFilter("voice")}>Voice</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    Tag: {tagFilter === "all" ? "All" : tagFilter}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setTagFilter("all")}>All</DropdownMenuItem>
-                  {availableTags.map((tag) => (
-                    <DropdownMenuItem key={tag.id} onClick={() => setTagFilter(tag.name)}>
-                      {tag.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <Button
-                variant={assignedMine ? "default" : "outline"}
-                size="sm"
-                className="ml-auto"
-                onClick={() => setAssignedMine((previous) => !previous)}
-              >
-                {assignedMine ? "Assigned: Mine" : "Assigned: Any"}
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSavedViewsOpen(true)}
-              >
-                Saved Views{activeSavedViewId ? " • Active" : ""}
-              </Button>
-
-              {selectedTickets.size > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-neutral-600">{selectedTickets.size} selected</span>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setBulkActionsOpen(true)}
+                    className={cn(
+                      "h-7 rounded-[12px] px-3 text-[12px] font-medium shadow-none",
+                      activeQueueFilters.length > 0
+                        ? "border-blue-600 bg-blue-600 text-white hover:bg-blue-700 hover:text-white dark:border-blue-500 dark:bg-blue-500 dark:hover:bg-blue-400"
+                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70"
+                    )}
                   >
-                    Bulk Actions
+                    <Filter className="h-3.5 w-3.5" />
+                    Filter
+                    {activeQueueFilters.length > 0 ? (
+                      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-white/18 px-1 text-[10px] font-semibold text-white">
+                        {activeQueueFilters.length}
+                      </span>
+                    ) : null}
+                    <ChevronDown className="h-3 w-3" />
                   </Button>
-                </div>
-              )}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                    Queue Filters
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuLabel className="pb-1 text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                    Status
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
+                    <DropdownMenuRadioItem value="all">All statuses</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="open">Open</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="pending">Pending</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="resolved">Resolved</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="closed">Closed</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="pb-1 text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                    Priority
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as "all" | TicketPriorityDisplay)}>
+                    <DropdownMenuRadioItem value="all">All priorities</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="low">Low</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="medium">Medium</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="high">High</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="urgent">Urgent</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="pb-1 text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                    Channel
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={channelFilter}
+                    onValueChange={(value) => setChannelFilter(value as "all" | "email" | "whatsapp" | "voice")}
+                  >
+                    <DropdownMenuRadioItem value="all">All channels</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="email">Email</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="whatsapp">WhatsApp</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="voice">Voice</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="pb-1 text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                    Tag
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={tagFilter} onValueChange={setTagFilter}>
+                    <DropdownMenuRadioItem value="all">All tags</DropdownMenuRadioItem>
+                    {availableTags.map((tag) => (
+                      <DropdownMenuRadioItem key={tag.id} value={tag.name}>
+                        {tag.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+
+                  {activeQueueFilters.length > 0 ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={clearAllQueueFilters}>Reset filters</DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
+
+            {activeQueueFilters.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {activeQueueFilters.map((filter) => (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    onClick={() => clearQueueFilter(filter.key)}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-[12px] bg-blue-600 px-3 text-[12px] font-medium text-white transition-colors hover:bg-blue-700"
+                  >
+                    <span>{filter.label}</span>
+                    <X className="h-3 w-3" />
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={clearAllQueueFilters}
+                  className="inline-flex h-7 items-center rounded-[12px] border border-neutral-200 bg-white px-3 text-[12px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+                >
+                  Clear all
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="border-b border-neutral-200 bg-neutral-50/80 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/70">
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-1 rounded-[14px] border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-950/90">
+                <button
+                  type="button"
+                  onClick={() => setAssignedMine(false)}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-[12px] px-3 text-[12px] font-medium transition-colors",
+                    !assignedMine && !activeSavedViewId
+                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-950"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
+                      !assignedMine && !activeSavedViewId
+                        ? "bg-white/18 text-white dark:bg-neutral-950/10 dark:text-neutral-950"
+                        : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+                    )}
+                  >
+                    {queueCounts.all}
+                  </span>
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAssignedMine(true)}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-[12px] px-3 text-[12px] font-medium transition-colors",
+                    assignedMine && !activeSavedViewId
+                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-950"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
+                      assignedMine && !activeSavedViewId
+                        ? "bg-white/18 text-white dark:bg-neutral-950/10 dark:text-neutral-950"
+                        : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+                    )}
+                  >
+                    {queueCounts.mine}
+                  </span>
+                  Mine
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSavedViewsOpen(true)}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-[12px] px-3 text-[12px] font-medium transition-colors",
+                    activeSavedViewId
+                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-950"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+                  )}
+                >
+                  Views
+                  {activeSavedViewId ? (
+                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-white dark:bg-neutral-950" />
+                  ) : null}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  className="h-8 rounded-[12px] px-3.5 text-[12px] font-medium bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
+                  onClick={() => router.push("/tickets/new")}
+                >
+                  <Plus className="h-4 w-4" />
+                  Create Ticket
+                </Button>
+              </div>
+            </div>
+            {selectedTickets.size > 0 ? (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[12px] font-medium text-neutral-500 dark:text-neutral-400">
+                  {selectedTickets.size} selected
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 rounded-[12px] px-3 text-[12px] font-medium dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70"
+                  onClick={() => setBulkActionsOpen(true)}
+                >
+                  Bulk Actions
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 rounded-[12px] px-3 text-[12px] font-medium dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70"
+                  onClick={() => setBulkEmailOpen(true)}
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  Bulk Email
+                </Button>
+              </div>
+            ) : null}
+            {activeSavedView ? (
+              <p className="mt-2 text-[12px] text-neutral-500 dark:text-neutral-400">
+                View active: <span className="font-medium text-neutral-700 dark:text-neutral-200">{activeSavedView.name}</span>
+              </p>
+            ) : null}
           </div>
 
           {/* Ticket List */}
@@ -1806,7 +2107,12 @@ export function SupportWorkspace() {
             {/* Tickets */}
             {!queueLoading &&
               !queueError &&
-              tickets.map((ticket) => (
+              tickets.map((ticket) => {
+                const showPreview =
+                  Boolean(ticket.preview) &&
+                  normalizeQueuePreviewValue(ticket.preview) !== normalizeQueuePreviewValue(ticket.subject);
+
+                return (
               <div
                 key={ticket.id}
                 className={cn(
@@ -1842,7 +2148,9 @@ export function SupportWorkspace() {
                     <p className="text-xs text-neutral-600 mb-2">{ticket.requester_name}</p>
 
                     {/* Preview */}
-                    <p className="text-xs text-neutral-500 line-clamp-2 mb-3">{ticket.preview}</p>
+                    {showPreview ? (
+                      <p className="text-xs text-neutral-500 line-clamp-2 mb-3">{ticket.preview}</p>
+                    ) : null}
 
                     {/* Meta */}
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1875,12 +2183,17 @@ export function SupportWorkspace() {
                   </div>
                 </div>
               </div>
-            ))}
+                );
+              })}
 
             {!queueLoading && !queueError && tickets.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                 <p className="text-neutral-600 mb-1">No tickets found</p>
-                <p className="text-xs text-neutral-500">Try adjusting your filters</p>
+                <p className="text-xs text-neutral-500">Try adjusting your filters or create a new ticket.</p>
+                <Button size="sm" className="mt-4 gap-2" onClick={() => router.push("/tickets/new")}>
+                  <Plus className="h-4 w-4" />
+                  New Ticket
+                </Button>
               </div>
             )}
           </div>
@@ -2287,6 +2600,142 @@ export function SupportWorkspace() {
               disabled={bulkUpdating || selectedTickets.size === 0}
             >
               {bulkUpdating ? "Applying..." : "Apply Updates"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={bulkEmailOpen}
+        onOpenChange={(open) => {
+          setBulkEmailOpen(open);
+          if (!open && !bulkEmailSending) {
+            resetBulkEmailComposer();
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create Bulk Email Tickets</DialogTitle>
+            <DialogDescription>
+              Send one email to each selected customer and create a new outbound email ticket per resolved recipient.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="flex flex-wrap items-center gap-2 text-[12px] text-neutral-500 dark:text-neutral-400">
+              <span>{selectedTickets.size} selected ticket{selectedTickets.size === 1 ? "" : "s"}</span>
+              <span className="inline-flex h-1 w-1 rounded-full bg-neutral-300 dark:bg-neutral-700" />
+              <span>{bulkEmailAttachments.length} attachment{bulkEmailAttachments.length === 1 ? "" : "s"}</span>
+            </div>
+
+            {demoModeEnabled ? (
+              <div className="rounded-[14px] border border-blue-200 bg-blue-50 px-4 py-3 text-[12px] text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-100">
+                Bulk email is wired for live mode only. Switch Sample Data off in Settings to send real customer emails.
+              </div>
+            ) : null}
+
+            <label className="grid gap-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+              Subject
+              <Input
+                value={bulkEmailSubject}
+                onChange={(event) => setBulkEmailSubject(event.target.value)}
+                placeholder="Quarterly product update"
+                disabled={bulkEmailSending}
+              />
+            </label>
+
+            <label className="grid gap-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+              Email body
+              <Textarea
+                rows={8}
+                value={bulkEmailBody}
+                onChange={(event) => setBulkEmailBody(event.target.value)}
+                placeholder="Write the email that should be sent to every resolved customer address."
+                disabled={bulkEmailSending}
+              />
+            </label>
+
+            {bulkEmailAttachments.length > 0 ? (
+              <div className="space-y-2">
+                {bulkEmailAttachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                        {attachment.filename}
+                      </p>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        {formatFileSize(attachment.size)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={bulkEmailSending}
+                      onClick={() =>
+                        setBulkEmailAttachments((previous) =>
+                          previous.filter((entry) => entry.id !== attachment.id)
+                        )
+                      }
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between gap-3 rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/70">
+              <div className="text-[12px] text-neutral-500 dark:text-neutral-400">
+                Attachments are copied onto each new outbound email ticket.
+              </div>
+              <label className="inline-flex">
+                <input
+                  type="file"
+                  className="hidden"
+                  multiple
+                  onChange={(event) => {
+                    void handleBulkEmailAttachmentChange(event);
+                  }}
+                  disabled={bulkEmailSending}
+                />
+                <span className="inline-flex items-center gap-2 rounded-[12px] border border-neutral-200 bg-white px-3 py-1.5 text-[12px] font-medium text-neutral-700 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70">
+                  <Upload className="h-3.5 w-3.5" />
+                  Attach files
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setBulkEmailOpen(false);
+                if (!bulkEmailSending) {
+                  resetBulkEmailComposer();
+                }
+              }}
+              disabled={bulkEmailSending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                void submitBulkEmail();
+              }}
+              disabled={
+                bulkEmailSending ||
+                demoModeEnabled ||
+                selectedTickets.size === 0 ||
+                !bulkEmailSubject.trim() ||
+                !bulkEmailBody.trim()
+              }
+            >
+              {bulkEmailSending ? "Creating..." : "Create & Send"}
             </Button>
           </DialogFooter>
         </DialogContent>

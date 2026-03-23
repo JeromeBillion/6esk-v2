@@ -3418,6 +3418,7 @@ function handlePost(url: URL, init?: RequestInit) {
     const body = parseJsonBody<CreateTicketInput>(init);
     const ticketId = `TKT-${state.nextTicketNumber++}`;
     const isVoice = body.contactMode === "call";
+    const isWhatsApp = body.contactMode === "whatsapp";
     const customerId = `cust-${ticketId.toLowerCase()}`;
     state.customers[customerId] = {
       id: customerId,
@@ -3425,7 +3426,7 @@ function handlePost(url: URL, init?: RequestInit) {
       external_system: null,
       external_user_id: null,
       display_name: body.to ?? body.toPhone ?? "New Contact",
-      primary_email: body.to ?? null,
+      primary_email: isWhatsApp ? null : body.to ?? null,
       primary_phone: body.toPhone ?? null,
       address: null,
       merged_into_customer_id: null,
@@ -3437,7 +3438,9 @@ function handlePost(url: URL, init?: RequestInit) {
     };
     const ticket = createTicket({
       id: ticketId,
-      requester_email: body.to ?? body.toPhone ?? "unknown@example.com",
+      requester_email: isWhatsApp
+        ? `whatsapp:${body.toPhone ?? "unknown"}`
+        : body.to ?? body.toPhone ?? "unknown@example.com",
       requesterName: body.to ?? body.toPhone ?? "New Contact",
       requesterPhone: body.toPhone ?? null,
       customerId,
@@ -3445,7 +3448,7 @@ function handlePost(url: URL, init?: RequestInit) {
       category: body.category ?? "general",
       metadata: body.metadata ?? {},
       tags: body.tags ?? [],
-      has_whatsapp: false,
+      has_whatsapp: isWhatsApp,
       has_voice: isVoice,
       status: "open",
       priority: "normal",
@@ -3475,6 +3478,30 @@ function handlePost(url: URL, init?: RequestInit) {
       });
       messageId = message.id;
       callSessionId = `call-session-${ticketId.toLowerCase()}`;
+    } else if (isWhatsApp) {
+      const message = createMailboxMessage(state, {
+        ticketId,
+        mailboxId: DEFAULT_MAILBOX_ID,
+        threadId: `ticket-thread-${ticketId.toLowerCase()}`,
+        direction: "outbound",
+        channel: "whatsapp",
+        from: DEFAULT_WHATSAPP_NUMBER,
+        to: [body.toPhone ?? ""],
+        subject: body.subject,
+        text: body.description ?? body.subject,
+        sentAt: DEMO_NOW,
+        waStatus: "queued",
+        attachments: (body.attachments ?? []).slice(0, 1).map((attachment, index) =>
+          createAttachment(
+            `${ticketId}-att-${index + 1}`,
+            attachment.filename,
+            attachment.contentType ?? "application/octet-stream",
+            1024
+          )
+        ),
+        statusEvents: [{ status: "queued" }]
+      });
+      messageId = message.id;
     } else {
       const message = createMailboxMessage(state, {
         ticketId,
@@ -3507,7 +3534,7 @@ function handlePost(url: URL, init?: RequestInit) {
       action: "ticket_created",
       entity_type: "ticket",
       entity_id: ticketId,
-      data: { channel: isVoice ? "voice" : "email" },
+      data: { channel: isVoice ? "voice" : isWhatsApp ? "whatsapp" : "email" },
       actor_name: state.currentUser.display_name,
       actor_email: state.currentUser.email
     });
@@ -3519,6 +3546,13 @@ function handlePost(url: URL, init?: RequestInit) {
           callSessionId: callSessionId!,
           channel: "voice"
         } satisfies CreateTicketSuccessResponse)
+      : isWhatsApp
+        ? ({
+            status: "created",
+            ticketId,
+            messageId,
+            channel: "whatsapp"
+          } satisfies CreateTicketSuccessResponse)
       : ({
           status: "created",
           ticketId,
@@ -3693,6 +3727,9 @@ function handlePost(url: URL, init?: RequestInit) {
       actor_email: state.currentUser.email
     });
     return { status: "sent", messageId: message.id };
+  }
+  if (url.pathname === "/api/tickets/bulk-email") {
+    throw new Error("Bulk email requires Live Data mode. Switch sample data off in Settings to send real customer emails.");
   }
   if (url.pathname === "/api/support/saved-views") {
     const body = parseJsonBody<{ name: string; filters: SupportSavedView["filters"] }>(init);

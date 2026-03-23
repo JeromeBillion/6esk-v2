@@ -183,6 +183,25 @@ export type TicketCallOptions = {
   };
 };
 
+export type BulkEmailTicketResult = {
+  sourceTicketId: string;
+  sourceSubject: string | null;
+  status: "created" | "skipped" | "failed";
+  recipientEmail: string | null;
+  createdTicketId: string | null;
+  messageId: string | null;
+  detail: string | null;
+};
+
+export type BulkEmailTicketsResponse = {
+  status: "created" | "partial" | "failed";
+  createdCount: number;
+  skippedCount: number;
+  failedCount: number;
+  createdTicketIds: string[];
+  results: BulkEmailTicketResult[];
+};
+
 export type QueueOutboundCallResponse =
   | {
       status: "queued";
@@ -337,6 +356,23 @@ export function patchTicketsBulk(input: {
 }) {
   return apiFetch<{ status: string; updatedTicketIds: string[]; updatedCount: number }>("/api/tickets/bulk", {
     method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export function createBulkEmailTickets(input: {
+  ticketIds: string[];
+  subject: string;
+  text: string;
+  attachments?: Array<{
+    filename: string;
+    contentType?: string | null;
+    contentBase64: string;
+  }> | null;
+}) {
+  return apiFetch<BulkEmailTicketsResponse>("/api/tickets/bulk-email", {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });

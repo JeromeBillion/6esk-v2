@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   resolveOrCreateCustomerForInbound: vi.fn(),
   normalizeCallPhone: vi.fn(),
   queueOutboundCall: vi.fn(),
+  queueWhatsAppSend: vi.fn(),
   deliverPendingCallEvents: vi.fn(),
   getLatestVoiceConsentState: vi.fn(),
   syncVoiceConsentFromMetadata: vi.fn(),
@@ -47,6 +48,10 @@ vi.mock("@/server/customers", () => ({
 vi.mock("@/server/calls/service", () => ({
   normalizeCallPhone: mocks.normalizeCallPhone,
   queueOutboundCall: mocks.queueOutboundCall
+}));
+
+vi.mock("@/server/whatsapp/send", () => ({
+  queueWhatsAppSend: mocks.queueWhatsAppSend
 }));
 
 vi.mock("@/server/calls/outbox", () => ({
@@ -114,6 +119,10 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
       status: "queued",
       callSessionId: "call-1",
       messageId: "message-1"
+    });
+    mocks.queueWhatsAppSend.mockResolvedValue({
+      status: "queued",
+      messageId: "wa-msg-1"
     });
     mocks.buildAgentEvent.mockReturnValue({ id: "evt-1" });
     mocks.enqueueAgentEvent.mockResolvedValue(undefined);
@@ -198,6 +207,71 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
       expect.objectContaining({
         ticketId: "ticket-1",
         toPhone: "+15551234567",
+        origin: "human",
+        actorUserId: "agent-1"
+      })
+    );
+  });
+
+  it("defaults queued call reason to subject when call reason is omitted", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contactMode: "call",
+          toPhone: "+15551234567",
+          subject: "Call customer"
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: "created",
+      ticketId: "ticket-1",
+      channel: "voice"
+    });
+    expect(mocks.queueOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "Call customer"
+      })
+    );
+  });
+
+  it("creates outbound WhatsApp ticket when WhatsApp contact mode is selected", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contactMode: "whatsapp",
+          toPhone: "+15551234567",
+          subject: "Invoice follow-up",
+          description: "Can I send the corrected invoice here?"
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: "created",
+      ticketId: "ticket-1",
+      messageId: "wa-msg-1",
+      channel: "whatsapp"
+    });
+    expect(mocks.createTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requesterEmail: "whatsapp:+15551234567"
+      })
+    );
+    expect(mocks.queueWhatsAppSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketId: "ticket-1",
+        to: "+15551234567",
+        text: "Can I send the corrected invoice here?",
         origin: "human",
         actorUserId: "agent-1"
       })

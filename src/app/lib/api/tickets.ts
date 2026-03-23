@@ -7,7 +7,7 @@ export type CreateTicketAttachmentInput = {
 };
 
 export type CreateTicketInput = {
-  contactMode?: "email" | "call";
+  contactMode?: "email" | "whatsapp" | "call";
   to?: string;
   toPhone?: string;
   subject: string;
@@ -24,6 +24,12 @@ export type CreateTicketSuccessResponse =
       ticketId: string;
       messageId: string | null;
       channel?: "email";
+    }
+  | {
+      status: "created";
+      ticketId: string;
+      messageId: string | null;
+      channel: "whatsapp";
     }
   | {
       status: "created";

@@ -38,9 +38,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="h-screen flex bg-neutral-50">
-        <div className="w-16 bg-white border-r border-neutral-200 flex flex-col items-center py-4 gap-2">
-          <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
+      <div className="h-screen flex bg-neutral-50 dark:bg-neutral-950">
+        <div className="w-16 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 flex flex-col items-center py-4 gap-2">
+          <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.28)]">
             <BrandMark size={32} priority />
           </div>
           <nav className="flex flex-col gap-1 w-full px-2">
@@ -53,8 +53,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   key={item.name}
                   href={item.href}
                   className={cn(
-                    "flex flex-col items-center justify-center h-12 rounded-lg transition-colors",
-                    isActive ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"
+                    "mx-auto flex h-10 w-10 items-center justify-center rounded-full transition-colors",
+                    isActive
+                      ? "bg-neutral-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)] dark:bg-white dark:text-neutral-950 dark:shadow-[0_10px_24px_rgba(255,255,255,0.08)]"
+                      : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
                   )}
                   title={item.name}
                 >
