@@ -26,13 +26,9 @@ import {
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
 import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
-import adminLightSnapshot from "@/app/assets/landing-snapshots/admin-light.png";
 import channelDarkSnapshot from "@/app/assets/landing-snapshots/channel-dark.png";
-import channelLightSnapshot from "@/app/assets/landing-snapshots/channel-light.png";
 import mailDarkSnapshot from "@/app/assets/landing-snapshots/mail-dark.png";
-import mailLightSnapshot from "@/app/assets/landing-snapshots/mail-light.png";
 import supportDarkSnapshot from "@/app/assets/landing-snapshots/support-dark.png";
-import supportLightSnapshot from "@/app/assets/landing-snapshots/support-light.png";
 import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
@@ -209,19 +205,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         )
       },
       {
-        id: "support-light",
-        eyebrow: "Support Workspace",
-        title: "Omnichannel timelines",
-        summary: "The same operator surface in a light treatment for teams running a brighter workspace theme.",
-        preview: (
-          <SnapshotPreview
-            src={supportLightSnapshot}
-            alt="Light support workspace view showing ticket list, conversation timeline, and customer details."
-            theme="light"
-          />
-        )
-      },
-      {
         id: "mail-dark",
         eyebrow: "Mail Surface",
         title: "Shared inbox control",
@@ -231,19 +214,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             src={mailDarkSnapshot}
             alt="Dark shared inbox view showing thread list and billing discrepancy conversation."
             theme="dark"
-          />
-        )
-      },
-      {
-        id: "mail-light",
-        eyebrow: "Mail Surface",
-        title: "Shared inbox control",
-        summary: "The same inbox composition in a light treatment with thread selection and reply state visible.",
-        preview: (
-          <SnapshotPreview
-            src={mailLightSnapshot}
-            alt="Light shared inbox view showing thread list and billing discrepancy conversation."
-            theme="light"
           />
         )
       },
@@ -261,19 +231,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         )
       },
       {
-        id: "channel-light",
-        eyebrow: "Channel Drilldown",
-        title: "Daily pattern visibility",
-        summary: "The same channel metrics view in a light treatment for quick comparative reading.",
-        preview: (
-          <SnapshotPreview
-            src={channelLightSnapshot}
-            alt="Light channel drilldown view with inbound and outbound trend charts."
-            theme="light"
-          />
-        )
-      },
-      {
         id: "admin-dark",
         eyebrow: "Admin + Ops",
         title: "Guardrails and recovery",
@@ -283,19 +240,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             src={adminDarkSnapshot}
             alt="Dark admin view showing users and roles, SLA targets, and security snapshot."
             theme="dark"
-          />
-        )
-      },
-      {
-        id: "admin-light",
-        eyebrow: "Admin + Ops",
-        title: "Guardrails and recovery",
-        summary: "The same admin surface in a light treatment with role management and security posture in view.",
-        preview: (
-          <SnapshotPreview
-            src={adminLightSnapshot}
-            alt="Light admin view showing users and roles, SLA targets, and security snapshot."
-            theme="light"
           />
         )
       }
