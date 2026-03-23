@@ -5,7 +5,6 @@ import Link from "next/link";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
-  BarChart3,
   Bot,
   ChevronDown,
   Mail,
@@ -25,6 +24,7 @@ import {
 } from "@/app/workspace/components/ui/dialog";
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
+import Aurora from "./Aurora";
 import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
 import channelDarkSnapshot from "@/app/assets/landing-snapshots/channel-dark.png";
 import mailDarkSnapshot from "@/app/assets/landing-snapshots/mail-dark.png";
@@ -323,7 +323,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         <div className={styles.navLinks}>
           <a href="#channels">Channels</a>
           <a href="#platform">Platform</a>
-          <a href="#metrics">Metrics</a>
           <Link href={workspaceHref} className={styles.navCta}>
             {navCtaLabel}
           </Link>
@@ -607,83 +606,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         </div>
       </section>
 
-      <section id="metrics" className={styles.metricsSection}>
-        <div className={styles.parallaxWordSoft} data-parallax-speed="0.35">
-          Evidence
-        </div>
-        <div className={styles.container}>
-          <div data-reveal className={styles.sectionLabel}>
-            <span className={landingMonoFont.className}>Measured operations</span>
-          </div>
-          <div className={styles.metricsHeader}>
-            <h2 data-reveal className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
-              Real support work leaves a pattern.
-            </h2>
-            <p data-reveal className={styles.sectionIntro}>
-              The landing page mirrors that idea with animated counters and a quiet analytics composition rather than
-              generic marketing noise.
-            </p>
-          </div>
-          <div className={styles.metricsGrid}>
-            <div data-reveal className={styles.metricsBoard}>
-              <div className={styles.metricsBoardHeader}>
-                <div>
-                  <p className={landingMonoFont.className}>Performance snapshot</p>
-                  <h3>Support rhythm over the last 7 days</h3>
-                </div>
-                <BarChart3 size={18} />
-              </div>
-              <div className={styles.chartArea}>
-                <div className={styles.chartCurve}>
-                  <span style={{ height: "40%" }} />
-                  <span style={{ height: "58%" }} />
-                  <span style={{ height: "50%" }} />
-                  <span style={{ height: "76%" }} />
-                  <span style={{ height: "64%" }} />
-                  <span style={{ height: "82%" }} />
-                  <span style={{ height: "70%" }} />
-                </div>
-                <div className={styles.chartLegend}>
-                  <div>
-                    <strong>Inbound load</strong>
-                    <span>balanced across email, WhatsApp, and voice</span>
-                  </div>
-                  <div>
-                    <strong>Operator response</strong>
-                    <span>kept inside target range through AI and saved views</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className={styles.counterGrid}>
-              {[
-                { label: "Average handle time", target: 6.4, suffix: " min" },
-                { label: "Draft acceptance", target: 72, suffix: "%" },
-                { label: "Delivered WhatsApp events", target: 98, suffix: "%" },
-                { label: "Recovered failed jobs", target: 43, suffix: "" }
-              ].map((metric, index) => (
-                <article
-                  key={metric.label}
-                  data-reveal
-                  className={styles.counterCard}
-                  style={{ transitionDelay: `${index * 110}ms` }}
-                >
-                  <div
-                    className={`${styles.counterValue} ${landingDisplayFont.className}`}
-                    data-counter-target={metric.target}
-                    data-counter-suffix={metric.suffix}
-                    data-counter-duration="1700"
-                  >
-                    0{metric.suffix}
-                  </div>
-                  <p className={styles.counterLabel}>{metric.label}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section className={styles.sequenceSection}>
         <div className={styles.container}>
           <div data-reveal className={styles.sectionLabel}>
@@ -735,7 +657,17 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
       </section>
 
       <footer className={styles.footer}>
-        <div className={styles.container}>
+        <div className={styles.footerAuroraWrap} aria-hidden="true">
+          <Aurora
+            className={styles.footerAurora}
+            colorStops={["#7cff67", "#B19EEF", "#5227FF"]}
+            blend={0.5}
+            amplitude={1}
+            speed={1}
+            flipY
+          />
+        </div>
+        <div className={`${styles.container} ${styles.footerContainer}`}>
           <div className={styles.footerGrid}>
             <div>
               <div className={styles.footerBrand}>
@@ -746,7 +678,6 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             <div className={styles.footerLinks}>
               <a href="#channels">Channels</a>
               <a href="#platform">Platform</a>
-              <a href="#metrics">Metrics</a>
               <Link href={workspaceHref}>{workspaceLabel}</Link>
             </div>
           </div>

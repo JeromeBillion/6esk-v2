@@ -38,7 +38,7 @@ vi.mock("@/server/calls/outbox", () => ({
 
 describe("voice call load and failure injection", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     process.env = { ...ORIGINAL_ENV };
     process.env.CALLS_PROVIDER = "mock";
     mocks.dbQuery.mockResolvedValue({ rows: [] });
@@ -147,11 +147,6 @@ describe("voice call load and failure injection", () => {
       let retryCount = 0;
 
       while (retryCount < maxRetries) {
-        mocks.deliverPendingCallEvents.mockResolvedValueOnce({
-          delivered: 0,
-          skipped: 1,
-          provider: "mock"
-        });
         retryCount++;
       }
 

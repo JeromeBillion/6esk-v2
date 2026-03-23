@@ -148,7 +148,7 @@ describe("call outbox hardening", () => {
     query.mockResolvedValueOnce(undefined); // COMMIT
     mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-    const result = await retryFailedCallOutboxEvents(500);
+    const result = await retryFailedCallOutboxEvents({ limit: 500 });
 
     expect(result).toMatchObject({
       requested: 100,

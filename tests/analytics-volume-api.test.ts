@@ -76,6 +76,9 @@ describe("GET /api/analytics/volume", () => {
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
+        rows: []
+      })
+      .mockResolvedValueOnce({
         rows: [
           {
             day: new Date("2026-02-02T00:00:00.000Z"),
