@@ -9,6 +9,14 @@ npm install
 npm run dev
 ```
 
+`npm run dev` now verifies that your checkout already includes the latest `origin/main`.
+If your branch is behind, dev will stop and tell you whether to fast-forward `main` or rebase your branch first.
+
+One-time bypass:
+
+- PowerShell: `$env:SKIP_MAIN_SYNC_CHECK='1'; npm run dev`
+- `cmd.exe`: `set SKIP_MAIN_SYNC_CHECK=1&& npm run dev`
+
 ## Environment
 
 Copy `.env.example` to `.env` and fill in the values.

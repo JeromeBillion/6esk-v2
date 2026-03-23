@@ -141,6 +141,14 @@ Rules:
 - sample data must cover support, mail, analytics, admin, merge reviews, and new ticket flows
 - attachment links shown in demo mode should resolve to working mock downloads
 
+## Local Dev Sync
+
+- `npm run dev` must only run from a checkout that already includes the latest `origin/main`
+- the enforced check lives in `scripts/check-main-sync.js` and runs through the `predev` script
+- the check fetches `origin` and blocks local dev if the current checkout is missing remote `main` commits
+- do not auto-pull inside the dev command itself; local work must be rebased or fast-forwarded deliberately
+- one-time bypass is allowed only with `SKIP_MAIN_SYNC_CHECK=1`
+
 ## Maintenance Rule
 
 If a future prototype, export, or scratch implementation is introduced, do not leave it as a second frontend stack inside the repo.
