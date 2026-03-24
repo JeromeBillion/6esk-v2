@@ -108,6 +108,57 @@ const SOUTH_AFRICA_STARTUPS = [
   "Tata-iMali"
 ] as const;
 
+const FOOTER_SECTIONS = [
+  {
+    title: "Products",
+    items: [
+      { label: "Pricing" },
+      { label: "Integrations" },
+      { label: "System status" },
+      { label: "Sign in", href: "workspace" as const }
+    ]
+  },
+  {
+    title: "Features",
+    items: [
+      { label: "AI agents" },
+      { label: "Copilot" },
+      { label: "AI and automation" },
+      { label: "Messaging and live chat" },
+      { label: "Advanced Data Privacy and Protection" },
+      { label: "Help center", href: "/support" },
+      { label: "Ticketing system" },
+      { label: "Voice" },
+      { label: "Reporting and analytics" },
+      { label: "Workforce management" },
+      { label: "AI Quality assurance" },
+      { label: "Knowledge base", href: "/support" }
+    ]
+  },
+  {
+    title: "Resources",
+    items: [
+      { label: "Security" },
+      { label: "Training" },
+      { label: "Partners" },
+      { label: "Professional services" },
+      { label: "What is CRM?" },
+      { label: "CRM software guide" },
+      { label: "Help center", href: "/support" }
+    ]
+  },
+  {
+    title: "Company",
+    items: [
+      { label: "About us" },
+      { label: "What is 6esk?" },
+      { label: "Careers" },
+      { label: "Legal" },
+      { label: "Product updates" }
+    ]
+  }
+] as const;
+
 export default function LandingPageClient({ authenticated, workspaceHref }: LandingPageClientProps) {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [navScrolled, setNavScrolled] = useState(false);
@@ -669,16 +720,34 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         </div>
         <div className={`${styles.container} ${styles.footerContainer}`}>
           <div className={styles.footerGrid}>
-            <div>
+            <div className={styles.footerIntro}>
               <div className={styles.footerBrand}>
                 <BrandMark size={26} />
               </div>
               <p className={styles.footerTagline}>Omnichannel support, one deliberate operating surface.</p>
             </div>
-            <div className={styles.footerLinks}>
-              <a href="#channels">Channels</a>
-              <a href="#platform">Platform</a>
-              <Link href={workspaceHref}>{workspaceLabel}</Link>
+            <div className={styles.footerColumns}>
+              {FOOTER_SECTIONS.map((section) => (
+                <div key={section.title} className={styles.footerColumn}>
+                  <h3 className={`${styles.footerHeading} ${landingMonoFont.className}`}>{section.title}</h3>
+                  <ul className={styles.footerLinkList}>
+                    {section.items.map((item) => (
+                      <li key={`${section.title}-${item.label}`}>
+                        {"href" in item && item.href ? (
+                          <Link
+                            href={item.href === "workspace" ? workspaceHref : item.href}
+                            className={styles.footerLink}
+                          >
+                            {item.label}
+                          </Link>
+                        ) : (
+                          <span className={styles.footerLinkMuted}>{item.label}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
           </div>
         </div>
