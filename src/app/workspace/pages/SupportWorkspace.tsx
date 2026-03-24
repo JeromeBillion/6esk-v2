@@ -14,7 +14,6 @@ import {
   Plus,
   Mail,
   ChevronDown,
-  MoreHorizontal,
   Clock,
   Phone,
   PhoneCall,
@@ -3589,9 +3588,6 @@ function TicketDetail({
             <div className="flex items-start justify-between mb-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">
-                  <Button variant="ghost" size="sm" className="gap-2 -ml-2" onClick={() => setShowHistory(true)}>
-                    <Clock className="w-4 h-4" />
-                  </Button>
                   <span className="text-sm font-medium text-neutral-600">{activeTimelineTicketIdValue}</span>
                   <Badge variant="outline" className="text-xs">
                     {toTitleCase(activeTimelineChannelValue)}
@@ -3602,8 +3598,14 @@ function TicketDetail({
                   {ticket.requester_name} • {ticket.requester_email}
                 </p>
               </div>
-              <Button variant="ghost" size="sm">
-                <MoreHorizontal className="w-4 h-4" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2"
+                onClick={() => setShowHistory(true)}
+                aria-label="Open history"
+              >
+                <Clock className="w-4 h-4" />
               </Button>
             </div>
 

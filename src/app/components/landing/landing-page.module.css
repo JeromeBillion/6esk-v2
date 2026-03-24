@@ -248,38 +248,45 @@
   position: relative;
   display: grid;
   gap: 0.08rem;
-  width: min(100%, 54rem);
+  width: min(100%, 48rem);
   max-width: 100%;
-  margin-left: auto;
-  padding-right: min(16vw, 11rem);
+  margin-left: 0;
+  justify-self: start;
+  padding-right: min(15vw, 11rem);
 }
 
 .heroLine {
   margin: 0;
   width: max-content;
   max-width: 100%;
-  font-size: clamp(4.3rem, 7.3vw, 8.25rem);
-  line-height: 0.92;
+  font-size: clamp(3.55rem, 6vw, 6.9rem);
+  line-height: 0.9;
   letter-spacing: -0.05em;
   color: #fff;
   white-space: nowrap;
 }
 
 .heroLineTop {
-  font-size: clamp(4.55rem, 7.6vw, 8.45rem);
-  margin-left: clamp(0.8rem, 1.9vw, 2.4rem);
+  font-size: clamp(3.8rem, 6.35vw, 7.1rem);
+  margin-left: clamp(0.55rem, 1.4vw, 1.65rem);
 }
 
 .heroLineMiddle {
-  font-size: clamp(4.25rem, 7vw, 7.8rem);
+  font-size: clamp(3.55rem, 5.85vw, 6.4rem);
+  margin-top: -0.5rem;
+  margin-left: 0;
+}
+
+.heroLineLower {
+  font-size: clamp(3.5rem, 5.75vw, 6.15rem);
   margin-top: -0.72rem;
-  margin-left: clamp(-0.8rem, -0.8vw, -0.2rem);
+  margin-left: clamp(1.4rem, 2.8vw, 3.05rem);
 }
 
 .heroLineBottom {
-  font-size: clamp(4.35rem, 7.1vw, 7.95rem);
-  margin-top: -0.95rem;
-  margin-left: clamp(4.1rem, 5.8vw, 6.8rem);
+  font-size: clamp(3.55rem, 5.85vw, 6.25rem);
+  margin-top: -0.86rem;
+  margin-left: clamp(4.7rem, 6.6vw, 7.8rem);
 }
 
 .heroLineMuted {
@@ -289,7 +296,7 @@
 .heroHeadlineSupport {
   position: absolute;
   top: 0.1rem;
-  right: clamp(-8.5rem, -7vw, -4rem);
+  right: clamp(-11.25rem, -9vw, -5.75rem);
   width: min(14.8rem, 26vw);
   padding: 0.9rem 0.95rem;
   border-radius: 1.25rem;
@@ -370,8 +377,7 @@
 }
 
 .primaryAction,
-.secondaryAction,
-.secondaryActionDark {
+.secondaryAction {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -397,7 +403,6 @@
 
 .primaryAction:hover,
 .secondaryAction:hover,
-.secondaryActionDark:hover,
 .navCta:hover {
   transform: translateY(-2px);
 }
@@ -406,12 +411,6 @@
   border: 1px solid rgba(255, 255, 255, 0.16);
   color: rgba(255, 255, 255, 0.82);
   background: rgba(255, 255, 255, 0.04);
-}
-
-.secondaryActionDark {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.88);
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .inlineIcon {
@@ -453,30 +452,54 @@
 .bookingDialog {
   max-width: 34rem !important;
   gap: 0 !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border: 1px solid rgba(17, 20, 27, 0.08) !important;
   border-radius: 1.55rem !important;
-  background: linear-gradient(180deg, rgba(11, 13, 17, 0.98), rgba(8, 10, 14, 0.98)) !important;
-  color: #fff !important;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 243, 237, 0.98)) !important;
+  color: var(--landing-ink) !important;
+  box-shadow: 0 30px 80px rgba(16, 18, 24, 0.18) !important;
   backdrop-filter: blur(22px);
+  color-scheme: light;
+}
+
+.bookingDialog > button {
+  top: 1rem !important;
+  right: 1rem !important;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(17, 20, 27, 0.12);
+  border-radius: 999px;
+  background: rgba(17, 20, 27, 0.04);
+  color: var(--landing-ink) !important;
+  opacity: 1 !important;
+}
+
+.bookingDialog > button:hover {
+  background: rgba(17, 20, 27, 0.08);
 }
 
 .bookingDialogHeader {
+  display: grid;
   gap: 0.75rem !important;
   padding-right: 2rem;
 }
 
 .bookingDialogTitle {
+  display: block;
+  margin: 0 !important;
   font-size: clamp(2rem, 4vw, 3rem) !important;
   line-height: 0.96 !important;
   letter-spacing: -0.05em !important;
-  color: #fff !important;
+  color: var(--landing-ink) !important;
+  -webkit-text-fill-color: var(--landing-ink) !important;
+  opacity: 1 !important;
 }
 
 .bookingDialogDescription {
-  color: rgba(255, 255, 255, 0.62) !important;
+  margin: 0 !important;
+  color: rgba(17, 20, 27, 0.62) !important;
   font-size: 0.96rem !important;
   line-height: 1.75 !important;
+  opacity: 1 !important;
 }
 
 .bookingForm {
@@ -491,10 +514,11 @@
 }
 
 .bookingFieldLabel {
-  color: rgba(255, 255, 255, 0.56);
+  color: rgba(17, 20, 27, 0.48) !important;
   font-size: 0.66rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+  opacity: 1 !important;
 }
 
 .bookingRow {
@@ -504,29 +528,59 @@
 }
 
 .bookingInput {
+  appearance: none;
   width: 100%;
   min-height: 3rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(17, 20, 27, 0.12);
   border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.04);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--landing-ink) !important;
+  -webkit-text-fill-color: var(--landing-ink) !important;
+  caret-color: var(--landing-ink);
   padding: 0.85rem 0.95rem;
   font-size: 0.96rem;
   line-height: 1.4;
   outline: none;
+  opacity: 1 !important;
   transition:
     border-color 160ms ease,
     background 160ms ease,
     box-shadow 160ms ease;
+  color-scheme: light;
 }
 
 .bookingInput::placeholder {
-  color: rgba(255, 255, 255, 0.36);
+  color: rgba(17, 20, 27, 0.34);
+  opacity: 1;
+}
+
+.bookingInput::-moz-placeholder {
+  color: rgba(17, 20, 27, 0.34);
+  opacity: 1;
+}
+
+.bookingInput::-webkit-datetime-edit,
+.bookingInput::-webkit-date-and-time-value,
+.bookingInput::-webkit-datetime-edit-fields-wrapper,
+.bookingInput::-webkit-datetime-edit-text,
+.bookingInput::-webkit-datetime-edit-month-field,
+.bookingInput::-webkit-datetime-edit-day-field,
+.bookingInput::-webkit-datetime-edit-year-field,
+.bookingInput::-webkit-datetime-edit-hour-field,
+.bookingInput::-webkit-datetime-edit-minute-field,
+.bookingInput::-webkit-datetime-edit-ampm-field {
+  color: var(--landing-ink);
+  -webkit-text-fill-color: var(--landing-ink);
+  opacity: 1;
+}
+
+.bookingInput::-webkit-calendar-picker-indicator {
+  opacity: 0.78;
 }
 
 .bookingInput:focus {
   border-color: rgba(90, 131, 255, 0.8);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 0 0 3px rgba(90, 131, 255, 0.14);
 }
 
@@ -557,15 +611,15 @@
 }
 
 .bookingPrimaryAction {
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  background: #fff;
-  color: #0b0d11;
+  border: 1px solid rgba(17, 20, 27, 0.04);
+  background: #0b0d11;
+  color: #fff;
 }
 
 .bookingGhostAction {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(17, 20, 27, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+  color: rgba(17, 20, 27, 0.82);
 }
 
 .bookingPrimaryAction:hover,
@@ -892,16 +946,433 @@
   margin-top: 2.5rem;
 }
 
+.sequenceFlowScroller {
+  margin-top: 2.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+}
+
+.sequenceFlowScroller::-webkit-scrollbar {
+  height: 0.45rem;
+}
+
+.sequenceFlowScroller::-webkit-scrollbar-thumb {
+  background: rgba(17, 20, 27, 0.14);
+  border-radius: 999px;
+}
+
+.sequenceFlowPanel {
+  position: relative;
+  min-width: 1040px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr) minmax(0, 0.9fr);
+  gap: 2.1rem;
+  padding: 2rem;
+  border-radius: 2rem;
+  border: 1px solid var(--landing-rule);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 244, 238, 0.96));
+  box-shadow: none;
+}
+
+.sequenceFlowStep {
+  position: relative;
+  display: grid;
+  align-content: start;
+}
+
+.sequenceFlowIndex {
+  color: rgba(18, 21, 29, 0.34);
+  font-size: 0.9rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.sequenceFlowTitle {
+  margin: 1.25rem 0 0;
+  font-size: clamp(1.55rem, 2vw, 2.1rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: var(--landing-ink);
+}
+
+.sequenceFlowBody {
+  margin: 0.8rem 0 0;
+  max-width: 22rem;
+  color: rgba(17, 20, 27, 0.7);
+  font-size: 0.94rem;
+  line-height: 1.72;
+}
+
+.sequenceFlowBridge {
+  display: none;
+}
+
+.sequenceFlowBridgeOne {
+  top: 7.1rem;
+  left: calc(24.8% + 0.1rem);
+  width: calc(6.5% + 0.15rem);
+}
+
+.sequenceFlowBridgeTwo {
+  top: 7.1rem;
+  left: calc(67.15% + 0.1rem);
+  width: calc(3.6% + 0.05rem);
+}
+
+.sequenceSignalScene {
+  position: relative;
+  height: 14rem;
+  margin-top: 1.35rem;
+}
+
+.sequenceSignalCard {
+  position: absolute;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 10.5rem;
+  min-height: 3rem;
+  padding: 0.65rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(17, 20, 27, 0.14);
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(17, 20, 27, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.sequenceSignalCardWhatsapp {
+  top: 0.4rem;
+  border-color: rgba(66, 120, 255, 0.2);
+}
+
+.sequenceSignalCardEmail {
+  top: 4.7rem;
+}
+
+.sequenceSignalCardVoice {
+  top: 9rem;
+}
+
+.sequenceSignalCard svg {
+  width: 1rem;
+  height: 1rem;
+  color: rgba(17, 20, 27, 0.74);
+}
+
+.sequenceSignalLine {
+  position: absolute;
+  left: 10rem;
+  height: 1px;
+  background: rgba(17, 20, 27, 0.34);
+  transform-origin: left center;
+}
+
+.sequenceSignalLineTop {
+  top: 2.3rem;
+  width: 6.1rem;
+  transform: rotate(32deg);
+}
+
+.sequenceSignalLineMiddle {
+  top: 6.35rem;
+  width: 6rem;
+}
+
+.sequenceSignalLineBottom {
+  top: 10.4rem;
+  width: 6.1rem;
+  transform: rotate(-32deg);
+}
+
+.sequenceSignalNode {
+  position: absolute;
+  top: 5.25rem;
+  right: 1.55rem;
+  width: 4.9rem;
+  height: 3.8rem;
+  display: grid;
+  place-items: center;
+}
+
+.sequenceSignalRing,
+.sequenceSignalCore {
+  position: absolute;
+}
+
+.sequenceSignalRing {
+  inset: 0;
+  border: 1px solid rgba(17, 20, 27, 0.14);
+  border-radius: 1.15rem;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.sequenceSignalRing::before,
+.sequenceSignalRing::after {
+  content: "";
+  position: absolute;
+}
+
+.sequenceSignalRing::before {
+  top: 0.82rem;
+  left: 0.8rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background: rgba(66, 120, 255, 0.14);
+  border: 1px solid rgba(66, 120, 255, 0.18);
+}
+
+.sequenceSignalRing::after {
+  top: 0.88rem;
+  left: 2.05rem;
+  width: 1.55rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: rgba(17, 20, 27, 0.18);
+  box-shadow: 0 0.75rem 0 0 rgba(17, 20, 27, 0.12);
+}
+
+.sequenceSignalCore {
+  right: 0.7rem;
+  bottom: 0.7rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  border: 1px solid rgba(46, 166, 95, 0.2);
+  background: rgba(233, 248, 239, 0.98);
+  box-shadow: none;
+}
+
+.sequenceSignalCore::before {
+  content: "";
+  position: absolute;
+  left: 0.28rem;
+  top: 0.24rem;
+  width: 0.5rem;
+  height: 0.28rem;
+  border-left: 2px solid rgba(34, 121, 69, 0.95);
+  border-bottom: 2px solid rgba(34, 121, 69, 0.95);
+  transform: rotate(-45deg);
+}
+
+.sequenceContextScene {
+  margin-top: 1.35rem;
+}
+
+.sequenceContextCard {
+  border-radius: 1.65rem;
+  border: 1px solid rgba(17, 20, 27, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.sequenceContextHeader {
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid rgba(17, 20, 27, 0.1);
+  color: rgba(17, 20, 27, 0.54);
+  font-size: 0.9rem;
+  letter-spacing: -0.03em;
+}
+
+.sequenceContextBody {
+  display: grid;
+  gap: 1rem;
+  padding: 1.2rem;
+}
+
+.sequenceContextIdentity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.sequenceContextAvatar {
+  display: inline-grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 999px;
+  background: rgba(205, 178, 112, 0.2);
+  color: rgba(17, 20, 27, 0.74);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+}
+
+.sequenceContextMeta {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.sequenceContextName {
+  color: var(--landing-ink);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sequenceContextSubline {
+  color: rgba(17, 20, 27, 0.54);
+  font-size: 0.86rem;
+}
+
+.sequenceContextChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  align-self: start;
+  padding: 0.45rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(211, 166, 64, 0.26);
+  background: rgba(211, 166, 64, 0.12);
+  color: rgba(119, 80, 0, 0.9);
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.sequenceContextChip svg {
+  width: 0.78rem;
+  height: 0.78rem;
+}
+
+.sequenceContextThread {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.sequenceContextThreadLine,
+.sequenceContextThreadLineShort,
+.sequenceContextThreadLineMuted {
+  height: 1px;
+  background: rgba(17, 20, 27, 0.16);
+}
+
+.sequenceContextThreadLineShort {
+  width: 74%;
+}
+
+.sequenceContextThreadLineMuted {
+  width: 58%;
+  background: rgba(17, 20, 27, 0.1);
+}
+
+.sequenceContextHistory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.sequenceContextHistoryPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.7rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 20, 27, 0.1);
+  color: rgba(17, 20, 27, 0.52);
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.sequenceResolveScene {
+  position: relative;
+  height: 14rem;
+  margin-top: 1.35rem;
+}
+
+.sequenceResolveSplit {
+  display: none;
+}
+
+.sequenceResolveSpine {
+  position: absolute;
+  left: 0.95rem;
+  top: 3.28rem;
+  width: 1px;
+  height: 6.56rem;
+  background: rgba(17, 20, 27, 0.28);
+}
+
+.sequenceResolveLane {
+  position: absolute;
+  left: 1.7rem;
+  display: grid;
+  grid-template-columns: 8.2rem 3.3rem 6.2rem;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.sequenceResolveLane::before {
+  content: "";
+  position: absolute;
+  left: -0.75rem;
+  top: 50%;
+  width: 0.75rem;
+  height: 1px;
+  background: rgba(17, 20, 27, 0.28);
+}
+
+.sequenceResolveLaneTop {
+  top: 2.08rem;
+}
+
+.sequenceResolveLaneBottom {
+  top: 8.82rem;
+}
+
+.sequenceResolveLaneTrack {
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(17, 20, 27, 0.34) 0 10px,
+    transparent 10px 18px
+  );
+  animation: sequenceDash 1.5s linear infinite;
+}
+
+.sequenceResolveMode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(17, 20, 27, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+  color: rgba(17, 20, 27, 0.82);
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+.sequenceResolvedState {
+  display: inline-grid;
+  place-items: center;
+  min-width: 6.2rem;
+  min-height: 2.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(46, 166, 95, 0.26);
+  background: rgba(233, 248, 239, 0.96);
+  color: rgba(34, 121, 69, 0.98);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .ctaSection {
-  padding-bottom: 4rem;
+  padding-bottom: 2.5rem;
 }
 
 .ctaPanel {
   padding: 2.25rem;
   border-radius: 2.25rem;
-  background:
-    radial-gradient(circle at top right, rgba(90, 131, 255, 0.22), transparent 28%),
-    linear-gradient(180deg, #0b0d11 0%, #11141b 100%);
+  background: #0f1218;
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 36px 100px rgba(7, 8, 12, 0.28);
@@ -923,51 +1394,9 @@
 .footer {
   position: relative;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, #050608 0%, #020305 100%);
+  background: #050608;
   color: rgba(255, 255, 255, 0.92);
-  padding-top: 4rem;
-  padding-bottom: 3rem;
-}
-
-.footer::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(3, 4, 6, 0.18) 0%, rgba(3, 4, 6, 0.42) 30%, rgba(3, 4, 6, 0.86) 100%);
-  pointer-events: none;
-  z-index: 1;
-}
-
-.footer::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 55%;
-  background:
-    radial-gradient(circle at 18% 100%, rgba(124, 255, 103, 0.18), transparent 26%),
-    radial-gradient(circle at 50% 100%, rgba(82, 39, 255, 0.28), transparent 34%),
-    radial-gradient(circle at 82% 100%, rgba(177, 158, 239, 0.18), transparent 30%);
-  pointer-events: none;
-  z-index: 1;
-}
-
-.footerAuroraWrap {
-  position: absolute;
-  inset: 18% -12% -36%;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.footerAurora {
-  width: 100%;
-  height: 100%;
-  opacity: 0.92;
-  mix-blend-mode: screen;
-  filter: saturate(118%);
+  padding: 0;
 }
 
 .footerContainer {
@@ -975,13 +1404,64 @@
   z-index: 2;
 }
 
+.footerAccordionToggle {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  padding: 0.95rem 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.footerAccordionSummary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr) auto;
+  align-items: center;
+  gap: 2rem;
+}
+
+.footerSummaryHeadings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2rem;
+}
+
+.footerAccordionChevron {
+  width: 1rem;
+  height: 1rem;
+  color: rgba(255, 255, 255, 0.62);
+  transition: transform 180ms ease, color 180ms ease;
+}
+
+.footerAccordionChevronOpen {
+  transform: rotate(180deg);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.footerAccordionPanel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease, opacity 220ms ease;
+  opacity: 0;
+}
+
+.footerAccordionPanelOpen {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.footerAccordionPanelInner {
+  overflow: hidden;
+}
+
 .footerGrid {
   display: grid;
   grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
   align-items: start;
   gap: 2.5rem;
-  padding-top: 1.75rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.9rem 0 2.4rem;
 }
 
 .footerIntro {
@@ -1116,6 +1596,15 @@
   }
 }
 
+@keyframes sequenceDash {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 28px 0;
+  }
+}
+
 @media (max-width: 1120px) {
   .lawGrid,
   .channelGrid,
@@ -1145,32 +1634,40 @@
   }
 
   .heroLine {
-    font-size: clamp(3.95rem, 7vw, 6.7rem);
+    font-size: clamp(3.3rem, 5.9vw, 5.95rem);
   }
 
   .heroLineTop {
-    font-size: clamp(4.1rem, 7.2vw, 6.8rem);
-    margin-left: 0.8rem;
+    font-size: clamp(3.45rem, 6.05vw, 6.05rem);
+    margin-left: 0.7rem;
   }
 
   .heroLineMiddle {
-    font-size: clamp(3.8rem, 6.5vw, 6.2rem);
-    margin-left: -0.2rem;
+    font-size: clamp(3.25rem, 5.5vw, 5.6rem);
+    margin-top: -0.35rem;
+    margin-left: 0;
+  }
+
+  .heroLineLower {
+    font-size: clamp(3.2rem, 5.4vw, 5.45rem);
+    margin-top: -0.5rem;
+    margin-left: 1.5rem;
   }
 
   .heroLineBottom {
-    font-size: clamp(3.95rem, 6.7vw, 6.35rem);
-    margin-left: 2.5rem;
+    font-size: clamp(3.25rem, 5.5vw, 5.55rem);
+    margin-top: -0.62rem;
+    margin-left: 3.85rem;
   }
 
   .heroHeadlineGroup {
-    width: min(100%, 48rem);
-    padding-right: 9.75rem;
+    width: min(100%, 42rem);
+    padding-right: 7.75rem;
   }
 
   .heroHeadlineSupport {
     top: 0.15rem;
-    right: -3rem;
+    right: -5.4rem;
     width: 12.2rem;
   }
 
@@ -1186,6 +1683,22 @@
   .startupMarqueeTrack,
   .startupMarqueeItem {
     gap: 1.65rem;
+  }
+
+  .sequenceFlowPanel {
+    min-width: 980px;
+    gap: 1.6rem;
+    padding: 1.75rem;
+  }
+
+  .sequenceFlowBridgeOne {
+    left: calc(24.9% + 0.1rem);
+    width: calc(6.3% + 0.1rem);
+  }
+
+  .sequenceFlowBridgeTwo {
+    left: calc(67.15% + 0.1rem);
+    width: calc(3.55% + 0.05rem);
   }
 }
 
@@ -1254,6 +1767,7 @@
 
   .heroLineTop,
   .heroLineMiddle,
+  .heroLineLower,
   .heroLineBottom {
     margin-left: 0;
     margin-top: 0;
@@ -1284,6 +1798,16 @@
   .channelGrid,
   .sequenceGrid {
     grid-template-columns: 1fr;
+  }
+
+  .sequenceFlowScroller {
+    margin-top: 2rem;
+    width: calc(100% + 0.25rem);
+  }
+
+  .sequenceFlowPanel {
+    min-width: 920px;
+    padding: 1.4rem;
   }
 
   .platformVisual {
@@ -1329,14 +1853,26 @@
     gap: 2rem;
   }
 
+  .footerAccordionSummary {
+    grid-template-columns: 1fr auto;
+    gap: 1rem;
+  }
+
+  .footerSummaryHeadings {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem 1.25rem;
+  }
+
+  .footerAccordionChevron {
+    justify-self: end;
+  }
+
   .footerColumns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.75rem 1.25rem;
   }
 
-  .footerAuroraWrap {
-    inset: 28% -22% -44%;
-  }
 }
 
 @media (max-width: 640px) {

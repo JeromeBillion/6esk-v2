@@ -1,7 +1,13 @@
+import { Inter } from "next/font/google";
 import { Clock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { ScrollArea } from "./ui/scroll-area";
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"]
+});
 
 export type HistoryTicketEvent = {
   id: string;
@@ -72,7 +78,7 @@ export function HistoryModal({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[80vh]">
+      <DialogContent className={`max-w-2xl max-h-[80vh] ${inter.className}`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Clock className="w-5 h-5" />
@@ -81,9 +87,19 @@ export function HistoryModal({
         </DialogHeader>
 
         <Tabs defaultValue="activity" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="activity">Ticket Activity ({sortedEvents.length})</TabsTrigger>
-            <TabsTrigger value="audit">Audit Log ({sortedAuditEvents.length})</TabsTrigger>
+          <TabsList className="grid h-10 w-full grid-cols-2 rounded-full bg-neutral-100 p-1 dark:bg-neutral-900">
+            <TabsTrigger
+              value="activity"
+              className="h-8 rounded-full px-4 text-[13px] leading-none data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-neutral-800"
+            >
+              Ticket Activity ({sortedEvents.length})
+            </TabsTrigger>
+            <TabsTrigger
+              value="audit"
+              className="h-8 rounded-full px-4 text-[13px] leading-none data-[state=active]:bg-white data-[state=active]:shadow-sm dark:data-[state=active]:bg-neutral-800"
+            >
+              Audit Log ({sortedAuditEvents.length})
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="activity" className="mt-4">

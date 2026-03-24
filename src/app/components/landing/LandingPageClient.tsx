@@ -12,6 +12,7 @@ import {
   PhoneCall,
   ShieldCheck,
   Sparkles,
+  UserRound,
   Workflow
 } from "lucide-react";
 import BrandMark from "@/app/components/BrandMark";
@@ -22,9 +23,9 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/app/workspace/components/ui/dialog";
+import { cn } from "@/app/workspace/components/ui/utils";
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
-import Aurora from "./Aurora";
 import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
 import channelDarkSnapshot from "@/app/assets/landing-snapshots/channel-dark.png";
 import mailDarkSnapshot from "@/app/assets/landing-snapshots/mail-dark.png";
@@ -122,17 +123,11 @@ const FOOTER_SECTIONS = [
     title: "Features",
     items: [
       { label: "AI agents" },
-      { label: "Copilot" },
-      { label: "AI and automation" },
-      { label: "Messaging and live chat" },
-      { label: "Advanced Data Privacy and Protection" },
-      { label: "Help center", href: "/support" },
-      { label: "Ticketing system" },
       { label: "Voice" },
+      { label: "Ticketing system" },
       { label: "Reporting and analytics" },
-      { label: "Workforce management" },
-      { label: "AI Quality assurance" },
-      { label: "Knowledge base", href: "/support" }
+      { label: "Messaging and live chat" },
+      { label: "See all features →" }
     ]
   },
   {
@@ -164,6 +159,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
   const [navScrolled, setNavScrolled] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [bookCallOpen, setBookCallOpen] = useState(false);
+  const [footerExpanded, setFooterExpanded] = useState(false);
   const [bookingForm, setBookingForm] = useState({
     email: "",
     phone: "",
@@ -435,19 +431,25 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             </div>
             <div className={styles.heroHeadlineGroup}>
               <BlurRevealText
-                text="Every signal."
+                text="If support"
                 className={`${styles.heroLine} ${styles.heroLineTop} ${landingDisplayFont.className}`}
                 delayMs={110}
                 wrap={false}
               />
               <BlurRevealText
-                text="One operating"
+                text="is serious,"
                 className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineMiddle} ${landingDisplayFont.className}`}
                 delayMs={115}
                 wrap={false}
               />
               <BlurRevealText
-                text="surface."
+                text="the software"
+                className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineLower} ${landingDisplayFont.className}`}
+                delayMs={120}
+                wrap={false}
+              />
+              <BlurRevealText
+                text="should be too."
                 className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineBottom} ${landingDisplayFont.className}`}
                 delayMs={120}
                 wrap={false}
@@ -461,7 +463,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
             </div>
             <div data-reveal className={styles.heroActions}>
               <Link href={workspaceHref} className={styles.primaryAction}>
-                See the unified workspace
+                Open Workspace Free
                 <ArrowRight className={styles.inlineIcon} />
               </Link>
               <button type="button" className={styles.secondaryAction} onClick={() => setBookCallOpen(true)}>
@@ -658,26 +660,108 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
       </section>
 
       <section className={styles.sequenceSection}>
-        <div className={styles.container}>
+        <div className={styles.containerWide}>
           <div data-reveal className={styles.sectionLabel}>
             <span className={landingMonoFont.className}>Resolution sequence</span>
           </div>
-          <div className={styles.sequenceGrid}>
-            {[
-              "Capture the message, call, or thread the moment it lands.",
-              "Surface the customer history, current ticket, and interaction shortcuts beside the reply context.",
-              "Draft, route, retry, merge, and measure without leaving the operating plane."
-            ].map((step, index) => (
-              <article
-                key={step}
-                data-reveal
-                className={styles.sequenceCard}
-                style={{ transitionDelay: `${index * 120}ms` }}
-              >
-                <span className={`${styles.sequenceNumber} ${landingMonoFont.className}`}>0{index + 1}</span>
-                <p>{step}</p>
+          <div data-reveal className={styles.sequenceFlowScroller}>
+            <div className={styles.sequenceFlowPanel}>
+              <div className={`${styles.sequenceFlowBridge} ${styles.sequenceFlowBridgeOne}`} aria-hidden="true" />
+              <div className={`${styles.sequenceFlowBridge} ${styles.sequenceFlowBridgeTwo}`} aria-hidden="true" />
+
+              <article className={styles.sequenceFlowStep}>
+                <span className={`${styles.sequenceFlowIndex} ${landingMonoFont.className}`}>01</span>
+                <div className={styles.sequenceSignalScene}>
+                  <div className={`${styles.sequenceSignalCard} ${styles.sequenceSignalCardWhatsapp}`}>
+                    <MessageCircleMore size={16} />
+                    <span>WhatsApp</span>
+                  </div>
+                  <div className={`${styles.sequenceSignalCard} ${styles.sequenceSignalCardEmail}`}>
+                    <Mail size={16} />
+                    <span>Email</span>
+                  </div>
+                  <div className={`${styles.sequenceSignalCard} ${styles.sequenceSignalCardVoice}`}>
+                    <PhoneCall size={16} />
+                    <span>Voice</span>
+                  </div>
+                  <span className={`${styles.sequenceSignalLine} ${styles.sequenceSignalLineTop}`} aria-hidden="true" />
+                  <span className={`${styles.sequenceSignalLine} ${styles.sequenceSignalLineMiddle}`} aria-hidden="true" />
+                  <span className={`${styles.sequenceSignalLine} ${styles.sequenceSignalLineBottom}`} aria-hidden="true" />
+                  <div className={styles.sequenceSignalNode} aria-hidden="true">
+                    <span className={styles.sequenceSignalRing} />
+                    <span className={styles.sequenceSignalCore} />
+                  </div>
+                </div>
+                <h3 className={styles.sequenceFlowTitle}>Signal captured.</h3>
+                <p className={styles.sequenceFlowBody}>
+                  Incoming email, WhatsApp, and voice signals collapse into one operating queue the moment they land.
+                </p>
               </article>
-            ))}
+
+              <article className={styles.sequenceFlowStep}>
+                <span className={`${styles.sequenceFlowIndex} ${landingMonoFont.className}`}>02</span>
+                <div className={styles.sequenceContextScene}>
+                  <div className={styles.sequenceContextCard}>
+                    <div className={styles.sequenceContextHeader}>TKT-2841 · WhatsApp · High</div>
+                    <div className={styles.sequenceContextBody}>
+                      <div className={styles.sequenceContextIdentity}>
+                        <span className={styles.sequenceContextAvatar}>OP</span>
+                        <div className={styles.sequenceContextMeta}>
+                          <span className={styles.sequenceContextName}>Olivia Parker</span>
+                          <span className={styles.sequenceContextSubline}>Enterprise · 14 tickets</span>
+                        </div>
+                        <span className={`${styles.sequenceContextChip} ${landingMonoFont.className}`}>
+                          <Sparkles size={12} />
+                          AI resolution
+                        </span>
+                      </div>
+                      <div className={styles.sequenceContextThread}>
+                        <span className={styles.sequenceContextThreadLine} />
+                        <span className={styles.sequenceContextThreadLineShort} />
+                        <span className={styles.sequenceContextThreadLineMuted} />
+                      </div>
+                      <div className={styles.sequenceContextHistory}>
+                        <span className={`${styles.sequenceContextHistoryPill} ${landingMonoFont.className}`}>History</span>
+                        <span className={`${styles.sequenceContextHistoryPill} ${landingMonoFont.className}`}>Priority</span>
+                        <span className={`${styles.sequenceContextHistoryPill} ${landingMonoFont.className}`}>Owner</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <h3 className={styles.sequenceFlowTitle}>Context loaded.</h3>
+                <p className={styles.sequenceFlowBody}>
+                  The ticket expands with customer identity, thread history, and an AI resolution path before anyone types a word.
+                </p>
+              </article>
+
+              <article className={styles.sequenceFlowStep}>
+                <span className={`${styles.sequenceFlowIndex} ${landingMonoFont.className}`}>03</span>
+                <div className={styles.sequenceResolveScene}>
+                  <div className={styles.sequenceResolveSplit} aria-hidden="true" />
+                  <span className={styles.sequenceResolveSpine} aria-hidden="true" />
+                  <div className={`${styles.sequenceResolveLane} ${styles.sequenceResolveLaneTop}`}>
+                    <span className={`${styles.sequenceResolveMode} ${landingMonoFont.className}`}>
+                      <Bot size={13} />
+                      AI auto-close
+                    </span>
+                    <span className={styles.sequenceResolveLaneTrack} aria-hidden="true" />
+                    <span className={styles.sequenceResolvedState}>Resolved</span>
+                  </div>
+                  <div className={`${styles.sequenceResolveLane} ${styles.sequenceResolveLaneBottom}`}>
+                    <span className={`${styles.sequenceResolveMode} ${landingMonoFont.className}`}>
+                      <UserRound size={13} />
+                      Human handoff
+                    </span>
+                    <span className={styles.sequenceResolveLaneTrack} aria-hidden="true" />
+                    <span className={styles.sequenceResolvedState}>Resolved</span>
+                  </div>
+                </div>
+                <h3 className={styles.sequenceFlowTitle}>Resolved.</h3>
+                <p className={styles.sequenceFlowBody}>
+                  AI can close one path automatically. Human operators can take the other. Both end with full context and a clean resolved state.
+                </p>
+              </article>
+            </div>
           </div>
         </div>
       </section>
@@ -687,67 +771,84 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
           <div className={styles.ctaPanel} data-reveal>
             <p className={`${styles.ctaEyebrow} ${landingMonoFont.className}`}>6esk</p>
             <h2 className={`${styles.ctaTitle} ${landingDisplayFont.className}`}>
-              If support is operationally serious,
+              Every signal.
               <br />
-              the software should be too.
+              One operating surface.
             </h2>
             <p className={styles.ctaBody}>
-              Open the workspace, inspect the product, or send a public request through the same system the team uses.
+              No sales process. No demo lock. Just open it and see if it fits.
             </p>
             <div className={styles.ctaActions}>
               <Link href={workspaceHref} className={styles.primaryAction}>
-                {workspaceLabel}
+                Open Workspace Free
                 <ArrowRight className={styles.inlineIcon} />
               </Link>
-              <Link href="/support" className={styles.secondaryActionDark}>
-                Public Support Form
-              </Link>
+              <button type="button" className={styles.secondaryAction} onClick={() => setBookCallOpen(true)}>
+                Book a call
+              </button>
             </div>
           </div>
         </div>
       </section>
 
       <footer className={styles.footer}>
-        <div className={styles.footerAuroraWrap} aria-hidden="true">
-          <Aurora
-            className={styles.footerAurora}
-            colorStops={["#7cff67", "#B19EEF", "#5227FF"]}
-            blend={0.5}
-            amplitude={1}
-            speed={1}
-            flipY
-          />
-        </div>
         <div className={`${styles.container} ${styles.footerContainer}`}>
-          <div className={styles.footerGrid}>
-            <div className={styles.footerIntro}>
+          <button
+            type="button"
+            className={styles.footerAccordionToggle}
+            onClick={() => setFooterExpanded((previous) => !previous)}
+            aria-expanded={footerExpanded}
+            aria-controls="landing-footer-panel"
+          >
+            <div className={styles.footerAccordionSummary}>
               <div className={styles.footerBrand}>
-                <BrandMark size={26} />
+                <BrandMark size={28} />
               </div>
-              <p className={styles.footerTagline}>Omnichannel support, one deliberate operating surface.</p>
+              <div className={styles.footerSummaryHeadings}>
+                {FOOTER_SECTIONS.map((section) => (
+                  <span key={section.title} className={`${styles.footerHeading} ${landingMonoFont.className}`}>
+                    {section.title}
+                  </span>
+                ))}
+              </div>
+              <ChevronDown
+                className={cn(styles.footerAccordionChevron, footerExpanded && styles.footerAccordionChevronOpen)}
+              />
             </div>
-            <div className={styles.footerColumns}>
-              {FOOTER_SECTIONS.map((section) => (
-                <div key={section.title} className={styles.footerColumn}>
-                  <h3 className={`${styles.footerHeading} ${landingMonoFont.className}`}>{section.title}</h3>
-                  <ul className={styles.footerLinkList}>
-                    {section.items.map((item) => (
-                      <li key={`${section.title}-${item.label}`}>
-                        {"href" in item && item.href ? (
-                          <Link
-                            href={item.href === "workspace" ? workspaceHref : item.href}
-                            className={styles.footerLink}
-                          >
-                            {item.label}
-                          </Link>
-                        ) : (
-                          <span className={styles.footerLinkMuted}>{item.label}</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+          </button>
+          <div
+            id="landing-footer-panel"
+            className={cn(styles.footerAccordionPanel, footerExpanded && styles.footerAccordionPanelOpen)}
+          >
+            <div className={styles.footerAccordionPanelInner}>
+              <div className={styles.footerGrid}>
+                <div className={styles.footerIntro}>
+                  <p className={styles.footerTagline}>AI-native support. Every channel. One surface.</p>
                 </div>
-              ))}
+                <div className={styles.footerColumns}>
+                  {FOOTER_SECTIONS.map((section) => (
+                    <div key={section.title} className={styles.footerColumn}>
+                      <h3 className="sr-only">{section.title}</h3>
+                      <ul className={styles.footerLinkList}>
+                        {section.items.map((item) => (
+                          <li key={`${section.title}-${item.label}`}>
+                            {"href" in item && item.href ? (
+                              <Link
+                                href={item.href === "workspace" ? workspaceHref : item.href}
+                                className={styles.footerLink}
+                              >
+                                {item.label}
+                              </Link>
+                            ) : (
+                              <span className={styles.footerLinkMuted}>{item.label}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -1887,12 +1887,12 @@ export default function AdminClient() {
                       <Link href="/mail?view=spam">Open spam queue</Link>
                     </Button>
                   </div>
-                  <div className="rounded-lg border border-neutral-200 bg-white/70 p-3">
-                    <p className="text-xs text-neutral-600">
+                  <div className="rounded-lg border border-neutral-200 bg-white/70 p-3 dark:border-neutral-800 dark:bg-neutral-950/80">
+                    <p className="text-xs text-neutral-600 dark:text-neutral-300">
                       Tune data depth for operations telemetry and event queues.
                     </p>
                     <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
-                      <label className="grid gap-1">
+                      <label className="grid gap-1 text-sm text-neutral-800 dark:text-neutral-200">
                         Window (hours)
                         <Input
                           type="number"
@@ -1907,7 +1907,7 @@ export default function AdminClient() {
                           }
                         />
                       </label>
-                      <label className="grid gap-1">
+                      <label className="grid gap-1 text-sm text-neutral-800 dark:text-neutral-200">
                         Event rows
                         <Input
                           type="number"
@@ -1922,7 +1922,7 @@ export default function AdminClient() {
                           }
                         />
                       </label>
-                      <label className="grid gap-1">
+                      <label className="grid gap-1 text-sm text-neutral-800 dark:text-neutral-200">
                         Audit rows
                         <Input
                           type="number"
@@ -1955,7 +1955,7 @@ export default function AdminClient() {
                       >
                         Reset Defaults
                       </Button>
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
                         Current: {operationsFilters.windowHours}h window, {operationsFilters.eventLimit} event rows,{" "}
                         {operationsFilters.auditLimit} audit rows.
                       </p>

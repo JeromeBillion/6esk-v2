@@ -4,13 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { BarChart3, LogOut, Mail, Moon, Settings, Sun, Ticket } from "lucide-react";
+import { Inter } from "next/font/google";
+import { BarChart3, Info, LogOut, Mail, Moon, Settings, Sun, Ticket } from "lucide-react";
 import BrandMark from "@/app/components/BrandMark";
 import { cn } from "@/app/workspace/components/ui/utils";
 import { Button } from "@/app/workspace/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/app/workspace/components/ui/dialog";
 import { useDemoMode } from "@/app/lib/demo-mode";
 import { useThemeMode } from "@/app/lib/theme";
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"]
+});
 
 const NAVIGATION = [
   { name: "Support", href: "/tickets", icon: Ticket },
@@ -38,7 +44,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="h-screen flex bg-neutral-50 dark:bg-neutral-950">
+      <div className={cn(inter.className, "h-screen flex bg-neutral-50 dark:bg-neutral-950")}>
         <div className="w-16 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 flex flex-col items-center py-4 gap-2">
           <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.28)]">
             <BrandMark size={32} priority />
@@ -84,10 +90,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
               type="button"
               onClick={() => setSettingsOpen(true)}
               className="flex flex-col items-center justify-center h-12 w-full rounded-lg transition-colors text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
-              title="Settings"
-              aria-label="Settings"
+              title="Info"
+              aria-label="Info"
             >
-              <Settings className="w-5 h-5" />
+              <Info className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -99,28 +105,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
+            <DialogTitle>Info</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex items-center justify-between border border-neutral-200 rounded-lg p-4">
-              <div>
-                <p className="text-sm font-medium">Appearance</p>
-                <p className="text-xs text-neutral-600">
-                  Active theme: {theme === "dark" ? "Dark" : "Light"}.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={toggleTheme}
-              >
-                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                {theme === "dark" ? "Light Mode" : "Dark Mode"}
-              </Button>
-            </div>
-
             <div className="flex items-center justify-between border border-neutral-200 rounded-lg p-4">
               <div>
                 <p className="text-sm font-medium">Data Source</p>
