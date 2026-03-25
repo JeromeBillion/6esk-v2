@@ -1,0 +1,375 @@
+# 6esk v2 Commercialization Roadmap (Multi-Tenant SaaS)
+
+## Purpose
+`6esk v2` is the independence and go-to-market version of the product: a true multi-tenant B2B SaaS platform, no longer a custom internal CRM for `6ex`.
+
+This roadmap starts only after `v1` is fully working.
+
+## Product Thesis
+`6esk v2` sells the operating model currently implied by the landing page:
+- every serious support channel in one surface
+- optional AI automation across text and voice
+- human operators can step in without losing context
+- modular commercial packaging
+- enterprise-grade trust, telemetry, and controls
+
+## Baseline Assumptions
+- architecture: true multi-tenant SaaS
+- `v2` can run with no Venus dependency
+- a forked AI orchestration module will originate from Venus, but be packaged as a 6esk module
+- customers may choose:
+  - no AI
+  - 6esk-managed AI orchestration
+  - bring-your-own AI API/provider
+- landing page and public GTM site are `v2` scope, not `v1` scope
+- internal business operations for the SaaS must have their own platform/workspace (`6esk Work`)
+
+## Commercial Packaging Model
+### Core Platform (included)
+These should not be priced as standalone add-ons:
+- support workspace shell
+- analytics
+- admin
+- operations tooling
+- human-to-6esk vanilla webchat
+
+### Billable Modules
+- email
+- WhatsApp
+- voice
+- AI automation
+- AI orchestration service module (forked from Venus)
+- bring-your-own AI provider mode
+- implementation / professional services (business-side offering)
+
+### AI Commercial Rule
+If a customer uses our managed AI stack:
+- they pay the AI module price inclusive of our orchestration/runtime margin and token cost model
+
+If a customer brings their own AI API/provider:
+- token cost is removed from our pricing model
+- we still charge for our orchestration/runtime layer and support margin
+
+## v2 Success Criteria
+`6esk v2` is ready for market only when all of the following are true:
+1. Tenants are isolated safely in a true multi-tenant architecture.
+2. Customers can be provisioned, billed, configured, and supported as external companies.
+3. Every billable module can be turned on/off per tenant without code forks.
+4. AI can be disabled, 6esk-managed, or BYO-provider.
+5. Security posture is strong enough for real procurement and enterprise review.
+6. South Africa legal/compliance requirements are met and international readiness is planned.
+7. `6esk Work` exists as the internal backoffice for running the SaaS business.
+
+## Workstream A: Multi-Tenant Core Architecture
+### Required Platform Shifts
+1. Introduce first-class `tenant`, `organization`, and `workspace` boundaries.
+2. Enforce data isolation in every API, worker, integration, and analytics path.
+3. Make all connectors tenant-aware:
+   - email
+   - WhatsApp
+   - voice
+   - webchat
+   - AI orchestration
+4. Add tenant-safe secret storage and rotation.
+5. Add tenant lifecycle operations:
+   - provision
+   - suspend
+   - downgrade
+   - close
+   - export
+   - delete/anonymize
+
+### Required Technical Controls
+- row-level or service-layer tenant isolation
+- per-tenant encryption/key strategy where justified
+- tenant-safe background jobs and queues
+- tenant-aware audit logs
+- environment promotion model that does not leak tenant data
+
+## Workstream B: Authentication, Identity, and Access
+### Must-Haves
+- OAuth / OpenID Connect support
+- SSO readiness for enterprise customers
+- MFA for admin and sensitive roles
+- SCIM or later-directory-sync roadmap for enterprise lifecycle management
+- stronger role and permission model beyond current internal assumptions
+- session policies, device/session visibility, and revoke controls
+
+### Commercial Requirement
+Auth can no longer assume a single internal company operating model. Identity must support:
+- multiple companies
+- multiple workspaces
+- external admins
+- external operators
+- partner/professional-services access where needed
+
+## Workstream C: Feature Entitlements, Packaging, and Metering
+### Goal
+Commercial packaging must be enforced by system design, not sales promises.
+
+### Required Capabilities
+1. Entitlement engine for channels and AI modules.
+2. Metering for:
+   - email volume
+   - WhatsApp volume/templates
+   - voice usage
+   - AI text actions
+   - AI voice actions
+   - orchestration runtime consumption
+3. Plan/catalog model:
+   - core plan
+   - add-on modules
+   - usage-based metrics
+4. Downgrade/upgrade behavior with safe transitions.
+5. Tenant-facing visibility into enabled modules and usage.
+
+### Revenue-Supporting Requirement
+The system must distinguish:
+- human-only channel usage
+- AI-assisted usage
+- fully autonomous AI usage
+- BYO-provider AI usage
+
+## Workstream D: AI Productization
+### Product Requirement
+The current Venus-derived capability must become an optional `6esk` module, not a hidden internal dependency.
+
+### Modes To Support
+1. No AI.
+2. `6esk` managed AI orchestration.
+3. BYO AI provider/API.
+4. Optional future partner-hosted AI modes.
+
+### Required Architecture
+- provider abstraction layer
+- cost/margin model by provider mode
+- prompt/policy/runtime controls owned by 6esk
+- event/audit trail for every AI action
+- escalation semantics that preserve full context
+- tenant-level AI policy controls
+
+### Explicit Commercial Rule
+BYO AI should reduce customer cost materially, but 6esk still owns:
+- orchestration
+- policy enforcement
+- safety rails
+- routing/runtime layer
+- auditability
+
+## Workstream E: South Africa Compliance Baseline
+This section covers what we should plan for based on South Africa requirements and what serious B2B customers will expect.
+
+### Minimum South Africa Compliance Baseline
+1. POPIA compliance program.
+2. Information Officer registration and operating process.
+3. PAIA private-body obligations and reporting/manual requirements.
+4. Security compromise notification process.
+5. Cross-border transfer posture for customer data and subprocessors.
+6. Contractual and policy treatment for call recordings, transcripts, and monitoring.
+7. VAT and invoicing treatment for SaaS/electronic services.
+
+### What This Means In Practice
+#### POPIA
+We need:
+- lawful processing basis inventory
+- operator agreements / DPA equivalents
+- retention and deletion rules
+- access-control and security safeguards
+- breach response and notification workflow
+- data subject rights handling
+- direct-marketing and consent rules where relevant
+
+#### PAIA
+We need:
+- private-body PAIA manual/process ownership
+- request handling process
+- annual/reporting obligations as applicable
+
+#### Voice / Recording
+We need a counsel-approved position for:
+- recording consent language
+- transcript retention
+- monitoring/interception boundaries
+- region-specific differences where customers operate outside South Africa
+
+#### VAT / Finance
+We need:
+- SaaS billing model validated for South Africa
+- VAT treatment and invoicing flow
+- finance controls for recurring subscriptions and usage billing
+
+### Enterprise Readiness Beyond Legal Minimum
+South Africa legal minimum is not enough for SaaS growth. We should also plan for:
+- SOC 2 readiness
+- ISO 27001 readiness
+- vendor security questionnaire workflow
+- trust center / subprocessor list / penetration testing evidence
+
+## Workstream F: Security Program
+### Required Platform Security Upgrades
+1. secrets management and rotation discipline
+2. stronger audit logs and immutable event provenance
+3. encryption in transit and at rest review
+4. least-privilege access model across services and ops
+5. vulnerability management and patch SLAs
+6. dependency/SAST/DAST/container scanning
+7. backup, restore, and disaster-recovery drills
+8. tenant data export and deletion controls
+9. abuse prevention / spam / fraud controls
+10. admin hardening, break-glass, and privileged-access controls
+
+### Security Definition Of Done For Market Entry
+- documented security program
+- regular penetration testing
+- incident response runbook
+- backup restore proven
+- tenant isolation verified
+- customer-facing security documentation ready
+
+## Workstream G: Telemetry, Reliability, and Supportability
+The current internal-tool telemetry bar is not enough.
+
+### v2 Must-Haves
+- tenant-aware observability
+- per-module health and latency dashboards
+- AI cost and outcome telemetry
+- delivery telemetry for email/WhatsApp/voice
+- SLOs/SLAs and alerting model
+- public status page and incident comms workflow
+- support diagnostics that do not require engineering access
+
+### Why This Matters
+A SaaS business dies if it cannot:
+- explain failures quickly
+- meter usage correctly
+- prove service quality
+- isolate one tenant's issue from another's
+
+## Workstream H: Billing, Finance, and Revenue Operations
+### Required Systems
+1. pricing catalog and quote model
+2. subscriptions and add-on module billing
+3. usage-based billing for channels/AI where applicable
+4. invoicing, VAT, collections, and dunning
+5. plan changes, proration, credits, and refunds
+6. finance reconciliation against provider spend
+7. margin reporting by tenant/module
+
+### Missing From Current Internal-Tool Shape
+The platform currently behaves like a product. `v2` must also behave like a business system.
+
+## Workstream I: Customer Lifecycle and BizOps (`6esk Work`)
+`6esk Work` is required. This is not optional admin polish.
+
+### Purpose
+Run the SaaS business itself:
+- tenant onboarding
+- implementation tracking
+- contract state
+- module entitlements
+- usage review
+- renewals
+- incidents
+- support escalations
+- finance visibility
+- AI/provider configuration ownership
+
+### Minimum Internal Backoffice Capabilities
+1. account and subscription management
+2. entitlement management
+3. onboarding and implementation pipeline
+4. support and incident coordination
+5. finance and collections visibility
+6. tenant usage and health overview
+7. audit of internal operator actions
+8. partner/pro-services workflow management
+
+## Workstream J: GTM and Public Company Readiness
+### Required Non-Code Assets
+- pricing page
+- legal terms and privacy policy
+- DPA / operator agreement pack
+- subprocessor list
+- trust/security page
+- status page
+- help center / docs
+- onboarding/training materials
+- product update/change communication flow
+
+### Required Commercial Processes
+- sales-assisted onboarding
+- implementation playbooks
+- support SLAs
+- escalation paths
+- renewal process
+- customer success/account ownership model
+
+## Things Most Commonly Forgotten When Turning An Internal Tool Into A Business
+These are the gaps teams usually underestimate:
+1. tenant isolation and safe migration tooling
+2. entitlement and billing enforcement drift
+3. data export/offboarding/delete workflows
+4. contract/DPA/subprocessor governance
+5. support, incident, and status-page process ownership
+6. finance reconciliation and margin visibility
+7. backup/restore drills under real customer expectations
+8. procurement and security questionnaire handling
+9. abuse/fraud/spam controls for outbound channels
+10. internal backoffice tooling for the SaaS operator team
+11. usage metering that customers can trust
+12. documentation and training good enough for non-engineers
+
+## Recommended Execution Order
+### Phase 0: lock v1 first
+- do not commercialize before `v1` is truly complete
+
+### Phase 1: commercial architecture foundation
+- multi-tenant model
+- entitlements
+- auth/identity model
+- tenant-safe connectors
+
+### Phase 2: security and compliance baseline
+- POPIA / PAIA / Info Officer processes
+- legal docs
+- security controls
+- incident and status posture
+
+### Phase 3: packaging and monetization
+- billing/metering/catalog
+- AI provider modes
+- customer-facing plan structure
+
+### Phase 4: bizops operating system
+- `6esk Work`
+- onboarding, renewals, finance, support ops
+
+### Phase 5: GTM launch readiness
+- public docs
+- trust artifacts
+- pricing
+- implementation and support model
+
+## Sources Checked For South Africa Planning
+These should be revisited with legal/compliance review before launch, but they are the correct planning inputs to anchor now.
+- Information Regulator South Africa home / POPIA / PAIA / Information Officer registration:
+  - https://inforegulator.org.za/
+- POPIA statutory source:
+  - https://www.gov.za/documents/protection-personal-information-act
+- SARS VAT overview:
+  - https://www.sars.gov.za/types-of-tax/value-added-tax/
+- SARS VAT registration guidance:
+  - https://www.sars.gov.za/types-of-tax/value-added-tax/register-for-vat/
+- SARS electronic services guidance:
+  - https://www.sars.gov.za/guide-to-supply-of-electronic-services-by-foreign-suppliers-and-foreign-intermediaries/
+
+## v2 Definition Of Done
+`6esk v2` is done when it is no longer merely a strong internal product, but a real company-ready SaaS platform with:
+- true multi-tenancy
+- commercial packaging
+- AI optionality
+- security and compliance maturity
+- billing and metering
+- supportable operations
+- a working internal backoffice (`6esk Work`)
+- a go-to-market surface that matches what the product can actually deliver

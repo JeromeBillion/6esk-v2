@@ -48,44 +48,37 @@ const CHANNELS = [
     body: "Full inbox control - threads, attachments, macros, and routing - without ever leaving the queue.",
     points: [
       "Never lose a prior exchange",
-      "Open files without leaving the ticket",
       "Route to the right agent, automatically",
-      "Manage multiple inboxes from one view",
       "AI drafts, routes, and resolves without a human in the loop"
     ]
   },
   {
     name: "WhatsApp",
     Icon: MessageCircleMore,
-    body: "WhatsApp that actually respects the 24-hour window. Templates, delivery states, and full customer context - built in, not bolted on.",
+    body: "WhatsApp that respects the 24-hour window. Templates, delivery states, full context - built in, not bolted on.",
     points: [
       "Know exactly when a message lands",
-      "Send compliant WhatsApp messages in one click",
-      "Share media and files in the same thread",
-      "Never miss the 24hr reply window",
+      "Send compliant templates in one click",
       "AI manages the 24-hour window and sends templates automatically"
     ]
   },
   {
     name: "Voice",
     Icon: PhoneCall,
-    body: "Every call logged, transcribed, and tied to the customer record automatically. Nothing lives in a separate dialer ever again.",
+    body: "Every call logged, transcribed, and tied to the customer record. Nothing lives in a separate dialer ever again.",
     points: [
-      "See live call status across the team",
-      "Full call record attached to every ticket",
-      "Log what happened - without a follow-up task",
-      "Place outbound calls from the same operator view",
-      "AI transcribes, summarises, and logs outcomes in real time"
+      "Live call status across the team",
+      "Full record attached to every ticket",
+      "AI transcribes and logs outcomes in real time"
     ]
   },
   {
     name: "AI Agent",
     Icon: Bot,
-    body: "Not a chatbot. A full operator. 6esk's AI reads context, drafts replies, sends messages, escalates when needed, and closes tickets — across every channel, autonomously.",
+    body: "Not a chatbot. A full operator. Reads context, drafts, sends, escalates, and closes - across every channel, autonomously.",
     points: [
-      "Autonomous end-to-end resolution",
-      "Cross-channel context awareness",
-      "Human escalation with full handoff notes",
+      "End-to-end resolution without human input",
+      "Escalates with full context, nothing resets",
       "Full audit trail on every AI action"
     ]
   }
@@ -664,6 +657,16 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
           <div data-reveal className={styles.sectionLabel}>
             <span className={landingMonoFont.className}>Resolution sequence</span>
           </div>
+          <div className={styles.sequenceHeader}>
+            <h2 data-reveal className={`${styles.sectionTitle} ${landingDisplayFont.className}`}>
+              One path in.
+              <br />
+              One resolved state out.
+            </h2>
+            <p data-reveal className={styles.sectionIntro}>
+              Email, WhatsApp, and voice collapse into one queue, load context beside the ticket, and resolve through AI or human handoff without resetting the work.
+            </p>
+          </div>
           <div data-reveal className={styles.sequenceFlowScroller}>
             <div className={styles.sequenceFlowPanel}>
               <div className={`${styles.sequenceFlowBridge} ${styles.sequenceFlowBridgeOne}`} aria-hidden="true" />
@@ -738,7 +741,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
                 <span className={`${styles.sequenceFlowIndex} ${landingMonoFont.className}`}>03</span>
                 <div className={styles.sequenceResolveScene}>
                   <div className={styles.sequenceResolveSplit} aria-hidden="true" />
-                  <span className={styles.sequenceResolveSpine} aria-hidden="true" />
+                  <span className={styles.sequenceResolveBetweenArrow} aria-hidden="true" />
                   <div className={`${styles.sequenceResolveLane} ${styles.sequenceResolveLaneTop}`}>
                     <span className={`${styles.sequenceResolveMode} ${landingMonoFont.className}`}>
                       <Bot size={13} />

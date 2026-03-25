@@ -29,6 +29,10 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Current pilot/rollout checklist for the voice feature
 - `docs/Venus-Voice.md`
   - Venus-to-6esk AI voice integration contract and safety model
+- `docs/6esk-v1-completion-roadmap.md`
+  - Completion roadmap for the `6ex`-custom proprietary `6esk v1` product
+- `docs/6esk-v2-commercialization-roadmap.md`
+  - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including South Africa readiness and BizOps
 
 ## Culled
 Removed as stale/duplicative:
