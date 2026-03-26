@@ -34,13 +34,31 @@ These should not be priced as standalone add-ons:
 - human-to-6esk vanilla webchat
 
 ### Billable Modules
-- email
+- email workspace connectivity
+- managed email service
 - WhatsApp
 - voice
 - AI automation
 - AI orchestration service module (forked from Venus)
 - bring-your-own AI provider mode
 - implementation / professional services (business-side offering)
+
+### Email Module Modes
+The email offer must be modular, because `6esk v2` should be able to replace the need for a separate workspace/email-tool subscription for some customers, while integrating cleanly with existing providers for others.
+
+Supported modes:
+1. Connected email workspace
+   - connect Google Workspace, Microsoft 365, or another supported provider
+   - use OAuth/API/IMAP-SMTP integration where appropriate
+   - 6esk operates the support workflow while the customer keeps its existing mailbox provider
+2. Managed 6esk email service
+   - 6esk provisions and operates the support email layer for the customer's domain
+   - 6esk can offer mailboxes, aliases, routing, and support inboxes without the customer buying a separate workspace tool just to run support
+
+Commercial rule:
+- some customers will buy only the CRM + connect their own provider
+- some customers will buy the full managed stack, including email service
+- both modes must be tenant-safe and interchangeable without product rewrites
 
 ### AI Commercial Rule
 If a customer uses our managed AI stack:
@@ -56,9 +74,10 @@ If a customer brings their own AI API/provider:
 2. Customers can be provisioned, billed, configured, and supported as external companies.
 3. Every billable module can be turned on/off per tenant without code forks.
 4. AI can be disabled, 6esk-managed, or BYO-provider.
-5. Security posture is strong enough for real procurement and enterprise review.
-6. South Africa legal/compliance requirements are met and international readiness is planned.
-7. `6esk Work` exists as the internal backoffice for running the SaaS business.
+5. Email can run in either connected-provider mode or 6esk-managed service mode.
+6. Security posture is strong enough for real procurement and enterprise review.
+7. South Africa legal/compliance requirements are met and international readiness is planned.
+8. `6esk Work` exists as the internal backoffice for running the SaaS business.
 
 ## Workstream A: Multi-Tenant Core Architecture
 ### Required Platform Shifts
@@ -66,6 +85,7 @@ If a customer brings their own AI API/provider:
 2. Enforce data isolation in every API, worker, integration, and analytics path.
 3. Make all connectors tenant-aware:
    - email
+   - managed email service
    - WhatsApp
    - voice
    - webchat
@@ -110,7 +130,8 @@ Commercial packaging must be enforced by system design, not sales promises.
 ### Required Capabilities
 1. Entitlement engine for channels and AI modules.
 2. Metering for:
-   - email volume
+   - connected email volume
+   - managed email mailboxes / aliases / seats / sending volume
    - WhatsApp volume/templates
    - voice usage
    - AI text actions
@@ -130,7 +151,67 @@ The system must distinguish:
 - fully autonomous AI usage
 - BYO-provider AI usage
 
-## Workstream D: AI Productization
+### Email Service Commercial Requirement
+The platform must support two distinct email commercial models:
+1. Bring-your-own email workspace
+   - connect an existing Google Workspace, Microsoft 365, or equivalent provider
+   - ingest/send mail without forcing mailbox migration
+2. 6esk-managed email service
+   - provision email support capability directly for the customer's domain
+   - reduce or eliminate the customer's need for a separate workspace-style support mail tool
+
+This means packaging, entitlement, metering, onboarding, and support flows must all understand the difference between:
+- connected provider mail
+- managed 6esk mail
+
+## Workstream D: Email Service Productization
+This is a separate workstream because once 6esk offers hosted/managed email, we are no longer only integrating with email systems. We are partially becoming one.
+
+### Product Requirement
+Customers must be able to choose between:
+1. Connected-provider email
+2. Managed 6esk email service
+
+### Connected-Provider Requirements
+- OAuth and provider integration for Google Workspace and Microsoft 365 first
+- mailbox import/sync model
+- shared inbox routing and send-as behavior
+- provider token lifecycle and refresh handling
+- failure visibility when provider auth or sync breaks
+
+### Managed Email Service Requirements
+- customer domain onboarding flow
+- DNS verification flow
+- SPF / DKIM / DMARC setup and validation
+- mailbox and alias provisioning
+- outbound delivery infrastructure or provider partnership
+- inbound routing into 6esk
+- bounce, complaint, suppression, and deliverability handling
+- mailbox ownership, suspend, delete, and export lifecycle
+
+### Business And Ops Implications
+If 6esk offers managed email service, we also need:
+- deliverability monitoring
+- sender reputation management
+- abuse/spam controls
+- domain warm-up and sending policy controls
+- support process for DNS and domain onboarding issues
+- clear customer responsibility split for domain ownership and DNS changes
+
+### Commercial Requirement
+Managed email service must meter and bill differently from connected-provider email.
+The roadmap must support:
+- mailbox/seat pricing
+- alias/domain pricing if needed
+- sending-volume pricing if needed
+- onboarding/service fees where justified
+
+### Exit Criteria
+- a customer can either connect existing mail or buy managed mail from 6esk
+- both modes end in the same operator experience inside the product
+- both modes are observable, billable, and supportable
+
+## Workstream E: AI Productization
 ### Product Requirement
 The current Venus-derived capability must become an optional `6esk` module, not a hidden internal dependency.
 
@@ -156,7 +237,7 @@ BYO AI should reduce customer cost materially, but 6esk still owns:
 - routing/runtime layer
 - auditability
 
-## Workstream E: South Africa Compliance Baseline
+## Workstream F: South Africa Compliance Baseline
 This section covers what we should plan for based on South Africa requirements and what serious B2B customers will expect.
 
 ### Minimum South Africa Compliance Baseline
@@ -198,6 +279,14 @@ We need:
 - VAT treatment and invoicing flow
 - finance controls for recurring subscriptions and usage billing
 
+#### Email Service / Domain Operations
+We need a compliant and supportable position for:
+- customer-domain verification and control
+- mailbox retention and deletion
+- cross-border handling where email data or providers sit outside South Africa
+- outbound sender reputation and complaint handling
+- terms governing hosted email service vs connected-provider integration
+
 ### Enterprise Readiness Beyond Legal Minimum
 South Africa legal minimum is not enough for SaaS growth. We should also plan for:
 - SOC 2 readiness
@@ -205,7 +294,7 @@ South Africa legal minimum is not enough for SaaS growth. We should also plan fo
 - vendor security questionnaire workflow
 - trust center / subprocessor list / penetration testing evidence
 
-## Workstream F: Security Program
+## Workstream G: Security Program
 ### Required Platform Security Upgrades
 1. secrets management and rotation discipline
 2. stronger audit logs and immutable event provenance
@@ -217,6 +306,7 @@ South Africa legal minimum is not enough for SaaS growth. We should also plan fo
 8. tenant data export and deletion controls
 9. abuse prevention / spam / fraud controls
 10. admin hardening, break-glass, and privileged-access controls
+11. stronger protection around tenant mailboxes, provider tokens, and hosted email domains
 
 ### Security Definition Of Done For Market Entry
 - documented security program
@@ -226,7 +316,7 @@ South Africa legal minimum is not enough for SaaS growth. We should also plan fo
 - tenant isolation verified
 - customer-facing security documentation ready
 
-## Workstream G: Telemetry, Reliability, and Supportability
+## Workstream H: Telemetry, Reliability, and Supportability
 The current internal-tool telemetry bar is not enough.
 
 ### v2 Must-Haves
@@ -234,6 +324,7 @@ The current internal-tool telemetry bar is not enough.
 - per-module health and latency dashboards
 - AI cost and outcome telemetry
 - delivery telemetry for email/WhatsApp/voice
+- deliverability telemetry for managed email domains and outbound reputation
 - SLOs/SLAs and alerting model
 - public status page and incident comms workflow
 - support diagnostics that do not require engineering access
@@ -245,7 +336,7 @@ A SaaS business dies if it cannot:
 - prove service quality
 - isolate one tenant's issue from another's
 
-## Workstream H: Billing, Finance, and Revenue Operations
+## Workstream I: Billing, Finance, and Revenue Operations
 ### Required Systems
 1. pricing catalog and quote model
 2. subscriptions and add-on module billing
@@ -254,11 +345,12 @@ A SaaS business dies if it cannot:
 5. plan changes, proration, credits, and refunds
 6. finance reconciliation against provider spend
 7. margin reporting by tenant/module
+8. hosted-email cost and margin tracking separate from connected-email mode
 
 ### Missing From Current Internal-Tool Shape
 The platform currently behaves like a product. `v2` must also behave like a business system.
 
-## Workstream I: Customer Lifecycle and BizOps (`6esk Work`)
+## Workstream J: Customer Lifecycle and BizOps (`6esk Work`)
 `6esk Work` is required. This is not optional admin polish.
 
 ### Purpose
@@ -283,8 +375,9 @@ Run the SaaS business itself:
 6. tenant usage and health overview
 7. audit of internal operator actions
 8. partner/pro-services workflow management
+9. email-domain onboarding and deliverability support workflow
 
-## Workstream J: GTM and Public Company Readiness
+## Workstream K: GTM and Public Company Readiness
 ### Required Non-Code Assets
 - pricing page
 - legal terms and privacy policy
