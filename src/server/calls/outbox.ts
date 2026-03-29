@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { updateCallSessionStatus } from "@/server/calls/service";
+import { sendOutboundCall } from "@/server/calls/provider";
 
 type CallOutboxEventRow = {
   id: string;
@@ -175,18 +176,6 @@ async function markFailed({
       }
     });
   }
-}
-
-async function sendOutboundCall(
-  provider: string,
-  eventId: string,
-  payload: Record<string, unknown>
-): Promise<{ providerCallId: string | null }> {
-  if (provider === "mock") {
-    return { providerCallId: `mock-${eventId}` };
-  }
-
-  throw new Error(`Call provider '${provider}' is not configured.`);
 }
 
 export async function deliverPendingCallEvents({ limit = 5 }: DeliverCallOutboxArgs = {}) {

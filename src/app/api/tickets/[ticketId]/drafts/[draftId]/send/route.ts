@@ -4,6 +4,19 @@ import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftStatus } from "@/server/agents/drafts";
 import { sendTicketReply } from "@/server/email/replies";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
+import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+
+function inferDraftReplyModule(input: {
+  requesterEmail: string | null | undefined;
+  hasTemplate: boolean;
+}) {
+  if (input.hasTemplate) {
+    return "whatsapp" as const;
+  }
+  const requester = input.requesterEmail?.trim().toLowerCase() ?? "";
+  return requester.startsWith("whatsapp:") ? ("whatsapp" as const) : ("email" as const);
+}
 
 export async function POST(
   _request: Request,
@@ -50,6 +63,21 @@ export async function POST(
     draft.metadata && typeof draft.metadata === "object"
       ? (draft.metadata as Record<string, unknown>).template ?? null
       : null;
+  const replyModule = inferDraftReplyModule({
+    requesterEmail: ticket.requester_email,
+    hasTemplate: Boolean(template)
+  });
+  if (!(await isWorkspaceModuleEnabled(replyModule))) {
+    const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
+    return Response.json(
+      {
+        error: `${label} module is not enabled for this workspace.`,
+        code: "module_disabled",
+        module: replyModule
+      },
+      { status: 409 }
+    );
+  }
 
   try {
     const result = await sendTicketReply({
@@ -89,6 +117,36 @@ export async function POST(
       entityType: "agent_draft",
       entityId: draftId,
       data: { ticketId }
+    });
+    await recordModuleUsageEvent({
+      moduleKey: replyModule,
+      usageKind: "reply_sent",
+      actorType: "human",
+      metadata: {
+        route: "/api/tickets/[ticketId]/drafts/[draftId]/send",
+        ticketId,
+        draftId,
+        messageId: result.messageId ?? null,
+        source: "approved_ai_draft"
+      }
+    });
+    await recordModuleUsageEvent({
+      moduleKey: "aiAutomation",
+      usageKind: "approved_draft_send",
+      actorType: "ai",
+      providerMode: resolveAiProviderMode(
+        draft.metadata && typeof draft.metadata === "object"
+          ? (draft.metadata as Record<string, unknown>)
+          : null
+      ),
+      metadata: {
+        route: "/api/tickets/[ticketId]/drafts/[draftId]/send",
+        ticketId,
+        draftId,
+        integrationId: draft.integration_id,
+        messageId: result.messageId ?? null,
+        channel: replyModule
+      }
     });
 
     return Response.json({ status: "sent", messageId: result.messageId, draft: updated });

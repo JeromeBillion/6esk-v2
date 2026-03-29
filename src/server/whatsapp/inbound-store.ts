@@ -19,7 +19,11 @@ import {
   lookupPredictionProfile
 } from "@/server/integrations/prediction-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
-import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
+import {
+  attachCustomerToTicket,
+  resolveOrCreateCustomerForInbound,
+  type CustomerResolutionConflict
+} from "@/server/customers";
 
 export type NormalizedWhatsAppAttachment = {
   mediaId?: string | null;
@@ -49,6 +53,26 @@ function getSupportAddress() {
   }
   const domain = process.env.RESEND_FROM_DOMAIN ?? "";
   return domain ? `support@${domain}`.toLowerCase() : "";
+}
+
+function applyIdentityConflictMetadata(
+  metadata: Record<string, unknown>,
+  conflict: CustomerResolutionConflict
+) {
+  const next = { ...metadata } as Record<string, unknown>;
+  const existingLookup =
+    typeof next.profile_lookup === "object" && next.profile_lookup !== null
+      ? { ...(next.profile_lookup as Record<string, unknown>) }
+      : {};
+
+  existingLookup.status = "conflicted";
+  existingLookup.conflict = conflict;
+  next.profile_lookup = existingLookup;
+  if (typeof next.external_profile === "object" && next.external_profile !== null) {
+    next.external_profile_conflict = next.external_profile;
+    delete next.external_profile;
+  }
+  return next;
 }
 
 function normalizeContact(value: string) {
@@ -170,12 +194,18 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   }
 
   const requesterProfile = await lookupPredictionProfile({ phone: from });
-  const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
   const customerResolution = await resolveOrCreateCustomerForInbound({
     profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
     inboundPhone: from,
     displayName: message.contactName ?? null
   });
+  const profileMetadataPatch =
+    requesterProfile.status === "matched" && customerResolution?.conflict
+      ? applyIdentityConflictMetadata(
+          buildProfileMetadataPatch(requesterProfile),
+          customerResolution.conflict
+        )
+      : buildProfileMetadataPatch(requesterProfile);
 
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
   const conversationId = message.conversationId ?? from;
@@ -258,13 +288,14 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
             email: null,
             phone: from
           },
-          matchedByProfile: requesterProfile.status === "matched"
+          matchedByProfile: requesterProfile.status === "matched",
+          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
         }
       });
     }
   }
 
-  if (requesterProfile.status === "matched" && ticketId) {
+  if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
     await upsertExternalUserLink({
       externalSystem: "prediction-market-mvp",
       profile: requesterProfile.profile,
@@ -275,7 +306,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     });
   }
 
-  if (createdNewTicket && requesterProfile.status === "matched") {
+  if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
     await recordTicketEvent({
       ticketId,
       eventType: "profile_enriched",
@@ -283,6 +314,16 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         source: "prediction-market-mvp",
         matchedBy: requesterProfile.matchedBy,
         externalUserId: requesterProfile.profile.id
+      }
+    });
+  } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
+    await recordTicketEvent({
+      ticketId,
+      eventType: "customer_identity_conflict",
+      data: {
+        source: "prediction-market-mvp",
+        matchedBy: requesterProfile.matchedBy,
+        conflict: customerResolution.conflict
       }
     });
   }

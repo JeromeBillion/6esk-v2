@@ -6,8 +6,9 @@ This file is the compact, code-aligned spec for customer identity, customer hist
 - Customer model for registered/unregistered identities
 - Customer history panel and API with pagination
 - Irreversible ticket merge (same-channel only)
+- Non-destructive linked-case ticket linkage
 - Irreversible customer merge
-- AI merge actions (`propose_merge`, `merge_tickets`, `merge_customers`)
+- AI merge actions (`propose_merge`, `merge_tickets`, `link_tickets`, `merge_customers`)
 - Merge review queue for human approval flow
 
 ## Data Model (Implemented)
@@ -19,6 +20,7 @@ Primary migrations:
 Core tables:
 - `customers`
 - `customer_identities` (global unique identity mapping)
+- `ticket_links`
 - `ticket_merges`
 - `customer_merges`
 - `merge_review_tasks`
@@ -34,10 +36,17 @@ Ticket extensions:
 ### Ticket Merge
 - Source and target must be different
 - Source/target must exist and be active (not already merged)
-- Cross-channel direct merge is blocked (`email` vs `whatsapp`)
+- Cross-channel direct merge is blocked (`email` vs `whatsapp`/`voice`)
 - Merge row movement is capped by `TICKET_MERGE_MAX_MOVE_ROWS` (default `5000`)
 - Source ticket is marked merged into target and closed
 - Target metadata gets provenance in `metadata.mergedFrom[]`
+
+### Linked Case
+- Source and target must be different
+- Source/target must exist and be active (not already merged)
+- Existing duplicate link for the same ticket pair is blocked
+- Cross-channel related tickets should be linked instead of destructively merged
+- Both tickets remain intact and receive explicit audit/event provenance
 
 ### Customer Merge
 - Source and target customers must be different
@@ -75,6 +84,7 @@ Execution endpoints require irreversible acknowledgement text:
 Supported merge action types:
 - `propose_merge`
 - `merge_tickets`
+- `link_tickets`
 - `merge_customers`
 
 Safety requirements:
@@ -85,6 +95,7 @@ Safety requirements:
 
 Agent merge-related events:
 - `ticket.merged`
+- `ticket.linked_case`
 - `customer.merged`
 - `customer.identity.resolved`
 - `merge.review.required`

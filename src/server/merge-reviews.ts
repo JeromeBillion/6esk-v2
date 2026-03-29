@@ -1,7 +1,7 @@
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { MergeError, mergeCustomers, mergeTickets } from "@/server/merges";
+import { linkTickets, MergeError, mergeCustomers, mergeTickets } from "@/server/merges";
 
 export type MergeReviewStatus =
   | "pending"
@@ -9,7 +9,7 @@ export type MergeReviewStatus =
   | "rejected"
   | "applied"
   | "failed";
-export type MergeReviewProposalType = "ticket" | "customer";
+export type MergeReviewProposalType = "ticket" | "customer" | "linked_case";
 
 export type MergeReviewTask = {
   id: string;
@@ -192,6 +192,12 @@ export async function createMergeReviewTask({
     throw new MergeReviewError(
       "invalid_input",
       "Customer merge review requires source and target customer ids."
+    );
+  }
+  if (proposalType === "linked_case" && (!sourceTicketId || !targetTicketId)) {
+    throw new MergeReviewError(
+      "invalid_input",
+      "Linked case review requires source and target ticket ids."
     );
   }
 
@@ -492,7 +498,7 @@ export async function resolveMergeReviewTask({
         actorUserId,
         reason: note ?? approvedTask.reason ?? null
       });
-    } else {
+    } else if (approvedTask.proposal_type === "customer") {
       if (!approvedTask.source_customer_id || !approvedTask.target_customer_id) {
         throw new MergeReviewError("invalid_input", "Customer merge review task is incomplete.");
       }
@@ -501,6 +507,17 @@ export async function resolveMergeReviewTask({
         targetCustomerId: approvedTask.target_customer_id,
         actorUserId,
         reason: note ?? approvedTask.reason ?? null
+      });
+    } else {
+      if (!approvedTask.source_ticket_id || !approvedTask.target_ticket_id) {
+        throw new MergeReviewError("invalid_input", "Linked case review task is incomplete.");
+      }
+      mergeResult = await linkTickets({
+        sourceTicketId: approvedTask.source_ticket_id,
+        targetTicketId: approvedTask.target_ticket_id,
+        actorUserId,
+        reason: note ?? approvedTask.reason ?? null,
+        metadata: approvedTask.metadata ?? null
       });
     }
 

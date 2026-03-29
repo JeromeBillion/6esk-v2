@@ -33,7 +33,10 @@ const mocks = vi.hoisted(() => {
     recordTicketEvent: vi.fn(),
     mergeCustomers: vi.fn(),
     mergeTickets: vi.fn(),
+    linkTickets: vi.fn(),
     createMergeReviewTask: vi.fn(),
+    isWorkspaceModuleEnabled: vi.fn(),
+    recordModuleUsageEvent: vi.fn(),
     MergeError,
     MergeReviewError
   };
@@ -77,11 +80,20 @@ vi.mock("@/server/tickets", () => ({
 vi.mock("@/server/merges", () => ({
   mergeCustomers: mocks.mergeCustomers,
   mergeTickets: mocks.mergeTickets,
+  linkTickets: mocks.linkTickets,
   MergeError: mocks.MergeError
 }));
 vi.mock("@/server/merge-reviews", () => ({
   createMergeReviewTask: mocks.createMergeReviewTask,
   MergeReviewError: mocks.MergeReviewError
+}));
+vi.mock("@/server/workspace-modules", () => ({
+  DEFAULT_WORKSPACE_KEY: "primary",
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
+}));
+vi.mock("@/server/module-metering", () => ({
+  recordModuleUsageEvent: mocks.recordModuleUsageEvent,
+  resolveAiProviderMode: () => "managed"
 }));
 
 import { POST } from "@/app/api/agent/v1/actions/route";
@@ -114,6 +126,7 @@ async function postAction(action: Record<string, unknown>) {
 describe("agent merge actions route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.dbQuery.mockReset();
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
       status: "active",
@@ -122,6 +135,8 @@ describe("agent merge actions route", () => {
       capabilities: {}
     });
     mocks.hasMailboxScope.mockReturnValue(true);
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
+    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
     mocks.getTicketById.mockImplementation(async (ticketId: string) => {
       if (ticketId === TICKET_A || ticketId === TICKET_B) return makeTicket(ticketId);
       return null;
@@ -147,6 +162,15 @@ describe("agent merge actions route", () => {
       targetCustomerId: CUSTOMER_B,
       movedTickets: 1,
       movedIdentities: 1
+    });
+    mocks.linkTickets.mockResolvedValue({
+      id: "link-1",
+      relationshipType: "linked_case",
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      sourceChannel: "email",
+      targetChannel: "whatsapp",
+      linkedAt: "2026-03-28T00:00:00.000Z"
     });
     mocks.recordTicketEvent.mockResolvedValue(undefined);
     mocks.recordAuditLog.mockResolvedValue(undefined);
@@ -192,6 +216,39 @@ describe("agent merge actions route", () => {
       detail: "Provide either ticket merge fields or customer merge fields, not both."
     });
     expect(mocks.createMergeReviewTask).not.toHaveBeenCalled();
+  });
+
+  it("accepts mixed merge hints when metadata explicitly requests customer merge", async () => {
+    const { response, body } = await postAction({
+      type: "propose_merge",
+      ticketId: TICKET_A,
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      sourceCustomerId: CUSTOMER_A,
+      targetCustomerId: CUSTOMER_B,
+      reason: "Same customer issue moved across channels",
+      confidence: 0.95,
+      metadata: {
+        proposalType: "customer_merge",
+        linkedTicketIds: {
+          sourceTicketId: TICKET_A,
+          targetTicketId: TICKET_B
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "propose_merge",
+      status: "ok"
+    });
+    expect(mocks.createMergeReviewTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proposalType: "customer",
+        sourceCustomerId: CUSTOMER_A,
+        targetCustomerId: CUSTOMER_B
+      })
+    );
   });
 
   it("requires explicit reason and minimum confidence for propose_merge", async () => {
@@ -247,6 +304,35 @@ describe("agent merge actions route", () => {
     expect(mocks.enqueueAgentEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "merge.review.required"
+      })
+    );
+  });
+
+  it("creates linked_case merge reviews when metadata explicitly requests ticket linkage", async () => {
+    const { response, body } = await postAction({
+      type: "propose_merge",
+      ticketId: TICKET_A,
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      sourceCustomerId: CUSTOMER_A,
+      targetCustomerId: CUSTOMER_B,
+      reason: "Same customer moved from email into WhatsApp follow-up",
+      confidence: 0.96,
+      metadata: {
+        proposalType: "linked_case"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "propose_merge",
+      status: "ok"
+    });
+    expect(mocks.createMergeReviewTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proposalType: "linked_case",
+        sourceTicketId: TICKET_A,
+        targetTicketId: TICKET_B
       })
     );
   });
@@ -332,6 +418,39 @@ describe("agent merge actions route", () => {
       detail: "Merge reason is required."
     });
     expect(mocks.mergeCustomers).not.toHaveBeenCalled();
+  });
+
+  it("executes link_tickets when capability and safety checks pass", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { allow_merge_actions: true }
+    });
+
+    const { response, body } = await postAction({
+      type: "link_tickets",
+      ticketId: TICKET_A,
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      reason: "Same issue continued on WhatsApp",
+      confidence: 0.93,
+      metadata: { proposalType: "linked_case" }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "link_tickets",
+      status: "ok"
+    });
+    expect(mocks.linkTickets).toHaveBeenCalledWith({
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      actorUserId: null,
+      reason: "Same issue continued on WhatsApp",
+      metadata: { proposalType: "linked_case" }
+    });
   });
 
   it("escalates send_reply outside working hours to draft + tag when policy is draft_only", async () => {
@@ -434,6 +553,7 @@ describe("agent merge actions route", () => {
   });
 
   it("deduplicates repeated request_human_review writebacks by callSessionId + idempotencyKey", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
     mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
     mocks.dbQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
 

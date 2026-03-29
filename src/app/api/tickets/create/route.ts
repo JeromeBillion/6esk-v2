@@ -14,8 +14,16 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
-import { resolveOrCreateCustomerForInbound } from "@/server/customers";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import {
+  resolveOrCreateCustomerForInbound,
+  type CustomerResolutionConflict
+} from "@/server/customers";
+import {
+  buildProfileMetadataPatch,
+  lookupPredictionProfile,
+  type PredictionProfile
+} from "@/server/integrations/prediction-profile";
+import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import { normalizeCallPhone, queueOutboundCall } from "@/server/calls/service";
 import { deliverPendingCallEvents } from "@/server/calls/outbox";
 import {
@@ -28,6 +36,8 @@ import {
 } from "@/server/calls/policy";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const createTicketSchema = z.object({
   contactMode: z.enum(["email", "whatsapp", "call"]).optional(),
@@ -65,6 +75,18 @@ function readString(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
+}
+
+function moduleDisabledResponse(module: "email" | "whatsapp" | "voice") {
+  const label = module === "voice" ? "Voice" : module === "whatsapp" ? "WhatsApp" : "Email";
+  return Response.json(
+    {
+      error: `${label} module is not enabled for this workspace.`,
+      code: "module_disabled",
+      module
+    },
+    { status: 409 }
+  );
 }
 
 function enrichExternalProfileMetadata(metadata: Record<string, unknown> | null) {
@@ -131,6 +153,80 @@ function readProfileFromMetadata(
   };
 }
 
+function readLookupPhoneFromMetadata(metadata: Record<string, unknown> | null) {
+  if (!metadata) return null;
+
+  const directPhone =
+    readString(metadata.appUserPhone) ??
+    readString(metadata.phoneNumber) ??
+    readString(metadata.phone);
+  if (directPhone) {
+    return directPhone;
+  }
+
+  const externalProfile =
+    typeof metadata.external_profile === "object" && metadata.external_profile !== null
+      ? (metadata.external_profile as Record<string, unknown>)
+      : null;
+
+  return (
+    readString(externalProfile?.phoneNumber) ??
+    readString(externalProfile?.phone) ??
+    null
+  );
+}
+
+function readLookupMatchedByFromMetadata(metadata: Record<string, unknown> | null) {
+  if (!metadata) return null;
+  const payload =
+    typeof metadata.profile_lookup === "object" && metadata.profile_lookup !== null
+      ? (metadata.profile_lookup as Record<string, unknown>)
+      : null;
+  return readString(payload?.matchedBy);
+}
+
+function applyIdentityConflictMetadata(
+  metadata: Record<string, unknown> | null,
+  conflict: CustomerResolutionConflict
+) {
+  const next = { ...(metadata ?? {}) } as Record<string, unknown>;
+  const existingLookup =
+    typeof next.profile_lookup === "object" && next.profile_lookup !== null
+      ? { ...(next.profile_lookup as Record<string, unknown>) }
+      : {};
+
+  existingLookup.status = "conflicted";
+  existingLookup.conflict = conflict;
+  next.profile_lookup = existingLookup;
+  if (typeof next.external_profile === "object" && next.external_profile !== null) {
+    next.external_profile_conflict = next.external_profile;
+    delete next.external_profile;
+  }
+  return next;
+}
+
+async function enrichInboundExternalMetadata({
+  fromEmail,
+  metadata
+}: {
+  fromEmail: string;
+  metadata: Record<string, unknown> | null;
+}) {
+  const enriched = enrichExternalProfileMetadata(metadata);
+  if (readProfileFromMetadata(enriched)) {
+    return enriched;
+  }
+
+  const lookup = await lookupPredictionProfile({
+    email: fromEmail,
+    phone: readLookupPhoneFromMetadata(enriched) ?? undefined
+  });
+  return {
+    ...(enriched ?? {}),
+    ...buildProfileMetadataPatch(lookup)
+  } as Record<string, unknown>;
+}
+
 export async function POST(request: Request) {
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
   const provided = request.headers.get("x-6esk-secret");
@@ -179,6 +275,16 @@ export async function POST(request: Request) {
       : data.contactMode === "whatsapp"
         ? "whatsapp"
         : "email";
+
+  if (contactMode === "call" && !(await isWorkspaceModuleEnabled("voice"))) {
+    return moduleDisabledResponse("voice");
+  }
+  if (contactMode === "whatsapp" && !(await isWorkspaceModuleEnabled("whatsapp"))) {
+    return moduleDisabledResponse("whatsapp");
+  }
+  if (contactMode === "email" && !(await isWorkspaceModuleEnabled("email"))) {
+    return moduleDisabledResponse("email");
+  }
 
   // Support agents creating tickets from CRM send outbound first contact.
   if (sessionUser) {
@@ -281,6 +387,19 @@ export async function POST(request: Request) {
       await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
       void deliverPendingAgentEvents().catch(() => {});
 
+      await recordModuleUsageEvent({
+        moduleKey: "voice",
+        usageKind: "ticket_created_outbound",
+        actorType: "human",
+        metadata: {
+          route: "/api/tickets/create",
+          ticketId,
+          callSessionId: queuedCall.callSessionId,
+          messageId: queuedCall.messageId,
+          contactMode: "call"
+        }
+      });
+
       return Response.json({
         status: "created",
         ticketId,
@@ -381,6 +500,17 @@ export async function POST(request: Request) {
       }
 
       void deliverPendingAgentEvents().catch(() => {});
+      await recordModuleUsageEvent({
+        moduleKey: "whatsapp",
+        usageKind: "ticket_created_outbound",
+        actorType: "human",
+        metadata: {
+          route: "/api/tickets/create",
+          ticketId,
+          messageId: queuedMessage.messageId ?? null,
+          contactMode: "whatsapp"
+        }
+      });
       return Response.json({
         status: "created",
         ticketId,
@@ -416,6 +546,17 @@ export async function POST(request: Request) {
 
     const ticketId = created.ticketId;
     const messageId = created.messageId;
+    await recordModuleUsageEvent({
+      moduleKey: "email",
+      usageKind: "ticket_created_outbound",
+      actorType: "human",
+      metadata: {
+        route: "/api/tickets/create",
+        ticketId,
+        messageId,
+        contactMode: "email"
+      }
+    });
     return Response.json({ status: "created", ticketId, messageId });
   }
 
@@ -433,13 +574,18 @@ export async function POST(request: Request) {
   if (!descriptionText) {
     return Response.json({ error: "Description is required" }, { status: 400 });
   }
-  const enrichedMetadata = enrichExternalProfileMetadata(
-    (data.metadata as Record<string, unknown> | null) ?? null
-  );
+  let enrichedMetadata = await enrichInboundExternalMetadata({
+    fromEmail,
+    metadata: (data.metadata as Record<string, unknown> | null) ?? null
+  });
+  const resolvedProfile = readProfileFromMetadata(enrichedMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
-    profile: readProfileFromMetadata(enrichedMetadata),
+    profile: resolvedProfile,
     inboundEmail: fromEmail
   });
+  if (customerResolution?.conflict) {
+    enrichedMetadata = applyIdentityConflictMetadata(enrichedMetadata, customerResolution.conflict);
+  }
   await syncVoiceConsentFromMetadata({
     metadata: enrichedMetadata,
     customerId: customerResolution?.customerId ?? null,
@@ -470,6 +616,36 @@ export async function POST(request: Request) {
       ticketId,
       eventType: "tags_assigned",
       data: { tags: inferredTags }
+    });
+  }
+
+  if (resolvedProfile && !customerResolution?.conflict) {
+    await upsertExternalUserLink({
+      externalSystem: "prediction-market-mvp",
+      profile: resolvedProfile,
+      matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+      inboundEmail: fromEmail,
+      ticketId,
+      channel: "email"
+    });
+    await recordTicketEvent({
+      ticketId,
+      eventType: "profile_enriched",
+      data: {
+        source: "prediction-market-mvp",
+        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        externalUserId: resolvedProfile.id
+      }
+    });
+  } else if (resolvedProfile && customerResolution?.conflict) {
+    await recordTicketEvent({
+      ticketId,
+      eventType: "customer_identity_conflict",
+      data: {
+        source: "prediction-market-mvp",
+        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        conflict: customerResolution.conflict
+      }
     });
   }
 
@@ -554,6 +730,32 @@ export async function POST(request: Request) {
     [textKey, htmlKey, sizeBytes || null, messageId]
   );
 
+  if (customerResolution?.customerId) {
+    const identityEvent = buildAgentEvent({
+      eventType: "customer.identity.resolved",
+      ticketId,
+      mailboxId: mailbox.id,
+      excerpt: `Resolved customer ${customerResolution.customerId}`,
+      threadId: messageId
+    });
+    await enqueueAgentEvent({
+      eventType: "customer.identity.resolved",
+      payload: {
+        ...identityEvent,
+        customer: {
+          id: customerResolution.customerId,
+          kind: customerResolution.kind
+        },
+          identity: {
+            email: fromEmail,
+            phone: readLookupPhoneFromMetadata(enrichedMetadata)
+          },
+          matchedByProfile: Boolean(resolvedProfile),
+          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
+        }
+      });
+  }
+
   await recordTicketEvent({ ticketId, eventType: "message_received" });
 
   const threadId = messageId;
@@ -576,6 +778,18 @@ export async function POST(request: Request) {
   await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
   await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
   void deliverPendingAgentEvents().catch(() => {});
+
+  await recordModuleUsageEvent({
+    moduleKey: "email",
+    usageKind: "ticket_created_inbound",
+    actorType: "system",
+    metadata: {
+      route: "/api/tickets/create",
+      ticketId,
+      messageId,
+      source: "external_platform"
+    }
+  });
 
   return Response.json({ status: "created", ticketId, messageId });
 }

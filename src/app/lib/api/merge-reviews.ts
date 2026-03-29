@@ -5,7 +5,7 @@ export type MergeReviewStatus = "pending" | "approved" | "rejected" | "applied" 
 export type MergeReviewQueueItem = {
   id: string;
   status: Exclude<MergeReviewStatus, "all">;
-  proposal_type: "ticket" | "customer";
+  proposal_type: "ticket" | "customer" | "linked_case";
   ticket_id: string | null;
   source_ticket_id: string | null;
   target_ticket_id: string | null;

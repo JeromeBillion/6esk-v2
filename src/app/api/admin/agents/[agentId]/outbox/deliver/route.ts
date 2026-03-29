@@ -25,23 +25,38 @@ export async function POST(
     ? Math.min(Math.max(limitParam, 1), 50)
     : undefined;
 
-  const result = await deliverPendingAgentEvents({
-    integrationId: agentId,
-    limit
-  });
+  try {
+    const result = await deliverPendingAgentEvents({
+      integrationId: agentId,
+      limit
+    });
 
-  await recordAuditLog({
-    actorUserId: user?.id ?? null,
-    action: "agent_outbox_delivery_triggered",
-    entityType: "agent_integration",
-    entityId: agentId,
-    data: {
-      requestedLimit: limit ?? null,
-      limitUsed: result.limitUsed,
-      delivered: result.delivered,
-      skipped: result.skipped
-    }
-  });
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "agent_outbox_delivery_triggered",
+      entityType: "agent_integration",
+      entityId: agentId,
+      data: {
+        requestedLimit: limit ?? null,
+        limitUsed: result.limitUsed,
+        delivered: result.delivered,
+        skipped: result.skipped
+      }
+    });
 
-  return Response.json({ status: "ok", ...result });
+    return Response.json({ status: "ok", ...result });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Failed to deliver agent outbox";
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "agent_outbox_delivery_failed",
+      entityType: "agent_integration",
+      entityId: agentId,
+      data: {
+        requestedLimit: limit ?? null,
+        detail
+      }
+    }).catch(() => {});
+    return Response.json({ error: "Failed to deliver agent outbox", detail }, { status: 500 });
+  }
 }

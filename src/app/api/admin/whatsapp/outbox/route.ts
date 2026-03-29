@@ -28,14 +28,25 @@ export async function POST(request: Request) {
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 10) || 10, 1), 100);
 
-  const result = await deliverPendingWhatsAppEvents({ limit });
+  try {
+    const result = await deliverPendingWhatsAppEvents({ limit });
 
-  await recordAuditLog({
-    actorUserId: user?.id ?? null,
-    action: "whatsapp_outbox_triggered",
-    entityType: "whatsapp_events",
-    data: result
-  });
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "whatsapp_outbox_triggered",
+      entityType: "whatsapp_events",
+      data: result
+    });
 
-  return Response.json({ status: "ok", ...result });
+    return Response.json({ status: "ok", ...result });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Failed to run WhatsApp outbox";
+    await recordAuditLog({
+      actorUserId: user?.id ?? null,
+      action: "whatsapp_outbox_trigger_failed",
+      entityType: "whatsapp_events",
+      data: { limit, detail }
+    }).catch(() => {});
+    return Response.json({ error: "Failed to run WhatsApp outbox", detail }, { status: 500 });
+  }
 }

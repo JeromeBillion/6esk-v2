@@ -3,6 +3,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const replySchema = z.object({
   text: z.string().optional().nullable(),
@@ -29,6 +31,26 @@ const replySchema = z.object({
     .nullable(),
   recipient: z.string().optional().nullable()
 });
+
+function inferReplyModule(input: {
+  requesterEmail: string | null | undefined;
+  recipient: string | null | undefined;
+  hasTemplate: boolean;
+}) {
+  if (input.hasTemplate) {
+    return "whatsapp" as const;
+  }
+
+  const resolvedRecipient = (input.recipient ?? input.requesterEmail ?? "").trim().toLowerCase();
+  if (resolvedRecipient.startsWith("whatsapp:")) {
+    return "whatsapp" as const;
+  }
+  if (input.requesterEmail?.trim().toLowerCase().startsWith("whatsapp:")) {
+    return "whatsapp" as const;
+  }
+
+  return "email" as const;
+}
 
 export async function POST(
   request: Request,
@@ -70,6 +92,23 @@ export async function POST(
     return Response.json({ error: "Reply body required" }, { status: 400 });
   }
 
+  const replyModule = inferReplyModule({
+    requesterEmail: ticket.requester_email,
+    recipient,
+    hasTemplate: Boolean(template)
+  });
+  if (!(await isWorkspaceModuleEnabled(replyModule))) {
+    const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
+    return Response.json(
+      {
+        error: `${label} module is not enabled for this workspace.`,
+        code: "module_disabled",
+        module: replyModule
+      },
+      { status: 409 }
+    );
+  }
+
   try {
     const result = await sendTicketReply({
       ticketId,
@@ -81,6 +120,16 @@ export async function POST(
       recipient: recipient ?? null,
       actorUserId: user.id,
       origin: "human"
+    });
+    await recordModuleUsageEvent({
+      moduleKey: replyModule,
+      usageKind: "reply_sent",
+      actorType: "human",
+      metadata: {
+        route: "/api/tickets/[ticketId]/replies",
+        ticketId,
+        messageId: result.messageId ?? null
+      }
     });
     return Response.json({ status: "sent", id: result.messageId });
   } catch (error) {

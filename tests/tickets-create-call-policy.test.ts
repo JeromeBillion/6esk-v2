@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   syncVoiceConsentFromMetadata: vi.fn(),
   evaluateVoiceCallPolicy: vi.fn(),
   getHumanVoicePolicyFromEnv: vi.fn(),
+  isWorkspaceModuleEnabled: vi.fn(),
+  recordModuleUsageEvent: vi.fn(),
   buildAgentEvent: vi.fn(),
   enqueueAgentEvent: vi.fn(),
   deliverPendingAgentEvents: vi.fn()
@@ -68,6 +70,15 @@ vi.mock("@/server/calls/policy", () => ({
   getHumanVoicePolicyFromEnv: mocks.getHumanVoicePolicyFromEnv
 }));
 
+vi.mock("@/server/workspace-modules", () => ({
+  DEFAULT_WORKSPACE_KEY: "primary",
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
+}));
+
+vi.mock("@/server/module-metering", () => ({
+  recordModuleUsageEvent: mocks.recordModuleUsageEvent
+}));
+
 vi.mock("@/server/agents/events", () => ({
   buildAgentEvent: mocks.buildAgentEvent
 }));
@@ -98,6 +109,8 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
     mocks.normalizeCallPhone.mockReturnValue("+15551234567");
     mocks.getHumanVoicePolicyFromEnv.mockReturnValue({ voice: {} });
     mocks.evaluateVoiceCallPolicy.mockResolvedValue({ allowed: true });
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
+    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
     mocks.getLatestVoiceConsentState.mockResolvedValue({
       state: "unknown",
       callbackPhone: null,
@@ -276,5 +289,56 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
         actorUserId: "agent-1"
       })
     );
+  });
+
+  it("returns module-disabled when voice is switched off", async () => {
+    mocks.isWorkspaceModuleEnabled.mockImplementation(async (moduleKey: string) => moduleKey !== "voice");
+
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contactMode: "call",
+          toPhone: "+15551234567",
+          subject: "Call customer"
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "voice"
+    });
+    expect(mocks.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("returns module-disabled when WhatsApp is switched off", async () => {
+    mocks.isWorkspaceModuleEnabled.mockImplementation(
+      async (moduleKey: string) => moduleKey !== "whatsapp"
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contactMode: "whatsapp",
+          toPhone: "+15551234567",
+          subject: "Invoice follow-up",
+          description: "Can I send the corrected invoice here?"
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "whatsapp"
+    });
+    expect(mocks.queueWhatsAppSend).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,8 @@ import { putObject } from "@/server/storage/r2";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { hasMailboxAccess } from "@/server/messages";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 type ResendResponse = {
   id?: string;
@@ -29,6 +31,16 @@ export async function POST(request: Request) {
   }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("email"))) {
+    return Response.json(
+      {
+        error: "Email module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "email"
+      },
+      { status: 409 }
+    );
   }
 
   let payload: unknown;
@@ -187,6 +199,18 @@ export async function POST(request: Request) {
      WHERE id = $4`,
     [textKey, htmlKey, sizeBytes || null, messageId]
   );
+
+  await recordModuleUsageEvent({
+    moduleKey: "email",
+    usageKind: "direct_send",
+    actorType: "human",
+    metadata: {
+      route: "/api/email/send",
+      messageId,
+      mailboxId: mailbox.id,
+      toCount: toList.length
+    }
+  });
 
   return Response.json({ status: "sent", id: messageId, providerId: resendData.id });
 }

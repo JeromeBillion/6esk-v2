@@ -4,6 +4,8 @@ import { canManageTickets } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const payloadSchema = z.object({
   ticketId: z.string().uuid().optional().nullable(),
@@ -36,6 +38,16 @@ export async function POST(request: Request) {
   }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("whatsapp"))) {
+    return Response.json(
+      {
+        error: "WhatsApp module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "whatsapp"
+      },
+      { status: 409 }
+    );
   }
 
   let body: unknown;
@@ -84,6 +96,16 @@ export async function POST(request: Request) {
     action: "whatsapp_send_queued",
     entityType: "whatsapp",
     data: { to: parsed.data.to, ticketId: parsed.data.ticketId ?? null }
+  });
+  await recordModuleUsageEvent({
+    moduleKey: "whatsapp",
+    usageKind: "direct_send",
+    actorType: "human",
+    metadata: {
+      route: "/api/whatsapp/send",
+      ticketId: parsed.data.ticketId ?? null,
+      to: parsed.data.to
+    }
   });
 
   return Response.json({ status: "queued" });

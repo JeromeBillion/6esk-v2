@@ -8,6 +8,7 @@ type MergeErrorCode =
   | "not_found"
   | "invalid_input"
   | "already_merged"
+  | "already_linked"
   | "cross_channel_not_allowed"
   | "too_large";
 
@@ -68,6 +69,35 @@ async function getTicketChannel(client: PoolClient, ticketId: string) {
   return "email" as const;
 }
 
+function canonicalizeTicketPair(leftTicketId: string, rightTicketId: string) {
+  return leftTicketId < rightTicketId
+    ? { firstTicketId: leftTicketId, secondTicketId: rightTicketId }
+    : { firstTicketId: rightTicketId, secondTicketId: leftTicketId };
+}
+
+async function getExistingTicketLink(
+  client: PoolClient,
+  sourceTicketId: string,
+  targetTicketId: string,
+  relationshipType = "linked_case"
+) {
+  const pair = canonicalizeTicketPair(sourceTicketId, targetTicketId);
+  const result = await client.query<{
+    id: string;
+    source_ticket_id: string;
+    target_ticket_id: string;
+  }>(
+    `SELECT id, source_ticket_id, target_ticket_id
+     FROM ticket_links
+     WHERE relationship_type = $3
+       AND LEAST(source_ticket_id, target_ticket_id) = $1::uuid
+       AND GREATEST(source_ticket_id, target_ticket_id) = $2::uuid
+     LIMIT 1`,
+    [pair.firstTicketId, pair.secondTicketId, relationshipType]
+  );
+  return result.rows[0] ?? null;
+}
+
 async function publishAgentMergeEvent({
   eventType,
   payload
@@ -89,6 +119,7 @@ export type TicketMergePreflight = {
   sourceChannel: "email" | "whatsapp" | "voice";
   targetChannel: "email" | "whatsapp" | "voice";
   sourceTicket: {
+    customerId: string | null;
     subject: string | null;
     requesterEmail: string;
     status: string;
@@ -97,6 +128,7 @@ export type TicketMergePreflight = {
     mergedIntoTicketId: string | null;
   };
   targetTicket: {
+    customerId: string | null;
     subject: string | null;
     requesterEmail: string;
     status: string;
@@ -113,9 +145,115 @@ export type TicketMergePreflight = {
     newTagsOnTarget: number;
   };
   allowed: boolean;
+  sourceCustomerId: string | null;
+  targetCustomerId: string | null;
   blockingCode: "already_merged" | "cross_channel_not_allowed" | "too_large" | null;
   blockingReason: string | null;
 };
+
+export type TicketLinkPreflight = {
+  sourceTicketId: string;
+  targetTicketId: string;
+  sourceChannel: "email" | "whatsapp" | "voice";
+  targetChannel: "email" | "whatsapp" | "voice";
+  sourceTicket: TicketMergePreflight["sourceTicket"];
+  targetTicket: TicketMergePreflight["targetTicket"];
+  sourceCustomerId: string | null;
+  targetCustomerId: string | null;
+  recommendedAction: "merge_ticket" | "linked_case";
+  allowed: boolean;
+  blockingCode: "already_merged" | "already_linked" | null;
+  blockingReason: string | null;
+};
+
+export type LinkedTicketSummary = {
+  linkId: string;
+  relationshipType: "linked_case";
+  ticketId: string;
+  customerId: string | null;
+  requesterEmail: string;
+  subject: string | null;
+  status: string;
+  priority: string;
+  assignedUserId: string | null;
+  channel: "email" | "whatsapp" | "voice";
+  linkedAt: string;
+  reason: string | null;
+};
+
+export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketSummary[]> {
+  const client = await db.connect();
+  try {
+    const result = await client.query<{
+      link_id: string;
+      relationship_type: "linked_case";
+      ticket_id: string;
+      customer_id: string | null;
+      requester_email: string;
+      subject: string | null;
+      status: string;
+      priority: string;
+      assigned_user_id: string | null;
+      has_whatsapp: boolean;
+      has_voice: boolean;
+      linked_at: Date | string;
+      reason: string | null;
+    }>(
+      `SELECT
+         tl.id AS link_id,
+         tl.relationship_type,
+         linked.id AS ticket_id,
+         linked.customer_id,
+         linked.requester_email,
+         linked.subject,
+         linked.status,
+         linked.priority,
+         linked.assigned_user_id,
+         EXISTS (
+           SELECT 1
+           FROM messages msg
+           WHERE msg.ticket_id = linked.id
+             AND msg.channel = 'whatsapp'
+         ) OR linked.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+         EXISTS (
+           SELECT 1
+           FROM messages msg
+           WHERE msg.ticket_id = linked.id
+             AND msg.channel = 'voice'
+         ) OR linked.requester_email ILIKE 'voice:%' AS has_voice,
+         tl.created_at AS linked_at,
+         tl.reason
+       FROM ticket_links tl
+       JOIN tickets linked
+         ON linked.id = CASE
+           WHEN tl.source_ticket_id = $1::uuid THEN tl.target_ticket_id
+           ELSE tl.source_ticket_id
+         END
+       WHERE tl.relationship_type = 'linked_case'
+         AND (tl.source_ticket_id = $1::uuid OR tl.target_ticket_id = $1::uuid)
+       ORDER BY tl.created_at DESC`,
+      [ticketId]
+    );
+
+    return result.rows.map((row) => ({
+      linkId: row.link_id,
+      relationshipType: row.relationship_type,
+      ticketId: row.ticket_id,
+      customerId: row.customer_id,
+      requesterEmail: row.requester_email,
+      subject: row.subject,
+      status: row.status,
+      priority: row.priority,
+      assignedUserId: row.assigned_user_id,
+      channel: row.has_whatsapp ? "whatsapp" : row.has_voice ? "voice" : "email",
+      linkedAt:
+        row.linked_at instanceof Date ? row.linked_at.toISOString() : String(row.linked_at),
+      reason: row.reason
+    }));
+  } finally {
+    client.release();
+  }
+}
 
 export async function preflightTicketMerge({
   sourceTicketId,
@@ -132,6 +270,7 @@ export async function preflightTicketMerge({
   try {
     const ticketResult = await client.query<{
       id: string;
+      customer_id: string | null;
       merged_into_ticket_id: string | null;
       subject: string | null;
       requester_email: string;
@@ -141,6 +280,7 @@ export async function preflightTicketMerge({
     }>(
       `SELECT
          id,
+         customer_id,
          merged_into_ticket_id,
          subject,
          requester_email,
@@ -209,7 +349,7 @@ export async function preflightTicketMerge({
     } else if (sourceChannel !== targetChannel) {
       blockingCode = "cross_channel_not_allowed";
       blockingReason =
-        "Cross-channel ticket merge is disabled. Merge customer profiles instead.";
+        "Cross-channel ticket merge is disabled. Link the tickets as one case instead.";
     } else if (moveRowTotal > maxMoveRows) {
       blockingCode = "too_large";
       blockingReason = `Merge impact exceeds configured cap (${moveRowTotal} rows > ${maxMoveRows}).`;
@@ -221,6 +361,7 @@ export async function preflightTicketMerge({
       sourceChannel,
       targetChannel,
       sourceTicket: {
+        customerId: source.customer_id,
         subject: source.subject,
         requesterEmail: source.requester_email,
         status: source.status,
@@ -229,6 +370,7 @@ export async function preflightTicketMerge({
         mergedIntoTicketId: source.merged_into_ticket_id
       },
       targetTicket: {
+        customerId: target.customer_id,
         subject: target.subject,
         requesterEmail: target.requester_email,
         status: target.status,
@@ -244,6 +386,107 @@ export async function preflightTicketMerge({
         sourceTags: toCount(counts?.source_tag_count),
         newTagsOnTarget: toCount(counts?.new_tag_count)
       },
+      allowed: !blockingCode,
+      sourceCustomerId: source.customer_id,
+      targetCustomerId: target.customer_id,
+      blockingCode,
+      blockingReason
+    };
+  } finally {
+    client.release();
+  }
+}
+
+export async function preflightTicketLink({
+  sourceTicketId,
+  targetTicketId
+}: {
+  sourceTicketId: string;
+  targetTicketId: string;
+}): Promise<TicketLinkPreflight> {
+  if (sourceTicketId === targetTicketId) {
+    throw new MergeError("invalid_input", "Source and target tickets must be different.");
+  }
+
+  const client = await db.connect();
+  try {
+    const ticketResult = await client.query<{
+      id: string;
+      customer_id: string | null;
+      merged_into_ticket_id: string | null;
+      subject: string | null;
+      requester_email: string;
+      status: string;
+      priority: string;
+      assigned_user_id: string | null;
+    }>(
+      `SELECT
+         id,
+         customer_id,
+         merged_into_ticket_id,
+         subject,
+         requester_email,
+         status,
+         priority,
+         assigned_user_id
+       FROM tickets
+       WHERE id = ANY($1::uuid[])`,
+      [[sourceTicketId, targetTicketId]]
+    );
+
+    if (ticketResult.rowCount !== 2) {
+      throw new MergeError("not_found", "Source or target ticket was not found.");
+    }
+
+    const source = ticketResult.rows.find((row) => row.id === sourceTicketId);
+    const target = ticketResult.rows.find((row) => row.id === targetTicketId);
+    if (!source || !target) {
+      throw new MergeError("not_found", "Source or target ticket was not found.");
+    }
+
+    const [sourceChannel, targetChannel, existingLink] = await Promise.all([
+      getTicketChannel(client, sourceTicketId),
+      getTicketChannel(client, targetTicketId),
+      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+    ]);
+
+    let blockingCode: "already_merged" | "already_linked" | null = null;
+    let blockingReason: string | null = null;
+
+    if (source.merged_into_ticket_id || target.merged_into_ticket_id) {
+      blockingCode = "already_merged";
+      blockingReason = "Source or target ticket is already merged.";
+    } else if (existingLink) {
+      blockingCode = "already_linked";
+      blockingReason = "Source and target tickets are already linked.";
+    }
+
+    return {
+      sourceTicketId,
+      targetTicketId,
+      sourceChannel,
+      targetChannel,
+      sourceTicket: {
+        customerId: source.customer_id,
+        subject: source.subject,
+        requesterEmail: source.requester_email,
+        status: source.status,
+        priority: source.priority,
+        assignedUserId: source.assigned_user_id,
+        mergedIntoTicketId: source.merged_into_ticket_id
+      },
+      targetTicket: {
+        customerId: target.customer_id,
+        subject: target.subject,
+        requesterEmail: target.requester_email,
+        status: target.status,
+        priority: target.priority,
+        assignedUserId: target.assigned_user_id,
+        mergedIntoTicketId: target.merged_into_ticket_id
+      },
+      sourceCustomerId: source.customer_id,
+      targetCustomerId: target.customer_id,
+      recommendedAction: sourceChannel === targetChannel ? "merge_ticket" : "linked_case",
       allowed: !blockingCode,
       blockingCode,
       blockingReason
@@ -494,7 +737,7 @@ export async function mergeTickets({
     if (sourceChannel !== targetChannel) {
       throw new MergeError(
         "cross_channel_not_allowed",
-        "Cross-channel ticket merge is disabled. Merge customer profiles instead."
+        "Cross-channel ticket merge is disabled. Link the tickets as one case instead."
       );
     }
 
@@ -681,6 +924,215 @@ export async function mergeTickets({
       targetTicketId,
       channel: sourceChannel,
       ...summary
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function linkTickets({
+  sourceTicketId,
+  targetTicketId,
+  actorUserId,
+  reason,
+  metadata
+}: {
+  sourceTicketId: string;
+  targetTicketId: string;
+  actorUserId?: string | null;
+  reason?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  if (sourceTicketId === targetTicketId) {
+    throw new MergeError("invalid_input", "Source and target tickets must be different.");
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const lockResult = await client.query<{
+      id: string;
+      customer_id: string | null;
+      merged_into_ticket_id: string | null;
+      mailbox_id: string | null;
+      requester_email: string;
+      subject: string | null;
+      status: string;
+      priority: string;
+      assigned_user_id: string | null;
+    }>(
+      `SELECT
+         id,
+         customer_id,
+         merged_into_ticket_id,
+         mailbox_id,
+         requester_email,
+         subject,
+         status,
+         priority,
+         assigned_user_id
+       FROM tickets
+       WHERE id = ANY($1::uuid[])
+       FOR UPDATE`,
+      [[sourceTicketId, targetTicketId]]
+    );
+
+    if (lockResult.rowCount !== 2) {
+      throw new MergeError("not_found", "Source or target ticket was not found.");
+    }
+
+    const source = lockResult.rows.find((row) => row.id === sourceTicketId);
+    const target = lockResult.rows.find((row) => row.id === targetTicketId);
+    if (!source || !target) {
+      throw new MergeError("not_found", "Source or target ticket was not found.");
+    }
+
+    if (source.merged_into_ticket_id || target.merged_into_ticket_id) {
+      throw new MergeError("already_merged", "Source or target ticket is already merged.");
+    }
+
+    const [sourceChannel, targetChannel, existingLink] = await Promise.all([
+      getTicketChannel(client, sourceTicketId),
+      getTicketChannel(client, targetTicketId),
+      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+    ]);
+
+    if (existingLink) {
+      throw new MergeError("already_linked", "Source and target tickets are already linked.");
+    }
+
+    const linkedAt = new Date().toISOString();
+
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO ticket_links (
+         relationship_type,
+         source_ticket_id,
+         target_ticket_id,
+         source_channel,
+         target_channel,
+         source_customer_id,
+         target_customer_id,
+         reason,
+         actor_user_id,
+         metadata
+       ) VALUES (
+         'linked_case',
+         $1,
+         $2,
+         $3,
+         $4,
+         $5,
+         $6,
+         $7,
+         $8,
+         $9
+       )
+       RETURNING id`,
+      [
+        sourceTicketId,
+        targetTicketId,
+        sourceChannel,
+        targetChannel,
+        source.customer_id,
+        target.customer_id,
+        reason ?? null,
+        actorUserId ?? null,
+        metadata ?? null
+      ]
+    );
+
+    const linkId = inserted.rows[0]?.id ?? null;
+
+    await client.query(
+      `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+       VALUES
+       ($1, 'ticket_linked_case', $3, $4),
+       ($2, 'ticket_linked_case', $3, $5)`,
+      [
+        sourceTicketId,
+        targetTicketId,
+        actorUserId ?? null,
+        {
+          linkId,
+          counterpartTicketId: targetTicketId,
+          counterpartChannel: targetChannel,
+          relationshipType: "linked_case",
+          reason: reason ?? null,
+          linkedAt
+        },
+        {
+          linkId,
+          counterpartTicketId: sourceTicketId,
+          counterpartChannel: sourceChannel,
+          relationshipType: "linked_case",
+          reason: reason ?? null,
+          linkedAt
+        }
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, 'ticket_linked_case', 'ticket_link', $2, $3)`,
+      [
+        actorUserId ?? null,
+        linkId,
+        {
+          sourceTicketId,
+          targetTicketId,
+          sourceChannel,
+          targetChannel,
+          sourceCustomerId: source.customer_id,
+          targetCustomerId: target.customer_id,
+          reason: reason ?? null,
+          linkedAt
+        }
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    const linkEvent = buildAgentEvent({
+      eventType: "ticket.linked_case",
+      ticketId: targetTicketId,
+      mailboxId: target.mailbox_id ?? source.mailbox_id ?? null,
+      actorUserId: actorUserId ?? null,
+      threadId: targetTicketId,
+      excerpt: `Linked ticket ${sourceTicketId} with ${targetTicketId}`
+    });
+    await publishAgentMergeEvent({
+      eventType: "ticket.linked_case",
+      payload: {
+        ...linkEvent,
+        link: {
+          id: linkId,
+          relationshipType: "linked_case",
+          sourceTicketId,
+          targetTicketId,
+          sourceChannel,
+          targetChannel,
+          sourceCustomerId: source.customer_id,
+          targetCustomerId: target.customer_id,
+          reason: reason ?? null,
+          linkedAt
+        }
+      }
+    });
+
+    return {
+      id: linkId,
+      relationshipType: "linked_case" as const,
+      sourceTicketId,
+      targetTicketId,
+      sourceChannel,
+      targetChannel,
+      sourceCustomerId: source.customer_id,
+      targetCustomerId: target.customer_id,
+      linkedAt
     };
   } catch (error) {
     await client.query("ROLLBACK");

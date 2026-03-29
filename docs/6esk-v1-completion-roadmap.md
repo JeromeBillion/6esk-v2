@@ -45,20 +45,21 @@ Strongly in place already:
 - queue operations and bulk actions baseline
 - merge-review workflow
 - call analytics and ops baseline
+- workspace-level module entitlements and runtime guards
+- first-pass entitlement-aware usage metering surfaced in Admin
+- non-destructive cross-channel `linked_case` operator flow in Support
 
 Still incomplete or intentionally blocked:
-- real voice provider execution adapter
-- production-complete voice rollout/hardening
-- cross-channel merge behavior (currently blocked)
-- configurable commercial-grade feature entitlements
-- deep `6ex`-specific Venus and customer-identity integration
+- live provider callback rehearsal and production rollout validation
+- final pilot hardening against the chosen Twilio deployment
+- remaining open work is now overwhelmingly rollout validation rather than missing core provider code
 
 ## v1 Success Criteria
 `6esk v1` is complete only when all of the following are true:
 1. `6ex` can run customer support end-to-end in `6esk` across email, WhatsApp, tickets, and voice.
 2. Voice works with a real provider, not only mock or partial queue simulation.
 3. Cross-channel support history and merge behavior match the operator experience promised in the UI.
-4. Venus can create and act on tickets through supported APIs where required by the `6ex` operating model.
+4. Venus can create and act on tickets through supported APIs where required by the `6ex` operating model, with hardened contracts and full context propagation.
 5. `6esk` can reliably identify `6ex` customers using approved integration boundaries.
 6. Feature availability can be switched on/off cleanly by package or workspace entitlement.
 7. Operations can observe, recover, retry, and audit every major channel flow.
@@ -67,11 +68,11 @@ Still incomplete or intentionally blocked:
 Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs\call-capabilities-backlog.md)
 
 ### Priority Items
-1. Complete `VOICE-033` real provider adapter for outbound dial execution.
+1. Run full staging and pilot validation from human path and AI path against the live Twilio-backed `6ex` bridge.
 2. Validate provider call ID correlation across outbound queue, status callbacks, recordings, and transcripts.
-3. Close any remaining gaps in call recording playback/download and transcript attachment UX.
+3. Close any remaining live-environment gaps in call recording playback/download and transcript timing.
 4. Finalize consent, policy, and blocking behaviors for live calling.
-5. Run full staging and pilot validation from human path and AI path.
+5. Rehearse rollback and outage drills with the real provider path enabled.
 
 ### Required Deliverables
 - real provider adapter wired into `call_outbox_events`
@@ -87,7 +88,7 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 - no critical mock-only assumptions remain in the main call path
 
 ## Workstream B: Unblock WhatsApp / Cross-Channel Merge Vision
-Current constraint: [merge-feature-roadmap.md](C:\Users\choma\Desktop\6esk\docs\merge-feature-roadmap.md) explicitly blocks cross-channel direct merge.
+Current constraint: [merge-feature-roadmap.md](C:\Users\choma\Desktop\6esk\docs\merge-feature-roadmap.md) still blocks destructive cross-channel merge, but now supports a non-destructive `linked_case` path.
 
 ### Problem
 The current system still treats some merge behavior as channel-bounded, while the product vision and operator workflow increasingly assume:
@@ -106,7 +107,7 @@ We need to stop thinking only in terms of `ticket merge` and instead define:
 1. Redesign merge domain model for cross-channel linkage.
 2. Distinguish these operations clearly:
    - same-channel irreversible ticket merge
-   - cross-channel linked-case merge
+   - cross-channel linked-case linkage
    - customer merge
 3. Introduce preflight rules for cross-channel compatibility and provenance.
 4. Update support timeline/header logic so dominant ticket/channel can change while customer history remains coherent.
@@ -116,7 +117,7 @@ We need to stop thinking only in terms of `ticket merge` and instead define:
 ### Exit Criteria
 - WhatsApp and email/call flows can be unified in a way that matches the operator experience promised by the UI
 - no silent provenance loss
-- merge review queue supports the new decision model
+- merge review queue supports the new decision model, including `linked_case`
 - customer history and right-rail interaction history remain truthful after merge/link actions
 
 ## Workstream C: Modular Service Entitlements
@@ -170,20 +171,40 @@ Billable modules:
 - no hidden hard dependency on channels or AI features remains
 - this model is sufficient to become the commercial packaging backbone in `v2`
 
+Current progress:
+- entitlement storage, Admin controls, and runtime guards are in place
+- first-pass usage metering is in place for the main human and AI action paths
+- remaining work is hardening coverage and using that data for later billing/commercial logic
+
 ## Workstream D: Deep 6ex Integration
 `6esk v1` is still custom software for `6ex`. It should integrate like a real internal platform, not like a generic third-party product.
 
 ### Required Integration Outcomes
-1. Venus can create tickets from `6ex` into `6esk`.
+1. Venus/`6ex` can create tickets from `6ex` into `6esk` through hardened, versioned contracts.
 2. `6esk` can resolve `6ex` customers cleanly through approved integration boundaries.
 3. `6esk` can operate as the support control plane while `6ex` remains the source of truth where appropriate.
 4. Integration boundaries are explicit, versioned, and testable.
 
 ### Concrete Gaps To Close
-1. Venus ticket creation from `6ex` -> `6esk`.
-2. Customer identity lookup and reconciliation against `6ex` data.
-3. Event propagation back from `6esk` to `6ex` where the business flow needs it.
-4. Remove any fragile direct assumptions in favor of stable integration clients/contracts.
+1. Harden existing Venus/`6ex` -> `6esk` ticket creation and escalation contracts.
+2. Expand customer identity lookup and reconciliation against `6ex` data.
+3. Enrich tickets with `6ex` customer context, source-system metadata, and deterministic correlation identifiers.
+4. Propagate the `6esk` events that `6ex` actually needs back across the boundary.
+5. Remove any fragile direct assumptions in favor of stable integration clients/contracts.
+
+Current progress:
+- trusted `6ex` -> `6esk` ticket creation is already present
+- trusted `6esk` -> `6ex` voice bridge is now present
+- `6esk` already delivers lifecycle events directly to Venus where needed
+- trusted inbound `6ex` create flows now persist customer identity enrichment and external-user link cache updates inside `6esk`
+- trusted profile matches now promote existing identity-linked customers instead of forking duplicate registered records
+- true upstream identity contradictions now keep the canonical `6esk` customer, refuse external rebinds, and record explicit conflict metadata/events instead of silently rewriting ownership
+- we explicitly rejected broad `6esk` state mirroring back into `6ex` for `v1`
+
+Lean-build rule:
+- `6esk` remains the CRM system of record
+- `6ex` should not mirror ticket/message/call state unless a concrete `6ex` feature requires it
+- Venus can consume `6esk` lifecycle events directly without forcing `6ex` to become a shadow CRM
 
 ### Architecture Rule
 Even for `v1`, do not solve this with uncontrolled direct database coupling unless it is deliberately isolated behind a single access layer. If `6esk` reads `6ex` data directly, that must still be treated like an integration module with:
@@ -194,7 +215,7 @@ Even for `v1`, do not solve this with uncontrolled direct database coupling unle
 - fallback behavior
 
 ### Exit Criteria
-- Venus creates tickets reliably
+- Venus/`6ex` ticket creation is reliable and context-rich
 - `6esk` identifies `6ex` customers reliably
 - customer and ticket state stay coherent across the two systems
 - no undocumented “magic coupling” remains
@@ -216,12 +237,20 @@ This is not just DevOps. It is product-operability.
 - retry/dead-letter handling is operator-usable, not only developer-usable
 - staging drills mirror production enough to de-risk rollout
 
+Current progress:
+- voice already had failed-event, retry, and dead-letter operator tooling
+- WhatsApp outbox now has stale-processing recovery, failed-event inspection, targeted retry, and audited admin recovery actions
+- AI agent outbox now has stale-processing recovery, failed-event inspection, targeted retry, and audited admin recovery actions
+
 ## Execution Order
 ### Phase 1: finish product-critical blockers
-- voice provider execution
-- cross-channel merge model
-- Venus ticket creation
+- voice rollout validation on the real `6esk -> 6ex -> Twilio` path
+- Venus/6ex ticket creation hardening + `6ex` context integration
 - `6ex` customer identity integration
+
+Note:
+- the real provider adapter is now implemented as `6esk http_bridge -> 6ex -> Twilio`
+- the remaining voice task is rollout validation, not missing core provider code
 
 ### Phase 2: modularize the platform
 - entitlement schema

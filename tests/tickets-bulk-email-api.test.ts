@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   createOutboundEmailTicket: vi.fn(),
   recordTicketEvent: vi.fn(),
   recordAuditLog: vi.fn(),
-  deliverPendingAgentEvents: vi.fn()
+  deliverPendingAgentEvents: vi.fn(),
+  isWorkspaceModuleEnabled: vi.fn(),
+  recordModuleUsageEvent: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -46,6 +48,15 @@ vi.mock("@/server/agents/outbox", () => ({
 
 vi.mock("@/server/tickets/outbound-email", () => ({
   createOutboundEmailTicket: mocks.createOutboundEmailTicket
+}));
+
+vi.mock("@/server/workspace-modules", () => ({
+  DEFAULT_WORKSPACE_KEY: "primary",
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
+}));
+
+vi.mock("@/server/module-metering", () => ({
+  recordModuleUsageEvent: mocks.recordModuleUsageEvent
 }));
 
 import { POST } from "@/app/api/tickets/bulk-email/route";
@@ -97,6 +108,8 @@ describe("POST /api/tickets/bulk-email", () => {
     mocks.recordTicketEvent.mockResolvedValue(undefined);
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.deliverPendingAgentEvents.mockResolvedValue(undefined);
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
+    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
     mocks.listCustomerIdentities.mockResolvedValue([]);
     mocks.getCustomerById.mockImplementation(async (customerId: string) => ({
       id: customerId,
@@ -155,6 +168,23 @@ describe("POST /api/tickets/bulk-email", () => {
       error: "Some tickets were not found.",
       missingTicketIds: [TICKET_2]
     });
+  });
+
+  it("returns 409 when the email module is disabled", async () => {
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(false);
+
+    const { response, body } = await postBulkEmail({
+      ticketIds: [TICKET_1],
+      subject: "Product update",
+      text: "Hello"
+    });
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "email"
+    });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("returns 403 when non-admin selects tickets not assigned to them", async () => {

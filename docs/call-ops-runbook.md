@@ -10,14 +10,25 @@ CALLS_OUTBOX_SECRET=<maintenance-secret>
 CALLS_WEBHOOK_SECRET=<webhook-hmac-secret>
 CALLS_WEBHOOK_MAX_SKEW_SECONDS=300
 CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false
-CALLS_PROVIDER=mock
+CALLS_PROVIDER=http_bridge
+CALLS_PROVIDER_HTTP_URL=https://<6ex-backend-domain>/api/v1/internal/support/calls/outbound
+CALLS_PROVIDER_HTTP_SECRET=<support_calls_api_secret_or_support_ticket_api_secret>
 SIXESK_AGENT_ID=<agent_integration_id>
 SIXESK_AGENT_KEY=<agent_shared_secret>
 CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 ```
 
 Notes:
-- `CALLS_PROVIDER=mock` is the current supported execution path.
+- `CALLS_PROVIDER=http_bridge` is the supported non-mock execution path for `v1`.
+- The bridge should point at the trusted `6ex` backend route `/api/v1/internal/support/calls/outbound`.
+- The `6ex` backend now owns the real provider hookup and webhook relay layer.
+- Current live-capable shape is Twilio-backed:
+  - `SUPPORT_CALLS_PROVIDER=twilio`
+  - `SUPPORT_CALLS_PUBLIC_BASE_URL=https://<your-6ex-backend-domain>`
+  - `SUPPORT_CALLS_TWILIO_ACCOUNT_SID=<sid>`
+  - `SUPPORT_CALLS_TWILIO_AUTH_TOKEN=<token>`
+  - `SUPPORT_CALLS_TWILIO_FROM_NUMBER=<twilio_number>`
+  - `SUPPORT_CALLS_TWILIO_BRIDGE_TARGET=<pstn_or_client_identity>`
 - Keep `CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false` outside migration windows.
 - Keep consent/retention wording aligned with `docs/privacy-retention-policy.md`.
 
@@ -41,6 +52,26 @@ Invoke-RestMethod -Method GET -Uri "https://<your-6esk-domain>/api/admin/calls/r
 Targets:
 - Rejection rate under 2% for 24h.
 - Failed outbox queue stable and recoverable with retries.
+
+## 6ex Bridge Checks
+
+1. Verify `6ex` bridge env:
+```powershell
+Get-ChildItem Env:SUPPORT_CALLS_PROVIDER,Env:SUPPORT_CALLS_PUBLIC_BASE_URL,Env:SUPPORT_CALLS_TWILIO_ACCOUNT_SID,Env:SUPPORT_CALLS_TWILIO_FROM_NUMBER
+```
+
+2. Verify `6ex` build and route availability:
+```powershell
+Invoke-RestMethod -Method GET -Uri "https://<your-6ex-backend-domain>/health"
+```
+
+3. Provider callback endpoints expected on `6ex`:
+- `GET /api/v1/internal/support/calls/webhooks/twilio/status`
+- `GET /api/v1/internal/support/calls/webhooks/twilio/recording`
+- `POST /api/v1/internal/support/calls/transcript`
+- `GET /api/v1/internal/support/calls/recordings/:bridgeId?token=...`
+
+4. Confirm `6esk` receives bridged recording URLs, not raw provider media URLs.
 
 ## Replay-Window Drill
 

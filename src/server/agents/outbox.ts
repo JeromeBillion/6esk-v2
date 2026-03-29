@@ -18,6 +18,29 @@ type DeliverArgs = {
   limit?: number;
 };
 
+export type FailedAgentOutboxEvent = {
+  id: string;
+  integration_id: string;
+  event_type: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  payload: Record<string, unknown>;
+};
+
+const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+
+function getProcessingRecoverySeconds() {
+  const configured = Number(process.env.AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return DEFAULT_PROCESSING_RECOVERY_SECONDS;
+  }
+  return Math.floor(configured);
+}
+
 function buildWebhookUrl(baseUrl: string) {
   const trimmed = baseUrl.replace(/\/+$/, "");
   if (trimmed.includes("/hooks/6esk/events")) {
@@ -54,7 +77,8 @@ export async function enqueueAgentEvent({ eventType, payload, integrationId }: E
 
 async function lockPendingEvents(
   integrationId: string,
-  limit: number
+  limit: number,
+  processingRecoverySeconds: number
 ): Promise<Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>> {
   const client = await db.connect();
   try {
@@ -65,15 +89,20 @@ async function lockPendingEvents(
        WHERE id IN (
          SELECT id
          FROM agent_outbox
-         WHERE status = 'pending'
-           AND integration_id = $1
-           AND next_attempt_at <= now()
+         WHERE integration_id = $1
+           AND (
+             (status = 'pending' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $3::int)
+             )
+           )
          ORDER BY created_at ASC
          LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, payload, attempt_count`,
-      [integrationId, limit]
+      [integrationId, limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -145,7 +174,11 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
     requestedLimit: limit,
     capabilities: integration.capabilities
   });
-  const pending = await lockPendingEvents(integration.id, limitUsed);
+  const pending = await lockPendingEvents(
+    integration.id,
+    limitUsed,
+    getProcessingRecoverySeconds()
+  );
   if (!pending.length) {
     return { delivered: 0, skipped: 0, limitUsed };
   }
@@ -164,4 +197,88 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
   }
 
   return { delivered, skipped: pending.length - delivered, limitUsed };
+}
+
+export async function listFailedAgentEvents(integrationId: string, limit = 50) {
+  const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+  const result = await db.query<FailedAgentOutboxEvent>(
+    `SELECT
+       id,
+       integration_id,
+       event_type,
+       status,
+       attempt_count,
+       last_error,
+       next_attempt_at,
+       created_at,
+       updated_at,
+       payload
+     FROM agent_outbox
+     WHERE integration_id = $1
+       AND status = 'failed'
+     ORDER BY updated_at DESC
+     LIMIT $2`,
+    [integrationId, normalizedLimit]
+  );
+  return result.rows;
+}
+
+type RetryFailedAgentOutboxInput = {
+  integrationId: string;
+  limit?: number;
+  eventIds?: string[];
+};
+
+export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput) {
+  const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+  const eventIds = Array.from(
+    new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
+  ).slice(0, 100);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result =
+      eventIds.length > 0
+        ? await client.query<{ id: string }>(
+            `UPDATE agent_outbox
+             SET status = 'pending',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             WHERE integration_id = $1
+               AND status = 'failed'
+               AND id::text = ANY($2::text[])
+             RETURNING id`,
+            [input.integrationId, eventIds]
+          )
+        : await client.query<{ id: string }>(
+            `WITH failed AS (
+               SELECT id
+               FROM agent_outbox
+               WHERE integration_id = $1
+                 AND status = 'failed'
+               ORDER BY updated_at ASC
+               LIMIT $2
+               FOR UPDATE SKIP LOCKED
+             )
+             UPDATE agent_outbox evt
+             SET status = 'pending',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             FROM failed
+             WHERE evt.id = failed.id
+             RETURNING evt.id`,
+            [input.integrationId, normalizedLimit]
+          );
+    await client.query("COMMIT");
+    return {
+      requested: eventIds.length > 0 ? eventIds.length : normalizedLimit,
+      retried: result.rows.length,
+      ids: result.rows.map((row) => row.id)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

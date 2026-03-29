@@ -2,19 +2,19 @@
 
 This backlog converts `docs/call-capabilities-plan.md` into implementation work items with sequencing and estimates.
 
-## Current Status (February 18, 2026)
+## Current Status (March 29, 2026)
 - Done/mostly done:
   - E1 foundations
   - E2 inbound voice pipeline (including replay-window checks)
-  - E3 outbound queue path except provider adapter
+  - E3 outbound queue path including `6esk` `http_bridge` delivery and `6ex` Twilio-capable bridge ingestion
   - E4 human UX core call flows
   - E5 AI voice actions and policy gate
   - E7 analytics + ops endpoints/UI baseline
   - VOICE-072 baseline PII phone redaction for call audit/admin surfaces
   - VOICE-074 baseline failure-injection tests for replay-window and outbox retry paths
   - VOICE-075 baseline call ops runbook + drill scripts (replay/load/retry)
-- Deferred:
-  - `VOICE-033` provider adapter for non-mock dial execution
+- In progress:
+  - live provider callback rehearsal and pilot hardening against the chosen Twilio deployment
 
 ## Planning Assumptions
 - Estimate unit: engineering days (ideal).

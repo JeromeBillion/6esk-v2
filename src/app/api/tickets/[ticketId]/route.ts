@@ -12,6 +12,7 @@ import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { listDraftsForTicket } from "@/server/agents/drafts";
 import { listAuditLogsForTicket } from "@/server/audit";
+import { listLinkedTickets } from "@/server/merges";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -41,11 +42,14 @@ export async function GET(
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const messages = await listTicketMessages(ticketId);
-  const events = await listTicketEvents(ticketId);
-  const drafts = await listDraftsForTicket(ticketId);
-  const auditLogs = await listAuditLogsForTicket(ticketId, 50);
-  return Response.json({ ticket, messages, events, drafts, auditLogs });
+  const [messages, events, drafts, auditLogs, linkedTickets] = await Promise.all([
+    listTicketMessages(ticketId),
+    listTicketEvents(ticketId),
+    listDraftsForTicket(ticketId),
+    listAuditLogsForTicket(ticketId, 50),
+    listLinkedTickets(ticketId)
+  ]);
+  return Response.json({ ticket, messages, events, drafts, auditLogs, linkedTickets });
 }
 
 export async function PATCH(

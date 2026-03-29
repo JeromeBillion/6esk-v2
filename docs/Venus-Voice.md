@@ -166,7 +166,7 @@ When Venus posts transcript summary/action items via `POST /api/agent/v1/actions
 - Max concurrent AI calls per integration.
 - Whether manual-dial numbers require human confirmation in all cases.
 
-## Current 6esk Status (February 18, 2026)
+## Current 6esk Status (March 29, 2026)
 - Implemented:
   - outbound/inbound call session model with ticket linkage
   - call options APIs for human + AI paths
@@ -181,5 +181,10 @@ When Venus posts transcript summary/action items via `POST /api/agent/v1/actions
   - monotonic call event sequencing (`call.sequence`) and event idempotency keys (`call.eventIdempotencyKey`) on `ticket.call.*`
   - transcript summary writeback deduplication for `request_human_review` keyed by `callSessionId + idempotencyKey`
   - call ops runbook and replay/load drill scripts for safe validation
-- Deferred:
-  - non-mock provider dial adapter (`CALLS_PROVIDER=mock` remains default)
+  - generic `http_bridge` outbound provider path in `6esk`
+  - trusted `6ex` bridge route for outbound support call relay at `/api/v1/internal/support/calls/outbound`
+  - Twilio-capable provider execution path in `6ex`, including status/recording webhook relay and recording proxy URLs back to `6esk`
+  - generic transcript ingress route in `6ex` for provider-side transcript delivery to `6esk`
+- Still pending:
+  - live callback rehearsal against production/staging Twilio credentials
+  - pilot signoff on real provider status/recording/transcript timing

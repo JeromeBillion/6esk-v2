@@ -10,6 +10,7 @@ import { cn } from "./ui/utils";
 
 type MergeType = "ticket" | "customer";
 type MergeStep = "search" | "select" | "preflight" | "success" | "error";
+type MergeOperation = "ticket_merge" | "linked_case" | "customer_merge";
 
 type TicketCandidate = {
   id: string;
@@ -59,9 +60,10 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
   const [preflightData, setPreflightData] = useState<{
+    operation: MergeOperation;
     source: Candidate;
     target: Candidate;
-    impacts: Array<{ label: string; count: number }>;
+    impacts: Array<{ label: string; value: number | string }>;
     conflicts: string[];
     warnings: string[];
   } | null>(null);
@@ -75,6 +77,8 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
   }, [candidates, selectedSource]);
 
   const acknowledgementMatches = acknowledgement.trim() === MERGE_IRREVERSIBLE_ACK_TEXT;
+  const requiresIrreversibleAcknowledgement =
+    preflightData?.operation === "ticket_merge" || preflightData?.operation === "customer_merge";
 
   function resetState() {
     setStep("search");
@@ -200,19 +204,75 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
             sourceTags: number;
             newTagsOnTarget: number;
           };
+          sourceChannel: "email" | "whatsapp" | "voice";
+          targetChannel: "email" | "whatsapp" | "voice";
+          blockingCode: "already_merged" | "cross_channel_not_allowed" | "too_large" | null;
           blockingReason: string | null;
         };
 
+        if (preflight.blockingCode === "cross_channel_not_allowed") {
+          const linkResponse = await fetch("/api/tickets/link/preflight", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceTicketId: selectedSource.id,
+              targetTicketId: selectedTarget.id,
+            }),
+          });
+          const linkPayload = await linkResponse.json().catch(() => ({}));
+          if (!linkResponse.ok) {
+            setPreflightError(linkPayload.error ?? "Failed to prepare linked case.");
+            return;
+          }
+
+          const linkPreflight = linkPayload.preflight as {
+            sourceChannel: "email" | "whatsapp" | "voice";
+            targetChannel: "email" | "whatsapp" | "voice";
+            sourceCustomerId: string | null;
+            targetCustomerId: string | null;
+            recommendedAction: "merge_ticket" | "linked_case";
+            blockingReason: string | null;
+          };
+
+          setPreflightData({
+            operation: "linked_case",
+            source: selectedSource,
+            target: selectedTarget,
+            impacts: [
+              { label: "Source channel", value: linkPreflight.sourceChannel },
+              { label: "Target channel", value: linkPreflight.targetChannel },
+              {
+                label: "Customer scope",
+                value:
+                  linkPreflight.sourceCustomerId &&
+                  linkPreflight.targetCustomerId &&
+                  linkPreflight.sourceCustomerId === linkPreflight.targetCustomerId
+                    ? "Shared customer"
+                    : "Cross-customer"
+              },
+              { label: "Recommended action", value: "Link as one case" },
+            ],
+            conflicts: linkPreflight.blockingReason ? [linkPreflight.blockingReason] : [],
+            warnings: [
+              "This action is non-destructive. Both tickets stay intact.",
+              "Use linked case when one customer issue moved across channels or follow-up tickets should remain separate.",
+            ],
+          });
+          setStep("preflight");
+          return;
+        }
+
         setPreflightData({
+          operation: "ticket_merge",
           source: selectedSource,
           target: selectedTarget,
           impacts: [
-            { label: "Messages", count: preflight.moveCounts.messages },
-            { label: "Replies", count: preflight.moveCounts.replies },
-            { label: "Events", count: preflight.moveCounts.events },
-            { label: "Drafts", count: preflight.moveCounts.drafts },
-            { label: "Source tags", count: preflight.moveCounts.sourceTags },
-            { label: "New target tags", count: preflight.moveCounts.newTagsOnTarget },
+            { label: "Messages", value: preflight.moveCounts.messages },
+            { label: "Replies", value: preflight.moveCounts.replies },
+            { label: "Events", value: preflight.moveCounts.events },
+            { label: "Drafts", value: preflight.moveCounts.drafts },
+            { label: "Source tags", value: preflight.moveCounts.sourceTags },
+            { label: "New target tags", value: preflight.moveCounts.newTagsOnTarget },
           ],
           conflicts: preflight.blockingReason ? [preflight.blockingReason] : [],
           warnings: ["This action is irreversible.", "All source ticket data will move into target."],
@@ -232,15 +292,16 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
         };
 
         setPreflightData({
+          operation: "customer_merge",
           source: selectedSource,
           target: selectedTarget,
           impacts: [
-            { label: "Tickets to relink", count: preflight.moveCounts.totalTickets },
-            { label: "Active tickets", count: preflight.moveCounts.activeTickets },
-            { label: "Active email", count: preflight.moveCounts.activeEmailTickets },
-            { label: "Active WhatsApp", count: preflight.moveCounts.activeWhatsappTickets },
-            { label: "Source identities", count: preflight.moveCounts.sourceIdentities },
-            { label: "Identities to move", count: preflight.moveCounts.identitiesToMove },
+            { label: "Tickets to relink", value: preflight.moveCounts.totalTickets },
+            { label: "Active tickets", value: preflight.moveCounts.activeTickets },
+            { label: "Active email", value: preflight.moveCounts.activeEmailTickets },
+            { label: "Active WhatsApp", value: preflight.moveCounts.activeWhatsappTickets },
+            { label: "Source identities", value: preflight.moveCounts.sourceIdentities },
+            { label: "Identities to move", value: preflight.moveCounts.identitiesToMove },
           ],
           conflicts:
             preflight.moveCounts.identityConflicts > 0
@@ -261,24 +322,35 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
   }
 
   async function handleConfirmMerge() {
-    if (!selectedSource || !selectedTarget) return;
+    if (!selectedSource || !selectedTarget || !preflightData) return;
 
     setMergeSubmitting(true);
-    const endpoint = type === "ticket" ? "/api/tickets/merge" : "/api/customers/merge";
+    const endpoint =
+      preflightData.operation === "linked_case"
+        ? "/api/tickets/link"
+        : type === "ticket"
+          ? "/api/tickets/merge"
+          : "/api/customers/merge";
     const body =
-      type === "ticket"
+      preflightData.operation === "linked_case"
         ? {
             sourceTicketId: selectedSource.id,
             targetTicketId: selectedTarget.id,
-            acknowledgement: MERGE_IRREVERSIBLE_ACK_TEXT,
             reason: null,
           }
-        : {
-            sourceCustomerId: selectedSource.id,
-            targetCustomerId: selectedTarget.id,
-            acknowledgement: MERGE_IRREVERSIBLE_ACK_TEXT,
-            reason: null,
-          };
+        : type === "ticket"
+          ? {
+              sourceTicketId: selectedSource.id,
+              targetTicketId: selectedTarget.id,
+              acknowledgement: MERGE_IRREVERSIBLE_ACK_TEXT,
+              reason: null,
+            }
+          : {
+              sourceCustomerId: selectedSource.id,
+              targetCustomerId: selectedTarget.id,
+              acknowledgement: MERGE_IRREVERSIBLE_ACK_TEXT,
+              reason: null,
+            };
 
     try {
       const response = await fetch(endpoint, {
@@ -312,12 +384,12 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
         {step === "search" ? (
           <>
             <DialogHeader>
-              <DialogTitle>Merge {type === "ticket" ? "Tickets" : "Customers"}</DialogTitle>
+              <DialogTitle>{type === "ticket" ? "Merge or Link Tickets" : "Merge Customers"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium mb-2 block">
-                  Search for {type === "ticket" ? "tickets" : "customers"} to merge
+                  Search for {type === "ticket" ? "tickets to merge or link" : "customers to merge"}
                 </label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
@@ -350,7 +422,9 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
         {step === "select" ? (
           <>
             <DialogHeader>
-              <DialogTitle>Select {type === "ticket" ? "Tickets" : "Customers"} to Merge</DialogTitle>
+              <DialogTitle>
+                Select {type === "ticket" ? "Tickets to Merge or Link" : "Customers to Merge"}
+              </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto space-y-4">
               {candidates.length === 0 ? (
@@ -443,7 +517,9 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
         {step === "preflight" && preflightData ? (
           <>
             <DialogHeader>
-              <DialogTitle>Confirm Merge</DialogTitle>
+              <DialogTitle>
+                {preflightData.operation === "linked_case" ? "Confirm Linked Case" : "Confirm Merge"}
+              </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto space-y-4">
               <div className="flex items-center justify-center gap-4 p-4 bg-neutral-50 rounded-lg">
@@ -466,7 +542,7 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
                   {preflightData.impacts.map((impact) => (
                     <div key={impact.label} className="flex items-center justify-between p-2 bg-neutral-50 rounded">
                       <span className="text-sm text-neutral-700">{impact.label}</span>
-                      <Badge variant="secondary">{impact.count}</Badge>
+                      <Badge variant="secondary">{impact.value}</Badge>
                     </div>
                   ))}
                 </div>
@@ -488,44 +564,77 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
                 </div>
               ) : null}
 
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div
+                className={cn(
+                  "rounded-lg border p-4",
+                  preflightData.operation === "linked_case"
+                    ? "bg-blue-50 border-blue-200"
+                    : "bg-red-50 border-red-200"
+                )}
+              >
                 <div className="flex gap-2 mb-2">
-                  <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5" />
-                  <h4 className="text-sm font-medium text-red-900">Important Warnings</h4>
+                  <AlertTriangle
+                    className={cn(
+                      "w-4 h-4 mt-0.5",
+                      preflightData.operation === "linked_case" ? "text-blue-600" : "text-red-600"
+                    )}
+                  />
+                  <h4
+                    className={cn(
+                      "text-sm font-medium",
+                      preflightData.operation === "linked_case" ? "text-blue-900" : "text-red-900"
+                    )}
+                  >
+                    {preflightData.operation === "linked_case" ? "Linked Case Guidance" : "Important Warnings"}
+                  </h4>
                 </div>
                 <ul className="space-y-1">
                   {preflightData.warnings.map((warning) => (
-                    <li key={warning} className="text-sm text-red-800">
+                    <li
+                      key={warning}
+                      className={cn(
+                        "text-sm",
+                        preflightData.operation === "linked_case" ? "text-blue-800" : "text-red-800"
+                      )}
+                    >
                       • {warning}
                     </li>
                   ))}
                 </ul>
               </div>
 
-              <div>
-                <label className="text-sm font-medium mb-2 block">
-                  Type acknowledgment to continue
-                </label>
-                <Input
-                  value={acknowledgement}
-                  onChange={(event) => setAcknowledgement(event.target.value)}
-                  placeholder={MERGE_IRREVERSIBLE_ACK_TEXT}
-                />
-                {acknowledgement && !acknowledgementMatches ? (
-                  <p className="text-xs text-red-600 mt-2">Acknowledgment text does not match.</p>
-                ) : null}
-              </div>
+              {requiresIrreversibleAcknowledgement ? (
+                <div>
+                  <label className="text-sm font-medium mb-2 block">
+                    Type acknowledgment to continue
+                  </label>
+                  <Input
+                    value={acknowledgement}
+                    onChange={(event) => setAcknowledgement(event.target.value)}
+                    placeholder={MERGE_IRREVERSIBLE_ACK_TEXT}
+                  />
+                  {acknowledgement && !acknowledgementMatches ? (
+                    <p className="text-xs text-red-600 mt-2">Acknowledgment text does not match.</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center justify-between pt-4 border-t">
               <Button variant="outline" onClick={() => setStep("select")}>
                 Back
               </Button>
               <Button
-                variant="destructive"
+                variant={preflightData.operation === "linked_case" ? "default" : "destructive"}
                 onClick={() => void handleConfirmMerge()}
-                disabled={mergeSubmitting || !acknowledgementMatches}
+                disabled={mergeSubmitting || (requiresIrreversibleAcknowledgement && !acknowledgementMatches)}
               >
-                {mergeSubmitting ? "Merging..." : "Confirm Merge"}
+                {mergeSubmitting
+                  ? preflightData.operation === "linked_case"
+                    ? "Linking..."
+                    : "Merging..."
+                  : preflightData.operation === "linked_case"
+                    ? "Confirm Link"
+                    : "Confirm Merge"}
               </Button>
             </div>
           </>
@@ -546,9 +655,13 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
                 <path d="M5 13l4 4L19 7"></path>
               </svg>
             </div>
-            <h3 className="text-lg font-semibold mb-2">Merge Successful</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {preflightData?.operation === "linked_case" ? "Linked Case Created" : "Merge Successful"}
+            </h3>
             <p className="text-sm text-neutral-600">
-              {type === "ticket" ? "Tickets" : "Customers"} have been merged successfully.
+              {preflightData?.operation === "linked_case"
+                ? "The selected tickets now stay linked as one case while keeping each channel thread intact."
+                : `${type === "ticket" ? "Tickets" : "Customers"} have been merged successfully.`}
             </p>
           </div>
         ) : null}

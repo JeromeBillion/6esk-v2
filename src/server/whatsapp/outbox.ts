@@ -8,6 +8,17 @@ type WhatsAppEventRow = {
   attempt_count: number;
 };
 
+export type FailedWhatsAppOutboxEvent = {
+  id: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  payload: Record<string, unknown>;
+};
+
 type WhatsAppAccount = {
   id: string;
   provider: string;
@@ -21,6 +32,15 @@ type DeliverArgs = {
 };
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
+const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+
+function getProcessingRecoverySeconds() {
+  const configured = Number(process.env.WHATSAPP_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return DEFAULT_PROCESSING_RECOVERY_SECONDS;
+  }
+  return Math.floor(configured);
+}
 
 async function getActiveAccount() {
   const result = await db.query<WhatsAppAccount>(
@@ -33,7 +53,10 @@ async function getActiveAccount() {
   return result.rows[0] ?? null;
 }
 
-async function lockPendingEvents(limit: number): Promise<WhatsAppEventRow[]> {
+async function lockPendingEvents(
+  limit: number,
+  processingRecoverySeconds: number
+): Promise<WhatsAppEventRow[]> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -46,14 +69,19 @@ async function lockPendingEvents(limit: number): Promise<WhatsAppEventRow[]> {
          SELECT id
          FROM whatsapp_events
          WHERE direction = 'outbound'
-           AND status = 'queued'
-           AND next_attempt_at <= now()
+           AND (
+             (status = 'queued' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $2::int)
+             )
+           )
          ORDER BY created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, payload, attempt_count`,
-      [limit]
+      [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -352,7 +380,7 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
     return { delivered: 0, skipped: 0, error: "No active WhatsApp account" };
   }
 
-  const pending = await lockPendingEvents(limit);
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds());
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
@@ -377,4 +405,85 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
   }
 
   return { delivered, skipped: pending.length - delivered };
+}
+
+export async function listFailedWhatsAppOutboxEvents(limit = 50) {
+  const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+  const result = await db.query<FailedWhatsAppOutboxEvent>(
+    `SELECT
+       id,
+       status,
+       attempt_count,
+       last_error,
+       next_attempt_at,
+       created_at,
+       updated_at,
+       payload
+     FROM whatsapp_events
+     WHERE direction = 'outbound'
+       AND status = 'failed'
+     ORDER BY updated_at DESC
+     LIMIT $1`,
+    [normalizedLimit]
+  );
+  return result.rows;
+}
+
+type RetryFailedWhatsAppOutboxInput = {
+  limit?: number;
+  eventIds?: string[];
+};
+
+export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutboxInput = {}) {
+  const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+  const eventIds = Array.from(
+    new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
+  ).slice(0, 100);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result =
+      eventIds.length > 0
+        ? await client.query<{ id: string }>(
+            `UPDATE whatsapp_events
+             SET status = 'queued',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             WHERE direction = 'outbound'
+               AND status = 'failed'
+               AND id::text = ANY($1::text[])
+             RETURNING id`,
+            [eventIds]
+          )
+        : await client.query<{ id: string }>(
+            `WITH failed AS (
+               SELECT id
+               FROM whatsapp_events
+               WHERE direction = 'outbound'
+                 AND status = 'failed'
+               ORDER BY updated_at ASC
+               LIMIT $1
+               FOR UPDATE SKIP LOCKED
+             )
+             UPDATE whatsapp_events evt
+             SET status = 'queued',
+                 next_attempt_at = now(),
+                 updated_at = now()
+             FROM failed
+             WHERE evt.id = failed.id
+             RETURNING evt.id`,
+            [normalizedLimit]
+          );
+    await client.query("COMMIT");
+    return {
+      requested: eventIds.length > 0 ? eventIds.length : normalizedLimit,
+      retried: result.rows.length,
+      ids: result.rows.map((row) => row.id)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

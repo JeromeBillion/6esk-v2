@@ -21,6 +21,43 @@ export type SlaConfig = {
   resolutionMinutes: number;
 };
 
+export type WorkspaceModuleFlags = {
+  email: boolean;
+  whatsapp: boolean;
+  voice: boolean;
+  aiAutomation: boolean;
+  venusOrchestration: boolean;
+  vanillaWebchat: boolean;
+};
+
+export type WorkspaceModulesConfig = {
+  workspaceKey: string;
+  updatedAt: string | null;
+  modules: WorkspaceModuleFlags;
+};
+
+export type WorkspaceModuleUsageSummary = {
+  workspaceKey: string;
+  windowDays: number;
+  generatedAt: string;
+  modules: Array<{
+    moduleKey: keyof WorkspaceModuleFlags;
+    totalQuantity: number;
+    eventCount: number;
+    actorBreakdown: {
+      human: number;
+      ai: number;
+      system: number;
+    };
+    lastSeenAt: string | null;
+    usageKinds: Array<{
+      usageKind: string;
+      quantity: number;
+      eventCount: number;
+    }>;
+  }>;
+};
+
 export type TagRecord = {
   id: string;
   name: string;
@@ -89,6 +126,17 @@ export type WhatsAppOutboxMetrics = {
   };
 };
 
+export type WhatsAppFailedEvent = {
+  id: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+  updated_at: string;
+  payload: Record<string, unknown>;
+};
+
 export type AgentIntegration = {
   id: string;
   name: string;
@@ -124,6 +172,19 @@ export type AgentOutboxMetrics = {
     lastFailedAt: string | null;
     lastError: string | null;
   };
+};
+
+export type AgentFailedEvent = {
+  id: string;
+  integration_id: string;
+  event_type: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+  updated_at: string;
+  payload: Record<string, unknown>;
 };
 
 export type ProfileLookupMetricsPoint = {
@@ -410,6 +471,24 @@ export function updateSlaConfig(input: SlaConfig) {
   });
 }
 
+export function getWorkspaceModules() {
+  return apiFetch<{ config: WorkspaceModulesConfig }>("/api/admin/workspace/modules");
+}
+
+export function updateWorkspaceModules(input: WorkspaceModuleFlags) {
+  return apiFetch<{ status: string; config: WorkspaceModulesConfig }>("/api/admin/workspace/modules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export function getWorkspaceModuleUsage(days = 30) {
+  return apiFetch<{ summary: WorkspaceModuleUsageSummary }>(
+    `/api/admin/workspace/usage?days=${days}`
+  );
+}
+
 export async function listTags(signal?: AbortSignal) {
   const payload = await apiFetch<{ tags: TagRecord[] }>("/api/support/tags", { signal });
   return payload.tags ?? [];
@@ -564,6 +643,24 @@ export function runWhatsAppOutbox(limit = 25) {
   );
 }
 
+export async function listFailedWhatsAppEvents(limit = 30) {
+  const payload = await apiFetch<{ events: WhatsAppFailedEvent[] }>(
+    `/api/admin/whatsapp/failed?limit=${limit}`
+  );
+  return payload.events ?? [];
+}
+
+export function retryFailedWhatsAppOutboxEvents(limit = 25, eventIds?: string[]) {
+  return apiFetch<{ status: string; requested: number; retried: number; ids: string[] }>(
+    `/api/admin/whatsapp/retry?limit=${limit}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: eventIds?.length ? JSON.stringify({ eventIds }) : undefined
+    }
+  );
+}
+
 export async function listAgentIntegrations() {
   const payload = await apiFetch<{ agents: AgentIntegration[] }>("/api/admin/agents");
   return payload.agents ?? [];
@@ -618,6 +715,24 @@ export function deliverAgentOutbox(agentId: string, limit = 25) {
   return apiFetch<{ status: string; delivered: number; skipped: number; limitUsed: number }>(
     `/api/admin/agents/${agentId}/outbox/deliver?limit=${limit}`,
     { method: "POST" }
+  );
+}
+
+export async function listFailedAgentEvents(agentId: string, limit = 30) {
+  const payload = await apiFetch<{ events: AgentFailedEvent[] }>(
+    `/api/admin/agents/${agentId}/outbox/failed?limit=${limit}`
+  );
+  return payload.events ?? [];
+}
+
+export function retryFailedAgentOutboxEvents(agentId: string, limit = 25, eventIds?: string[]) {
+  return apiFetch<{ status: string; requested: number; retried: number; ids: string[] }>(
+    `/api/admin/agents/${agentId}/outbox/retry?limit=${limit}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: eventIds?.length ? JSON.stringify({ eventIds }) : undefined
+    }
   );
 }
 

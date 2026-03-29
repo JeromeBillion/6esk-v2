@@ -54,6 +54,20 @@ export type TicketDetailsResponse = {
   messages: ApiTicketMessage[];
   events: ApiTicketEvent[];
   drafts: ApiDraft[];
+  linkedTickets?: Array<{
+    linkId: string;
+    relationshipType: "linked_case";
+    ticketId: string;
+    customerId: string | null;
+    requesterEmail: string;
+    subject: string | null;
+    status: "new" | "open" | "pending" | "solved" | "closed";
+    priority: "low" | "normal" | "high" | "urgent";
+    assignedUserId: string | null;
+    channel: "email" | "whatsapp" | "voice";
+    linkedAt: string;
+    reason: string | null;
+  }>;
   auditLogs?: Array<{
     id: string;
     action: string;

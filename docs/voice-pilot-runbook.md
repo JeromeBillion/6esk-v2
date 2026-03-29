@@ -1,9 +1,9 @@
 # Voice Call Feature - Pilot Runbook & Rollout Checklist
 
 **Feature**: AI Voice Call Initiation with User-Controlled Escalation  
-**Status**: Ready for Pilot  
+**Status**: Provider path implemented, pilot validation pending  
 **Version**: 1.0  
-**Last Updated**: 2026-02-20
+**Last Updated**: 2026-03-29
 
 ---
 
@@ -153,11 +153,11 @@ GROUP BY action;
 
 ### Pilot Launch Decision
 
-**All Go/No-Go criteria: ✅ PASS**
+**All Go/No-Go criteria: PENDING REVALIDATION**
 
-**Pilot Launch Approved**: YES  
-**Risk Level**: LOW (infrastructure ~90% mature, extensive test coverage)  
-**Recommended Pilot Size**: 5-10% of operable agent instances
+**Pilot Launch Approved**: NOT YET  
+**Risk Level**: MODERATE until live provider rehearsal is completed  
+**Recommended Pilot Size**: 5-10% of operable agent instances after validation
 
 ---
 
@@ -186,18 +186,26 @@ psql $DATABASE_URL -c "\dt call_sessions call_events call_outbox_events call_pol
 
 ```bash
 # Check required environment variables
-env | grep -E 'CALLS_PROVIDER|CALLS_API_KEY|RECORDING_STORAGE'
+env | grep -E 'CALLS_PROVIDER|CALLS_PROVIDER_HTTP_URL|CALLS_PROVIDER_HTTP_SECRET|CALLS_WEBHOOK_SECRET'
 
-# Expected: All three should be set for production
+# Expected: 6esk bridge envs should be set for production
 # If any missing: contact DevOps to configure before pilot
 ```
 
 **Checklist**:
-- [ ] `CALLS_PROVIDER` set to production provider (e.g., "twilio")
-- [ ] `CALLS_API_KEY` set and rotated in last 30 days
+- [ ] `CALLS_PROVIDER=http_bridge`
+- [ ] `CALLS_PROVIDER_HTTP_URL` points at `6ex /api/v1/internal/support/calls/outbound`
+- [ ] `CALLS_PROVIDER_HTTP_SECRET` matches `6ex SUPPORT_CALLS_API_SECRET` (or fallback support secret)
+- [ ] `CALLS_WEBHOOK_SECRET` rotated and documented
 - [ ] `RECORDING_STORAGE_BUCKET` configured (R2/S3 accessible)
 - [ ] `RECORDING_STORAGE_REGION` matches bucket region
-- [ ] Webhook signature secret rotated and documented
+- [ ] `6ex` bridge envs are set:
+  - [ ] `SUPPORT_CALLS_PROVIDER=twilio`
+  - [ ] `SUPPORT_CALLS_PUBLIC_BASE_URL` externally reachable
+  - [ ] `SUPPORT_CALLS_TWILIO_ACCOUNT_SID`
+  - [ ] `SUPPORT_CALLS_TWILIO_AUTH_TOKEN`
+  - [ ] `SUPPORT_CALLS_TWILIO_FROM_NUMBER`
+  - [ ] `SUPPORT_CALLS_TWILIO_BRIDGE_TARGET`
 
 ### 3. API Endpoint Readiness
 
@@ -709,9 +717,11 @@ Before enabling for provider, verify:
 **Twilio** (if using):
 - [ ] API account active and verified
 - [ ] Phone numbers purchased for origination
-- [ ] Webhooks configured for all call events
-- [ ] Recording storage bucket accessible
-- [ ] SIP URI format matches expectations
+- [ ] `6ex` callback URLs reachable from Twilio:
+  - [ ] `/api/v1/internal/support/calls/webhooks/twilio/status`
+  - [ ] `/api/v1/internal/support/calls/webhooks/twilio/recording`
+- [ ] Recording relay URL from `6ex` is reachable by `6esk`
+- [ ] Bridge target format matches deployment (`+E164` PSTN or `client:<identity>`)
 
 **Other Providers**:
 - [ ] Authentication tokens configured

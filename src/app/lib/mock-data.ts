@@ -19,6 +19,8 @@ import type {
   SpamMessageRecord,
   SpamRuleRecord,
   TagRecord,
+  WorkspaceModulesConfig,
+  WorkspaceModuleUsageSummary,
   WhatsAppAccount,
   WhatsAppOutboxMetrics,
   WhatsAppTemplate
@@ -106,6 +108,8 @@ type DemoState = {
   roles: RoleRecord[];
   users: AdminUserRecord[];
   sla: SlaConfig;
+  workspaceModules: WorkspaceModulesConfig;
+  workspaceUsage: WorkspaceModuleUsageSummary;
   security: SecuritySnapshot;
   tags: TagRecord[];
   supportMacros: SupportMacro[];
@@ -2160,6 +2164,43 @@ function buildInitialState(): DemoState {
       target_customer_primary_phone: "+1234567899"
     },
     {
+      id: "merge-6",
+      status: "pending",
+      proposal_type: "linked_case",
+      ticket_id: "TKT-1844",
+      source_ticket_id: "TKT-1844",
+      target_ticket_id: "TKT-1837",
+      source_customer_id: "cust-lisa",
+      target_customer_id: "cust-lisa",
+      reason: "Email incident and WhatsApp follow-up belong to one customer case but should stay as separate channel tickets",
+      confidence: 0.91,
+      metadata: { policy: "cross_channel_link", channels: ["email", "whatsapp"] },
+      failure_reason: null,
+      proposed_by_agent_id: "agent-1",
+      proposed_by_user_id: null,
+      reviewed_by_user_id: null,
+      reviewed_at: null,
+      applied_at: null,
+      created_at: "2026-03-18T12:45:00Z",
+      updated_at: "2026-03-18T12:45:00Z",
+      context_ticket_subject: "Integration not syncing with Salesforce",
+      context_ticket_requester_email: "lisa.nguyen@enterprise.com",
+      source_ticket_subject: "Integration not syncing with Salesforce",
+      source_ticket_requester_email: "lisa.nguyen@enterprise.com",
+      source_ticket_has_whatsapp: false,
+      source_ticket_has_voice: false,
+      target_ticket_subject: "WhatsApp follow-up for Salesforce sync",
+      target_ticket_requester_email: "+1234567894",
+      target_ticket_has_whatsapp: true,
+      target_ticket_has_voice: false,
+      source_customer_display_name: "Lisa Nguyen",
+      source_customer_primary_email: "lisa.nguyen@enterprise.com",
+      source_customer_primary_phone: "+1234567894",
+      target_customer_display_name: "Lisa Nguyen",
+      target_customer_primary_email: "lisa.nguyen@enterprise.com",
+      target_customer_primary_phone: "+1234567894"
+    },
+    {
       id: "merge-3",
       status: "failed",
       proposal_type: "ticket",
@@ -2277,6 +2318,88 @@ function buildInitialState(): DemoState {
     roles,
     users,
     sla: { firstResponseMinutes: 120, resolutionMinutes: 1440 },
+    workspaceModules: {
+      workspaceKey: "primary",
+      updatedAt: DEMO_NOW,
+      modules: {
+        email: true,
+        whatsapp: true,
+        voice: true,
+        aiAutomation: true,
+        venusOrchestration: true,
+        vanillaWebchat: true
+      }
+    },
+    workspaceUsage: {
+      workspaceKey: "primary",
+      windowDays: 30,
+      generatedAt: DEMO_NOW,
+      modules: [
+        {
+          moduleKey: "email",
+          totalQuantity: 146,
+          eventCount: 146,
+          actorBreakdown: { human: 122, ai: 18, system: 6 },
+          lastSeenAt: DEMO_NOW,
+          usageKinds: [
+            { usageKind: "reply_sent", quantity: 83, eventCount: 83 },
+            { usageKind: "ticket_created_outbound", quantity: 41, eventCount: 41 },
+            { usageKind: "ticket_created_inbound", quantity: 22, eventCount: 22 }
+          ]
+        },
+        {
+          moduleKey: "whatsapp",
+          totalQuantity: 92,
+          eventCount: 92,
+          actorBreakdown: { human: 71, ai: 17, system: 4 },
+          lastSeenAt: DEMO_NOW,
+          usageKinds: [
+            { usageKind: "reply_sent", quantity: 49, eventCount: 49 },
+            { usageKind: "ticket_created_outbound", quantity: 27, eventCount: 27 },
+            { usageKind: "resend_queued", quantity: 16, eventCount: 16 }
+          ]
+        },
+        {
+          moduleKey: "voice",
+          totalQuantity: 18,
+          eventCount: 18,
+          actorBreakdown: { human: 13, ai: 5, system: 0 },
+          lastSeenAt: DEMO_NOW,
+          usageKinds: [
+            { usageKind: "call_queued", quantity: 13, eventCount: 13 },
+            { usageKind: "ticket_created_outbound", quantity: 5, eventCount: 5 }
+          ]
+        },
+        {
+          moduleKey: "aiAutomation",
+          totalQuantity: 54,
+          eventCount: 54,
+          actorBreakdown: { human: 0, ai: 54, system: 0 },
+          lastSeenAt: DEMO_NOW,
+          usageKinds: [
+            { usageKind: "draft_reply", quantity: 24, eventCount: 24 },
+            { usageKind: "send_reply", quantity: 19, eventCount: 19 },
+            { usageKind: "initiate_call", quantity: 11, eventCount: 11 }
+          ]
+        },
+        {
+          moduleKey: "venusOrchestration",
+          totalQuantity: 0,
+          eventCount: 0,
+          actorBreakdown: { human: 0, ai: 0, system: 0 },
+          lastSeenAt: null,
+          usageKinds: []
+        },
+        {
+          moduleKey: "vanillaWebchat",
+          totalQuantity: 0,
+          eventCount: 0,
+          actorBreakdown: { human: 0, ai: 0, system: 0 },
+          lastSeenAt: null,
+          usageKinds: []
+        }
+      ]
+    },
     security: {
       adminAllowlist: ["10.0.0.0/24", "192.168.0.0/24"],
       agentAllowlist: ["10.10.0.0/24"],
@@ -3001,6 +3124,8 @@ function handleGet(url: URL) {
   if (url.pathname === "/api/admin/roles") return { roles: state.roles };
   if (url.pathname === "/api/admin/users") return { users: state.users };
   if (url.pathname === "/api/admin/sla") return state.sla;
+  if (url.pathname === "/api/admin/workspace/modules") return { config: state.workspaceModules };
+  if (url.pathname === "/api/admin/workspace/usage") return { summary: state.workspaceUsage };
   if (url.pathname === "/api/admin/security") return state.security;
   if (url.pathname === "/api/support/tags") return { tags: state.tags };
   if (url.pathname === "/api/admin/spam-rules") return { rules: state.spamRules };
@@ -3184,6 +3309,30 @@ function handlePost(url: URL, init?: RequestInit) {
       actor_email: state.currentUser.email
     });
     return state.sla;
+  }
+  if (url.pathname === "/api/admin/workspace/modules") {
+    const body = parseJsonBody<WorkspaceModulesConfig["modules"]>(init);
+    state.workspaceModules = {
+      workspaceKey: state.workspaceModules.workspaceKey,
+      updatedAt: DEMO_NOW,
+      modules: {
+        email: body.email === true,
+        whatsapp: body.whatsapp === true,
+        voice: body.voice === true,
+        aiAutomation: body.aiAutomation === true,
+        venusOrchestration: body.venusOrchestration === true,
+        vanillaWebchat: body.vanillaWebchat === true
+      }
+    };
+    appendAuditLog({
+      action: "workspace_modules_updated",
+      entity_type: "workspace_modules",
+      entity_id: state.workspaceModules.workspaceKey,
+      data: state.workspaceModules.modules,
+      actor_name: state.currentUser.display_name,
+      actor_email: state.currentUser.email
+    });
+    return { status: "updated", config: state.workspaceModules };
   }
   if (url.pathname === "/api/support/tags") {
     const body = parseJsonBody<{ name: string; description?: string | null }>(init);
@@ -3419,6 +3568,15 @@ function handlePost(url: URL, init?: RequestInit) {
     const ticketId = `TKT-${state.nextTicketNumber++}`;
     const isVoice = body.contactMode === "call";
     const isWhatsApp = body.contactMode === "whatsapp";
+    if (isVoice && !state.workspaceModules.modules.voice) {
+      throw new Error("Voice module is not enabled for this workspace.");
+    }
+    if (isWhatsApp && !state.workspaceModules.modules.whatsapp) {
+      throw new Error("WhatsApp module is not enabled for this workspace.");
+    }
+    if (!isVoice && !isWhatsApp && !state.workspaceModules.modules.email) {
+      throw new Error("Email module is not enabled for this workspace.");
+    }
     const customerId = `cust-${ticketId.toLowerCase()}`;
     state.customers[customerId] = {
       id: customerId,
@@ -3655,6 +3813,9 @@ function handlePost(url: URL, init?: RequestInit) {
     return { status: "queued", callSessionId, messageId: message.id, toPhone: selectedPhone, idempotent: false };
   }
   if (url.pathname === "/api/whatsapp/send") {
+    if (!state.workspaceModules.modules.whatsapp) {
+      throw new Error("WhatsApp module is not enabled for this workspace.");
+    }
     const body = parseJsonBody<{
       ticketId?: string | null;
       to: string;
@@ -3680,6 +3841,9 @@ function handlePost(url: URL, init?: RequestInit) {
     return { status: "sent" };
   }
   if (url.pathname === "/api/email/send") {
+    if (!state.workspaceModules.modules.email) {
+      throw new Error("Email module is not enabled for this workspace.");
+    }
     const body = parseJsonBody<{
       from: string;
       to: string[];

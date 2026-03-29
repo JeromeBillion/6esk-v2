@@ -5,6 +5,8 @@ import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 function normalizeContact(value: string | null | undefined) {
   if (!value) return "";
@@ -28,6 +30,16 @@ export async function POST(
   }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("whatsapp"))) {
+    return Response.json(
+      {
+        error: "WhatsApp module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "whatsapp"
+      },
+      { status: 409 }
+    );
   }
 
   const { messageId } = await params;
@@ -173,6 +185,17 @@ export async function POST(
     entityType: "message",
     entityId: message.id,
     data: { ticketId: message.ticket_id ?? null, to }
+  });
+  await recordModuleUsageEvent({
+    moduleKey: "whatsapp",
+    usageKind: "resend_queued",
+    actorType: "human",
+    metadata: {
+      route: "/api/messages/[messageId]/whatsapp-resend",
+      ticketId: message.ticket_id ?? null,
+      messageId: message.id,
+      to
+    }
   });
 
   return Response.json({ status: "queued" });

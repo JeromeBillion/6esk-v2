@@ -31,6 +31,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Venus-to-6esk AI voice integration contract and safety model
 - `docs/6esk-v1-completion-roadmap.md`
   - Completion roadmap for the `6ex`-custom proprietary `6esk v1` product
+- `docs/6esk-v1-execution-backlog.md`
+  - Ordered execution backlog translating the `v1` roadmap into concrete implementation slices
 - `docs/6esk-v2-commercialization-roadmap.md`
   - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including South Africa readiness and BizOps
 

@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => {
     getLatestVoiceConsentState: vi.fn(),
     evaluateVoiceCallPolicy: vi.fn(),
     queueOutboundCall: vi.fn(),
+    isWorkspaceModuleEnabled: vi.fn(),
+    recordModuleUsageEvent: vi.fn(),
     MergeError,
     MergeReviewError
   };
@@ -104,6 +106,16 @@ vi.mock("@/server/calls/policy", () => ({
   evaluateVoiceCallPolicy: mocks.evaluateVoiceCallPolicy
 }));
 
+vi.mock("@/server/workspace-modules", () => ({
+  DEFAULT_WORKSPACE_KEY: "primary",
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
+}));
+
+vi.mock("@/server/module-metering", () => ({
+  recordModuleUsageEvent: mocks.recordModuleUsageEvent,
+  resolveAiProviderMode: () => "managed"
+}));
+
 import { POST } from "@/app/api/agent/v1/actions/route";
 
 async function postAction(action: Record<string, unknown>) {
@@ -157,6 +169,7 @@ describe("agent initiate_call action", () => {
     mocks.evaluateVoiceCallPolicy.mockResolvedValue({
       allowed: true
     });
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
     mocks.getLatestVoiceConsentState.mockResolvedValue({
       state: "unknown",
       callbackPhone: null,
@@ -175,6 +188,7 @@ describe("agent initiate_call action", () => {
       idempotent: false
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
   });
 
   it("blocks when allowVoiceActions capability is disabled", async () => {
@@ -516,4 +530,3 @@ describe("agent initiate_call action", () => {
     );
   });
 });
-

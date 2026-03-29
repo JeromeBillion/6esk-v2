@@ -82,7 +82,7 @@ describe("POST /api/tickets/merge", () => {
     mocks.mergeTickets.mockRejectedValue(
       new mocks.MergeError(
         "cross_channel_not_allowed",
-        "Cross-channel ticket merge is disabled. Merge customer profiles instead."
+        "Cross-channel ticket merge is disabled. Link the tickets as one case instead."
       )
     );
 
@@ -95,7 +95,7 @@ describe("POST /api/tickets/merge", () => {
     expect(response.status).toBe(409);
     expect(body).toMatchObject({
       code: "cross_channel_not_allowed",
-      error: "Cross-channel ticket merge is disabled. Merge customer profiles instead."
+      error: "Cross-channel ticket merge is disabled. Link the tickets as one case instead."
     });
     expect(mocks.mergeTickets).toHaveBeenCalledWith({
       sourceTicketId: SOURCE_TICKET_ID,

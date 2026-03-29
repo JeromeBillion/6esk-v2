@@ -9,7 +9,7 @@ import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { sendTicketReply } from "@/server/email/replies";
 import { addTagsToTicket, getTicketById, recordTicketEvent } from "@/server/tickets";
-import { mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
+import { linkTickets, mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
 import { createMergeReviewTask, MergeReviewError } from "@/server/merge-reviews";
 import {
   getTicketCallOptions,
@@ -20,6 +20,8 @@ import { deliverPendingCallEvents } from "@/server/calls/outbox";
 import { getLatestVoiceConsentState } from "@/server/calls/consent";
 import { evaluateVoiceCallPolicy } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
 
 const actionSchema = z.object({
   type: z.enum([
@@ -31,6 +33,7 @@ const actionSchema = z.object({
     "assign_to",
     "request_human_review",
     "merge_tickets",
+    "link_tickets",
     "merge_customers",
     "propose_merge"
   ]),
@@ -97,6 +100,20 @@ function validateMergeSafety(
   return null;
 }
 
+function readMergeProposalPreference(metadata: Record<string, unknown> | null | undefined) {
+  const raw = typeof metadata?.proposalType === "string" ? metadata.proposalType.trim().toLowerCase() : "";
+  if (raw === "linked_case" || raw === "linked_case_merge" || raw === "link_tickets" || raw === "link") {
+    return "linked_case" as const;
+  }
+  if (raw === "customer_merge" || raw === "customer") {
+    return "customer" as const;
+  }
+  if (raw === "ticket_merge" || raw === "ticket") {
+    return "ticket" as const;
+  }
+  return null;
+}
+
 function normalizeEscalationTag(value: unknown) {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
@@ -112,6 +129,14 @@ function requesterEmailForConsent(value: string | null | undefined) {
     return null;
   }
   return trimmed;
+}
+
+function inferAgentReplyModule(input: { requesterEmail: string | null | undefined; hasTemplate: boolean }) {
+  if (input.hasTemplate) {
+    return "whatsapp" as const;
+  }
+  const requester = input.requesterEmail?.trim().toLowerCase() ?? "";
+  return requester.startsWith("whatsapp:") ? ("whatsapp" as const) : ("email" as const);
 }
 
 function readOutOfHoursEscalation(policy: Record<string, unknown> | null | undefined) {
@@ -173,6 +198,16 @@ export async function POST(request: Request) {
 
   if (integration.status !== "active") {
     return Response.json({ error: "Integration paused" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("aiAutomation"))) {
+    return Response.json(
+      {
+        error: "AI automation module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "aiAutomation"
+      },
+      { status: 409 }
+    );
   }
 
   let payload: unknown;
@@ -246,12 +281,36 @@ export async function POST(request: Request) {
           entityId: action.ticketId,
           data: { agentId: integration.id }
         });
+        await recordModuleUsageEvent({
+          moduleKey: "aiAutomation",
+          usageKind: "draft_reply",
+          actorType: "ai",
+          providerMode: resolveAiProviderMode(action.metadata ?? null),
+          metadata: {
+            route: "/api/agent/v1/actions",
+            ticketId: action.ticketId,
+            actionType: action.type,
+            integrationId: integration.id
+          }
+        });
         results.push({ type: action.type, status: "ok" });
         break;
       }
       case "send_reply": {
         if (integration.policy_mode !== "auto_send") {
           results.push({ type: action.type, status: "blocked", detail: "Auto-send disabled" });
+          break;
+        }
+        const replyModule = inferAgentReplyModule({
+          requesterEmail: ticket.requester_email,
+          hasTemplate: Boolean(action.template)
+        });
+        if (!(await isWorkspaceModuleEnabled(replyModule))) {
+          results.push({
+            type: action.type,
+            status: "blocked",
+            detail: `${replyModule === "whatsapp" ? "WhatsApp" : "Email"} module disabled`
+          });
           break;
         }
 
@@ -329,6 +388,30 @@ export async function POST(request: Request) {
             entityId: action.ticketId,
             data: { agentId: integration.id }
           });
+          await recordModuleUsageEvent({
+            moduleKey: replyModule,
+            usageKind: "reply_sent",
+            actorType: "ai",
+            metadata: {
+              route: "/api/agent/v1/actions",
+              ticketId: action.ticketId,
+              actionType: action.type,
+              channel: replyModule
+            }
+          });
+          await recordModuleUsageEvent({
+            moduleKey: "aiAutomation",
+            usageKind: "send_reply",
+            actorType: "ai",
+            providerMode: resolveAiProviderMode(action.metadata ?? null),
+            metadata: {
+              route: "/api/agent/v1/actions",
+              ticketId: action.ticketId,
+              actionType: action.type,
+              integrationId: integration.id,
+              channel: replyModule
+            }
+          });
           results.push({ type: action.type, status: "ok" });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to send";
@@ -342,6 +425,14 @@ export async function POST(request: Request) {
             type: action.type,
             status: "blocked",
             detail: "Voice actions disabled"
+          });
+          break;
+        }
+        if (!(await isWorkspaceModuleEnabled("voice"))) {
+          results.push({
+            type: action.type,
+            status: "blocked",
+            detail: "Voice module disabled"
           });
           break;
         }
@@ -444,6 +535,34 @@ export async function POST(request: Request) {
               ticketId: action.ticketId,
               toPhone: redactPhoneNumber(queued.toPhone),
               idempotent: queued.idempotent
+            }
+          });
+          await recordModuleUsageEvent({
+            moduleKey: "voice",
+            usageKind: "call_queued",
+            actorType: "ai",
+            metadata: {
+              route: "/api/agent/v1/actions",
+              ticketId: action.ticketId,
+              actionType: action.type,
+              integrationId: integration.id,
+              callSessionId: queued.callSessionId,
+              messageId: queued.messageId,
+              idempotent: queued.idempotent
+            }
+          });
+          await recordModuleUsageEvent({
+            moduleKey: "aiAutomation",
+            usageKind: "initiate_call",
+            actorType: "ai",
+            providerMode: resolveAiProviderMode(action.metadata ?? null),
+            metadata: {
+              route: "/api/agent/v1/actions",
+              ticketId: action.ticketId,
+              actionType: action.type,
+              integrationId: integration.id,
+              callSessionId: queued.callSessionId,
+              messageId: queued.messageId
             }
           });
           results.push({
@@ -617,11 +736,12 @@ export async function POST(request: Request) {
         break;
       }
       case "propose_merge": {
+        const preferredProposalType = readMergeProposalPreference(action.metadata ?? null);
         const hasCustomerPair = Boolean(action.sourceCustomerId && action.targetCustomerId);
         const proposedSourceTicketId = action.sourceTicketId ?? action.ticketId;
         const hasTicketPair = Boolean(proposedSourceTicketId && action.targetTicketId);
 
-        if (hasCustomerPair && hasTicketPair) {
+        if (hasCustomerPair && hasTicketPair && !preferredProposalType) {
           results.push({
             type: action.type,
             status: "failed",
@@ -645,14 +765,23 @@ export async function POST(request: Request) {
         }
 
         let reviewTaskId: string | null = null;
-        let reviewProposalType: "ticket" | "customer" = hasCustomerPair ? "customer" : "ticket";
+        let reviewProposalType: "ticket" | "customer" | "linked_case" =
+          preferredProposalType ?? (hasCustomerPair ? "customer" : "ticket");
         let sourceTicketId: string | null = null;
         let targetTicketId: string | null = null;
         let sourceCustomerId: string | null = null;
         let targetCustomerId: string | null = null;
         let targetTicketMailboxId: string | null = null;
 
-        if (hasCustomerPair) {
+        if (reviewProposalType === "customer") {
+          if (!hasCustomerPair) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              detail: "Missing source or target customer id for merge proposal."
+            });
+            break;
+          }
           sourceCustomerId = action.sourceCustomerId ?? null;
           targetCustomerId = action.targetCustomerId ?? null;
         } else {
@@ -824,6 +953,62 @@ export async function POST(request: Request) {
               : error instanceof Error
                 ? error.message
                 : "Failed to merge tickets";
+          results.push({ type: action.type, status: "failed", detail });
+        }
+        break;
+      }
+      case "link_tickets": {
+        if (!allowMergeActions) {
+          results.push({ type: action.type, status: "blocked", detail: "Merge actions disabled" });
+          break;
+        }
+        const sourceTicketId = action.sourceTicketId ?? action.ticketId;
+        const targetTicketId = action.targetTicketId;
+        if (!targetTicketId) {
+          results.push({ type: action.type, status: "failed", detail: "Missing target ticket id" });
+          break;
+        }
+        const mergeSafetyError = validateMergeSafety(action, mergeMinConfidence);
+        if (mergeSafetyError) {
+          results.push({ type: action.type, status: "failed", detail: mergeSafetyError });
+          break;
+        }
+
+        const targetTicket = await getTicketById(targetTicketId);
+        if (!targetTicket) {
+          results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
+          break;
+        }
+
+        if (
+          !hasMailboxScope(integration, ticket.mailbox_id) ||
+          !hasMailboxScope(integration, targetTicket.mailbox_id)
+        ) {
+          return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+
+        try {
+          const result = await linkTickets({
+            sourceTicketId,
+            targetTicketId,
+            actorUserId: null,
+            reason: action.reason ?? null,
+            metadata: action.metadata ?? null
+          });
+          await recordAuditLog({
+            action: "ai_ticket_linked_case",
+            entityType: "ticket",
+            entityId: sourceTicketId,
+            data: { agentId: integration.id, result }
+          });
+          results.push({ type: action.type, status: "ok" });
+        } catch (error) {
+          const detail =
+            error instanceof MergeError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Failed to link tickets";
           results.push({ type: action.type, status: "failed", detail });
         }
         break;

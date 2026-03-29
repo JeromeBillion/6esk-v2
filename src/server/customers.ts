@@ -40,6 +40,22 @@ export type CustomerHistoryPage = {
   nextCursor: string | null;
 };
 
+export type CustomerResolutionConflict = {
+  type: "external_identity_conflict";
+  externalSystem: string;
+  incomingExternalUserId: string;
+  existingExternalUserId: string | null;
+  existingExternalSystem: string | null;
+  existingCustomerId: string;
+  matchedIdentity: "email" | "phone" | "email_or_phone" | "unknown";
+};
+
+export type CustomerResolution = {
+  customerId: string;
+  kind: CustomerKind;
+  conflict?: CustomerResolutionConflict;
+};
+
 export class CustomerIdentityConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -47,20 +63,26 @@ export class CustomerIdentityConflictError extends Error {
   }
 }
 
+type Queryable = {
+  query: typeof db.query;
+};
+
 async function upsertCustomerIdentity({
   customerId,
   identityType,
   identityValue,
   isPrimary,
-  source
+  source,
+  queryable = db
 }: {
   customerId: string;
   identityType: "email" | "phone";
   identityValue: string;
   isPrimary: boolean;
   source: string;
+  queryable?: Queryable;
 }) {
-  await db.query(
+  await queryable.query(
     `INSERT INTO customer_identities (
       customer_id, identity_type, identity_value, is_primary, source, updated_at
     ) VALUES (
@@ -92,10 +114,12 @@ async function upsertCustomerIdentity({
 
 async function findCanonicalCustomerByIdentity({
   email,
-  phone
+  phone,
+  queryable = db
 }: {
   email: string | null;
   phone: string | null;
+  queryable?: Queryable;
 }) {
   const conditions: string[] = [];
   const values: string[] = [];
@@ -122,8 +146,13 @@ async function findCanonicalCustomerByIdentity({
     return null;
   }
 
-  const result = await db.query<{ id: string; kind: CustomerKind }>(
-    `SELECT c.id, c.kind
+  const result = await queryable.query<{
+    id: string;
+    kind: CustomerKind;
+    external_system: string | null;
+    external_user_id: string | null;
+  }>(
+    `SELECT c.id, c.kind, c.external_system, c.external_user_id
      FROM customer_identities ci
      JOIN customers c ON c.id = ci.customer_id
      WHERE c.merged_into_customer_id IS NULL
@@ -136,16 +165,45 @@ async function findCanonicalCustomerByIdentity({
   return result.rows[0] ?? null;
 }
 
+async function findCustomerByExternalRef({
+  externalSystem,
+  externalUserId,
+  queryable = db
+}: {
+  externalSystem: string;
+  externalUserId: string;
+  queryable?: Queryable;
+}) {
+  const result = await queryable.query<{
+    id: string;
+    kind: CustomerKind;
+    external_system: string | null;
+    external_user_id: string | null;
+  }>(
+    `SELECT id, kind, external_system, external_user_id
+     FROM customers
+     WHERE merged_into_customer_id IS NULL
+       AND external_system = $1
+       AND external_user_id = $2
+     LIMIT 1`,
+    [externalSystem, externalUserId]
+  );
+
+  return result.rows[0] ?? null;
+}
+
 async function createUnregisteredCustomer({
   displayName,
   email,
-  phone
+  phone,
+  queryable = db
 }: {
   displayName: string | null;
   email: string | null;
   phone: string | null;
+  queryable?: Queryable;
 }) {
-  const result = await db.query<{ id: string }>(
+  const result = await queryable.query<{ id: string }>(
     `INSERT INTO customers (kind, display_name, primary_email, primary_phone)
      VALUES ('unregistered', $1, $2, $3)
      RETURNING id`,
@@ -159,18 +217,20 @@ async function upsertRegisteredCustomer({
   profile,
   email,
   phone,
-  displayName
+  displayName,
+  queryable = db
 }: {
   externalSystem: string;
   profile: PredictionProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
+  queryable?: Queryable;
 }) {
   const preferredEmail = normalizeLinkEmail(profile.email) ?? email;
   const preferredPhone = normalizeLinkPhone(profile.phoneNumber) ?? phone;
 
-  const result = await db.query<{ id: string }>(
+  const result = await queryable.query<{ id: string }>(
     `INSERT INTO customers (
       kind,
       external_system,
@@ -200,6 +260,56 @@ async function upsertRegisteredCustomer({
   return result.rows[0].id;
 }
 
+async function promoteCustomerWithProfile({
+  customerId,
+  externalSystem,
+  profile,
+  email,
+  phone,
+  displayName,
+  queryable = db
+}: {
+  customerId: string;
+  externalSystem: string;
+  profile: PredictionProfile;
+  email: string | null;
+  phone: string | null;
+  displayName: string | null;
+  queryable?: Queryable;
+}) {
+  const preferredEmail = normalizeLinkEmail(profile.email) ?? email;
+  const preferredPhone = normalizeLinkPhone(profile.phoneNumber) ?? phone;
+
+  const result = await queryable.query<{ id: string }>(
+    `UPDATE customers
+     SET kind = 'registered',
+         external_system = CASE
+           WHEN external_system IS NULL OR external_system = $2 THEN $2
+           ELSE external_system
+         END,
+         external_user_id = CASE
+           WHEN external_system IS NULL OR external_system = $2 THEN $3
+           ELSE external_user_id
+         END,
+         display_name = COALESCE($4, display_name),
+         primary_email = COALESCE($5, primary_email),
+         primary_phone = COALESCE($6, primary_phone),
+         updated_at = now()
+     WHERE id = $1
+     RETURNING id`,
+    [
+      customerId,
+      externalSystem,
+      profile.id,
+      profile.fullName ?? displayName,
+      preferredEmail,
+      preferredPhone
+    ]
+  );
+
+  return result.rows[0]?.id ?? customerId;
+}
+
 export async function resolveOrCreateCustomerForInbound({
   externalSystem = "prediction-market-mvp",
   profile,
@@ -212,7 +322,7 @@ export async function resolveOrCreateCustomerForInbound({
   inboundEmail?: string | null;
   inboundPhone?: string | null;
   displayName?: string | null;
-}) {
+}): Promise<CustomerResolution | null> {
   const normalizedEmail = normalizeLinkEmail(inboundEmail ?? undefined);
   const normalizedPhone = normalizeLinkPhone(inboundPhone ?? undefined);
 
@@ -222,81 +332,170 @@ export async function resolveOrCreateCustomerForInbound({
 
   let customerId: string;
   let kind: CustomerKind;
-
-  if (profile) {
-    customerId = await upsertRegisteredCustomer({
-      externalSystem,
-      profile,
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      displayName: displayName ?? null
-    });
-    kind = "registered";
-  } else {
-    const existing = await findCanonicalCustomerByIdentity({
-      email: normalizedEmail,
-      phone: normalizedPhone
-    });
-
-    if (existing) {
-      customerId = existing.id;
-      kind = existing.kind;
-    } else {
-      customerId = await createUnregisteredCustomer({
-        displayName: displayName ?? null,
-        email: normalizedEmail,
-        phone: normalizedPhone
-      });
-      kind = "unregistered";
-    }
-  }
-
+  let conflict: CustomerResolutionConflict | undefined;
   const profileEmail = profile ? normalizeLinkEmail(profile.email) : null;
   const profilePhone = profile ? normalizeLinkPhone(profile.phoneNumber) : null;
   const primaryEmail = profileEmail ?? normalizedEmail;
   const primaryPhone = profilePhone ?? normalizedPhone;
+  const matchedIdentity: CustomerResolutionConflict["matchedIdentity"] =
+    normalizedEmail && normalizedPhone
+      ? "email_or_phone"
+      : normalizedEmail
+        ? "email"
+        : normalizedPhone
+          ? "phone"
+          : "unknown";
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
 
-  if (primaryEmail) {
-    await upsertCustomerIdentity({
-      customerId,
-      identityType: "email",
-      identityValue: primaryEmail,
-      isPrimary: true,
-      source: profile ? "profile_lookup" : "inbound_email"
-    });
+    if (profile) {
+      const registeredCustomer = await findCustomerByExternalRef({
+        externalSystem,
+        externalUserId: profile.id,
+        queryable: client
+      });
+      const canonical = await findCanonicalCustomerByIdentity({
+        email: primaryEmail,
+        phone: primaryPhone,
+        queryable: client
+      });
+
+      if (canonical && registeredCustomer && canonical.id !== registeredCustomer.id) {
+        customerId = canonical.id;
+        kind = canonical.kind;
+        conflict = {
+          type: "external_identity_conflict",
+          externalSystem,
+          incomingExternalUserId: profile.id,
+          existingExternalUserId: canonical.external_user_id ?? registeredCustomer.external_user_id,
+          existingExternalSystem: canonical.external_system ?? registeredCustomer.external_system,
+          existingCustomerId: canonical.id,
+          matchedIdentity
+        };
+      } else if (registeredCustomer) {
+        customerId = await promoteCustomerWithProfile({
+          customerId: registeredCustomer.id,
+          externalSystem,
+          profile,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          displayName: displayName ?? null,
+          queryable: client
+        });
+        kind = "registered";
+      } else if (canonical && canonical.kind === "unregistered") {
+        customerId = await promoteCustomerWithProfile({
+          customerId: canonical.id,
+          externalSystem,
+          profile,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          displayName: displayName ?? null,
+          queryable: client
+        });
+        kind = "registered";
+      } else if (canonical && canonical.kind === "registered") {
+        customerId = canonical.id;
+        kind = canonical.kind;
+        conflict = {
+          type: "external_identity_conflict",
+          externalSystem,
+          incomingExternalUserId: profile.id,
+          existingExternalUserId: canonical.external_user_id,
+          existingExternalSystem: canonical.external_system,
+          existingCustomerId: canonical.id,
+          matchedIdentity
+        };
+      } else {
+        customerId = await upsertRegisteredCustomer({
+          externalSystem,
+          profile,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          displayName: displayName ?? null,
+          queryable: client
+        });
+        kind = "registered";
+      }
+    } else {
+      const existing = await findCanonicalCustomerByIdentity({
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        queryable: client
+      });
+
+      if (existing) {
+        customerId = existing.id;
+        kind = existing.kind;
+      } else {
+        customerId = await createUnregisteredCustomer({
+          displayName: displayName ?? null,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          queryable: client
+        });
+        kind = "unregistered";
+      }
+    }
+
+    const identityEmail = conflict ? normalizedEmail : primaryEmail;
+    const identityPhone = conflict ? normalizedPhone : primaryPhone;
+
+    if (identityEmail) {
+      await upsertCustomerIdentity({
+        customerId,
+        identityType: "email",
+        identityValue: identityEmail,
+        isPrimary: true,
+        source: profile ? "profile_lookup" : "inbound_email",
+        queryable: client
+      });
+    }
+
+    if (identityPhone) {
+      await upsertCustomerIdentity({
+        customerId,
+        identityType: "phone",
+        identityValue: identityPhone,
+        isPrimary: true,
+        source: profile ? "profile_lookup" : "inbound_whatsapp",
+        queryable: client
+      });
+    }
+
+    if (normalizedEmail && normalizedEmail !== identityEmail) {
+      await upsertCustomerIdentity({
+        customerId,
+        identityType: "email",
+        identityValue: normalizedEmail,
+        isPrimary: false,
+        source: "inbound_email",
+        queryable: client
+      });
+    }
+
+    if (normalizedPhone && normalizedPhone !== identityPhone) {
+      await upsertCustomerIdentity({
+        customerId,
+        identityType: "phone",
+        identityValue: normalizedPhone,
+        isPrimary: false,
+        source: "inbound_whatsapp",
+        queryable: client
+      });
+    }
+
+    await client.query("COMMIT");
+    return { customerId, kind, conflict };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
   }
-
-  if (primaryPhone) {
-    await upsertCustomerIdentity({
-      customerId,
-      identityType: "phone",
-      identityValue: primaryPhone,
-      isPrimary: true,
-      source: profile ? "profile_lookup" : "inbound_whatsapp"
-    });
-  }
-
-  if (normalizedEmail && normalizedEmail !== primaryEmail) {
-    await upsertCustomerIdentity({
-      customerId,
-      identityType: "email",
-      identityValue: normalizedEmail,
-      isPrimary: false,
-      source: "inbound_email"
-    });
-  }
-
-  if (normalizedPhone && normalizedPhone !== primaryPhone) {
-    await upsertCustomerIdentity({
-      customerId,
-      identityType: "phone",
-      identityValue: normalizedPhone,
-      isPrimary: false,
-      source: "inbound_whatsapp"
-    });
-  }
-
-  return { customerId, kind };
 }
 
 export async function attachCustomerToTicket(ticketId: string, customerId: string | null) {

@@ -42,11 +42,13 @@ function formatDate(value: string | null | undefined) {
 }
 
 function typeBadge(item: MergeReviewQueueItem) {
-  return item.proposal_type === "ticket" ? "Ticket merge" : "Customer merge";
+  if (item.proposal_type === "ticket") return "Ticket merge";
+  if (item.proposal_type === "customer") return "Customer merge";
+  return "Linked case";
 }
 
 function primaryLabel(item: MergeReviewQueueItem) {
-  if (item.proposal_type === "ticket") {
+  if (item.proposal_type === "ticket" || item.proposal_type === "linked_case") {
     return `${item.source_ticket_id} -> ${item.target_ticket_id}`;
   }
   return `${item.source_customer_display_name ?? item.source_customer_primary_email ?? item.source_customer_id} -> ${item.target_customer_display_name ?? item.target_customer_primary_email ?? item.target_customer_id}`;

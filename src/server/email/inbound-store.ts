@@ -22,7 +22,11 @@ import {
   lookupPredictionProfile
 } from "@/server/integrations/prediction-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
-import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
+import {
+  attachCustomerToTicket,
+  resolveOrCreateCustomerForInbound,
+  type CustomerResolutionConflict
+} from "@/server/customers";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -33,6 +37,26 @@ function getSupportAddress() {
   }
   const domain = process.env.RESEND_FROM_DOMAIN ?? "";
   return domain ? `support@${domain}`.toLowerCase() : "";
+}
+
+function applyIdentityConflictMetadata(
+  metadata: Record<string, unknown>,
+  conflict: CustomerResolutionConflict
+) {
+  const next = { ...metadata } as Record<string, unknown>;
+  const existingLookup =
+    typeof next.profile_lookup === "object" && next.profile_lookup !== null
+      ? { ...(next.profile_lookup as Record<string, unknown>) }
+      : {};
+
+  existingLookup.status = "conflicted";
+  existingLookup.conflict = conflict;
+  next.profile_lookup = existingLookup;
+  if (typeof next.external_profile === "object" && next.external_profile !== null) {
+    next.external_profile_conflict = next.external_profile;
+    delete next.external_profile;
+  }
+  return next;
 }
 
 export async function storeInboundEmail(data: InboundEmail) {
@@ -74,11 +98,17 @@ export async function storeInboundEmail(data: InboundEmail) {
   let createdNewTicket = false;
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
     const requesterProfile = await lookupPredictionProfile({ email: fromEmail });
-    const profileMetadataPatch = buildProfileMetadataPatch(requesterProfile);
     const customerResolution = await resolveOrCreateCustomerForInbound({
       profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
       inboundEmail: fromEmail
     });
+    const profileMetadataPatch =
+      requesterProfile.status === "matched" && customerResolution?.conflict
+        ? applyIdentityConflictMetadata(
+            buildProfileMetadataPatch(requesterProfile),
+            customerResolution.conflict
+          )
+        : buildProfileMetadataPatch(requesterProfile);
 
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
@@ -143,13 +173,14 @@ export async function storeInboundEmail(data: InboundEmail) {
               email: fromEmail,
               phone: null
             },
-            matchedByProfile: requesterProfile.status === "matched"
+            matchedByProfile: requesterProfile.status === "matched",
+            ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
           }
         });
       }
     }
 
-    if (requesterProfile.status === "matched" && ticketId) {
+    if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
       await upsertExternalUserLink({
         externalSystem: "prediction-market-mvp",
         profile: requesterProfile.profile,
@@ -160,7 +191,7 @@ export async function storeInboundEmail(data: InboundEmail) {
       });
     }
 
-    if (createdNewTicket && requesterProfile.status === "matched") {
+    if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
       await recordTicketEvent({
         ticketId,
         eventType: "profile_enriched",
@@ -168,6 +199,16 @@ export async function storeInboundEmail(data: InboundEmail) {
           source: "prediction-market-mvp",
           matchedBy: requesterProfile.matchedBy,
           externalUserId: requesterProfile.profile.id
+        }
+      });
+    } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
+      await recordTicketEvent({
+        ticketId,
+        eventType: "customer_identity_conflict",
+        data: {
+          source: "prediction-market-mvp",
+          matchedBy: requesterProfile.matchedBy,
+          conflict: customerResolution.conflict
         }
       });
     }

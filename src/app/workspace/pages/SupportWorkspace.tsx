@@ -181,6 +181,19 @@ type CustomerTicketHistoryItem = {
   lastCustomerInboundAt: string | null;
 };
 
+type LinkedCaseHistoryItem = {
+  linkId: string;
+  ticketId: string;
+  customerId: string | null;
+  subject: string;
+  status: TicketStatusDisplay;
+  priority: TicketPriorityDisplay;
+  channel: "email" | "whatsapp" | "voice";
+  requesterEmail: string;
+  linkedAt: string;
+  reason: string | null;
+};
+
 type CustomerProfileView = {
   id: string;
   kind: "registered" | "unregistered";
@@ -810,6 +823,7 @@ export function SupportWorkspace() {
   const [auditEvents, setAuditEvents] = useState<HistoryAuditEvent[]>([]);
   const [customerProfile, setCustomerProfile] = useState<CustomerProfileView | null>(null);
   const [customerTicketHistory, setCustomerTicketHistory] = useState<CustomerTicketHistoryItem[]>([]);
+  const [linkedCaseTickets, setLinkedCaseTickets] = useState<LinkedCaseHistoryItem[]>([]);
   const [activeDraft, setActiveDraft] = useState<DraftView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -1108,11 +1122,25 @@ export function SupportWorkspace() {
         }))
         .sort((left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime());
       setCustomerTicketHistory(mappedHistory);
+      const mappedLinkedCases = (details.linkedTickets ?? [])
+        .map((item) => ({
+          linkId: item.linkId,
+          ticketId: item.ticketId,
+          customerId: item.customerId,
+          subject: item.subject ?? "(no subject)",
+          status: mapHistoryStatus(item.status),
+          priority: DISPLAY_PRIORITY_BY_API[item.priority],
+          channel: item.channel,
+          requesterEmail: item.requesterEmail,
+          linkedAt: item.linkedAt,
+          reason: item.reason
+        }))
+        .sort((left, right) => new Date(right.linkedAt).getTime() - new Date(left.linkedAt).getTime());
+      setLinkedCaseTickets(mappedLinkedCases);
 
       const relatedTicketIds = Array.from(
         new Set(
-          mappedHistory
-            .map((item) => item.ticketId)
+          [...mappedHistory.map((item) => item.ticketId), ...mappedLinkedCases.map((item) => item.ticketId)]
             .filter((historyTicketId) => historyTicketId && historyTicketId !== ticketId)
         )
       );
@@ -1166,6 +1194,7 @@ export function SupportWorkspace() {
       setAuditEvents([]);
       setCustomerProfile(null);
       setCustomerTicketHistory([]);
+      setLinkedCaseTickets([]);
       setActiveDraft(null);
     } finally {
       setDetailLoading(false);
@@ -1830,7 +1859,7 @@ export function SupportWorkspace() {
                         setShowMergeModal(true);
                       }}
                     >
-                      Merge Tickets
+                      Merge or Link Tickets
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
@@ -2211,6 +2240,7 @@ export function SupportWorkspace() {
               auditEvents={auditEvents}
               customerProfile={customerProfile}
               customerTicketHistory={customerTicketHistory}
+              linkedCaseTickets={linkedCaseTickets}
               draft={activeDraft}
               detailLoading={detailLoading}
               detailError={detailError}
@@ -2798,6 +2828,7 @@ function TicketDetail({
   auditEvents,
   customerProfile,
   customerTicketHistory,
+  linkedCaseTickets,
   draft,
   detailLoading,
   detailError,
@@ -2832,6 +2863,7 @@ function TicketDetail({
   auditEvents: HistoryAuditEvent[];
   customerProfile: CustomerProfileView | null;
   customerTicketHistory: CustomerTicketHistoryItem[];
+  linkedCaseTickets: LinkedCaseHistoryItem[];
   draft: DraftView | null;
   detailLoading: boolean;
   detailError: string | null;
@@ -3132,6 +3164,18 @@ function TicketDetail({
       (left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
     );
   }, [customerTicketHistory, primaryChannel, ticket.id, ticket.status, ticket.subject, ticket.updated_at]);
+
+  const linkedCaseRows = useMemo(() => {
+    const deduped = new Map<string, LinkedCaseHistoryItem>();
+    for (const item of linkedCaseTickets) {
+      if (!deduped.has(item.ticketId)) {
+        deduped.set(item.ticketId, item);
+      }
+    }
+    return Array.from(deduped.values()).sort(
+      (left, right) => new Date(right.linkedAt).getTime() - new Date(left.linkedAt).getTime()
+    );
+  }, [linkedCaseTickets]);
 
   const getHistoryStatusColor = useCallback((status: TicketStatusDisplay) => {
     if (status === "open") return "border-green-200 bg-green-50 text-green-700";
@@ -4064,6 +4108,70 @@ function TicketDetail({
               )}
             </div>
           </div>
+
+          {linkedCaseRows.length > 0 ? (
+            <div className="mb-6">
+              <h4 className="mb-2 text-xs font-medium text-neutral-600">Linked Cases</h4>
+              <div className="space-y-2">
+                {linkedCaseRows.map((linkedItem) => {
+                  const isCurrentTicket = linkedItem.ticketId === activeTimelineTicketIdValue;
+                  return (
+                    <button
+                      key={linkedItem.linkId}
+                      type="button"
+                      className={cn(
+                        "w-full rounded-lg border px-3 py-2 text-left transition-colors",
+                        isCurrentTicket
+                          ? "border-blue-300 bg-blue-50"
+                          : "border-neutral-200 bg-white hover:bg-neutral-50"
+                      )}
+                      onClick={() => {
+                        pendingTimelineFocusTicketIdRef.current = linkedItem.ticketId;
+                        pendingTimelineFocusBehaviorRef.current = "smooth";
+                        if (linkedItem.ticketId === ticket.id) {
+                          scrollTimelineToTicketId(linkedItem.ticketId, "smooth");
+                          return;
+                        }
+                        onSelectHistoryTicket(linkedItem.ticketId);
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-neutral-800">{linkedItem.ticketId}</p>
+                          <p className="mt-0.5 truncate text-xs text-neutral-600">{linkedItem.subject}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline" className="h-5 border-neutral-200 text-[10px]">
+                              {toTitleCase(linkedItem.channel)}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={cn("h-5 text-[10px]", getHistoryStatusColor(linkedItem.status))}
+                            >
+                              {toTitleCase(linkedItem.status)}
+                            </Badge>
+                            <Badge variant="outline" className="h-5 border-purple-200 bg-purple-50 text-[10px] text-purple-700">
+                              Linked case
+                            </Badge>
+                            {isCurrentTicket ? (
+                              <Badge variant="outline" className="h-5 border-blue-300 text-[10px] text-blue-700">
+                                Current
+                              </Badge>
+                            ) : null}
+                          </div>
+                          {linkedItem.reason ? (
+                            <p className="mt-1 line-clamp-2 text-[11px] text-neutral-500">{linkedItem.reason}</p>
+                          ) : null}
+                        </div>
+                        <span className="whitespace-nowrap text-[11px] text-neutral-500">
+                          {formatDateRelative(linkedItem.linkedAt)}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           <div className="mb-6">
             <div className="mb-2 flex items-center gap-2">

@@ -60,9 +60,12 @@ function buildPreflight(
   return {
     sourceTicketId: SOURCE_TICKET_ID,
     targetTicketId: TARGET_TICKET_ID,
+    sourceCustomerId: "33333333-3333-3333-3333-333333333333",
+    targetCustomerId: "44444444-4444-4444-4444-444444444444",
     sourceChannel: "email",
     targetChannel: blockingCode === "cross_channel_not_allowed" ? "whatsapp" : "email",
     sourceTicket: {
+      customerId: "33333333-3333-3333-3333-333333333333",
       subject: "Source",
       requesterEmail: "source@example.com",
       status: "open",
@@ -71,6 +74,7 @@ function buildPreflight(
       mergedIntoTicketId: null
     },
     targetTicket: {
+      customerId: "44444444-4444-4444-4444-444444444444",
       subject: "Target",
       requesterEmail: "target@example.com",
       status: "open",
@@ -120,7 +124,7 @@ describe("POST /api/tickets/merge/preflight", () => {
     mocks.preflightTicketMerge.mockResolvedValue(
       buildPreflight(
         "cross_channel_not_allowed",
-        "Cross-channel ticket merge is disabled. Merge customer profiles instead."
+        "Cross-channel ticket merge is disabled. Link the tickets as one case instead."
       )
     );
 
@@ -133,7 +137,7 @@ describe("POST /api/tickets/merge/preflight", () => {
     expect(body.preflight).toMatchObject({
       allowed: false,
       blockingCode: "cross_channel_not_allowed",
-      blockingReason: "Cross-channel ticket merge is disabled. Merge customer profiles instead."
+      blockingReason: "Cross-channel ticket merge is disabled. Link the tickets as one case instead."
     });
   });
 

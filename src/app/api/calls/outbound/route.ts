@@ -15,6 +15,8 @@ import {
   getHumanVoicePolicyFromEnv
 } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const outboundCallSchema = z.object({
   ticketId: z.string().uuid(),
@@ -44,6 +46,16 @@ export async function POST(request: Request) {
   }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("voice"))) {
+    return Response.json(
+      {
+        error: "Voice module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "voice"
+      },
+      { status: 409 }
+    );
   }
 
   let payload: unknown;
@@ -153,6 +165,18 @@ export async function POST(request: Request) {
       data: {
         ticketId: data.ticketId,
         toPhone: redactPhoneNumber(queued.toPhone),
+        idempotent: queued.idempotent
+      }
+    });
+    await recordModuleUsageEvent({
+      moduleKey: "voice",
+      usageKind: "call_queued",
+      actorType: "human",
+      metadata: {
+        route: "/api/calls/outbound",
+        ticketId: data.ticketId,
+        callSessionId: queued.callSessionId,
+        messageId: queued.messageId,
         idempotent: queued.idempotent
       }
     });

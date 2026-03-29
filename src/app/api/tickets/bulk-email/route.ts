@@ -8,6 +8,8 @@ import { getCustomerById, listCustomerIdentities } from "@/server/customers";
 import { recordTicketEvent } from "@/server/tickets";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const bulkEmailSchema = z.object({
   ticketIds: z.array(z.string().uuid()).min(1).max(100),
@@ -66,6 +68,16 @@ export async function POST(request: Request) {
   }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!(await isWorkspaceModuleEnabled("email"))) {
+    return Response.json(
+      {
+        error: "Email module is not enabled for this workspace.",
+        code: "module_disabled",
+        module: "email"
+      },
+      { status: 409 }
+    );
   }
 
   let payload: unknown;
@@ -213,6 +225,19 @@ export async function POST(request: Request) {
           sourceTicketId: row.id,
           recipientEmail,
           subject: parsed.data.subject
+        }
+      });
+      await recordModuleUsageEvent({
+        moduleKey: "email",
+        usageKind: "bulk_email_created",
+        actorType: "human",
+        metadata: {
+          route: "/api/tickets/bulk-email",
+          sourceTicketId: row.id,
+          createdTicketId: created.ticketId,
+          messageId: created.messageId,
+          recipientEmail,
+          selectionCount: uniqueTicketIds.length
         }
       });
     } catch (error) {

@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/workspace/compon
 import { Textarea } from "@/app/workspace/components/ui/textarea";
 import {
   AgentIntegration,
+  AgentFailedEvent,
   AgentOutboxMetrics,
   AdminUserRecord,
   AuditLogRecord,
@@ -37,7 +38,10 @@ import {
   SpamMessageRecord,
   SpamRuleRecord,
   TagRecord,
+  WorkspaceModulesConfig,
+  WorkspaceModuleUsageSummary,
   WhatsAppTemplate,
+  WhatsAppFailedEvent,
   WhatsAppOutboxMetrics,
   batchRecoverDeadLetters,
   createAgentIntegration,
@@ -49,6 +53,7 @@ import {
   deleteTag,
   deleteWhatsAppTemplate,
   deliverAgentOutbox,
+  listFailedAgentEvents,
   getAgentOutboxMetrics,
   getCallRejections,
   getCallOutboxMetrics,
@@ -58,8 +63,11 @@ import {
   getProfileLookupMetrics,
   getSecuritySnapshot,
   getSlaConfig,
+  getWorkspaceModules,
+  getWorkspaceModuleUsage,
   getWhatsAppAccount,
   getWhatsAppOutboxMetrics,
+  listFailedWhatsAppEvents,
   listAgentIntegrations,
   listAuditLogs,
   listFailedCallEvents,
@@ -74,6 +82,8 @@ import {
   patchDeadLetterEvent,
   requestPasswordResetLink,
   retryFailedCallEvents,
+  retryFailedAgentOutboxEvents,
+  retryFailedWhatsAppOutboxEvents,
   retryInboundEvents,
   runCallOutbox,
   runInboundAlertCheck,
@@ -86,6 +96,7 @@ import {
   updateSpamRule,
   updateTag,
   updateUser,
+  updateWorkspaceModules,
   updateWhatsAppTemplate
 } from "@/app/lib/api/admin";
 import { ApiError } from "@/app/lib/api/http";
@@ -150,6 +161,50 @@ type AgentForm = {
   scopesJson: string;
   policyJson: string;
 };
+
+const WORKSPACE_MODULE_FIELDS: Array<{
+  key: keyof WorkspaceModulesConfig["modules"];
+  label: string;
+  description: string;
+  billing: "billable" | "included";
+}> = [
+  {
+    key: "email",
+    label: "Email",
+    description: "Mailbox ingest, outbound email, and email ticket creation.",
+    billing: "billable"
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp",
+    description: "WhatsApp messaging, templates, resend flows, and related ticket creation.",
+    billing: "billable"
+  },
+  {
+    key: "voice",
+    label: "Voice",
+    description: "Outbound voice initiation, queue processing, and live call operations.",
+    billing: "billable"
+  },
+  {
+    key: "aiAutomation",
+    label: "AI automation",
+    description: "Autonomous AI text and voice actions when policy allows.",
+    billing: "billable"
+  },
+  {
+    key: "venusOrchestration",
+    label: "Venus orchestration",
+    description: "Optional Venus-derived orchestration paths and runtime hooks.",
+    billing: "billable"
+  },
+  {
+    key: "vanillaWebchat",
+    label: "Vanilla webchat",
+    description: "Human-to-6esk webchat without autonomous AI behavior.",
+    billing: "included"
+  }
+];
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -282,6 +337,8 @@ export default function AdminClient() {
   const [sla, setSla] = useState<SlaForm>({ firstResponseMinutes: 120, resolutionMinutes: 1440 });
   const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
 
+  const [workspaceModules, setWorkspaceModules] = useState<WorkspaceModulesConfig | null>(null);
+  const [workspaceUsage, setWorkspaceUsage] = useState<WorkspaceModuleUsageSummary | null>(null);
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [tagForm, setTagForm] = useState<TagForm>({ name: "", description: "" });
   const [tagEditingId, setTagEditingId] = useState<string | null>(null);
@@ -299,6 +356,7 @@ export default function AdminClient() {
   });
   const [whatsAppTemplates, setWhatsAppTemplates] = useState<WhatsAppTemplate[]>([]);
   const [whatsAppOutbox, setWhatsAppOutbox] = useState<WhatsAppOutboxMetrics | null>(null);
+  const [failedWhatsAppEvents, setFailedWhatsAppEvents] = useState<WhatsAppFailedEvent[]>([]);
   const [showWhatsAppAccessToken, setShowWhatsAppAccessToken] = useState(false);
   const [templateForm, setTemplateForm] = useState({
     name: "",
@@ -314,6 +372,7 @@ export default function AdminClient() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [agentForm, setAgentForm] = useState<AgentForm>(defaultAgentForm);
   const [agentOutbox, setAgentOutbox] = useState<AgentOutboxMetrics | null>(null);
+  const [failedAgentEvents, setFailedAgentEvents] = useState<AgentFailedEvent[]>([]);
   const [showAgentSecret, setShowAgentSecret] = useState(false);
   const [profileDays, setProfileDays] = useState(14);
   const [profile, setProfile] = useState<ProfileLookupMetrics | null>(null);
@@ -550,14 +609,29 @@ export default function AdminClient() {
   const loadWorkspace = useCallback(async () => {
     setLoading((prev) => ({ ...prev, workspace: true }));
     try {
-      const [tagRows, ruleRows, spamRows, accountPayload, templates, outbox] = await Promise.all([
+      const [
+        modulesPayload,
+        usagePayload,
+        tagRows,
+        ruleRows,
+        spamRows,
+        accountPayload,
+        templates,
+        outbox,
+        failedOutbox
+      ] = await Promise.all([
+        getWorkspaceModules(),
+        getWorkspaceModuleUsage(),
         listTags(),
         listSpamRules(),
         listSpamMessages(25),
         getWhatsAppAccount(),
         listWhatsAppTemplates(),
-        getWhatsAppOutboxMetrics()
+        getWhatsAppOutboxMetrics(),
+        listFailedWhatsAppEvents(25)
       ]);
+      setWorkspaceModules(modulesPayload.config);
+      setWorkspaceUsage(usagePayload.summary);
       setTags(tagRows);
       setSpamRules(ruleRows);
       setSpamMessages(spamRows);
@@ -582,6 +656,7 @@ export default function AdminClient() {
       }
       setWhatsAppTemplates(templates);
       setWhatsAppOutbox(outbox);
+      setFailedWhatsAppEvents(failedOutbox);
       setLoaded((prev) => ({ ...prev, workspace: true }));
     } catch (error) {
       pushError(error, "Failed loading messaging tab");
@@ -603,11 +678,16 @@ export default function AdminClient() {
       setSelectedAgentId(nextAgent?.id ?? "");
       if (nextAgent) {
         setAgentForm(mapAgentToForm(nextAgent));
-        const outbox = await getAgentOutboxMetrics(nextAgent.id).catch(() => null);
+        const [outbox, failedOutbox] = await Promise.all([
+          getAgentOutboxMetrics(nextAgent.id).catch(() => null),
+          listFailedAgentEvents(nextAgent.id, 25).catch(() => [])
+        ]);
         setAgentOutbox(outbox);
+        setFailedAgentEvents(failedOutbox);
       } else {
         setAgentForm(defaultAgentForm());
         setAgentOutbox(null);
+        setFailedAgentEvents([]);
       }
       setLoaded((prev) => ({ ...prev, automation: true }));
     } catch (error) {
@@ -733,6 +813,21 @@ export default function AdminClient() {
       await loadOverview();
     } catch (error) {
       pushError(error, "Could not update SLA");
+    }
+  }
+
+  async function saveWorkspaceModuleConfig() {
+    if (!workspaceModules) {
+      setToast({ tone: "error", message: "Workspace modules have not loaded yet." });
+      return;
+    }
+    try {
+      const payload = await updateWorkspaceModules(workspaceModules.modules);
+      setWorkspaceModules(payload.config);
+      pushSuccess("Workspace modules updated");
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not update workspace modules");
     }
   }
 
@@ -954,6 +1049,43 @@ export default function AdminClient() {
     }
   }
 
+  async function retryFailedWhatsAppEventNow(eventId: string) {
+    const busyKey = `whatsapp:${eventId}`;
+    setEventActionBusyKey(busyKey);
+    try {
+      const result = await retryFailedWhatsAppOutboxEvents(1, [eventId]);
+      if (result.retried > 0) {
+        pushSuccess("WhatsApp outbox event queued for retry");
+      } else {
+        setToast({ tone: "error", message: "WhatsApp event is no longer retryable." });
+      }
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not retry WhatsApp event");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
+
+  async function retryFailedAgentEventNow(eventId: string) {
+    if (!selectedAgent?.id) return;
+    const busyKey = `agent:${eventId}`;
+    setEventActionBusyKey(busyKey);
+    try {
+      const result = await retryFailedAgentOutboxEvents(selectedAgent.id, 1, [eventId]);
+      if (result.retried > 0) {
+        pushSuccess("Agent outbox event queued for retry");
+      } else {
+        setToast({ tone: "error", message: "Agent event is no longer retryable." });
+      }
+      await loadAutomation();
+    } catch (error) {
+      pushError(error, "Could not retry agent event");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
+
   return (
     <AppShell>
       <div className="h-full bg-neutral-50 overflow-y-auto">
@@ -1164,6 +1296,125 @@ export default function AdminClient() {
             </TabsContent>
 
             <TabsContent value="workspace" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Workspace Modules</CardTitle>
+                  <CardDescription>
+                    Runtime entitlements for channel and orchestration capabilities. Core admin, ops, and analytics remain available outside these toggles.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {WORKSPACE_MODULE_FIELDS.map((field) => (
+                      <label
+                        key={field.key}
+                        className="flex items-start gap-3 rounded-lg border border-neutral-200 p-4"
+                      >
+                        <Checkbox
+                          checked={workspaceModules?.modules[field.key] === true}
+                          disabled={!workspaceModules}
+                          onCheckedChange={(checked) =>
+                            setWorkspaceModules((previous) =>
+                              previous
+                                ? {
+                                    ...previous,
+                                    modules: {
+                                      ...previous.modules,
+                                      [field.key]: checked === true
+                                    }
+                                  }
+                                : previous
+                            )
+                          }
+                        />
+                        <span>
+                          <span className="flex items-center gap-2 text-sm font-medium text-neutral-900">
+                            {field.label}
+                            <Badge variant={field.billing === "included" ? "secondary" : "outline"}>
+                              {field.billing === "included" ? "Included" : "Billable"}
+                            </Badge>
+                          </span>
+                          <span className="mt-1 block text-xs text-neutral-600">
+                            {field.description}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button onClick={() => void saveWorkspaceModuleConfig()} disabled={!workspaceModules}>
+                      Save Modules
+                    </Button>
+                    <p className="text-xs text-neutral-500">
+                      Updated {workspaceModules?.updatedAt ? formatDate(workspaceModules.updatedAt) : "never"}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Module Usage (30 days)</CardTitle>
+                  <CardDescription>
+                    Lean pilot metering for billable modules and AI runtime actions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {(workspaceUsage?.modules ?? []).map((moduleUsage) => {
+                      const moduleField = WORKSPACE_MODULE_FIELDS.find(
+                        (field) => field.key === moduleUsage.moduleKey
+                      );
+                      return (
+                        <div
+                          key={moduleUsage.moduleKey}
+                          className="rounded-lg border border-neutral-200 p-4 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-neutral-900">
+                                {moduleField?.label ?? moduleUsage.moduleKey}
+                              </p>
+                              <p className="text-xs text-neutral-500">
+                                {moduleUsage.totalQuantity} events · {moduleUsage.eventCount} writes
+                              </p>
+                            </div>
+                            <Badge
+                              variant={moduleField?.billing === "included" ? "secondary" : "outline"}
+                            >
+                              {moduleField?.billing === "included" ? "Included" : "Billable"}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <Badge variant="outline">Human {moduleUsage.actorBreakdown.human}</Badge>
+                            <Badge variant="outline">AI {moduleUsage.actorBreakdown.ai}</Badge>
+                            <Badge variant="outline">System {moduleUsage.actorBreakdown.system}</Badge>
+                          </div>
+                          <div className="space-y-1 text-xs text-neutral-600">
+                            {(moduleUsage.usageKinds.length ? moduleUsage.usageKinds : [{ usageKind: "No events yet", quantity: 0, eventCount: 0 }]).slice(0, 3).map((kind) => (
+                              <div
+                                key={`${moduleUsage.moduleKey}-${kind.usageKind}`}
+                                className="flex items-center justify-between gap-3"
+                              >
+                                <span className="truncate">{kind.usageKind}</span>
+                                <span className="text-neutral-500">{kind.quantity}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-neutral-500">
+                            Last seen {formatDate(moduleUsage.lastSeenAt)}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    Generated {formatDate(workspaceUsage?.generatedAt)} for the last{" "}
+                    {workspaceUsage?.windowDays ?? 30} days.
+                  </p>
+                </CardContent>
+              </Card>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
                   <CardHeader>
@@ -1455,6 +1706,48 @@ export default function AdminClient() {
                         {whatsAppOutbox?.queue.lastError ? (
                           <p className="text-red-600">Last outbox error: {whatsAppOutbox.queue.lastError}</p>
                         ) : null}
+                      </div>
+
+                      <div className="space-y-2 max-h-56 overflow-y-auto">
+                        {failedWhatsAppEvents.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                            No failed WhatsApp outbox events.
+                          </div>
+                        ) : (
+                          failedWhatsAppEvents.map((event) => {
+                            const busyKey = `whatsapp:${event.id}`;
+                            const isBusy = eventActionBusyKey === busyKey;
+                            const payloadTo =
+                              typeof event.payload?.to === "string" ? event.payload.to : "unknown recipient";
+                            return (
+                              <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                                <p className="font-medium text-neutral-900">{payloadTo}</p>
+                                <p className="text-neutral-600">
+                                  {event.status} • Attempts {event.attempt_count} • Next{" "}
+                                  {formatDate(event.next_attempt_at)}
+                                </p>
+                                <p className="mt-1 text-neutral-500">{event.last_error ?? "No error detail"}</p>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isBusy}
+                                    onClick={() => void retryFailedWhatsAppEventNow(event.id)}
+                                  >
+                                    {isBusy ? "Retrying..." : "Retry now"}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void copyToClipboard(event.id, "WhatsApp event ID")}
+                                  >
+                                    Copy ID
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
 
@@ -1824,6 +2117,45 @@ export default function AdminClient() {
                       <Metric label="Failed" value={agentOutbox.queue.failed} />
                     </div>
                   ) : null}
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {failedAgentEvents.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                        No failed agent outbox events.
+                      </div>
+                    ) : (
+                      failedAgentEvents.map((event) => {
+                        const busyKey = `agent:${event.id}`;
+                        const isBusy = eventActionBusyKey === busyKey;
+                        return (
+                          <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                            <p className="font-medium text-neutral-900">{event.event_type}</p>
+                            <p className="text-neutral-600">
+                              {event.status} • Attempts {event.attempt_count} • Next{" "}
+                              {formatDate(event.next_attempt_at)}
+                            </p>
+                            <p className="mt-1 text-neutral-500">{event.last_error ?? "No error detail"}</p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={isBusy}
+                                onClick={() => void retryFailedAgentEventNow(event.id)}
+                              >
+                                {isBusy ? "Retrying..." : "Retry now"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void copyToClipboard(event.id, "Agent event ID")}
+                              >
+                                Copy ID
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 
