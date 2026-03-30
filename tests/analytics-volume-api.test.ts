@@ -92,6 +92,19 @@ describe("GET /api/analytics/volume", () => {
             avg_duration_seconds: 95
           }
         ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            day: new Date("2026-02-02T00:00:00.000Z"),
+            analyzed: 2,
+            pass: 1,
+            watch: 1,
+            review: 0,
+            flagged: 1,
+            total_flags: 2
+          }
+        ]
       });
 
     const response = await GET(new Request("http://localhost/api/analytics/volume"));
@@ -106,6 +119,17 @@ describe("GET /api/analytics/volume", () => {
         completed: 3,
         failed: 1,
         avgDurationSeconds: 95
+      }
+    ]);
+    expect(body.voiceQa).toMatchObject([
+      {
+        day: "2026-02-02T00:00:00.000Z",
+        analyzed: 2,
+        pass: 1,
+        watch: 1,
+        review: 0,
+        flagged: 1,
+        totalFlags: 2
       }
     ]);
   });

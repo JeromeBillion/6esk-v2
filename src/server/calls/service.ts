@@ -10,6 +10,8 @@ import {
 } from "@/server/calls/consent";
 import { getOrCreateMailbox } from "@/server/email/mailbox";
 import { putObject } from "@/server/storage/r2";
+import { enqueueCallTranscriptJob, markTranscriptJobCompleted } from "@/server/calls/transcript-jobs";
+import { enqueueCallTranscriptAiJob } from "@/server/calls/transcript-ai-jobs";
 import {
   addTagsToTicket,
   createTicket,
@@ -1020,6 +1022,7 @@ export async function attachCallRecording({
   const at = occurredAt ?? new Date();
   let uploadedKey: string | null = null;
   let attachmentId: string | null = null;
+  let canonicalRecordingUrl = url;
 
   if (!session.recording_r2_key && session.message_id) {
     try {
@@ -1046,10 +1049,12 @@ export async function attachCallRecording({
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [attachmentId, session.message_id, `Call Recording.${ext}`, contentType, buffer.length, uploadedKey]
         );
+        canonicalRecordingUrl = `/api/attachments/${attachmentId}?disposition=inline`;
       }
     } catch {
       uploadedKey = null;
       attachmentId = null;
+      canonicalRecordingUrl = url;
     }
   }
 
@@ -1065,7 +1070,7 @@ export async function attachCallRecording({
          duration_seconds = COALESCE($4, duration_seconds),
          updated_at = now()
      WHERE id = $1`,
-    [session.id, url, uploadedKey, parsedDuration]
+    [session.id, canonicalRecordingUrl, uploadedKey, parsedDuration]
   );
 
   const recordingEventMeta = await appendCallEvent({
@@ -1074,9 +1079,10 @@ export async function attachCallRecording({
     eventType: "recording_ready",
     occurredAt: at,
     payload: {
-      recordingUrl: url,
+      recordingUrl: canonicalRecordingUrl,
       recordingR2Key: uploadedKey,
       attachmentId,
+      providerRecordingUrl: url,
       ...(payload ?? {})
     }
   });
@@ -1086,7 +1092,7 @@ export async function attachCallRecording({
     eventType: "call_recording_ready",
     data: {
       callSessionId: session.id,
-      recordingUrl: url,
+      recordingUrl: canonicalRecordingUrl,
       recordingR2Key: uploadedKey
     }
   });
@@ -1105,8 +1111,9 @@ export async function attachCallRecording({
       ...recordingEvent,
       call: {
         id: session.id,
-        recordingUrl: url,
+        recordingUrl: canonicalRecordingUrl,
         recordingR2Key: uploadedKey,
+        providerRecordingUrl: url,
         sequence: recordingEventMeta.sequence,
         eventType: "recording_ready",
         eventIdempotencyKey: recordingEventMeta.eventIdempotencyKey
@@ -1115,9 +1122,25 @@ export async function attachCallRecording({
   });
   void deliverPendingAgentEvents().catch(() => {});
 
+  if (uploadedKey && !session.transcript_r2_key) {
+    await enqueueCallTranscriptJob({
+      callSessionId: session.id,
+      recordingR2Key: uploadedKey,
+      metadata: {
+        source: "recording_ready",
+        ticketId: session.ticket_id,
+        messageId: session.message_id,
+        provider: providerValue,
+        providerCallId: providerCallIdValue,
+        providerRecordingUrl: url
+      }
+    });
+  }
+
   return {
     status: "attached" as const,
     callSessionId: session.id,
+    recordingUrl: canonicalRecordingUrl,
     recordingR2Key: uploadedKey,
     attachmentId
   };
@@ -1227,6 +1250,11 @@ export async function attachCallTranscript({
     [session.id, uploadedKey]
   );
 
+  await markTranscriptJobCompleted({
+    callSessionId: session.id,
+    transcriptR2Key: uploadedKey
+  });
+
   const transcriptEventMeta = await appendCallEvent({
     queryExecutor: db,
     callSessionId: session.id,
@@ -1273,6 +1301,21 @@ export async function attachCallTranscript({
     }
   });
   void deliverPendingAgentEvents().catch(() => {});
+
+  if (uploadedKey) {
+    await enqueueCallTranscriptAiJob({
+      callSessionId: session.id,
+      transcriptR2Key: uploadedKey,
+      metadata: {
+        source: "transcript_ready",
+        ticketId: session.ticket_id,
+        messageId: session.message_id,
+        provider: providerValue,
+        providerCallId: providerCallIdValue,
+        transcriptAttachmentId: attachmentId
+      }
+    });
+  }
 
   return {
     status: "attached" as const,

@@ -5,11 +5,13 @@ This contract is focused on safe AI calling through 6esk.
 ## Scope Boundary
 - 6esk owns:
   - call execution orchestration, ticket linkage, call lifecycle, recording/transcript attachment, policy enforcement.
+  - durable recording/transcript storage in `6esk` Cloudflare R2 buckets.
 - Venus owns:
   - AI reasoning, voice/LLM providers, character/knowledge, tool-choice logic.
 - Explicit boundary:
   - AI/voice provider keys stay in `C:\Users\choma\Desktop\Venus-develop`.
   - Do not send those keys to 6esk.
+  - `6ex` may bridge provider callbacks and media retrieval, but it must not become the durable store for recordings or transcripts.
 
 ## Integration Objectives
 - AI and human call flows share the same 6esk backend behavior.
@@ -183,8 +185,9 @@ When Venus posts transcript summary/action items via `POST /api/agent/v1/actions
   - call ops runbook and replay/load drill scripts for safe validation
   - generic `http_bridge` outbound provider path in `6esk`
   - trusted `6ex` bridge route for outbound support call relay at `/api/v1/internal/support/calls/outbound`
-  - Twilio-capable provider execution path in `6ex`, including status/recording webhook relay and recording proxy URLs back to `6esk`
+  - Twilio-capable provider execution path in `6ex`, including status/recording webhook relay and temporary recording proxy URLs back to `6esk`
   - generic transcript ingress route in `6ex` for provider-side transcript delivery to `6esk`
 - Still pending:
   - live callback rehearsal against production/staging Twilio credentials
   - pilot signoff on real provider status/recording/transcript timing
+  - final live STT/provider choice for the mandatory transcript pipeline

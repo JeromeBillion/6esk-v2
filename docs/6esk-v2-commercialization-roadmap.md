@@ -228,6 +228,7 @@ The current Venus-derived capability must become an optional `6esk` module, not 
 - event/audit trail for every AI action
 - escalation semantics that preserve full context
 - tenant-level AI policy controls
+- STT abstraction owned by `6esk`, with managed STT as the default commercial baseline and self-hosted inference as a later cost-optimization path when volume justifies dedicated infra
 
 ### Explicit Commercial Rule
 BYO AI should reduce customer cost materially, but 6esk still owns:
@@ -236,6 +237,18 @@ BYO AI should reduce customer cost materially, but 6esk still owns:
 - safety rails
 - routing/runtime layer
 - auditability
+
+### Voice / Transcript Product Rule
+- call recordings and transcripts remain `6esk` artifacts, not provider-owned artifacts
+- telephony transport and transcription transport must be swappable independently
+- transcript generation is mandatory for voice-enabled tenants
+- the first commercial implementation should assume managed STT rather than self-hosted GPU infrastructure
+- transcript-derived AI layers are separate from STT and should be modeled explicitly:
+  - summary
+  - resolution note
+  - QA flags
+  - action items
+- QA flags are a first-class commercial product capability for voice-enabled AI tenants and should remain explainable against the underlying raw transcript
 
 ## Workstream F: South Africa Compliance Baseline
 This section covers what we should plan for based on South Africa requirements and what serious B2B customers will expect.

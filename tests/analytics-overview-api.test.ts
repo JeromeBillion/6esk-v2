@@ -95,6 +95,19 @@ describe("GET /api/analytics/overview", () => {
         ]
       }) // voice summary
       .mockResolvedValueOnce({
+        rows: [
+          {
+            analyzed: 4,
+            pass: 2,
+            watch: 1,
+            review: 1,
+            flagged: 2,
+            total_flags: 3,
+            total_action_items: 2
+          }
+        ]
+      }) // voice QA summary
+      .mockResolvedValueOnce({
         rows: [{ total: 1, ai_initiated: 1, human_initiated: 0 }]
       }) // ticket merge summary
       .mockResolvedValueOnce({
@@ -128,6 +141,15 @@ describe("GET /api/analytics/overview", () => {
       busy: 0,
       canceled: 0,
       avgDurationSeconds: 86
+    });
+    expect(body.voiceQa).toMatchObject({
+      analyzed: 4,
+      pass: 2,
+      watch: 1,
+      review: 1,
+      flagged: 2,
+      totalFlags: 3,
+      totalActionItems: 2
     });
   });
 });

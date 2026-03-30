@@ -354,6 +354,66 @@ export type CallFailedEvent = {
   payload: Record<string, unknown>;
 };
 
+export type CallTranscriptQaFlag = {
+  code: string;
+  severity: "low" | "medium" | "high" | "critical";
+  title: string;
+  detail: string;
+  evidence: string | null;
+};
+
+export type CallTranscriptActionItem = {
+  owner: "agent" | "supervisor" | "system";
+  priority: "low" | "medium" | "high";
+  description: string;
+};
+
+export type CallTranscriptAiMetrics = {
+  provider: string;
+  queue: {
+    queued: number;
+    dueNow: number;
+    processing: number;
+    failed: number;
+    completed24h: number;
+    nextAttemptAt: string | null;
+    lastCompletedAt: string | null;
+    lastFailedAt: string | null;
+    lastError: string | null;
+  };
+  analysis: {
+    analyzed24h: number;
+    pass24h: number;
+    watch24h: number;
+    review24h: number;
+    flagged24h: number;
+    totalQaFlags24h: number;
+    totalActionItems24h: number;
+  };
+  recentFlagged: Array<{
+    jobId: string;
+    callSessionId: string;
+    ticketId: string;
+    messageId: string | null;
+    qaStatus: string;
+    summary: string | null;
+    qaFlags: CallTranscriptQaFlag[];
+    actionItems: CallTranscriptActionItem[];
+    completedAt: string | null;
+  }>;
+};
+
+export type CallTranscriptAiFailedJob = {
+  id: string;
+  callSessionId: string;
+  status: string;
+  attemptCount: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type CallRejections = {
   windowHours: number;
   summary: Array<{
@@ -801,6 +861,35 @@ export function runCallOutbox(limit = 25) {
 export async function listFailedCallEvents(limit = 30) {
   const payload = await apiFetch<{ events: CallFailedEvent[] }>(`/api/admin/calls/failed?limit=${limit}`);
   return payload.events ?? [];
+}
+
+export function getCallTranscriptAiMetrics(limit = 8) {
+  return apiFetch<CallTranscriptAiMetrics>(`/api/admin/calls/transcripts/ai?limit=${limit}`);
+}
+
+export function runCallTranscriptAiOutbox(limit = 10) {
+  return apiFetch<{ status: string; delivered: number; skipped: number; provider: string }>(
+    `/api/admin/calls/transcripts/ai?limit=${limit}`,
+    { method: "POST" }
+  );
+}
+
+export async function listFailedCallTranscriptAiJobs(limit = 30) {
+  const payload = await apiFetch<{ jobs: CallTranscriptAiFailedJob[] }>(
+    `/api/admin/calls/transcripts/ai/failed?limit=${limit}`
+  );
+  return payload.jobs ?? [];
+}
+
+export function retryFailedCallTranscriptAiJobs(limit = 25, jobIds?: string[]) {
+  return apiFetch<{ status: string; requested: number; retried: number; ids: string[] }>(
+    `/api/admin/calls/transcripts/ai/retry?limit=${limit}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: jobIds?.length ? JSON.stringify({ jobIds }) : undefined
+    }
+  );
 }
 
 export function getCallRejections(hours = 24, limit = 30) {

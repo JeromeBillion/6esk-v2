@@ -6,6 +6,8 @@ import type {
   AuditLogRecord,
   CallFailedEvent,
   CallOutboxMetrics,
+  CallTranscriptAiFailedJob,
+  CallTranscriptAiMetrics,
   CallRejections,
   DeadLetterEvent,
   DeadLetterSummary,
@@ -132,6 +134,8 @@ type DemoState = {
   inboundSettings: InboundAlertConfig;
   failedInboundEvents: InboundFailedEvent[];
   callOutbox: CallOutboxMetrics;
+  callTranscriptAiMetrics: CallTranscriptAiMetrics;
+  failedCallTranscriptAiJobs: CallTranscriptAiFailedJob[];
   failedCallEvents: CallFailedEvent[];
   callRejections: CallRejections;
   deadLetters: DeadLetterEvent[];
@@ -2064,6 +2068,95 @@ function buildInitialState(): DemoState {
     }
   };
 
+  const callTranscriptAiMetrics: CallTranscriptAiMetrics = {
+    provider: "managed_http",
+    queue: {
+      queued: 4,
+      dueNow: 2,
+      processing: 1,
+      failed: 1,
+      completed24h: 19,
+      nextAttemptAt: "2026-03-19T08:42:00Z",
+      lastCompletedAt: "2026-03-19T08:18:00Z",
+      lastFailedAt: "2026-03-19T07:52:00Z",
+      lastError: "provider timeout"
+    },
+    analysis: {
+      analyzed24h: 19,
+      pass24h: 13,
+      watch24h: 4,
+      review24h: 2,
+      flagged24h: 6,
+      totalQaFlags24h: 8,
+      totalActionItems24h: 5
+    },
+    recentFlagged: [
+      {
+        jobId: "call-ai-job-1",
+        callSessionId: "call-session-1837",
+        ticketId: "ticket-1837",
+        messageId: "message-voice-1837",
+        qaStatus: "review",
+        summary: "Caller requested escalation after an unconfirmed integration fix.",
+        qaFlags: [
+          {
+            code: "escalation_request",
+            severity: "high",
+            title: "Escalation requested",
+            detail: "The caller explicitly asked for escalation after uncertainty in the response.",
+            evidence: "I need someone senior to confirm this today."
+          }
+        ],
+        actionItems: [
+          {
+            owner: "supervisor",
+            priority: "high",
+            description: "Review the call and confirm escalation follow-up before close of business."
+          }
+        ],
+        completedAt: "2026-03-19T08:18:00Z"
+      },
+      {
+        jobId: "call-ai-job-2",
+        callSessionId: "call-session-1846",
+        ticketId: "ticket-1846",
+        messageId: "message-voice-1846",
+        qaStatus: "watch",
+        summary: "Agent resolved the billing issue but skipped a clear confirmation step.",
+        qaFlags: [
+          {
+            code: "missing_confirmation",
+            severity: "medium",
+            title: "Resolution confirmation missing",
+            detail: "The caller accepted the explanation, but the agent never explicitly confirmed next steps.",
+            evidence: "Okay, thanks. I guess I will check later."
+          }
+        ],
+        actionItems: [
+          {
+            owner: "agent",
+            priority: "medium",
+            description: "Add a follow-up confirmation note before closing the ticket."
+          }
+        ],
+        completedAt: "2026-03-19T07:41:00Z"
+      }
+    ]
+  };
+
+  const failedCallTranscriptAiJobs: CallTranscriptAiFailedJob[] = [
+    {
+      id: "call-ai-fail-1",
+      callSessionId: "call-session-1950",
+      status: "failed",
+      attemptCount: 3,
+      lastError: "provider timeout",
+      nextAttemptAt: "2026-03-19T08:55:00Z",
+      createdAt: "2026-03-19T07:10:00Z",
+      updatedAt: "2026-03-19T08:12:00Z"
+    }
+  ];
+
   const failedCallEvents: CallFailedEvent[] = [
     { id: "call-fail-1", status: "failed", attempt_count: 3, last_error: "provider timeout", next_attempt_at: "2026-03-19T08:44:00Z", created_at: "2026-03-19T07:20:00Z", updated_at: "2026-03-19T08:12:00Z", payload: { to: "+15551230001", reason: "reconnect needed" } },
     { id: "call-fail-2", status: "failed", attempt_count: 2, last_error: "customer busy", next_attempt_at: "2026-03-19T09:00:00Z", created_at: "2026-03-19T07:45:00Z", updated_at: "2026-03-19T08:15:00Z", payload: { to: "+15551230002", reason: "busy" } }
@@ -2430,6 +2523,8 @@ function buildInitialState(): DemoState {
     inboundSettings,
     failedInboundEvents,
     callOutbox,
+    callTranscriptAiMetrics,
+    failedCallTranscriptAiJobs,
     failedCallEvents,
     callRejections,
     deadLetters,
@@ -2789,6 +2884,11 @@ function buildOverview(url: URL): OverviewResponse {
     0,
     voiceOutbound - voiceCompleted - voiceFailed - voiceNoAnswer - voiceBusy
   );
+  const voiceQaAnalyzed = rows.reduce((sum, row) => sum + Math.round(row.created * 0.09), 0);
+  const voiceQaReview = Math.max(1, Math.round(voiceQaAnalyzed * 0.09));
+  const voiceQaWatch = Math.max(0, Math.round(voiceQaAnalyzed * 0.18));
+  const voiceQaFlagged = voiceQaReview + voiceQaWatch;
+  const voiceQaPass = Math.max(0, voiceQaAnalyzed - voiceQaFlagged);
   const pendingReviews = getState().mergeReviews.filter((review) => review.status === "pending").length;
   const rejectedReviews = getState().mergeReviews.filter((review) => review.status === "rejected").length;
   const failedReviews = getState().mergeReviews.filter((review) => review.status === "failed").length;
@@ -2819,6 +2919,15 @@ function buildOverview(url: URL): OverviewResponse {
         canceled: voiceCanceled,
         avgDurationSeconds: 226
       }
+    },
+    voiceQa: {
+      analyzed: voiceQaAnalyzed,
+      pass: voiceQaPass,
+      watch: voiceQaWatch,
+      review: voiceQaReview,
+      flagged: voiceQaFlagged,
+      totalFlags: voiceQaFlagged + voiceQaReview,
+      totalActionItems: Math.max(1, Math.round(voiceQaFlagged * 0.7))
     },
     merges: {
       ticketMerges: 24,
@@ -2872,6 +2981,22 @@ function buildVolume(url: URL): VolumeResponse {
         busy,
         canceled,
         avgDurationSeconds: 210 + (Date.parse(`${row.day}T00:00:00Z`) % 40)
+      };
+    }),
+    voiceQa: rows.map((row) => {
+      const analyzed = Math.round(row.created * 0.09);
+      const review = Math.max(0, Math.round(analyzed * 0.09));
+      const watch = Math.max(0, Math.round(analyzed * 0.18));
+      const flagged = review + watch;
+      const pass = Math.max(0, analyzed - flagged);
+      return {
+        day: row.day,
+        analyzed,
+        pass,
+        watch,
+        review,
+        flagged,
+        totalFlags: flagged + review
       };
     }),
     whatsappSource: whatsAppSource,
@@ -3169,6 +3294,12 @@ function handleGet(url: URL) {
   }
   if (url.pathname === "/api/admin/inbound/settings") return { config: state.inboundSettings };
   if (url.pathname === "/api/admin/calls/outbox") return state.callOutbox;
+  if (url.pathname === "/api/admin/calls/transcripts/ai") return state.callTranscriptAiMetrics;
+  if (url.pathname === "/api/admin/calls/transcripts/ai/failed") {
+    return {
+      jobs: state.failedCallTranscriptAiJobs.slice(0, Number(url.searchParams.get("limit") ?? 30))
+    };
+  }
   if (url.pathname === "/api/admin/calls/failed") {
     return { events: state.failedCallEvents.slice(0, Number(url.searchParams.get("limit") ?? 30)) };
   }
@@ -3537,6 +3668,42 @@ function handlePost(url: URL, init?: RequestInit) {
     state.callOutbox.queue.sent24h += delivered;
     state.callOutbox.queue.lastSentAt = DEMO_NOW;
     return { status: "processed", delivered, skipped: 0, provider: state.callOutbox.provider };
+  }
+  if (url.pathname === "/api/admin/calls/transcripts/ai") {
+    const delivered = Math.min(
+      Number(url.searchParams.get("limit") ?? 25),
+      Math.max(1, state.callTranscriptAiMetrics.queue.dueNow)
+    );
+    state.callTranscriptAiMetrics.queue.queued = Math.max(
+      0,
+      state.callTranscriptAiMetrics.queue.queued - delivered
+    );
+    state.callTranscriptAiMetrics.queue.dueNow = Math.max(
+      0,
+      state.callTranscriptAiMetrics.queue.dueNow - delivered
+    );
+    state.callTranscriptAiMetrics.queue.completed24h += delivered;
+    state.callTranscriptAiMetrics.analysis.analyzed24h += delivered;
+    state.callTranscriptAiMetrics.queue.lastCompletedAt = DEMO_NOW;
+    return {
+      status: "processed",
+      delivered,
+      skipped: 0,
+      provider: state.callTranscriptAiMetrics.provider
+    };
+  }
+  if (url.pathname === "/api/admin/calls/transcripts/ai/retry") {
+    const body = parseJsonBody<{ jobIds?: string[] }>(init);
+    const requestedIds = body.jobIds?.length
+      ? body.jobIds
+      : state.failedCallTranscriptAiJobs
+          .slice(0, Number(url.searchParams.get("limit") ?? 25))
+          .map((job) => job.id);
+    state.failedCallTranscriptAiJobs = state.failedCallTranscriptAiJobs.filter(
+      (job) => !requestedIds.includes(job.id)
+    );
+    state.callTranscriptAiMetrics.queue.failed = state.failedCallTranscriptAiJobs.length;
+    return { status: "queued", requested: requestedIds.length, retried: requestedIds.length, ids: requestedIds };
   }
   if (url.pathname === "/api/admin/calls/retry") {
     const body = parseJsonBody<{ eventIds?: string[] }>(init);

@@ -26,6 +26,8 @@ import {
   AuditLogRecord,
   CallFailedEvent,
   CallOutboxMetrics,
+  CallTranscriptAiFailedJob,
+  CallTranscriptAiMetrics,
   CallRejections,
   DeadLetterEvent,
   DeadLetterSummary,
@@ -57,6 +59,7 @@ import {
   getAgentOutboxMetrics,
   getCallRejections,
   getCallOutboxMetrics,
+  getCallTranscriptAiMetrics,
   getDeadLetterSummary,
   getInboundSettings,
   getInboundMetrics,
@@ -71,6 +74,7 @@ import {
   listAgentIntegrations,
   listAuditLogs,
   listFailedCallEvents,
+  listFailedCallTranscriptAiJobs,
   listFailedInboundEvents,
   listDeadLetterEvents,
   listRoles,
@@ -82,10 +86,12 @@ import {
   patchDeadLetterEvent,
   requestPasswordResetLink,
   retryFailedCallEvents,
+  retryFailedCallTranscriptAiJobs,
   retryFailedAgentOutboxEvents,
   retryFailedWhatsAppOutboxEvents,
   retryInboundEvents,
   runCallOutbox,
+  runCallTranscriptAiOutbox,
   runInboundAlertCheck,
   runWhatsAppOutbox,
   saveWhatsAppAccount,
@@ -382,6 +388,10 @@ export default function AdminClient() {
   const [failedInboundEvents, setFailedInboundEvents] = useState<InboundFailedEvent[]>([]);
   const [calls, setCalls] = useState<CallOutboxMetrics | null>(null);
   const [failedCallEvents, setFailedCallEvents] = useState<CallFailedEvent[]>([]);
+  const [callTranscriptAi, setCallTranscriptAi] = useState<CallTranscriptAiMetrics | null>(null);
+  const [failedCallTranscriptAiJobs, setFailedCallTranscriptAiJobs] = useState<
+    CallTranscriptAiFailedJob[]
+  >([]);
   const [callRejections, setCallRejections] = useState<CallRejections | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetterEvent[]>([]);
   const [deadLetterSummary, setDeadLetterSummary] = useState<DeadLetterSummary | null>(null);
@@ -706,6 +716,8 @@ export default function AdminClient() {
         inboundFailedRows,
         callMetrics,
         failedCalls,
+        transcriptAiMetrics,
+        failedTranscriptAiRows,
         rejectionMetrics,
         deadLetterPayload,
         deadLetterRows,
@@ -716,6 +728,8 @@ export default function AdminClient() {
         listFailedInboundEvents(operationsFilters.eventLimit),
         getCallOutboxMetrics(),
         listFailedCallEvents(operationsFilters.eventLimit),
+        getCallTranscriptAiMetrics(operationsFilters.eventLimit),
+        listFailedCallTranscriptAiJobs(operationsFilters.eventLimit),
         getCallRejections(operationsFilters.windowHours, operationsFilters.eventLimit),
         getDeadLetterSummary(),
         listDeadLetterEvents({ limit: operationsFilters.eventLimit, status: "all" }),
@@ -726,6 +740,8 @@ export default function AdminClient() {
       setFailedInboundEvents(inboundFailedRows);
       setCalls(callMetrics);
       setFailedCallEvents(failedCalls);
+      setCallTranscriptAi(transcriptAiMetrics);
+      setFailedCallTranscriptAiJobs(failedTranscriptAiRows);
       setCallRejections(rejectionMetrics);
       setDeadLetterSummary(deadLetterPayload.summary);
       setDeadLetters(deadLetterRows);
@@ -1044,6 +1060,59 @@ export default function AdminClient() {
       await loadOperations();
     } catch (error) {
       pushError(error, "Could not retry call event");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
+
+  async function retryFailedCallTranscriptAiJobNow(jobId: string) {
+    const busyKey = `call-ai:${jobId}`;
+    setEventActionBusyKey(busyKey);
+    try {
+      const result = await retryFailedCallTranscriptAiJobs(1, [jobId]);
+      if (result.retried > 0) {
+        pushSuccess("Call transcript QA job queued for retry");
+      } else {
+        setToast({ tone: "error", message: "Transcript QA job is no longer retryable." });
+      }
+      await loadOperations();
+    } catch (error) {
+      pushError(error, "Could not retry transcript QA job");
+    } finally {
+      setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
+    }
+  }
+
+  async function runTranscriptQaRetryDrill() {
+    const candidate = failedCallTranscriptAiJobs[0];
+    if (!candidate) {
+      setToast({
+        tone: "error",
+        message: "No failed transcript QA job is available for the drill."
+      });
+      return;
+    }
+
+    const busyKey = "call-ai:drill";
+    setEventActionBusyKey(busyKey);
+    try {
+      const retryResult = await retryFailedCallTranscriptAiJobs(1, [candidate.id]);
+      if (retryResult.retried < 1) {
+        setToast({
+          tone: "error",
+          message: "Transcript QA drill could not queue the selected failed job."
+        });
+        await loadOperations();
+        return;
+      }
+
+      const deliverResult = await runCallTranscriptAiOutbox(1);
+      pushSuccess(
+        `Transcript QA drill ran for ${candidate.callSessionId}. Retried ${retryResult.retried} job and executed ${deliverResult.delivered} analysis pass.`
+      );
+      await loadOperations();
+    } catch (error) {
+      pushError(error, "Could not run transcript QA retry drill");
     } finally {
       setEventActionBusyKey((prev) => (prev === busyKey ? null : prev));
     }
@@ -2503,6 +2572,18 @@ export default function AdminClient() {
                     <div className="flex gap-2 flex-wrap">
                       <Button variant="outline" onClick={() => void runCallOutbox(operationsFilters.eventLimit).then(loadOperations)}>Run Outbox</Button>
                       <Button variant="outline" onClick={() => void retryFailedCallEvents(operationsFilters.eventLimit).then(loadOperations)}>Retry Failed</Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void runCallTranscriptAiOutbox(operationsFilters.eventLimit).then(loadOperations)}
+                      >
+                        Run Transcript QA
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void retryFailedCallTranscriptAiJobs(operationsFilters.eventLimit).then(loadOperations)}
+                      >
+                        Retry Failed QA
+                      </Button>
                       <Button variant="outline" onClick={() => void batchRecoverDeadLetters({ filter: { status: "failed" } }).then(loadOperations)}>Batch Recover</Button>
                       <select
                         className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
@@ -2518,6 +2599,160 @@ export default function AdminClient() {
                         <option value="poison">Poison</option>
                         <option value="quarantined">Quarantined</option>
                       </select>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">Transcript QA</p>
+                          <p className="text-xs text-neutral-500">
+                            AI-derived call quality signals from stored transcripts. Not shown in Support.
+                          </p>
+                        </div>
+                        <Badge variant="outline">{callTranscriptAi?.provider ?? "unknown"}</Badge>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <Metric label="Analyzed 24h" value={callTranscriptAi?.analysis.analyzed24h ?? 0} />
+                        <Metric label="Flagged 24h" value={callTranscriptAi?.analysis.flagged24h ?? 0} />
+                        <Metric label="Review 24h" value={callTranscriptAi?.analysis.review24h ?? 0} />
+                        <Metric label="QA jobs failed" value={callTranscriptAi?.queue.failed ?? 0} />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline">Pass {callTranscriptAi?.analysis.pass24h ?? 0}</Badge>
+                        <Badge variant="outline">Watch {callTranscriptAi?.analysis.watch24h ?? 0}</Badge>
+                        <Badge variant="outline">Review {callTranscriptAi?.analysis.review24h ?? 0}</Badge>
+                        <Badge variant="outline">Flags {callTranscriptAi?.analysis.totalQaFlags24h ?? 0}</Badge>
+                        <Badge variant="outline">
+                          Actions {callTranscriptAi?.analysis.totalActionItems24h ?? 0}
+                        </Badge>
+                      </div>
+                      <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="font-medium text-neutral-900">Failed QA Retry Drill</p>
+                            <p className="mt-1">
+                              Uses the oldest failed transcript-QA job, retries it once, runs a
+                              single QA outbox pass, then reloads this panel. This is an operator
+                              rehearsal, not a simulator.
+                            </p>
+                          </div>
+                          <Badge variant="secondary">
+                            {failedCallTranscriptAiJobs.length > 0 ? "Ready" : "Waiting for a failed job"}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <div className="rounded-md border border-neutral-200 bg-white p-2">
+                            <p className="font-medium text-neutral-900">1. Target</p>
+                            <p className="mt-1 text-neutral-600">
+                              {failedCallTranscriptAiJobs[0]?.callSessionId ?? "No failed transcript QA job loaded."}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-neutral-200 bg-white p-2">
+                            <p className="font-medium text-neutral-900">2. Success signal</p>
+                            <p className="mt-1 text-neutral-600">
+                              Failed count should drop, or the job should leave the failed list and
+                              re-enter queue/processing.
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-neutral-200 bg-white p-2">
+                            <p className="font-medium text-neutral-900">3. Escalate if stuck</p>
+                            <p className="mt-1 text-neutral-600">
+                              If the same error repeats after retry, treat it as provider/config
+                              failure and keep it in Admin triage.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={
+                              eventActionBusyKey === "call-ai:drill" ||
+                              failedCallTranscriptAiJobs.length === 0
+                            }
+                            onClick={() => void runTranscriptQaRetryDrill()}
+                          >
+                            {eventActionBusyKey === "call-ai:drill"
+                              ? "Running drill..."
+                              : "Run Retry Drill"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={loading.operations}
+                            onClick={() => void loadOperations()}
+                          >
+                            Refresh QA Panel
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {callTranscriptAi?.recentFlagged.length ? (
+                            callTranscriptAi.recentFlagged.map((item) => (
+                              <div key={item.jobId} className="rounded-md border border-neutral-200 p-2 text-xs">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-medium text-neutral-900">
+                                    {item.qaStatus} · {item.ticketId}
+                                  </p>
+                                  <span className="text-neutral-500">{formatDate(item.completedAt)}</span>
+                                </div>
+                                <p className="mt-1 text-neutral-600">
+                                  {item.summary ?? "No summary available."}
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {item.qaFlags.slice(0, 3).map((flag) => (
+                                    <Badge key={`${item.jobId}-${flag.code}`} variant="outline">
+                                      {flag.severity}: {flag.title}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                              No recent flagged transcript QA calls.
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {failedCallTranscriptAiJobs.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                              No failed transcript QA jobs.
+                            </div>
+                          ) : (
+                            failedCallTranscriptAiJobs.map((job) => {
+                              const busyKey = `call-ai:${job.id}`;
+                              const isBusy = eventActionBusyKey === busyKey;
+                              return (
+                                <div key={job.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                                  <p className="font-medium text-neutral-900">{job.callSessionId}</p>
+                                  <p className="text-neutral-600">
+                                    {job.status} • Attempts {job.attemptCount} • Next {formatDate(job.nextAttemptAt)}
+                                  </p>
+                                  <p className="mt-1 text-neutral-500">{job.lastError ?? "No error detail"}</p>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={isBusy}
+                                      onClick={() => void retryFailedCallTranscriptAiJobNow(job.id)}
+                                    >
+                                      {isBusy ? "Retrying..." : "Retry now"}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => void copyToClipboard(job.id, "Transcript QA job ID")}
+                                    >
+                                      Copy ID
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <div className="space-y-2 max-h-56 overflow-y-auto">
                       {filteredDeadLetters.map((event) => (

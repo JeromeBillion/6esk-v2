@@ -6,7 +6,7 @@ import { getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { resolveMockAttachment } from "@/app/lib/mock-attachments";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ attachmentId: string }> }
 ) {
   const { attachmentId } = await params;
@@ -54,10 +54,17 @@ export async function GET(
 
   const { buffer, contentType } = await getObjectBuffer(attachment.r2_key);
 
+  const requestUrl = new URL(request.url);
+  const requestedDisposition = requestUrl.searchParams.get("disposition");
+  const disposition =
+    requestedDisposition === "inline" || requestedDisposition === "attachment"
+      ? requestedDisposition
+      : "attachment";
+
   return new Response(buffer, {
     headers: {
       "Content-Type": contentType ?? "application/octet-stream",
-      "Content-Disposition": `attachment; filename=\"${attachment.filename}\"`
+      "Content-Disposition": `${disposition}; filename=\"${attachment.filename}\"`
     }
   });
 }

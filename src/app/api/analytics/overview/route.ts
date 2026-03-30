@@ -24,6 +24,16 @@ type VoiceSummaryRow = {
   avg_duration_seconds: number | string | null;
 };
 
+type VoiceQaSummaryRow = {
+  analyzed: number | string | null;
+  pass: number | string | null;
+  watch: number | string | null;
+  review: number | string | null;
+  flagged: number | string | null;
+  total_flags: number | string | null;
+  total_action_items: number | string | null;
+};
+
 type MergeCountRow = {
   total: number | string | null;
   ai_initiated: number | string | null;
@@ -144,6 +154,47 @@ export async function GET(request: Request) {
     [start, end]
   );
 
+  const voiceQaSummaryResult = await db.query<VoiceQaSummaryRow>(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND completed_at >= $1 AND completed_at < $2
+       )::int AS analyzed,
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND qa_status = 'pass'
+           AND completed_at >= $1 AND completed_at < $2
+       )::int AS pass,
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND qa_status = 'watch'
+           AND completed_at >= $1 AND completed_at < $2
+       )::int AS watch,
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND qa_status = 'review'
+           AND completed_at >= $1 AND completed_at < $2
+       )::int AS review,
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND completed_at >= $1 AND completed_at < $2
+           AND (
+             qa_status IN ('watch', 'review')
+             OR jsonb_array_length(qa_flags) > 0
+           )
+       )::int AS flagged,
+       COALESCE(SUM(jsonb_array_length(qa_flags)) FILTER (
+         WHERE status = 'completed'
+           AND completed_at >= $1 AND completed_at < $2
+       ), 0)::int AS total_flags,
+       COALESCE(SUM(jsonb_array_length(action_items)) FILTER (
+         WHERE status = 'completed'
+           AND completed_at >= $1 AND completed_at < $2
+       ), 0)::int AS total_action_items
+     FROM call_transcript_ai_jobs`,
+    [start, end]
+  );
+
   const channelSummary = channelSummaryResult.rows[0] ?? {
     email_inbound: 0,
     email_outbound: 0,
@@ -163,6 +214,15 @@ export async function GET(request: Request) {
     busy: 0,
     canceled: 0,
     avg_duration_seconds: 0
+  };
+  const voiceQaSummary = voiceQaSummaryResult.rows[0] ?? {
+    analyzed: 0,
+    pass: 0,
+    watch: 0,
+    review: 0,
+    flagged: 0,
+    total_flags: 0,
+    total_action_items: 0
   };
 
   const ticketMergeSummaryResult = await db.query<MergeCountRow>(
@@ -260,6 +320,15 @@ export async function GET(request: Request) {
         canceled: toInt(voiceSummary.canceled),
         avgDurationSeconds: Number(voiceSummary.avg_duration_seconds ?? 0)
       }
+    },
+    voiceQa: {
+      analyzed: toInt(voiceQaSummary.analyzed),
+      pass: toInt(voiceQaSummary.pass),
+      watch: toInt(voiceQaSummary.watch),
+      review: toInt(voiceQaSummary.review),
+      flagged: toInt(voiceQaSummary.flagged),
+      totalFlags: toInt(voiceQaSummary.total_flags),
+      totalActionItems: toInt(voiceQaSummary.total_action_items)
     },
     merges: {
       ticketMerges: toInt(ticketMergeSummary.total),

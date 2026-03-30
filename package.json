@@ -18,6 +18,8 @@
     "alert:inbound": "node scripts/alert-inbound.js",
     "whatsapp:outbox": "node scripts/whatsapp-outbox.js",
     "calls:outbox": "node scripts/call-outbox.js",
+    "calls:transcripts": "node scripts/call-transcript-outbox.js",
+    "calls:transcripts:ai": "node scripts/call-transcript-ai-outbox.js",
     "calls:replay-drill": "node scripts/call-webhook-replay-drill.js",
     "calls:load-drill": "node scripts/call-outbox-load-drill.js",
     "calls:crm-e2e": "node scripts/calls-crm-e2e.js"

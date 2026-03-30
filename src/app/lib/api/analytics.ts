@@ -28,6 +28,15 @@ export type OverviewResponse = {
       avgDurationSeconds: number;
     };
   };
+  voiceQa?: {
+    analyzed: number;
+    pass: number;
+    watch: number;
+    review: number;
+    flagged: number;
+    totalFlags: number;
+    totalActionItems: number;
+  };
   merges?: {
     ticketMerges: number;
     customerMerges: number;
@@ -65,6 +74,15 @@ export type VolumeResponse = {
     busy: number;
     canceled: number;
     avgDurationSeconds: number;
+  }>;
+  voiceQa?: Array<{
+    day: string;
+    analyzed: number;
+    pass: number;
+    watch: number;
+    review: number;
+    flagged: number;
+    totalFlags: number;
   }>;
   whatsappSource?: "all" | "webhook" | "outbox";
   whatsapp?: {

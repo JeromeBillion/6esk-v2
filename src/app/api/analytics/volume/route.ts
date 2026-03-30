@@ -31,6 +31,16 @@ type EmailVolumeRow = {
   outbound: number | string | null;
 };
 
+type VoiceQaVolumeRow = {
+  day: Date;
+  analyzed: number | string | null;
+  pass: number | string | null;
+  watch: number | string | null;
+  review: number | string | null;
+  flagged: number | string | null;
+  total_flags: number | string | null;
+};
+
 function toInt(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -113,6 +123,28 @@ export async function GET(request: Request) {
     [start, end]
   );
 
+  const voiceQaResult = await db.query<VoiceQaVolumeRow>(
+    `SELECT
+       date_trunc('day', completed_at) AS day,
+       COUNT(*) FILTER (WHERE status = 'completed')::int AS analyzed,
+       COUNT(*) FILTER (WHERE status = 'completed' AND qa_status = 'pass')::int AS pass,
+       COUNT(*) FILTER (WHERE status = 'completed' AND qa_status = 'watch')::int AS watch,
+       COUNT(*) FILTER (WHERE status = 'completed' AND qa_status = 'review')::int AS review,
+       COUNT(*) FILTER (
+         WHERE status = 'completed'
+           AND (
+             qa_status IN ('watch', 'review')
+             OR jsonb_array_length(qa_flags) > 0
+           )
+       )::int AS flagged,
+       COALESCE(SUM(jsonb_array_length(qa_flags)) FILTER (WHERE status = 'completed'), 0)::int AS total_flags
+     FROM call_transcript_ai_jobs
+     WHERE completed_at >= $1 AND completed_at < $2
+     GROUP BY day
+     ORDER BY day`,
+    [start, end]
+  );
+
   const formatRows = (rows: VolumeRow[]) =>
     rows.map((row) => ({
       day: row.day.toISOString(),
@@ -138,6 +170,15 @@ export async function GET(request: Request) {
       busy: toInt(row.busy),
       canceled: toInt(row.canceled),
       avgDurationSeconds: Number(row.avg_duration_seconds ?? 0)
+    })),
+    voiceQa: voiceQaResult.rows.map((row) => ({
+      day: row.day.toISOString(),
+      analyzed: toInt(row.analyzed),
+      pass: toInt(row.pass),
+      watch: toInt(row.watch),
+      review: toInt(row.review),
+      flagged: toInt(row.flagged),
+      totalFlags: toInt(row.total_flags)
     })),
     whatsappSource,
     whatsapp: buildWhatsAppStatusSeries(whatsappStatusResult.rows)

@@ -494,6 +494,34 @@ export function AnalyticsWorkspace() {
     };
   }, [overview]);
 
+  const voiceQaSummary = useMemo(() => {
+    return (
+      overview?.voiceQa ?? {
+        analyzed: 0,
+        pass: 0,
+        watch: 0,
+        review: 0,
+        flagged: 0,
+        totalFlags: 0,
+        totalActionItems: 0
+      }
+    );
+  }, [overview]);
+
+  const voiceQaSeries = useMemo(
+    () =>
+      (volume?.voiceQa ?? []).map((item) => ({
+        date: item.day,
+        analyzed: item.analyzed,
+        pass: item.pass,
+        watch: item.watch,
+        review: item.review,
+        flagged: item.flagged,
+        totalFlags: item.totalFlags
+      })),
+    [volume]
+  );
+
   const whatsAppStatusSeries = useMemo(() => {
     const sent = volume?.whatsapp?.sent ?? [];
     const delivered = volume?.whatsapp?.delivered ?? [];
@@ -1106,7 +1134,7 @@ export function AnalyticsWorkspace() {
 
               {channelFocus === "voice" ? (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                     <Metric
                       label="Inbound / Outbound"
                       value={`${overview?.channels.voice.inbound ?? 0} / ${overview?.channels.voice.outbound ?? 0}`}
@@ -1114,6 +1142,8 @@ export function AnalyticsWorkspace() {
                     <Metric label="Connect Rate" value={`${voiceRates.connectRate.toFixed(1)}%`} />
                     <Metric label="Failure Rate" value={`${voiceRates.failureRate.toFixed(1)}%`} />
                     <Metric label="Avg Duration" value={`${voiceRates.avgDurationSeconds.toFixed(1)}s`} />
+                    <Metric label="QA Flagged" value={voiceQaSummary.flagged} />
+                    <Metric label="Needs Review" value={voiceQaSummary.review} />
                   </div>
                   <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
                     <Card className="p-4">
@@ -1172,6 +1202,72 @@ export function AnalyticsWorkspace() {
                             )}
                           </tbody>
                         </table>
+                      </div>
+                    </Card>
+                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
+                    <Card className="p-4">
+                      <h4 className="text-sm font-medium text-neutral-800 mb-3">Voice QA Signals</h4>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={voiceQaSeries}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis
+                            dataKey="date"
+                            tickFormatter={(date) => {
+                              const parsed = new Date(date);
+                              return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
+                            }}
+                            stroke="#9ca3af"
+                            fontSize={12}
+                          />
+                          <YAxis stroke="#9ca3af" fontSize={12} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: "12px" }} />
+                          <Bar dataKey="pass" stackId="qa" fill={COLORS.success} />
+                          <Bar dataKey="watch" stackId="qa" fill="#f59e0b" />
+                          <Bar dataKey="review" stackId="qa" fill="#ef4444" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </Card>
+                    <Card className="p-4">
+                      <h4 className="text-sm font-medium text-neutral-800 mb-3">Voice QA Snapshot</h4>
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <Metric label="Analyzed" value={voiceQaSummary.analyzed} />
+                          <Metric label="Flags" value={voiceQaSummary.totalFlags} />
+                          <Metric label="Action Items" value={voiceQaSummary.totalActionItems} />
+                          <Metric label="Watch" value={voiceQaSummary.watch} />
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-neutral-200">
+                                <th className="text-left py-2">Day</th>
+                                <th className="text-right py-2">Analyzed</th>
+                                <th className="text-right py-2">Flagged</th>
+                                <th className="text-right py-2">Review</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {voiceQaSeries.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="py-3 text-neutral-500">
+                                    No voice QA signals in range.
+                                  </td>
+                                </tr>
+                              ) : (
+                                [...voiceQaSeries].slice(-8).reverse().map((item) => (
+                                  <tr key={item.date} className="border-b border-neutral-100">
+                                    <td className="py-2">{new Date(item.date).toLocaleDateString()}</td>
+                                    <td className="py-2 text-right">{item.analyzed}</td>
+                                    <td className="py-2 text-right">{item.flagged}</td>
+                                    <td className="py-2 text-right">{item.review}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </Card>
                   </div>

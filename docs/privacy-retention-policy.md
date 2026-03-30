@@ -23,7 +23,7 @@ Use this wording in privacy policy updates, support responses, and operational r
 
 Use the same phrasing in customer-facing privacy docs and internal SOPs:
 
-- Call recordings and transcripts are stored only for the period defined in the active Terms and Conditions and privacy notice.
+- Call recordings and transcripts are stored in `6esk`-owned storage only, for the period defined in the active Terms and Conditions and privacy notice.
 - Storage beyond that period is allowed only for legal/regulatory obligations, dispute handling, or approved incident forensics.
 - Consent event history is retained as compliance/audit evidence according to internal legal retention policy.
 

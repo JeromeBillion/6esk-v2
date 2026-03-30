@@ -17,13 +17,14 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 | 3 | Modular service entitlements | Extend entitlement guards into AI action execution paths | `done` | Agent action entry is blocked when AI automation is disabled; channel-specific AI hardening can still deepen later |
 | 4 | Modular service entitlements | Add entitlement-aware metering hooks | `done` | Usage events now land on real create/send/reply/call/AI action paths and are surfaced in Admin workspace usage |
 | 5 | Voice capability | Real provider adapter for outbound dial execution (`VOICE-033`) | `done` | `6esk` now delivers through `http_bridge`, and `6ex` now owns a Twilio-capable outbound bridge plus recording relay |
-| 6 | Voice capability | Callback correlation for status, recording, and transcript events | `in_progress` | `6ex` now relays status/recording/transcript callbacks back into `6esk`; live provider rehearsal is still required |
-| 7 | Voice capability | Production call rollout hardening and policy validation | `in_progress` | Runbooks now reflect the real bridge path; pilot and outage drills still need to be executed with live credentials |
-| 8 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and Venus handoff policy |
-| 9 | Cross-channel merge vision | Implement compatibility rules, preflight, and review semantics | `done` | Cross-channel merge now preflights into link semantics, same-channel hard merge stays separate, and operator-linked cases are surfaced in the Support right rail |
-| 10 | Deep 6ex integration | Venus/6ex ticket creation hardening + 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; the remaining work is no longer ticket-create hardening |
-| 11 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches now promote existing identity-linked customers, and contradictory upstream identities now preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
-| 12 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths now support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
+| 6 | Voice capability | Callback correlation for status, recording, and transcript events | `in_progress` | `6ex` now relays status/recording/transcript callbacks back into `6esk`; `6esk` stores canonical artifacts in its own R2, the first managed STT backend is wired behind `managed_http`, and live provider rehearsal is still required |
+| 7 | Voice capability | Transcript-derived AI outputs (summary, resolution note, QA flags, action items) | `done` | `6esk` now persists transcript-AI jobs, dispatches managed analysis, stores derived artifacts separately from the raw transcript, and surfaces QA only in Admin/Analytics |
+| 8 | Voice capability | Production call rollout hardening and policy validation | `in_progress` | Runbooks now reflect the real bridge path, `6esk`-owned artifact storage, and mandatory transcripts; pilot and outage drills still need to be executed with live credentials |
+| 9 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and Venus handoff policy |
+| 10 | Cross-channel merge vision | Implement compatibility rules, preflight, and review semantics | `done` | Cross-channel merge now preflights into link semantics, same-channel hard merge stays separate, and operator-linked cases are surfaced in the Support right rail |
+| 11 | Deep 6ex integration | Venus/6ex ticket creation hardening + 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; the remaining work is no longer ticket-create hardening |
+| 12 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches now promote existing identity-linked customers, and contradictory upstream identities now preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
+| 13 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths now support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
 
 ## Remaining v1 Focus
 
@@ -32,6 +33,7 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 
 ### Remaining telephony items
 - live callback rehearsal against the chosen Twilio deployment
+- finalize the `6esk`-owned recording-to-R2 and transcript pipeline against live provider callbacks and Deepgram STT credentials
 - pilot hardening and outage drills with real credentials
 
 ## Completed Build Slices

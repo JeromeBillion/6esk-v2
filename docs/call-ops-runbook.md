@@ -22,6 +22,7 @@ Notes:
 - `CALLS_PROVIDER=http_bridge` is the supported non-mock execution path for `v1`.
 - The bridge should point at the trusted `6ex` backend route `/api/v1/internal/support/calls/outbound`.
 - The `6ex` backend now owns the real provider hookup and webhook relay layer.
+- `6esk` owns durable call artifact storage. Recordings and transcripts must land in `6esk` Cloudflare R2, not in `6ex`.
 - Current live-capable shape is Twilio-backed:
   - `SUPPORT_CALLS_PROVIDER=twilio`
   - `SUPPORT_CALLS_PUBLIC_BASE_URL=https://<your-6ex-backend-domain>`
@@ -71,7 +72,7 @@ Invoke-RestMethod -Method GET -Uri "https://<your-6ex-backend-domain>/health"
 - `POST /api/v1/internal/support/calls/transcript`
 - `GET /api/v1/internal/support/calls/recordings/:bridgeId?token=...`
 
-4. Confirm `6esk` receives bridged recording URLs, not raw provider media URLs.
+4. Confirm `6esk` converts bridged recordings into `6esk` attachment URLs backed by `6esk` R2, not long-lived raw provider media URLs.
 
 ## Replay-Window Drill
 
@@ -108,6 +109,32 @@ Then re-run:
 ```powershell
 npm run calls:outbox
 ```
+
+## Transcript QA Retry Drill
+
+Purpose: rehearse recovery of failed transcript-QA analysis jobs from the Admin Calls panel.
+
+Admin path:
+- `Admin -> Operations -> Calls -> Transcript QA`
+
+Operator drill:
+1. Confirm at least one failed transcript-QA job is visible.
+2. Click `Run Retry Drill`.
+3. Verify the failed job leaves the failed list or the failed count drops.
+4. If the same error repeats, treat it as provider/config triage and keep it in Admin.
+
+What the drill does:
+- retries the oldest failed transcript-QA job once
+- immediately runs one transcript-QA outbox pass
+- reloads the Calls operations panel
+
+Expected success signal:
+- the target job is no longer listed under failed transcript-QA jobs
+- or the failed count decreases and queue/processing increases
+
+Failure signal:
+- the same job returns with the same error after retry
+- or the failed count does not change after the outbox pass
 
 ## CRM Calls Staging E2E Harness
 

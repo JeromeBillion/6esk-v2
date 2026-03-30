@@ -26,7 +26,8 @@ This document guides the pilot launch of AI Voice Call capabilities in the platf
 - **AI agents** to initiate voice calls to customer phone numbers
 - **Users** to manually manage call escalation (phone number entry, working hours bypass)
 - **Call lifecycle tracking** from initiation through completion
-- **Recording storage & retrieval** of all call sessions for audit/compliance
+- **Recording storage & retrieval** of all call sessions from `6esk`-owned R2 for audit/compliance
+- **Mandatory transcript generation** through an asynchronous STT pipeline writing back into `6esk`
 
 ### Key Benefits
 - Extends agent capabilities beyond text-based interactions
@@ -86,7 +87,7 @@ HAVING COUNT(ce.id) > 0;
 ```
 
 **Expected Result**: 
-- Verified in last 7 days: 100% of completed calls have recording_url AND recording_r2_key
+- Verified in last 7 days: 100% of completed calls have a playable `6esk` recording URL and `recording_r2_key`
 - Missing recording URLs indicate failed storage (alert condition)
 - Duration_seconds matches actual audio file length
 
@@ -197,8 +198,15 @@ env | grep -E 'CALLS_PROVIDER|CALLS_PROVIDER_HTTP_URL|CALLS_PROVIDER_HTTP_SECRET
 - [ ] `CALLS_PROVIDER_HTTP_URL` points at `6ex /api/v1/internal/support/calls/outbound`
 - [ ] `CALLS_PROVIDER_HTTP_SECRET` matches `6ex SUPPORT_CALLS_API_SECRET` (or fallback support secret)
 - [ ] `CALLS_WEBHOOK_SECRET` rotated and documented
-- [ ] `RECORDING_STORAGE_BUCKET` configured (R2/S3 accessible)
-- [ ] `RECORDING_STORAGE_REGION` matches bucket region
+- [ ] `CALLS_STT_PROVIDER=managed_http`
+- [ ] `CALLS_STT_PROVIDER_HTTP_URL` points at `6esk /api/internal/calls/stt/deepgram`
+- [ ] `CALLS_STT_PROVIDER_HTTP_SECRET` configured for the internal `6esk` STT backend
+- [ ] `CALLS_STT_DEEPGRAM_API_KEY` configured
+- [ ] `CALLS_STT_DEEPGRAM_CALLBACK_TOKEN` configured to the Deepgram callback token / key identifier expected by `/api/calls/transcript`
+- [ ] `R2_ENDPOINT` configured for the `6esk` Cloudflare R2 account
+- [ ] `R2_ACCESS_KEY_ID` configured for `6esk`
+- [ ] `R2_SECRET_ACCESS_KEY` configured for `6esk`
+- [ ] `R2_BUCKET` points at the `6esk` voice artifact bucket
 - [ ] `6ex` bridge envs are set:
   - [ ] `SUPPORT_CALLS_PROVIDER=twilio`
   - [ ] `SUPPORT_CALLS_PUBLIC_BASE_URL` externally reachable
@@ -410,6 +418,7 @@ curl -X POST https://api.platform.com/api/agent/v1/actions \
 5. **Team Validation** (t=72h)
    - [ ] Support team reports: No unexpected customer complaints
    - [ ] Operations team reports: Metrics stable, no anomalies
+   - [ ] Operations team completes the Admin `Transcript QA` retry drill successfully
    - [ ] Product team reports: Feature adoption as expected
    - [ ] Security team reports: No signature validation failures
 
@@ -558,6 +567,7 @@ curl -X POST https://api.platform.com/api/agent/v1/actions \
   - [ ] If yes: Acknowledge alert, investigate logs
   - [ ] If failed webhook: Check provider status page
   - [ ] If retry exhaustion: Review specific call_session_id
+- [ ] If transcript QA failed jobs are present: run the Admin `Transcript QA` retry drill and confirm the failed count drops or the job leaves the failed list
 - [ ] Spot-check latest call_sessions in database:
   ```sql
   SELECT id, status, duration_seconds, recording_url 
@@ -740,13 +750,13 @@ Before enabling for provider, verify:
 ### E. Known Limitations & Future Work
 
 **Current Pilot Limitations**:
-1. Recording transcription not included (manual review only)
+1. Transcript generation is mandatory but still depends on live provider/STT rollout validation
 2. Call transfer not supported (single-leg calls only)
 3. Working hours policy applies to all calls (no overrides)
 4. No warm handoff between AI and human agent
 
 **Future Enhancements**:
-- Automatic transcription with AI summarization
+- Transcript summarization and QA on top of the mandatory raw transcript pipeline
 - Multi-leg calls (transfer to human agent)
 - Call recording with speaker identification
 - Real-time call sentiment analysis

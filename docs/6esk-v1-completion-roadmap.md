@@ -77,6 +77,13 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 ### Required Deliverables
 - real provider adapter wired into `call_outbox_events`
 - stable callback reconciliation for status, recording, and transcript events
+- `6esk`-owned recording and transcript storage in `6esk` R2 buckets; `6ex` only bridges provider callbacks/artifacts and must not become the durable artifact store
+- mandatory transcript pipeline attached to the correct ticket/session, even if transcript generation is asynchronous and handled outside Twilio
+- `6esk` STT orchestration owned inside `6esk`, with managed STT first and self-hosting treated as a later optimization, not a `v1` blocker
+- first managed STT backend wired behind `managed_http` so provider selection stays isolated from the rest of the call pipeline
+- raw transcript remains the canonical call record; AI-generated summary, resolution note, QA flags, and action items are separate derived artifacts layered on top of that transcript
+- AI QA is a required `v1` voice outcome, not a later nice-to-have; the system must be able to flag low-confidence handling, missed resolution steps, or other operator-review signals from the transcript
+- QA signals must surface in Admin/metrics dashboards only; Support remains focused on the raw transcript and operational ticket state
 - full audit/event provenance for call lifecycle
 - operator-visible failure states and retry controls
 - pilot checklist executed against `6ex` traffic or staging mirror
@@ -84,6 +91,8 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 ### Exit Criteria
 - inbound and outbound voice both work in a real environment
 - recordings and transcripts land on the correct ticket/session
+- transcript-derived AI outputs (summary, resolution note, QA flags, action items) land on the correct ticket/session and remain traceable back to the raw transcript
+- QA flags and review counts are visible in Admin/Analytics without leaking into the Support operator surface
 - AI and human call initiation both honor policy rules
 - no critical mock-only assumptions remain in the main call path
 
@@ -196,6 +205,7 @@ Current progress:
 - trusted `6ex` -> `6esk` ticket creation is already present
 - trusted `6esk` -> `6ex` voice bridge is now present
 - `6esk` already delivers lifecycle events directly to Venus where needed
+- `6esk` remains the storage owner for call artifacts; even when new Cloudflare R2 buckets are created, they are `6esk` buckets, not `6ex` buckets
 - trusted inbound `6ex` create flows now persist customer identity enrichment and external-user link cache updates inside `6esk`
 - trusted profile matches now promote existing identity-linked customers instead of forking duplicate registered records
 - true upstream identity contradictions now keep the canonical `6esk` customer, refuse external rebinds, and record explicit conflict metadata/events instead of silently rewriting ownership

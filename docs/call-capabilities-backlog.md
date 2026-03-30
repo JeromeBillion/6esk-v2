@@ -15,6 +15,7 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
   - VOICE-075 baseline call ops runbook + drill scripts (replay/load/retry)
 - In progress:
   - live provider callback rehearsal and pilot hardening against the chosen Twilio deployment
+  - locking voice artifacts to `6esk`-owned R2 storage with mandatory async transcript generation
 
 ## Planning Assumptions
 - Estimate unit: engineering days (ideal).
@@ -155,6 +156,7 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
 ## Go/No-Go Criteria
 - `selection_required` behavior verified for both human and AI flows.
 - Recording artifacts consistently attach to correct ticket/session.
+- Canonical recording access resolves through `6esk` URLs backed by `6esk` R2, not provider-hosted artifact URLs.
 - Idempotency verified for inbound/status/recording webhooks.
 - Outbound duplicate call rate below 0.5% in pilot.
 - Call webhook signature failure rate below 2% for sustained 24h.

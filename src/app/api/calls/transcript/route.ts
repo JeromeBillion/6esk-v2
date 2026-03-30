@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { attachCallTranscript } from "@/server/calls/service";
+import { normalizeDeepgramTranscriptPayload } from "@/server/calls/stt-deepgram";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
 
@@ -30,14 +31,40 @@ function parseTimestamp(value: string | number | null | undefined) {
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
-  const authorization = authorizeCallWebhook({
-    rawBody,
-    providedSignature:
-      request.headers.get("x-6esk-signature") ?? request.headers.get("x-call-signature"),
-    providedSecret: request.headers.get("x-6esk-secret"),
-    providedTimestamp:
-      request.headers.get("x-6esk-timestamp") ?? request.headers.get("x-call-timestamp")
-  });
+  const providedSecret = request.headers.get("x-6esk-secret") ?? request.headers.get("x-call-secret");
+  const deepgramToken = request.headers.get("dg-token")?.trim() ?? null;
+  const expectedDeepgramToken = process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN?.trim() ?? "";
+  const transcriptSharedSecrets = [
+    process.env.CALLS_TRANSCRIPT_SHARED_SECRET?.trim(),
+    process.env.INBOUND_SHARED_SECRET?.trim()
+  ].filter((value): value is string => Boolean(value));
+  const authorization =
+    expectedDeepgramToken && deepgramToken
+      ? deepgramToken === expectedDeepgramToken
+        ? {
+            authorized: true as const,
+            mode: "provider_token" as const,
+            reason: "ok" as const
+          }
+        : {
+            authorized: false as const,
+            mode: "provider_token" as const,
+            reason: "invalid_provider_token" as const
+          }
+      : transcriptSharedSecrets.includes(providedSecret ?? "")
+        ? {
+            authorized: true as const,
+            mode: "shared_secret" as const,
+            reason: "ok" as const
+          }
+        : authorizeCallWebhook({
+            rawBody,
+            providedSignature:
+              request.headers.get("x-6esk-signature") ?? request.headers.get("x-call-signature"),
+            providedSecret,
+            providedTimestamp:
+              request.headers.get("x-6esk-timestamp") ?? request.headers.get("x-call-timestamp")
+          });
 
   if (!authorization.authorized) {
     void recordAuditLog({
@@ -58,6 +85,8 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+
+  payload = normalizeDeepgramTranscriptPayload(payload) ?? payload;
 
   const parsed = callTranscriptSchema.safeParse(payload);
   if (!parsed.success) {
