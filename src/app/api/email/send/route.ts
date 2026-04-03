@@ -15,6 +15,19 @@ type ResendResponse = {
   messageId?: string;
 };
 
+function normalizeReferenceList(values?: string[] | null) {
+  if (!values?.length) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 function getSupportAddress() {
   const explicit = process.env.SUPPORT_ADDRESS;
   if (explicit) {
@@ -82,6 +95,12 @@ export async function POST(request: Request) {
     }
   }
 
+  const inReplyTo = data.inReplyTo?.trim() || null;
+  const references = normalizeReferenceList([
+    ...(data.references ?? []),
+    ...(inReplyTo ? [inReplyTo] : [])
+  ]);
+
   const resendPayload = {
     from: data.from,
     to: toList,
@@ -91,6 +110,18 @@ export async function POST(request: Request) {
     html: data.html ?? undefined,
     text: data.text ?? undefined,
     reply_to: data.replyTo ?? undefined,
+    headers: {
+      ...(inReplyTo
+        ? {
+            "In-Reply-To": inReplyTo
+          }
+        : {}),
+      ...(references.length
+        ? {
+            References: references.join(" ")
+          }
+        : {})
+    },
     attachments: data.attachments?.map((attachment) => ({
       filename: attachment.filename,
       content: attachment.contentBase64,
@@ -118,20 +149,28 @@ export async function POST(request: Request) {
   const resendData = (await resendResponse.json()) as ResendResponse;
   const messageId = randomUUID();
   const sentAt = new Date();
+  const providerMessageId = resendData.messageId ?? resendData.id ?? null;
+  const threadId =
+    data.threadId?.trim() ||
+    references[0] ||
+    providerMessageId ||
+    messageId;
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, direction, message_id, thread_id, from_email,
+      id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, provider, from_email,
       to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read
     ) VALUES (
-      $1, $2, 'outbound', $3, $4, $5,
-      $6, $7, $8, $9, $10, $11, true
+      $1, $2, 'outbound', $3, $4, $5, $6, 'resend', $7,
+      $8, $9, $10, $11, $12, $13, true
     )`,
     [
       messageId,
       mailbox.id,
-      resendData.messageId ?? resendData.id ?? null,
-      resendData.messageId ?? resendData.id ?? messageId,
+      providerMessageId,
+      threadId,
+      inReplyTo,
+      references.length ? references : null,
       fromEmail,
       toList,
       ccList,

@@ -14,6 +14,7 @@ type MergeOperation = "ticket_merge" | "linked_case" | "customer_merge";
 
 type TicketCandidate = {
   id: string;
+  ticketNumber?: number | null;
   subject: string | null;
   requesterEmail: string;
   status: string;
@@ -101,11 +102,11 @@ export function MergeModal({ open, onClose, type, onMerged }: MergeModalProps) {
     onClose();
   }
 
-  function normalizeTicketCandidate(candidate: TicketCandidate): Candidate {
+function normalizeTicketCandidate(candidate: TicketCandidate): Candidate {
     return {
       id: candidate.id,
       type: "ticket",
-      display: candidate.id,
+      display: candidate.ticketNumber ? `#${candidate.ticketNumber}` : candidate.id,
       email: candidate.requesterEmail,
       phone: null,
       metadata: `${candidate.subject ?? "(no subject)"} · ${candidate.status} · ${candidate.priority} · ${candidate.channel}`,

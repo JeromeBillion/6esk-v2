@@ -4,6 +4,7 @@ import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 
 export type TicketRecord = {
   id: string;
+  ticket_number: number;
   mailbox_id: string | null;
   customer_id: string | null;
   requester_email: string;
@@ -22,6 +23,13 @@ export type TicketRecord = {
   created_at: string;
   updated_at: string;
 };
+
+export function formatTicketDisplayId(ticketNumber: number | null | undefined) {
+  if (!ticketNumber || !Number.isFinite(ticketNumber)) {
+    return null;
+  }
+  return `#${ticketNumber}`;
+}
 
 export async function resolveTicketIdForInbound(references: string[]) {
   if (references.length === 0) {
@@ -351,6 +359,7 @@ export async function listTicketsForUser(
 
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+            t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
@@ -378,6 +387,7 @@ export async function listTicketsForUser(
 export async function getTicketById(ticketId: string) {
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+            t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,

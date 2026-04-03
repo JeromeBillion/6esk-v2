@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   const like = `%${query}%`;
   values.push(like);
   conditions.push(
-    `(t.id::text ILIKE $${values.length} OR t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length})`
+    `(t.id::text ILIKE $${values.length} OR t.ticket_number::text ILIKE $${values.length} OR t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length})`
   );
 
   if (!isLeadAdmin(user)) {
@@ -37,6 +37,7 @@ export async function GET(request: Request) {
 
   const result = await db.query<{
     id: string;
+    ticket_number: number | null;
     subject: string | null;
     requester_email: string;
     status: string;
@@ -48,6 +49,7 @@ export async function GET(request: Request) {
   }>(
     `SELECT
        t.id,
+       t.ticket_number,
        t.subject,
        t.requester_email,
        t.status,
@@ -74,6 +76,7 @@ export async function GET(request: Request) {
   return Response.json({
     tickets: result.rows.map((row) => ({
       id: row.id,
+      ticketNumber: row.ticket_number,
       subject: row.subject,
       requesterEmail: row.requester_email,
       status: row.status,

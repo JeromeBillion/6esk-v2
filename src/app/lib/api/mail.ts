@@ -21,6 +21,7 @@ export type ApiMailboxMessage = {
   is_spam: boolean;
   spam_reason?: string | null;
   thread_id: string | null;
+  message_id?: string | null;
   created_at: string;
   has_attachments: boolean;
 };
@@ -28,6 +29,10 @@ export type ApiMailboxMessage = {
 export type ApiMessageDetail = {
   message: {
     id: string;
+    messageId?: string | null;
+    threadId?: string | null;
+    inReplyTo?: string | null;
+    references?: string[];
     from: string;
     to: string[];
     direction: "inbound" | "outbound";
@@ -98,6 +103,9 @@ export function sendMail(input: {
   text?: string;
   html?: string;
   replyTo?: string;
+  threadId?: string;
+  inReplyTo?: string;
+  references?: string[];
   attachments?: Array<{
     filename: string;
     contentType?: string | null;

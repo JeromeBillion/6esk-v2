@@ -14,7 +14,10 @@ export type MessageRecord = {
   spam_reason: string | null;
   is_starred: boolean;
   is_pinned: boolean;
+  message_id: string | null;
   thread_id: string | null;
+  in_reply_to: string | null;
+  reference_ids: string[] | null;
   external_message_id?: string | null;
   conversation_id?: string | null;
   wa_contact?: string | null;
@@ -31,7 +34,8 @@ export type MessageRecord = {
 export async function getMessageById(messageId: string) {
   const result = await db.query<MessageRecord>(
     `SELECT id, mailbox_id, ticket_id, subject, from_email, to_emails, direction,
-            channel, origin, is_spam, spam_reason, is_starred, is_pinned, thread_id,
+            channel, origin, is_spam, spam_reason, is_starred, is_pinned, message_id, thread_id,
+            in_reply_to, reference_ids,
             external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
             received_at, sent_at, r2_key_text, r2_key_html, ai_meta
      FROM messages

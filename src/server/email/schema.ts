@@ -41,5 +41,8 @@ export const outboundEmailSchema = z.object({
   text: z.string().optional().nullable(),
   html: z.string().optional().nullable(),
   replyTo: z.string().optional().nullable(),
+  threadId: z.string().optional().nullable(),
+  inReplyTo: z.string().optional().nullable(),
+  references: z.array(z.string()).optional().nullable(),
   attachments: z.array(outboundAttachmentSchema).optional().nullable()
 });

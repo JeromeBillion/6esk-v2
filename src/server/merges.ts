@@ -170,6 +170,7 @@ export type LinkedTicketSummary = {
   linkId: string;
   relationshipType: "linked_case";
   ticketId: string;
+  ticketNumber: number | null;
   customerId: string | null;
   requesterEmail: string;
   subject: string | null;
@@ -188,6 +189,7 @@ export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketS
       link_id: string;
       relationship_type: "linked_case";
       ticket_id: string;
+      ticket_number: number | null;
       customer_id: string | null;
       requester_email: string;
       subject: string | null;
@@ -203,6 +205,7 @@ export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketS
          tl.id AS link_id,
          tl.relationship_type,
          linked.id AS ticket_id,
+         linked.ticket_number,
          linked.customer_id,
          linked.requester_email,
          linked.subject,
@@ -239,6 +242,7 @@ export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketS
       linkId: row.link_id,
       relationshipType: row.relationship_type,
       ticketId: row.ticket_id,
+      ticketNumber: row.ticket_number,
       customerId: row.customer_id,
       requesterEmail: row.requester_email,
       subject: row.subject,

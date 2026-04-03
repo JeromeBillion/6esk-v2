@@ -103,6 +103,7 @@ type TicketPriorityDisplay = "low" | "medium" | "high" | "urgent";
 
 type TicketView = {
   id: string;
+  ticket_number: number;
   requester_email: string;
   requester_name: string;
   subject: string;
@@ -174,6 +175,7 @@ type DraftView = {
 
 type CustomerTicketHistoryItem = {
   ticketId: string;
+  ticketDisplayId: string;
   subject: string;
   status: TicketStatusDisplay;
   channel: "email" | "whatsapp" | "voice";
@@ -184,6 +186,7 @@ type CustomerTicketHistoryItem = {
 type LinkedCaseHistoryItem = {
   linkId: string;
   ticketId: string;
+  ticketDisplayId: string;
   customerId: string | null;
   subject: string;
   status: TicketStatusDisplay;
@@ -537,6 +540,7 @@ function mapTicket(ticket: ApiTicket): TicketView {
   const subject = ticket.subject ?? "(no subject)";
   return {
     id: ticket.id,
+    ticket_number: ticket.ticket_number,
     requester_email: requesterEmail,
     requester_name: deriveNameFromIdentity(requesterEmail),
     subject,
@@ -554,6 +558,13 @@ function mapTicket(ticket: ApiTicket): TicketView {
     preview: null,
     unread: false
   };
+}
+
+function formatTicketDisplayId(ticketNumber: number | null | undefined, fallbackId: string) {
+  if (typeof ticketNumber === "number" && Number.isFinite(ticketNumber)) {
+    return `#${ticketNumber}`;
+  }
+  return fallbackId;
 }
 
 function normalizeQueuePreviewValue(value: string | null | undefined) {
@@ -1114,6 +1125,7 @@ export function SupportWorkspace() {
       const mappedHistory = historyResponse.history
         .map((item) => ({
           ticketId: item.ticketId,
+          ticketDisplayId: formatTicketDisplayId(item.ticketNumber, item.ticketId),
           subject: item.subject ?? "(no subject)",
           status: mapHistoryStatus(item.status),
           channel: item.channel,
@@ -1126,6 +1138,7 @@ export function SupportWorkspace() {
         .map((item) => ({
           linkId: item.linkId,
           ticketId: item.ticketId,
+          ticketDisplayId: formatTicketDisplayId(item.ticketNumber, item.ticketId),
           customerId: item.customerId,
           subject: item.subject ?? "(no subject)",
           status: mapHistoryStatus(item.status),
@@ -2162,7 +2175,9 @@ export function SupportWorkspace() {
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-neutral-600">{ticket.id}</span>
+                          <span className="text-xs font-medium text-neutral-600">
+                            {formatTicketDisplayId(ticket.ticket_number, ticket.id)}
+                          </span>
                           {ticket.unread && <div className="w-2 h-2 rounded-full bg-blue-500"></div>}
                         </div>
                         <h3 className="font-medium text-sm leading-tight truncate">{ticket.subject}</h3>
@@ -2786,7 +2801,11 @@ export function SupportWorkspace() {
       <VoiceCallModal
         open={voiceModalOpen}
         onClose={() => setVoiceModalOpen(false)}
-        ticketLabel={selectedTicket ? `${selectedTicket.id} • ${selectedTicket.subject}` : "Voice call"}
+        ticketLabel={
+          selectedTicket
+            ? `${formatTicketDisplayId(selectedTicket.ticket_number, selectedTicket.id)} • ${selectedTicket.subject}`
+            : "Voice call"
+        }
         options={callOptions}
         loading={callOptionsLoading}
         queueing={callQueueing}
@@ -3152,6 +3171,7 @@ function TicketDetail({
     if (!byTicketId.has(ticket.id)) {
       byTicketId.set(ticket.id, {
         ticketId: ticket.id,
+        ticketDisplayId: formatTicketDisplayId(ticket.ticket_number, ticket.id),
         subject: ticket.subject,
         status: ticket.status,
         channel: primaryChannel,
@@ -3163,7 +3183,15 @@ function TicketDetail({
     return Array.from(byTicketId.values()).sort(
       (left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
     );
-  }, [customerTicketHistory, primaryChannel, ticket.id, ticket.status, ticket.subject, ticket.updated_at]);
+  }, [
+    customerTicketHistory,
+    primaryChannel,
+    ticket.id,
+    ticket.status,
+    ticket.subject,
+    ticket.ticket_number,
+    ticket.updated_at
+  ]);
 
   const linkedCaseRows = useMemo(() => {
     const deduped = new Map<string, LinkedCaseHistoryItem>();
@@ -4079,7 +4107,7 @@ function TicketDetail({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-neutral-800">{historyItem.ticketId}</p>
+                          <p className="text-xs font-medium text-neutral-800">{historyItem.ticketDisplayId}</p>
                           <p className="mt-0.5 truncate text-xs text-neutral-600">{historyItem.subject}</p>
                           <div className="mt-1 flex items-center gap-1.5">
                             <Badge variant="outline" className="h-5 border-neutral-200 text-[10px]">
@@ -4137,7 +4165,7 @@ function TicketDetail({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-neutral-800">{linkedItem.ticketId}</p>
+                          <p className="text-xs font-medium text-neutral-800">{linkedItem.ticketDisplayId}</p>
                           <p className="mt-0.5 truncate text-xs text-neutral-600">{linkedItem.subject}</p>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5">
                             <Badge variant="outline" className="h-5 border-neutral-200 text-[10px]">

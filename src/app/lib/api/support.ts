@@ -2,6 +2,7 @@ import { apiFetch } from "@/app/lib/api/http";
 
 export type ApiTicket = {
   id: string;
+  ticket_number: number;
   requester_email: string;
   subject: string | null;
   category: string | null;
@@ -58,6 +59,7 @@ export type TicketDetailsResponse = {
     linkId: string;
     relationshipType: "linked_case";
     ticketId: string;
+    ticketNumber: number | null;
     customerId: string | null;
     requesterEmail: string;
     subject: string | null;
@@ -135,6 +137,7 @@ export type CustomerHistoryResponse = {
   } | null;
   history: Array<{
     ticketId: string;
+    ticketNumber: number | null;
     subject: string | null;
     status: string;
     channel: "email" | "whatsapp" | "voice";

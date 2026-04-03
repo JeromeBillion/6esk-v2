@@ -176,6 +176,10 @@ export async function GET(
   return Response.json({
     message: {
       id: message.id,
+      messageId: message.message_id ?? null,
+      threadId: message.thread_id ?? null,
+      inReplyTo: message.in_reply_to ?? null,
+      references: message.reference_ids ?? [],
       subject: message.subject,
       from: message.from_email,
       to: message.to_emails,

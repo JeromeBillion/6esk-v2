@@ -25,6 +25,7 @@ export type CustomerIdentityRecord = {
 
 export type CustomerHistoryItem = {
   ticketId: string;
+  ticketNumber: number | null;
   subject: string | null;
   status: string;
   priority: string;
@@ -773,6 +774,7 @@ export async function listCustomerHistory(
 
   const historyResult = await db.query<{
     id: string;
+    ticket_number: number | null;
     subject: string | null;
     status: string;
     priority: string;
@@ -786,6 +788,7 @@ export async function listCustomerHistory(
     `WITH ticket_history AS (
        SELECT
          t.id,
+         t.ticket_number,
          t.subject,
          t.status,
          t.priority,
@@ -863,6 +866,7 @@ export async function listCustomerHistory(
      )
      SELECT
        id,
+       ticket_number,
        subject,
        status,
        priority,
@@ -881,6 +885,7 @@ export async function listCustomerHistory(
 
   const mapped = historyResult.rows.map((row) => ({
     ticketId: row.id,
+    ticketNumber: row.ticket_number,
     subject: row.subject,
     status: row.status,
     priority: row.priority,

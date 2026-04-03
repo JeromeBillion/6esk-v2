@@ -106,6 +106,36 @@ function stripHtml(value: string) {
     .trim();
 }
 
+function looksLikeInternetMessageId(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return Boolean(trimmed && trimmed.startsWith("<") && trimmed.endsWith(">"));
+}
+
+function buildReplyThreadMeta(detail: ApiMessageDetail["message"] | undefined, fallbackThreadId?: string | null) {
+  const messageId = detail?.messageId ?? null;
+  const threadId = detail?.threadId ?? fallbackThreadId ?? messageId ?? undefined;
+  const references = Array.from(
+    new Set(
+      [
+        ...(detail?.references ?? []),
+        ...(looksLikeInternetMessageId(detail?.threadId) ? [detail!.threadId!.trim()] : []),
+        ...(looksLikeInternetMessageId(messageId) ? [messageId!.trim()] : [])
+      ].filter((value): value is string => Boolean(value?.trim()))
+    )
+  );
+  const inReplyTo =
+    (looksLikeInternetMessageId(messageId) ? messageId!.trim() : null) ??
+    detail?.inReplyTo ??
+    references[references.length - 1] ??
+    (looksLikeInternetMessageId(threadId) ? threadId!.trim() : undefined);
+
+  return {
+    threadId: threadId?.trim() || undefined,
+    inReplyTo: inReplyTo?.trim() || undefined,
+    references: references.length ? references : undefined
+  };
+}
+
 export function MailWorkspace() {
   const searchParams = useSearchParams();
   const paramsKey = searchParams.toString();
@@ -452,7 +482,17 @@ export function MailWorkspace() {
   );
 
   const sendEmail = useCallback(
-    async (to: string, subject: string, body: string, attachments?: EncodedAttachment[]) => {
+    async (
+      to: string,
+      subject: string,
+      body: string,
+      attachments?: EncodedAttachment[],
+      options?: {
+        threadId?: string;
+        inReplyTo?: string;
+        references?: string[];
+      }
+    ) => {
       if (!activeMailbox?.address) {
         const message = "No mailbox selected.";
         setError(message);
@@ -482,6 +522,9 @@ export function MailWorkspace() {
           to: [to.trim()],
           subject: subject.trim(),
           text: body.trim(),
+          threadId: options?.threadId,
+          inReplyTo: options?.inReplyTo,
+          references: options?.references,
           attachments:
             attachments?.map((attachment) => ({
               filename: attachment.filename,
@@ -784,7 +827,8 @@ export function MailWorkspace() {
                   ? message.subject
                   : `Re: ${message.subject}`
                 : "Re: (no subject)";
-              const success = await sendEmail(recipient, subject, body, attachments);
+              const threadMeta = buildReplyThreadMeta(detail?.message, message.thread_id);
+              const success = await sendEmail(recipient, subject, body, attachments, threadMeta);
               if (success) {
                 setReplyingToMessageId(null);
               }

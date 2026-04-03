@@ -246,10 +246,20 @@ function createMessage(
   };
 }
 
-function createTicket(input: Omit<InternalTicket, "archived"> & { archived?: boolean }): InternalTicket {
+function createTicket(
+  input: Omit<InternalTicket, "archived" | "ticket_number"> & {
+    archived?: boolean;
+    ticket_number?: number;
+  }
+): InternalTicket {
+  const inferredTicketNumber =
+    typeof input.ticket_number === "number"
+      ? input.ticket_number
+      : Number.parseInt(input.id.replace(/^\D+/, ""), 10) || 0;
   return {
     archived: input.archived ?? false,
-    ...input
+    ...input,
+    ticket_number: inferredTicketNumber
   };
 }
 
@@ -2561,6 +2571,7 @@ function getMessageById(messageId: string) {
 function toApiTicket(ticket: InternalTicket): ApiTicket {
   return {
     id: ticket.id,
+    ticket_number: ticket.ticket_number,
     requester_email: ticket.requester_email,
     subject: ticket.subject,
     category: ticket.category,
@@ -2597,6 +2608,10 @@ function toApiMessageDetail(message: InternalMessage): SupportMessageDetail & Ma
   return {
     message: {
       id: message.id,
+      messageId: message.id,
+      threadId: message.threadId,
+      inReplyTo: null,
+      references: message.threadId ? [message.threadId] : [],
       subject: message.subject,
       from: message.from,
       to: [...message.to],
@@ -2646,6 +2661,7 @@ function toApiMailboxMessage(message: InternalMessage): ApiMailboxMessage {
     is_spam: message.isSpam,
     spam_reason: message.spamReason,
     thread_id: message.threadId,
+    message_id: message.id,
     created_at: message.createdAt,
     has_attachments: message.attachments.length > 0
   };
@@ -2786,6 +2802,7 @@ function getTicketHistory(ticketId: string): CustomerHistoryResponse {
         )[0];
       return {
         ticketId: entry.id,
+        ticketNumber: entry.ticket_number,
         subject: entry.subject,
         status: entry.status,
         channel: deriveTicketChannel(entry.id),
@@ -2830,6 +2847,7 @@ function filterTickets(url: URL) {
       if (!query) return true;
       const haystack = [
         ticket.id,
+        `${ticket.ticket_number}`,
         ticket.requester_email,
         ticket.subject ?? "",
         ticket.category ?? "",
