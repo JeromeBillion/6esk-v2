@@ -10,26 +10,21 @@ CALLS_OUTBOX_SECRET=<maintenance-secret>
 CALLS_WEBHOOK_SECRET=<webhook-hmac-secret>
 CALLS_WEBHOOK_MAX_SKEW_SECONDS=300
 CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false
-CALLS_PROVIDER=http_bridge
-CALLS_PROVIDER_HTTP_URL=https://<6ex-backend-domain>/api/v1/internal/support/calls/outbound
-CALLS_PROVIDER_HTTP_SECRET=<support_calls_api_secret_or_support_ticket_api_secret>
+CALLS_PROVIDER=twilio
+CALLS_TWILIO_ACCOUNT_SID=<sid>
+CALLS_TWILIO_AUTH_TOKEN=<token>
+CALLS_TWILIO_FROM_NUMBER=<twilio_number>
+CALLS_TWILIO_BRIDGE_TARGET=<pstn_or_client_identity>
+CALLS_TWILIO_ALLOWED_CALLER_IDS=<optional_comma_separated_list>
 SIXESK_AGENT_ID=<agent_integration_id>
 SIXESK_AGENT_KEY=<agent_shared_secret>
 CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 ```
 
 Notes:
-- `CALLS_PROVIDER=http_bridge` is the supported non-mock execution path for `v1`.
-- The bridge should point at the trusted `6ex` backend route `/api/v1/internal/support/calls/outbound`.
-- The `6ex` backend now owns the real provider hookup and webhook relay layer.
+- `CALLS_PROVIDER=twilio` is the supported live-capable execution path for `v1`.
+- `6esk` now owns the real Twilio hookup and Twilio webhook relay layer directly.
 - `6esk` owns durable call artifact storage. Recordings and transcripts must land in `6esk` Cloudflare R2, not in `6ex`.
-- Current live-capable shape is Twilio-backed:
-  - `SUPPORT_CALLS_PROVIDER=twilio`
-  - `SUPPORT_CALLS_PUBLIC_BASE_URL=https://<your-6ex-backend-domain>`
-  - `SUPPORT_CALLS_TWILIO_ACCOUNT_SID=<sid>`
-  - `SUPPORT_CALLS_TWILIO_AUTH_TOKEN=<token>`
-  - `SUPPORT_CALLS_TWILIO_FROM_NUMBER=<twilio_number>`
-  - `SUPPORT_CALLS_TWILIO_BRIDGE_TARGET=<pstn_or_client_identity>`
 - Keep `CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false` outside migration windows.
 - Keep consent/retention wording aligned with `docs/privacy-retention-policy.md`.
 
@@ -54,25 +49,59 @@ Targets:
 - Rejection rate under 2% for 24h.
 - Failed outbox queue stable and recoverable with retries.
 
-## 6ex Bridge Checks
+## Twilio Ownership Checks
 
-1. Verify `6ex` bridge env:
+1. Verify `6esk` Twilio env:
 ```powershell
-Get-ChildItem Env:SUPPORT_CALLS_PROVIDER,Env:SUPPORT_CALLS_PUBLIC_BASE_URL,Env:SUPPORT_CALLS_TWILIO_ACCOUNT_SID,Env:SUPPORT_CALLS_TWILIO_FROM_NUMBER
+Get-ChildItem Env:CALLS_PROVIDER,Env:CALLS_TWILIO_ACCOUNT_SID,Env:CALLS_TWILIO_FROM_NUMBER,Env:CALLS_TWILIO_BRIDGE_TARGET
 ```
 
-2. Verify `6ex` build and route availability:
+2. Verify `6esk` build and route availability:
 ```powershell
-Invoke-RestMethod -Method GET -Uri "https://<your-6ex-backend-domain>/health"
+Invoke-RestMethod -Method GET -Uri "https://<your-6esk-domain>/"
 ```
 
-3. Provider callback endpoints expected on `6ex`:
-- `GET /api/v1/internal/support/calls/webhooks/twilio/status`
-- `GET /api/v1/internal/support/calls/webhooks/twilio/recording`
-- `POST /api/v1/internal/support/calls/transcript`
-- `GET /api/v1/internal/support/calls/recordings/:bridgeId?token=...`
+3. Provider callback endpoints expected on `6esk`:
+- `GET /api/calls/webhooks/twilio/status`
+- `GET /api/calls/webhooks/twilio/recording`
+- `POST /api/calls/transcript`
 
-4. Confirm `6esk` converts bridged recordings into `6esk` attachment URLs backed by `6esk` R2, not long-lived raw provider media URLs.
+4. Confirm `6esk` converts provider recordings into `6esk` attachment URLs backed by `6esk` R2, not long-lived raw provider media URLs.
+
+## Railway Layout
+
+Create a dedicated Railway project for `6esk`. Do not deploy voice infrastructure inside `6ex-home`.
+
+Recommended project:
+- `6esk-platform`
+
+Recommended services:
+1. `6esk-web`
+2. `6esk-jobs`
+
+Service responsibilities:
+- `6esk-web`
+  - Next.js app
+  - Twilio status callback endpoint
+  - Twilio recording callback endpoint
+  - transcript callback endpoint
+  - Admin and Support UI
+- `6esk-jobs`
+  - call outbox worker
+  - transcript outbox worker
+  - transcript-AI outbox worker
+  - retry/drill jobs
+
+Shared project resources:
+- Postgres
+- Redis (if/when enabled for job coordination)
+- Cloudflare R2 credentials
+- Twilio credentials
+- STT provider credentials
+
+Deployment rule:
+- `6ex` stays an external integrated system
+- telephony, call artifacts, transcripts, and QA are platform responsibilities owned by `6esk`
 
 ## Replay-Window Drill
 

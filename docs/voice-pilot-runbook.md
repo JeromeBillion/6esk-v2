@@ -187,16 +187,18 @@ psql $DATABASE_URL -c "\dt call_sessions call_events call_outbox_events call_pol
 
 ```bash
 # Check required environment variables
-env | grep -E 'CALLS_PROVIDER|CALLS_PROVIDER_HTTP_URL|CALLS_PROVIDER_HTTP_SECRET|CALLS_WEBHOOK_SECRET'
+env | grep -E 'CALLS_PROVIDER|CALLS_TWILIO_ACCOUNT_SID|CALLS_TWILIO_FROM_NUMBER|CALLS_TWILIO_BRIDGE_TARGET|CALLS_WEBHOOK_SECRET'
 
-# Expected: 6esk bridge envs should be set for production
+# Expected: 6esk Twilio envs should be set for production
 # If any missing: contact DevOps to configure before pilot
 ```
 
 **Checklist**:
-- [ ] `CALLS_PROVIDER=http_bridge`
-- [ ] `CALLS_PROVIDER_HTTP_URL` points at `6ex /api/v1/internal/support/calls/outbound`
-- [ ] `CALLS_PROVIDER_HTTP_SECRET` matches `6ex SUPPORT_CALLS_API_SECRET` (or fallback support secret)
+- [ ] `CALLS_PROVIDER=twilio`
+- [ ] `CALLS_TWILIO_ACCOUNT_SID`
+- [ ] `CALLS_TWILIO_AUTH_TOKEN`
+- [ ] `CALLS_TWILIO_FROM_NUMBER`
+- [ ] `CALLS_TWILIO_BRIDGE_TARGET`
 - [ ] `CALLS_WEBHOOK_SECRET` rotated and documented
 - [ ] `CALLS_STT_PROVIDER=managed_http`
 - [ ] `CALLS_STT_PROVIDER_HTTP_URL` points at `6esk /api/internal/calls/stt/deepgram`
@@ -207,13 +209,6 @@ env | grep -E 'CALLS_PROVIDER|CALLS_PROVIDER_HTTP_URL|CALLS_PROVIDER_HTTP_SECRET
 - [ ] `R2_ACCESS_KEY_ID` configured for `6esk`
 - [ ] `R2_SECRET_ACCESS_KEY` configured for `6esk`
 - [ ] `R2_BUCKET` points at the `6esk` voice artifact bucket
-- [ ] `6ex` bridge envs are set:
-  - [ ] `SUPPORT_CALLS_PROVIDER=twilio`
-  - [ ] `SUPPORT_CALLS_PUBLIC_BASE_URL` externally reachable
-  - [ ] `SUPPORT_CALLS_TWILIO_ACCOUNT_SID`
-  - [ ] `SUPPORT_CALLS_TWILIO_AUTH_TOKEN`
-  - [ ] `SUPPORT_CALLS_TWILIO_FROM_NUMBER`
-  - [ ] `SUPPORT_CALLS_TWILIO_BRIDGE_TARGET`
 
 ### 3. API Endpoint Readiness
 
@@ -727,10 +722,10 @@ Before enabling for provider, verify:
 **Twilio** (if using):
 - [ ] API account active and verified
 - [ ] Phone numbers purchased for origination
-- [ ] `6ex` callback URLs reachable from Twilio:
-  - [ ] `/api/v1/internal/support/calls/webhooks/twilio/status`
-  - [ ] `/api/v1/internal/support/calls/webhooks/twilio/recording`
-- [ ] Recording relay URL from `6ex` is reachable by `6esk`
+- [ ] `6esk` callback URLs reachable from Twilio:
+  - [ ] `/api/calls/webhooks/twilio/status`
+  - [ ] `/api/calls/webhooks/twilio/recording`
+- [ ] `6esk` can fetch provider recording media directly with Twilio auth
 - [ ] Bridge target format matches deployment (`+E164` PSTN or `client:<identity>`)
 
 **Other Providers**:

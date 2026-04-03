@@ -110,7 +110,7 @@ describe("call outbox hardening", () => {
     expect(call[0]).toContain("UPDATE call_outbox_events");
     expect(call[1][0]).toBe("queued");
     expect(call[1][1]).toBe(2);
-    expect(call[1][2]).toContain("not configured");
+    expect(call[1][2]).toContain("required");
     expect(call[1][4]).toBe("evt-1");
     expect(mocks.updateCallSessionStatus).not.toHaveBeenCalled();
   });
@@ -132,7 +132,7 @@ describe("call outbox hardening", () => {
     const call = mocks.dbQuery.mock.calls[0];
     expect(call[1][0]).toBe("failed");
     expect(call[1][1]).toBe(5);
-    expect(call[1][2]).toContain("not configured");
+    expect(call[1][2]).toContain("required");
     expect(mocks.updateCallSessionStatus).toHaveBeenCalledWith(
       expect.objectContaining({
         callSessionId: "call-1",

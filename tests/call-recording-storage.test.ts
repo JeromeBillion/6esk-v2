@@ -43,6 +43,8 @@ const ORIGINAL_FETCH = global.fetch;
 describe("attachCallRecording", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CALLS_TWILIO_ACCOUNT_SID = "AC123";
+    process.env.CALLS_TWILIO_AUTH_TOKEN = "auth-token";
     mocks.putObject.mockResolvedValue("messages/message-1/recording.mp3");
     mocks.recordTicketEvent.mockResolvedValue(undefined);
     mocks.buildAgentEvent.mockReturnValue({
@@ -65,6 +67,8 @@ describe("attachCallRecording", () => {
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    delete process.env.CALLS_TWILIO_ACCOUNT_SID;
+    delete process.env.CALLS_TWILIO_AUTH_TOKEN;
   });
 
   it("stores the canonical recording url as a 6esk attachment url after uploading to R2", async () => {
@@ -151,6 +155,52 @@ describe("attachCallRecording", () => {
         "messages/message-1/recording.mp3",
         expect.any(String)
       ]
+    );
+  });
+
+  it("fetches Twilio recordings with provider auth and normalized media url", async () => {
+    mocks.dbQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "call-session-1",
+            ticket_id: "ticket-1",
+            mailbox_id: "mailbox-1",
+            message_id: "message-1",
+            provider: "twilio",
+            provider_call_id: "CA123",
+            status: "completed",
+            event_sequence: 2,
+            to_phone: "+27123456789",
+            from_phone: "+27110000000",
+            recording_url: null,
+            recording_r2_key: null,
+            transcript_r2_key: null,
+            metadata: null
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ event_sequence: 3 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "job-1", status: "queued", provider: "managed_http" }]
+      });
+
+    await attachCallRecording({
+      provider: "twilio",
+      providerCallId: "CA123",
+      recordingUrl: "https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123"
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.twilio.com/2010-04-01/Accounts/AC123/Recordings/RE123.mp3",
+      expect.objectContaining({
+        headers: {
+          Authorization: `Basic ${Buffer.from("AC123:auth-token").toString("base64")}`
+        }
+      })
     );
   });
 });

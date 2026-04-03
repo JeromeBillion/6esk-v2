@@ -77,7 +77,7 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 ### Required Deliverables
 - real provider adapter wired into `call_outbox_events`
 - stable callback reconciliation for status, recording, and transcript events
-- `6esk`-owned recording and transcript storage in `6esk` R2 buckets; `6ex` only bridges provider callbacks/artifacts and must not become the durable artifact store
+- `6esk`-owned Twilio outbound execution plus `6esk`-owned recording and transcript storage in `6esk` R2 buckets
 - mandatory transcript pipeline attached to the correct ticket/session, even if transcript generation is asynchronous and handled outside Twilio
 - `6esk` STT orchestration owned inside `6esk`, with managed STT first and self-hosting treated as a later optimization, not a `v1` blocker
 - first managed STT backend wired behind `managed_http` so provider selection stays isolated from the rest of the call pipeline
@@ -203,7 +203,7 @@ Current progress:
 
 Current progress:
 - trusted `6ex` -> `6esk` ticket creation is already present
-- trusted `6esk` -> `6ex` voice bridge is now present
+- `6esk` now owns direct Twilio outbound execution, Twilio webhook handling, and voice artifact ingress without routing telephony through `6ex`
 - `6esk` already delivers lifecycle events directly to Venus where needed
 - `6esk` remains the storage owner for call artifacts; even when new Cloudflare R2 buckets are created, they are `6esk` buckets, not `6ex` buckets
 - trusted inbound `6ex` create flows now persist customer identity enrichment and external-user link cache updates inside `6esk`
@@ -254,12 +254,12 @@ Current progress:
 
 ## Execution Order
 ### Phase 1: finish product-critical blockers
-- voice rollout validation on the real `6esk -> 6ex -> Twilio` path
+- voice rollout validation on the real `6esk -> Twilio` path
 - Venus/6ex ticket creation hardening + `6ex` context integration
 - `6ex` customer identity integration
 
 Note:
-- the real provider adapter is now implemented as `6esk http_bridge -> 6ex -> Twilio`
+- the real provider adapter is now implemented directly in `6esk` for Twilio outbound/status/recording ownership
 - the remaining voice task is rollout validation, not missing core provider code
 
 ### Phase 2: modularize the platform

@@ -12,6 +12,7 @@ import { getOrCreateMailbox } from "@/server/email/mailbox";
 import { putObject } from "@/server/storage/r2";
 import { enqueueCallTranscriptJob, markTranscriptJobCompleted } from "@/server/calls/transcript-jobs";
 import { enqueueCallTranscriptAiJob } from "@/server/calls/transcript-ai-jobs";
+import { buildTwilioMediaFetchConfig } from "@/server/calls/twilio";
 import {
   addTagsToTicket,
   createTicket,
@@ -1019,6 +1020,15 @@ export async function attachCallRecording({
     return { status: "failed" as const, detail: "Recording URL is required." };
   }
 
+  if (session.recording_r2_key) {
+    return {
+      status: "ignored" as const,
+      callSessionId: session.id,
+      recordingUrl: session.recording_url,
+      recordingR2Key: session.recording_r2_key
+    };
+  }
+
   const at = occurredAt ?? new Date();
   let uploadedKey: string | null = null;
   let attachmentId: string | null = null;
@@ -1026,7 +1036,10 @@ export async function attachCallRecording({
 
   if (!session.recording_r2_key && session.message_id) {
     try {
-      const response = await fetch(url);
+      const twilioMediaConfig = providerValue === "twilio" ? buildTwilioMediaFetchConfig(url) : null;
+      const response = twilioMediaConfig
+        ? await fetch(twilioMediaConfig.url, { headers: twilioMediaConfig.headers })
+        : await fetch(url);
       if (response.ok) {
         const contentType = response.headers.get("content-type") || "audio/mpeg";
         const arrayBuffer = await response.arrayBuffer();

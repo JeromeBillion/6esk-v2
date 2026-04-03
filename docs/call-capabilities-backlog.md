@@ -6,7 +6,7 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
 - Done/mostly done:
   - E1 foundations
   - E2 inbound voice pipeline (including replay-window checks)
-  - E3 outbound queue path including `6esk` `http_bridge` delivery and `6ex` Twilio-capable bridge ingestion
+  - E3 outbound queue path including direct `6esk` Twilio delivery and `6esk`-owned webhook handling
   - E4 human UX core call flows
   - E5 AI voice actions and policy gate
   - E7 analytics + ops endpoints/UI baseline

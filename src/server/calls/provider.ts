@@ -1,3 +1,13 @@
+import twilio from "twilio";
+import {
+  buildTwilioDialTwiML,
+  buildTwilioPublicUrl,
+  getTwilioBridgeTarget,
+  getTwilioCredentials,
+  normalizeTwilioPhoneOrNull,
+  resolveTwilioCallerId
+} from "@/server/calls/twilio";
+
 type OutboundCallPayload = {
   callSessionId?: unknown;
   ticketId?: unknown;
@@ -26,14 +36,6 @@ function getHttpBridgeTimeoutMs() {
   return Math.floor(parsed);
 }
 
-function trimTrailingSlash(value: string) {
-  return value.replace(/\/+$/, "");
-}
-
-function buildCallbackUrl(appUrl: string, path: string) {
-  return `${trimTrailingSlash(appUrl)}${path}`;
-}
-
 function buildWebhookAuthConfig() {
   return {
     sharedSecret: readString(process.env.INBOUND_SHARED_SECRET) ?? null,
@@ -51,11 +53,6 @@ async function sendViaHttpBridge(
   const bridgeUrl = readString(process.env.CALLS_PROVIDER_HTTP_URL);
   if (!bridgeUrl) {
     throw new Error("CALLS_PROVIDER_HTTP_URL is not configured.");
-  }
-
-  const appUrl = readString(process.env.APP_URL);
-  if (!appUrl) {
-    throw new Error("APP_URL is required for outbound call callbacks.");
   }
 
   const callSessionId = readString(payload.callSessionId);
@@ -90,9 +87,9 @@ async function sendViaHttpBridge(
         fromPhone,
         reason,
         callbacks: {
-          statusUrl: buildCallbackUrl(appUrl, "/api/calls/status"),
-          recordingUrl: buildCallbackUrl(appUrl, "/api/calls/recording"),
-          transcriptUrl: buildCallbackUrl(appUrl, "/api/calls/transcript"),
+          statusUrl: buildTwilioPublicUrl("/api/calls/status"),
+          recordingUrl: buildTwilioPublicUrl("/api/calls/recording"),
+          transcriptUrl: buildTwilioPublicUrl("/api/calls/transcript"),
           auth: buildWebhookAuthConfig()
         }
       }),
@@ -123,6 +120,48 @@ async function sendViaHttpBridge(
   }
 }
 
+async function sendViaTwilio(
+  eventId: string,
+  payload: OutboundCallPayload
+): Promise<{ providerCallId: string | null }> {
+  const callSessionId = readString(payload.callSessionId);
+  const ticketId = readString(payload.ticketId);
+  const messageId = readString(payload.messageId);
+  const toPhone = normalizeTwilioPhoneOrNull(readString(payload.toPhone));
+  const fromPhone = resolveTwilioCallerId(readString(payload.fromPhone));
+  const reason = readString(payload.reason);
+
+  if (!callSessionId || !ticketId || !messageId || !toPhone) {
+    throw new Error("Outbound call payload is incomplete.");
+  }
+
+  const { accountSid, authToken } = getTwilioCredentials();
+  const bridgeTarget = getTwilioBridgeTarget();
+  const client = twilio(accountSid, authToken);
+  const statusCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/status");
+  const recordingCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/recording");
+  const twiml = buildTwilioDialTwiML({
+    bridgeTarget,
+    callerId: fromPhone,
+    recordingCallbackUrl: recordingCallback
+  });
+
+  const call = await client.calls.create({
+    to: toPhone,
+    from: fromPhone,
+    twiml,
+    statusCallback,
+    statusCallbackMethod: "GET",
+    statusCallbackEvent: ["initiated", "ringing", "answered", "completed"]
+  });
+
+  if (!call.sid) {
+    throw new Error(`Twilio call response missing SID for event ${eventId}.`);
+  }
+
+  return { providerCallId: call.sid };
+}
+
 export async function sendOutboundCall(
   provider: string,
   eventId: string,
@@ -134,6 +173,10 @@ export async function sendOutboundCall(
 
   if (provider === "http_bridge") {
     return sendViaHttpBridge(eventId, payload);
+  }
+
+  if (provider === "twilio") {
+    return sendViaTwilio(eventId, payload);
   }
 
   throw new Error(`Call provider '${provider}' is not configured.`);

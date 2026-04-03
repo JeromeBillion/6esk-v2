@@ -11,7 +11,7 @@ This contract is focused on safe AI calling through 6esk.
 - Explicit boundary:
   - AI/voice provider keys stay in `C:\Users\choma\Desktop\Venus-develop`.
   - Do not send those keys to 6esk.
-  - `6ex` may bridge provider callbacks and media retrieval, but it must not become the durable store for recordings or transcripts.
+  - `6ex` is not part of the telephony control plane for the target architecture.
 
 ## Integration Objectives
 - AI and human call flows share the same 6esk backend behavior.
@@ -183,10 +183,9 @@ When Venus posts transcript summary/action items via `POST /api/agent/v1/actions
   - monotonic call event sequencing (`call.sequence`) and event idempotency keys (`call.eventIdempotencyKey`) on `ticket.call.*`
   - transcript summary writeback deduplication for `request_human_review` keyed by `callSessionId + idempotencyKey`
   - call ops runbook and replay/load drill scripts for safe validation
-  - generic `http_bridge` outbound provider path in `6esk`
-  - trusted `6ex` bridge route for outbound support call relay at `/api/v1/internal/support/calls/outbound`
-  - Twilio-capable provider execution path in `6ex`, including status/recording webhook relay and temporary recording proxy URLs back to `6esk`
-  - generic transcript ingress route in `6ex` for provider-side transcript delivery to `6esk`
+  - direct Twilio outbound provider path in `6esk`
+  - `6esk`-owned Twilio status/recording webhook routes
+  - `6esk`-owned recording ingest into `6esk` R2 and managed transcript callback flow
 - Still pending:
   - live callback rehearsal against production/staging Twilio credentials
   - pilot signoff on real provider status/recording/transcript timing
