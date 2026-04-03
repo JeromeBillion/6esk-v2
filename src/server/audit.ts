@@ -27,7 +27,7 @@ export async function listAuditLogsForTicket(ticketId: string, limit = 50) {
             u.display_name as actor_name, u.email as actor_email
      FROM audit_logs a
      LEFT JOIN users u ON u.id = a.actor_user_id
-     WHERE a.entity_id = $1 OR (a.data->>'ticketId') = $1
+     WHERE a.entity_id = $1 OR (a.data->>'ticketId') = $1::text
      ORDER BY a.created_at DESC
      LIMIT $2`,
     [ticketId, limit]

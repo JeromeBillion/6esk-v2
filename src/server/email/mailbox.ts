@@ -46,3 +46,25 @@ export async function findMailbox(address: string) {
   );
   return result.rows[0] ?? null;
 }
+
+export async function resolveInboundMailbox(address: string, supportAddress: string) {
+  if (address === supportAddress) {
+    return getOrCreateMailbox(address, supportAddress);
+  }
+
+  const existing = await findMailbox(address);
+  if (existing) {
+    return existing;
+  }
+
+  const ownerResult = await db.query<{ id: string }>(
+    "SELECT id FROM users WHERE lower(email) = $1 LIMIT 1",
+    [address]
+  );
+
+  if (!ownerResult.rows[0]?.id) {
+    return null;
+  }
+
+  return getOrCreateMailbox(address, supportAddress);
+}

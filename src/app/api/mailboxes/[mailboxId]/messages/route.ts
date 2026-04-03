@@ -1,6 +1,6 @@
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
-import { listMailboxesForUser } from "@/server/mailboxes";
+import { listInboxMailboxesForUser } from "@/server/mailboxes";
 
 export async function GET(
   _request: Request,
@@ -12,7 +12,7 @@ export async function GET(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const mailboxes = await listMailboxesForUser(user);
+  const mailboxes = await listInboxMailboxesForUser(user);
   const allowed = mailboxes.some((mailbox) => mailbox.id === mailboxId);
   if (!allowed) {
     return Response.json({ error: "Forbidden" }, { status: 403 });

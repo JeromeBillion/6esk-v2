@@ -1,0 +1,11 @@
+{
+  "name": "6esk-email-worker",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {}
+}

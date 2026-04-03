@@ -21,6 +21,7 @@ import { Textarea } from "@/app/workspace/components/ui/textarea";
 import {
   AgentIntegration,
   AgentFailedEvent,
+  AdminMailboxRecord,
   AgentOutboxMetrics,
   AdminUserRecord,
   AuditLogRecord,
@@ -46,6 +47,7 @@ import {
   WhatsAppFailedEvent,
   WhatsAppOutboxMetrics,
   batchRecoverDeadLetters,
+  createAdminMailbox,
   createAgentIntegration,
   createSpamRule,
   createTag,
@@ -72,6 +74,7 @@ import {
   getWhatsAppOutboxMetrics,
   listFailedWhatsAppEvents,
   listAgentIntegrations,
+  listAdminMailboxes,
   listAuditLogs,
   listFailedCallEvents,
   listFailedCallTranscriptAiJobs,
@@ -126,6 +129,11 @@ type UserForm = {
   displayName: string;
   password: string;
   roleId: string;
+};
+
+type MailboxForm = {
+  address: string;
+  memberEmails: string;
 };
 
 type SlaForm = {
@@ -340,6 +348,8 @@ export default function AdminClient() {
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [userForm, setUserForm] = useState<UserForm>({ email: "", displayName: "", password: "", roleId: "" });
+  const [mailboxes, setMailboxes] = useState<AdminMailboxRecord[]>([]);
+  const [mailboxForm, setMailboxForm] = useState<MailboxForm>({ address: "", memberEmails: "" });
   const [sla, setSla] = useState<SlaForm>({ firstResponseMinutes: 120, resolutionMinutes: 1440 });
   const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
 
@@ -622,6 +632,7 @@ export default function AdminClient() {
       const [
         modulesPayload,
         usagePayload,
+        mailboxRows,
         tagRows,
         ruleRows,
         spamRows,
@@ -632,6 +643,7 @@ export default function AdminClient() {
       ] = await Promise.all([
         getWorkspaceModules(),
         getWorkspaceModuleUsage(),
+        listAdminMailboxes(),
         listTags(),
         listSpamRules(),
         listSpamMessages(25),
@@ -642,6 +654,7 @@ export default function AdminClient() {
       ]);
       setWorkspaceModules(modulesPayload.config);
       setWorkspaceUsage(usagePayload.summary);
+      setMailboxes(mailboxRows);
       setTags(tagRows);
       setSpamRules(ruleRows);
       setSpamMessages(spamRows);
@@ -844,6 +857,28 @@ export default function AdminClient() {
       await loadWorkspace();
     } catch (error) {
       pushError(error, "Could not update workspace modules");
+    }
+  }
+
+  async function saveMailbox() {
+    const address = mailboxForm.address.trim().toLowerCase();
+    const memberEmails = mailboxForm.memberEmails
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!address) {
+      setToast({ tone: "error", message: "Mailbox address is required." });
+      return;
+    }
+
+    try {
+      await createAdminMailbox({ address, memberEmails });
+      setMailboxForm({ address: "", memberEmails: "" });
+      pushSuccess("Mailbox saved");
+      await loadWorkspace();
+    } catch (error) {
+      pushError(error, "Could not save mailbox");
     }
   }
 
@@ -1481,6 +1516,84 @@ export default function AdminClient() {
                     Generated {formatDate(workspaceUsage?.generatedAt)} for the last{" "}
                     {workspaceUsage?.windowDays ?? 30} days.
                   </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Platform Mailboxes</CardTitle>
+                  <CardDescription>
+                    Shared inboxes owned inside 6esk. Personal mailboxes are created automatically when admins create users.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-neutral-900">Create or update platform mailbox</p>
+                      <p className="mt-1 text-xs text-neutral-600">
+                        Re-save the same address to replace member access. Use comma-separated user emails for inbox membership.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-[0.8fr_1.2fr] gap-2">
+                      <Input
+                        value={mailboxForm.address}
+                        onChange={(event) =>
+                          setMailboxForm((previous) => ({ ...previous, address: event.target.value }))
+                        }
+                        placeholder="support@6ex.co.za"
+                      />
+                      <Input
+                        value={mailboxForm.memberEmails}
+                        onChange={(event) =>
+                          setMailboxForm((previous) => ({ ...previous, memberEmails: event.target.value }))
+                        }
+                        placeholder="agent1@6ex.co.za, agent2@6ex.co.za"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={() => void saveMailbox()}>Save Mailbox</Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setMailboxForm({ address: "", memberEmails: "" })}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {mailboxes.map((mailbox) => (
+                      <div
+                        key={mailbox.id}
+                        className="rounded-lg border border-neutral-200 p-3 space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-neutral-900">{mailbox.address}</p>
+                            <p className="text-xs text-neutral-500">
+                              Created {formatDate(mailbox.created_at)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={mailbox.type === "platform" ? "outline" : "secondary"}>
+                              {mailbox.type}
+                            </Badge>
+                            {mailbox.owner_email ? (
+                              <Badge variant="secondary">{mailbox.owner_email}</Badge>
+                            ) : null}
+                          </div>
+                        </div>
+                        <p className="text-xs text-neutral-600">
+                          Members:{" "}
+                          {mailbox.members.length
+                            ? mailbox.members.map((member) => member.email).join(", ")
+                            : mailbox.type === "platform"
+                              ? "Lead admins only until members are added."
+                              : "Owner mailbox"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
 

@@ -1,5 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
-import { listMailboxesForUser } from "@/server/mailboxes";
+import { listInboxMailboxesForUser } from "@/server/mailboxes";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -7,6 +7,6 @@ export async function GET() {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const mailboxes = await listMailboxesForUser(user);
+  const mailboxes = await listInboxMailboxesForUser(user);
   return Response.json({ mailboxes });
 }

@@ -242,7 +242,10 @@ export async function listTicketsForUser(
   }
 ) {
   const values: Array<string> = [];
-  const conditions: string[] = ["t.merged_into_ticket_id IS NULL"];
+  const conditions: string[] = [
+    "t.merged_into_ticket_id IS NULL",
+    "(t.mailbox_id IS NULL OR mb.type = 'platform')"
+  ];
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
@@ -360,6 +363,7 @@ export async function listTicketsForUser(
               WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
+     LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id
      ${whereClause}

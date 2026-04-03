@@ -1,0 +1,10 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY package.json ./
+COPY scripts ./scripts
+
+CMD ["npm", "run", "jobs:runner"]

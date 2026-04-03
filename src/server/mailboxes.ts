@@ -30,6 +30,20 @@ export async function listMailboxesForUser(user: SessionUser) {
   return result.rows;
 }
 
+export async function listInboxMailboxesForUser(user: SessionUser) {
+  const result = await db.query<MailboxSummary>(
+    `SELECT m.id, m.address, m.type
+     FROM mailboxes m
+     JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
+     WHERE mm.user_id = $1
+       AND m.type = 'personal'
+     ORDER BY m.address`,
+    [user.id]
+  );
+
+  return result.rows;
+}
+
 export async function getPlatformMailbox() {
   const result = await db.query<MailboxSummary>(
     `SELECT id, address, type

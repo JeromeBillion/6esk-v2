@@ -16,6 +16,20 @@ export type AdminUserRecord = {
   role_name: string | null;
 };
 
+export type AdminMailboxRecord = {
+  id: string;
+  address: string;
+  type: "platform" | "personal";
+  created_at: string;
+  owner_email: string | null;
+  members: Array<{
+    id: string;
+    email: string;
+    displayName: string;
+    accessLevel: string;
+  }>;
+};
+
 export type SlaConfig = {
   firstResponseMinutes: number;
   resolutionMinutes: number;
@@ -481,6 +495,22 @@ export async function listRoles() {
 export async function listUsers() {
   const payload = await apiFetch<{ users: AdminUserRecord[] }>("/api/admin/users");
   return payload.users ?? [];
+}
+
+export async function listAdminMailboxes() {
+  const payload = await apiFetch<{ mailboxes: AdminMailboxRecord[] }>("/api/admin/mailboxes");
+  return payload.mailboxes ?? [];
+}
+
+export function createAdminMailbox(input: {
+  address: string;
+  memberEmails?: string[];
+}) {
+  return apiFetch<{ status: string; mailbox: AdminMailboxRecord }>("/api/admin/mailboxes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
 }
 
 export async function createUser(input: {

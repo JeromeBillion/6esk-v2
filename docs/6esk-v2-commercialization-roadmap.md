@@ -184,6 +184,8 @@ Customers must be able to choose between:
 - DNS verification flow
 - SPF / DKIM / DMARC setup and validation
 - mailbox and alias provisioning
+- Cloudflare Email Routing sync from `6esk`
+- when an admin creates a user or mailbox in `6esk`, `6esk` also creates or updates the corresponding Cloudflare custom address rule automatically
 - outbound delivery infrastructure or provider partnership
 - inbound routing into 6esk
 - bounce, complaint, suppression, and deliverability handling

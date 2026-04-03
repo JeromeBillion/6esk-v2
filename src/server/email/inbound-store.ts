@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { inboundEmailSchema } from "@/server/email/schema";
 import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize";
-import { getOrCreateMailbox } from "@/server/email/mailbox";
+import { resolveInboundMailbox } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import {
@@ -71,7 +71,10 @@ export async function storeInboundEmail(data: InboundEmail) {
 
   const supportAddress = getSupportAddress();
   const primaryRecipient = toList[0];
-  const mailbox = await getOrCreateMailbox(primaryRecipient, supportAddress);
+  const mailbox = await resolveInboundMailbox(primaryRecipient, supportAddress);
+  if (!mailbox) {
+    throw new Error(`Mailbox ${primaryRecipient} is not configured.`);
+  }
 
   const spamDecision = await evaluateSpam({
     fromEmail,

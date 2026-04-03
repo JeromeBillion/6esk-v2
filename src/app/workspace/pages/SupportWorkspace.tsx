@@ -2007,8 +2007,8 @@ export function SupportWorkspace() {
           </div>
 
           <div className="border-b border-neutral-200 bg-neutral-50/80 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/70">
-            <div className="flex items-center justify-between gap-3">
-              <div className="inline-flex items-center gap-1 rounded-[14px] border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-950/90">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-1 rounded-[14px] border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-950/90">
                 <button
                   type="button"
                   onClick={() => setAssignedMine(false)}
@@ -2070,7 +2070,7 @@ export function SupportWorkspace() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <Button
                   size="sm"
                   className="h-8 rounded-[12px] px-3.5 text-[12px] font-medium bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
