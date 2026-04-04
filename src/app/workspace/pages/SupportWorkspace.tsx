@@ -95,6 +95,7 @@ import { listActiveWhatsAppTemplates, type ActiveWhatsAppTemplate } from "@/app/
 import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { listTags, listUsers, type AdminUserRecord, type TagRecord } from "@/app/lib/api/admin";
 import { useDemoMode } from "@/app/lib/demo-mode";
+import { DESK_LIVE_EVENT_NAME, type DeskLiveEventDetail } from "@/app/lib/desk-live";
 import { encodeAttachments, formatFileSize } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
 
@@ -1275,6 +1276,28 @@ export function SupportWorkspace() {
     setChannelFilter("all");
     setTagFilter("all");
   }, []);
+
+  useEffect(() => {
+    if (demoModeEnabled) {
+      return;
+    }
+
+    const handleDeskLiveEvent = (event: Event) => {
+      const detail = (event as CustomEvent<DeskLiveEventDetail>).detail;
+      if (!detail?.supportVersionChanged) {
+        return;
+      }
+      void loadTickets();
+      if (selectedTicketId) {
+        void loadTicketDetails(selectedTicketId);
+      }
+    };
+
+    window.addEventListener(DESK_LIVE_EVENT_NAME, handleDeskLiveEvent as EventListener);
+    return () => {
+      window.removeEventListener(DESK_LIVE_EVENT_NAME, handleDeskLiveEvent as EventListener);
+    };
+  }, [demoModeEnabled, loadTicketDetails, loadTickets, selectedTicketId]);
 
   useEffect(() => {
     if (!selectedTicketId) {

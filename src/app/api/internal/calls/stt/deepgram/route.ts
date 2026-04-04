@@ -32,11 +32,21 @@ function appendDeepgramExtras(url: URL, values: Record<string, string | null | u
   }
 }
 
-function buildDeepgramUrl(callbackUrl: string, metadata: Record<string, unknown> | null) {
+function withCallbackToken(callbackUrl: string, callbackToken: string) {
+  const callback = new URL(callbackUrl);
+  callback.searchParams.set("callback_token", callbackToken);
+  return callback.toString();
+}
+
+function buildDeepgramUrl(
+  callbackUrl: string,
+  callbackToken: string,
+  metadata: Record<string, unknown> | null
+) {
   const baseUrl =
     readString(process.env.CALLS_STT_DEEPGRAM_API_URL) ?? "https://api.deepgram.com/v1/listen";
   const url = new URL(baseUrl);
-  url.searchParams.set("callback", callbackUrl);
+  url.searchParams.set("callback", withCallbackToken(callbackUrl, callbackToken));
   url.searchParams.set("callback_method", "POST");
   url.searchParams.set("punctuate", "true");
   url.searchParams.set("smart_format", "true");
@@ -112,7 +122,7 @@ export async function POST(request: Request) {
     callSessionId: parsedJob.callSessionId
   };
   const audioBuffer = Buffer.from(await audio.arrayBuffer());
-  const deepgramUrl = buildDeepgramUrl(parsedJob.callbackUrl, metadata);
+  const deepgramUrl = buildDeepgramUrl(parsedJob.callbackUrl, callbackToken, metadata);
 
   const response = await fetch(deepgramUrl, {
     method: "POST",

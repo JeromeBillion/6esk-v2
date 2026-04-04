@@ -2,11 +2,11 @@ import twilio from "twilio";
 import {
   buildTwilioDialTwiML,
   buildTwilioPublicUrl,
-  getTwilioBridgeTarget,
   getTwilioCredentials,
   normalizeTwilioPhoneOrNull,
   resolveTwilioCallerId
 } from "@/server/calls/twilio";
+import { resolveVoiceDeskTargetsForOutbound } from "@/server/calls/operators";
 
 type OutboundCallPayload = {
   callSessionId?: unknown;
@@ -15,6 +15,8 @@ type OutboundCallPayload = {
   toPhone?: unknown;
   fromPhone?: unknown;
   reason?: unknown;
+  actorUserId?: unknown;
+  actorIntegrationId?: unknown;
 };
 
 type HttpBridgeResponse = {
@@ -130,20 +132,38 @@ async function sendViaTwilio(
   const toPhone = normalizeTwilioPhoneOrNull(readString(payload.toPhone));
   const fromPhone = resolveTwilioCallerId(readString(payload.fromPhone));
   const reason = readString(payload.reason);
+  const actorUserId = readString(payload.actorUserId);
 
   if (!callSessionId || !ticketId || !messageId || !toPhone) {
     throw new Error("Outbound call payload is incomplete.");
   }
 
   const { accountSid, authToken } = getTwilioCredentials();
-  const bridgeTarget = getTwilioBridgeTarget();
   const client = twilio(accountSid, authToken);
   const statusCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/status");
   const recordingCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/recording");
+  const deskTargets = await resolveVoiceDeskTargetsForOutbound(actorUserId);
+  if (!deskTargets.length) {
+    throw new Error("No online desk operator is available to accept the call.");
+  }
   const twiml = buildTwilioDialTwiML({
-    bridgeTarget,
+    targets: deskTargets.map((target) => ({
+      type: "client" as const,
+      identity: target.identity,
+      parameters: {
+        callSessionId,
+        ticketId,
+        messageId,
+        fromPhone: toPhone,
+        toPhone: fromPhone,
+        direction: "outbound",
+        operatorUserId: target.userId,
+        operatorName: target.displayName
+      }
+    })),
     callerId: fromPhone,
-    recordingCallbackUrl: recordingCallback
+    recordingCallbackUrl: recordingCallback,
+    timeoutSeconds: Number(process.env.CALLS_TWILIO_OPERATOR_RING_TIMEOUT_SECONDS ?? "25")
   });
 
   const call = await client.calls.create({

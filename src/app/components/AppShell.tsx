@@ -14,6 +14,8 @@ import { useDemoMode } from "@/app/lib/demo-mode";
 import { parseDemoQueryValue } from "@/app/lib/demo-mode-config";
 import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { useThemeMode } from "@/app/lib/theme";
+import { DeskVoiceControl } from "@/app/components/DeskVoiceControl";
+import { DeskRealtimeController } from "@/app/components/DeskRealtimeController";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -84,6 +86,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   async function handleSignOut() {
     setSigningOut(true);
     setDemoModeEnabled(false);
+    await fetch("/api/calls/presence", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "offline", activeCallSessionId: null })
+    }).catch(() => {});
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
   }
@@ -139,6 +146,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="mt-auto flex flex-col items-center gap-2 w-full px-2">
+            <DeskVoiceControl currentUser={currentUser} demoModeEnabled={demoModeEnabled} />
             <button
               type="button"
               onClick={toggleTheme}
@@ -168,6 +176,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {children}
         </div>
       </div>
+
+      <DeskRealtimeController currentUser={currentUser} demoModeEnabled={demoModeEnabled} />
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-w-md">

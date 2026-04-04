@@ -31,16 +31,18 @@ function parseTimestamp(value: string | number | null | undefined) {
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
+  const requestUrl = new URL(request.url);
   const providedSecret = request.headers.get("x-6esk-secret") ?? request.headers.get("x-call-secret");
   const deepgramToken = request.headers.get("dg-token")?.trim() ?? null;
+  const callbackToken = requestUrl.searchParams.get("callback_token")?.trim() ?? null;
   const expectedDeepgramToken = process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN?.trim() ?? "";
   const transcriptSharedSecrets = [
     process.env.CALLS_TRANSCRIPT_SHARED_SECRET?.trim(),
     process.env.INBOUND_SHARED_SECRET?.trim()
   ].filter((value): value is string => Boolean(value));
   const authorization =
-    expectedDeepgramToken && deepgramToken
-      ? deepgramToken === expectedDeepgramToken
+    expectedDeepgramToken && (deepgramToken || callbackToken)
+      ? (deepgramToken ?? callbackToken) === expectedDeepgramToken
         ? {
             authorized: true as const,
             mode: "provider_token" as const,

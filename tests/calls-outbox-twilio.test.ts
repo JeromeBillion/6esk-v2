@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   updateCallSessionStatus: vi.fn(),
   twilioFactory: vi.fn(),
   twilioCreate: vi.fn(),
-  twilioValidate: vi.fn()
+  twilioValidate: vi.fn(),
+  resolveVoiceDeskTargetsForOutbound: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -18,6 +19,10 @@ vi.mock("@/server/db", () => ({
 
 vi.mock("@/server/calls/service", () => ({
   updateCallSessionStatus: mocks.updateCallSessionStatus
+}));
+
+vi.mock("@/server/calls/operators", () => ({
+  resolveVoiceDeskTargetsForOutbound: mocks.resolveVoiceDeskTargetsForOutbound
 }));
 
 vi.mock("twilio", () => {
@@ -53,11 +58,20 @@ describe("call outbox twilio provider", () => {
       APP_URL: "https://app.6esk.test",
       CALLS_TWILIO_ACCOUNT_SID: "AC123",
       CALLS_TWILIO_AUTH_TOKEN: "auth-token",
-      CALLS_TWILIO_FROM_NUMBER: "+27110000000",
-      CALLS_TWILIO_BRIDGE_TARGET: "+27119999999"
+      CALLS_TWILIO_FROM_NUMBER: "+27110000000"
     };
     mocks.dbQuery.mockResolvedValue({ rows: [] });
     mocks.updateCallSessionStatus.mockResolvedValue({ status: "updated" });
+    mocks.resolveVoiceDeskTargetsForOutbound.mockResolvedValue([
+      {
+        userId: "user-1",
+        identity: "desk_user_user-1",
+        displayName: "Jerome",
+        email: "jerome@6ex.co.za",
+        status: "online",
+        activeCallSessionId: null
+      }
+    ]);
     mocks.twilioFactory.mockReturnValue({
       calls: {
         create: mocks.twilioCreate
@@ -84,6 +98,7 @@ describe("call outbox twilio provider", () => {
           callSessionId: "call-1",
           ticketId: "ticket-1",
           messageId: "message-1",
+          actorUserId: "user-1",
           toPhone: "+27123456789",
           fromPhone: "+27110000000",
           reason: "Customer requested callback"
@@ -103,6 +118,7 @@ describe("call outbox twilio provider", () => {
       expect.objectContaining({
         to: "+27123456789",
         from: "+27110000000",
+        twiml: expect.stringContaining("<Client><Identity>desk_user_user-1</Identity>"),
         statusCallback: "https://app.6esk.test/api/calls/webhooks/twilio/status",
         statusCallbackMethod: "GET",
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"]

@@ -189,4 +189,41 @@ describe("POST /api/calls/transcript", () => {
       })
     );
   });
+
+  it("accepts Deepgram callback payloads when the callback token is passed in the callback URL", async () => {
+    process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN = "dg-callback-token";
+
+    const response = await POST(
+      new Request("http://localhost/api/calls/transcript?callback_token=dg-callback-token", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          metadata: {
+            request_id: "dg-request-2",
+            extra: {
+              callSessionId: "11111111-1111-1111-1111-111111111111"
+            }
+          },
+          results: {
+            utterances: [
+              {
+                speaker: 0,
+                transcript: "Please hold while I check that."
+              }
+            ]
+          }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: "attached",
+      callSessionId: "11111111-1111-1111-1111-111111111111"
+    });
+    expect(mocks.authorizeCallWebhook).not.toHaveBeenCalled();
+  });
 });

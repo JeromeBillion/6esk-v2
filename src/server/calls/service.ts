@@ -517,7 +517,9 @@ export async function queueOutboundCall({
           messageId,
           toPhone: normalizedTo,
           fromPhone: normalizedFrom ?? null,
-          reason: normalizedReason
+          reason: normalizedReason,
+          actorUserId: actorUserId ?? null,
+          actorIntegrationId: actorIntegrationId ?? null
         }
       ]
     );

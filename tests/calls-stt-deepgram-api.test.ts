@@ -89,7 +89,9 @@ describe("POST /api/internal/calls/stt/deepgram", () => {
     const [url, init] = vi.mocked(global.fetch).mock.calls[0] as [URL | string, RequestInit];
     const normalizedUrl = String(url);
     expect(normalizedUrl).toContain("https://api.deepgram.com/v1/listen");
-    expect(normalizedUrl).toContain("callback=https%3A%2F%2Fapp.6esk.test%2Fapi%2Fcalls%2Ftranscript");
+    expect(normalizedUrl).toContain(
+      "callback=https%3A%2F%2Fapp.6esk.test%2Fapi%2Fcalls%2Ftranscript%3Fcallback_token%3Ddeepgram-callback-token"
+    );
     expect(normalizedUrl).toContain("model=nova-3");
     expect(normalizedUrl).toContain("punctuate=true");
     expect(normalizedUrl).toContain("diarize=true");

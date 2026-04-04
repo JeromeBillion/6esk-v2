@@ -63,16 +63,21 @@ Still incomplete or intentionally blocked:
 5. `6esk` can reliably identify `6ex` customers using approved integration boundaries.
 6. Feature availability can be switched on/off cleanly by package or workspace entitlement.
 7. Operations can observe, recover, retry, and audit every major channel flow.
+8. Operators can work the platform as a live desk, with clear online/offline/away presence, queue notifications, and real-time updates for new work.
+9. Voice queue behavior matches real support expectations: customer calls route into `6esk`, operators ring and answer inside the desk, skip/pass onward is supported, in-call presence is visible, and there is no operator-driven customer drop action.
 
 ## Workstream A: Finish Voice Capability
 Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs\call-capabilities-backlog.md)
 
 ### Priority Items
-1. Run full staging and pilot validation from human path and AI path against the live Twilio-backed `6ex` bridge.
+1. Run full staging and pilot validation from human path and AI path against the live Twilio-backed `6esk` voice path.
 2. Validate provider call ID correlation across outbound queue, status callbacks, recordings, and transcripts.
 3. Close any remaining live-environment gaps in call recording playback/download and transcript timing.
 4. Finalize consent, policy, and blocking behaviors for live calling.
 5. Rehearse rollback and outage drills with the real provider path enabled.
+6. Replace the temporary fixed `CALLS_TWILIO_BRIDGE_TARGET` PSTN operator destination model with real in-platform queue-aware operator routing inside `6esk`.
+7. Add explicit in-call, ringing, available, away, and offline operator states so voice routing can respect real agent availability inside the desk.
+8. Add browser/platform answer and skip-pass controls for ringing calls and explicitly forbid operator-side call drop as a supported queue action.
 
 ### Required Deliverables
 - real provider adapter wired into `call_outbox_events`
@@ -86,7 +91,13 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 - QA signals must surface in Admin/metrics dashboards only; Support remains focused on the raw transcript and operational ticket state
 - full audit/event provenance for call lifecycle
 - operator-visible failure states and retry controls
+- live queue-aware call assignment inside `6esk` instead of a single hard-coded operator bridge target
+- ringing state with in-platform answer and pass-on controls
+- in-call state visible in the UI so teammates can see who is busy
+- no explicit operator-side drop action for queued/ringing customer calls
 - pilot checklist executed against `6ex` traffic or staging mirror
+- customer-facing support numbers route into `6esk`, not to an operator's personal phone as the normal support path
+- browser-native/softphone handling is the target desk model for `v1`, even if temporary PSTN bridging exists during migration
 
 ### Exit Criteria
 - inbound and outbound voice both work in a real environment
@@ -94,7 +105,10 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 - transcript-derived AI outputs (summary, resolution note, QA flags, action items) land on the correct ticket/session and remain traceable back to the raw transcript
 - QA flags and review counts are visible in Admin/Analytics without leaking into the Support operator surface
 - AI and human call initiation both honor policy rules
+- customer calls ring inside `6esk` and operators can receive, answer, or pass them from the queue without silently dropping customer calls
+- operator presence and in-call state are visible and respected by routing
 - no critical mock-only assumptions remain in the main call path
+- no normal support-call flow depends on dialing or bridging to an operator's personal phone number
 
 ## Workstream B: Unblock WhatsApp / Cross-Channel Merge Vision
 Current constraint: [merge-feature-roadmap.md](C:\Users\choma\Desktop\6esk\docs\merge-feature-roadmap.md) still blocks destructive cross-channel merge, but now supports a non-destructive `linked_case` path.
@@ -241,6 +255,37 @@ This is not just DevOps. It is product-operability.
 5. backup/restore verification for CRM-critical data
 6. channel-specific failure drills and rollback runbooks
 7. stronger telemetry around AI actions, message delivery, and call outcomes
+8. live operator presence model across the workspace
+9. real-time desk updates for new email, WhatsApp, and call events
+10. operator notifications with channel-aware popups and tones
+11. browser-native ringing and answer flow for support calls, instead of operator PSTN/mobile bridging as the normal desk path
+
+### Live Operator Experience Requirements
+The platform should feel like a live operating surface, not a static backoffice page. `v1` therefore also requires:
+- operator presence states:
+  - online
+  - away
+  - offline
+- notification controls tied to presence so active operators can receive pop-up alerts for:
+  - support emails
+  - inbox emails
+  - WhatsApp messages
+  - incoming/ringing calls
+- ringtone or equivalent audible alert for queued/ringing calls
+- real-time or near-real-time queue refresh so new work appears without manual reload
+- clear in-call state in the UI so the team can see who is currently busy on voice
+- support calls route into the desk UI itself; the normal operator experience is platform ringing/answering, not a call to the operator's personal handset
+
+### Voice Queue Rule
+For `v1`, customer calls should not be operator-droppable from the queue surface.
+Operators may:
+- answer
+- pass/skip onward
+
+Operators may not:
+- actively drop the customer's call from the queue on behalf of the customer
+
+If the customer abandons or hangs up, that should be reflected as a provider/customer-side outcome rather than a desk-side drop action.
 
 ### Exit Criteria
 - ops can explain and recover every failed send/call/merge path
@@ -260,7 +305,7 @@ Current progress:
 
 Note:
 - the real provider adapter is now implemented directly in `6esk` for Twilio outbound/status/recording ownership
-- the remaining voice task is rollout validation, not missing core provider code
+- the remaining voice task is no longer basic provider ownership; it is completion of the real desk-side ringing/answer flow plus rollout validation
 
 ### Phase 2: modularize the platform
 - entitlement schema

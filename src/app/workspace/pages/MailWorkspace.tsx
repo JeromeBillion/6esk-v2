@@ -25,6 +25,7 @@ import { ActionFeedbackModal } from "../components/ActionFeedbackModal";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { MacroPickerModal } from "../components/MacroPickerModal";
 import { useDemoMode } from "@/app/lib/demo-mode";
+import { DESK_LIVE_EVENT_NAME, type DeskLiveEventDetail } from "@/app/lib/desk-live";
 import {
   ApiMailbox,
   ApiMailboxMessage,
@@ -255,6 +256,25 @@ export function MailWorkspace() {
     void loadMessages(activeMailboxId, controller.signal);
     return () => controller.abort();
   }, [activeMailboxId, loadMessages]);
+
+  useEffect(() => {
+    if (demoModeEnabled || !activeMailboxId) {
+      return;
+    }
+
+    const handleDeskLiveEvent = (event: Event) => {
+      const detail = (event as CustomEvent<DeskLiveEventDetail>).detail;
+      if (!detail?.inboxVersionChanged) {
+        return;
+      }
+      void loadMessages(activeMailboxId);
+    };
+
+    window.addEventListener(DESK_LIVE_EVENT_NAME, handleDeskLiveEvent as EventListener);
+    return () => {
+      window.removeEventListener(DESK_LIVE_EVENT_NAME, handleDeskLiveEvent as EventListener);
+    };
+  }, [activeMailboxId, demoModeEnabled, loadMessages]);
 
   const threads = useMemo(() => buildMailThreads(messages), [messages]);
 

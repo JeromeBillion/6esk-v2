@@ -2,6 +2,17 @@ import twilio from "twilio";
 import { normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import type { CallStatus } from "@/server/calls/service";
 
+export type TwilioDialTarget =
+  | {
+      type: "client";
+      identity: string;
+      parameters?: Record<string, string | null | undefined>;
+    }
+  | {
+      type: "number";
+      value: string;
+    };
+
 function readString(value: string | null | undefined) {
   const trimmed = (value ?? "").trim();
   return trimmed || null;
@@ -64,13 +75,15 @@ export function resolveTwilioCallerId(requestedFromPhone: string | null | undefi
 }
 
 export function buildTwilioDialTwiML({
-  bridgeTarget,
+  targets,
   callerId,
-  recordingCallbackUrl
+  recordingCallbackUrl,
+  timeoutSeconds
 }: {
-  bridgeTarget: string;
+  targets: TwilioDialTarget[];
   callerId: string;
   recordingCallbackUrl: string;
+  timeoutSeconds?: number;
 }) {
   const escapeXml = (value: string) =>
     value
@@ -81,17 +94,30 @@ export function buildTwilioDialTwiML({
       .replace(/'/g, "&apos;");
 
   const escapedCallerId = escapeXml(callerId);
-  const escapedBridgeTarget = escapeXml(bridgeTarget);
   const escapedRecordingCallbackUrl = escapeXml(recordingCallbackUrl);
-  const isClientTarget = bridgeTarget.startsWith("client:");
-  const targetNode = isClientTarget
-    ? `<Client>${escapeXml(bridgeTarget.slice("client:".length))}</Client>`
-    : `<Number>${escapedBridgeTarget}</Number>`;
+  const dialTimeout = Number.isFinite(timeoutSeconds) ? Math.max(5, Math.floor(timeoutSeconds!)) : 20;
+  const targetNodes = targets
+    .map((target) => {
+      if (target.type === "number") {
+        return `<Number>${escapeXml(target.value)}</Number>`;
+      }
+
+      const parameters = Object.entries(target.parameters ?? {})
+        .filter(([, value]) => typeof value === "string" && value.trim())
+        .map(
+          ([name, value]) =>
+            `<Parameter name="${escapeXml(name)}" value="${escapeXml((value ?? "").trim())}" />`
+        )
+        .join("");
+
+      return `<Client><Identity>${escapeXml(target.identity)}</Identity>${parameters}</Client>`;
+    })
+    .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial answerOnBridge="true" callerId="${escapedCallerId}" record="record-from-answer-dual" recordingStatusCallback="${escapedRecordingCallbackUrl}" recordingStatusCallbackMethod="GET">
-    ${targetNode}
+  <Dial answerOnBridge="true" timeout="${dialTimeout}" callerId="${escapedCallerId}" record="record-from-answer-dual" recordingStatusCallback="${escapedRecordingCallbackUrl}" recordingStatusCallbackMethod="GET">
+    ${targetNodes}
   </Dial>
 </Response>`;
 }
