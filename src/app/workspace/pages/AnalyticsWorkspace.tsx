@@ -21,6 +21,8 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { cn } from "../components/ui/utils";
+import { HealthIndicator } from "../components/shared/HealthIndicator";
+import { MetricCard } from "../components/shared/MetricCard";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,15 +47,7 @@ type WhatsAppSource = "all" | "webhook" | "outbox";
 type ChannelFocus = "email" | "whatsapp" | "voice";
 
 
-type KpiMetric = {
-  id: string;
-  label: string;
-  value: number;
-  unit?: string;
-  change: number;
-  trend: "up" | "down";
-  format: "number" | "duration" | "percentage";
-};
+type MetricHealthStatus = "healthy" | "warning" | "critical";
 
 function rangeToDates(timeRange: TimeRange) {
   const end = new Date();
@@ -104,6 +98,24 @@ function safeRate(numerator: number, denominator: number) {
     return 0;
   }
   return (numerator / denominator) * 100;
+}
+
+function getSlaStatus(value: number): MetricHealthStatus {
+  if (value >= 95) return "healthy";
+  if (value >= 85) return "warning";
+  return "critical";
+}
+
+function getDurationStatus(value: number, healthyThreshold: number, warningThreshold: number): MetricHealthStatus {
+  if (value <= healthyThreshold) return "healthy";
+  if (value <= warningThreshold) return "warning";
+  return "critical";
+}
+
+function getBacklogStatus(value: number, change: number): MetricHealthStatus {
+  if (value <= 25 && change <= 5) return "healthy";
+  if (value <= 75 && change <= 15) return "warning";
+  return "critical";
 }
 
 function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number>>) {
@@ -226,84 +238,6 @@ export function AnalyticsWorkspace() {
     void loadAnalytics(controller.signal);
     return () => controller.abort();
   }, [loadAnalytics]);
-
-  const kpiMetrics = useMemo(() => {
-    if (!overview || !sla) return [];
-    const previous = overviewPrevious;
-    const previousSla = slaPrevious;
-    const openTicketsChange = percentChange(overview.openTickets, previous?.openTickets ?? 0);
-    const avgFirstResponseChange = percentChange(
-      toMinutes(overview.avgFirstResponseSeconds),
-      toMinutes(previous?.avgFirstResponseSeconds ?? 0)
-    );
-    const avgResolutionChange = percentChange(
-      toHours(overview.avgResolutionSeconds),
-      toHours(previous?.avgResolutionSeconds ?? 0)
-    );
-    const firstResponseSlaChange = percentChange(
-      sla.firstResponse.complianceRate * 100,
-      (previousSla?.firstResponse.complianceRate ?? 0) * 100
-    );
-    const resolutionSlaChange = percentChange(
-      sla.resolution.complianceRate * 100,
-      (previousSla?.resolution.complianceRate ?? 0) * 100
-    );
-
-    return [
-      {
-        id: "total-tickets",
-        label: "Total Tickets",
-        value: overview.totalTickets,
-        change: percentChange(overview.totalTickets, previous?.totalTickets ?? 0),
-        trend: overview.totalTickets >= (previous?.totalTickets ?? 0) ? "up" : "down",
-        format: "number"
-      },
-      {
-        id: "open-tickets",
-        label: "Open Tickets",
-        value: overview.openTickets,
-        change: openTicketsChange,
-        trend: openTicketsChange >= 0 ? "up" : "down",
-        format: "number"
-      },
-      {
-        id: "avg-first-response",
-        label: "Avg First Response",
-        value: toMinutes(overview.avgFirstResponseSeconds),
-        unit: "min",
-        change: avgFirstResponseChange,
-        trend: avgFirstResponseChange >= 0 ? "up" : "down",
-        format: "duration"
-      },
-      {
-        id: "avg-resolution",
-        label: "Avg Resolution",
-        value: toHours(overview.avgResolutionSeconds),
-        unit: "hrs",
-        change: avgResolutionChange,
-        trend: avgResolutionChange >= 0 ? "up" : "down",
-        format: "duration"
-      },
-      {
-        id: "first-response-sla",
-        label: "First Response SLA",
-        value: sla.firstResponse.complianceRate * 100,
-        unit: "%",
-        change: firstResponseSlaChange,
-        trend: firstResponseSlaChange >= 0 ? "up" : "down",
-        format: "percentage"
-      },
-      {
-        id: "resolution-sla",
-        label: "Resolution SLA",
-        value: sla.resolution.complianceRate * 100,
-        unit: "%",
-        change: resolutionSlaChange,
-        trend: resolutionSlaChange >= 0 ? "up" : "down",
-        format: "percentage"
-      }
-    ] satisfies KpiMetric[];
-  }, [overview, overviewPrevious, sla, slaPrevious]);
 
   const timeSeries = useMemo(() => {
     if (!volume || !overview || !sla) return [];
@@ -573,11 +507,131 @@ export function AnalyticsWorkspace() {
   };
   const PIE_COLORS = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444"];
 
-  const formatValue = (metric: KpiMetric) => {
-    if (metric.format === "number") return metric.value >= 1000 ? `${(metric.value / 1000).toFixed(1)}k` : metric.value.toFixed(0);
-    if (metric.format === "duration") return metric.value.toFixed(1);
-    return metric.value.toFixed(1);
-  };
+  const healthOverviewMetrics = useMemo(() => {
+    if (!overview || !sla || !overviewPrevious) return [];
+
+    const openTickets = overview.openTickets;
+    const openTicketsChange = percentChange(openTickets, overviewPrevious.openTickets ?? 0);
+    const avgFirstResponseMinutes = toMinutes(overview.avgFirstResponseSeconds);
+    const firstResponseSla = sla.firstResponse.complianceRate * 100;
+    const resolutionSla = sla.resolution.complianceRate * 100;
+
+    return [
+      {
+        label: "Open Tickets",
+        value: openTickets,
+        trend: (openTicketsChange >= 0 ? "up" : "down") as "up" | "down",
+        trendValue: `${Math.abs(openTicketsChange).toFixed(1)}%`,
+        trendTone: (openTicketsChange > 0 ? "negative" : openTicketsChange < 0 ? "positive" : "neutral") as
+          | "positive"
+          | "negative"
+          | "neutral",
+        status: getBacklogStatus(openTickets, Math.abs(openTicketsChange))
+      },
+      {
+        label: "Avg First Response",
+        value: avgFirstResponseMinutes.toFixed(1),
+        unit: "min",
+        trend: "neutral" as const,
+        trendValue: "live",
+        trendTone: "neutral" as const,
+        status: getDurationStatus(avgFirstResponseMinutes, 20, 45)
+      },
+      {
+        label: "First Response SLA",
+        value: firstResponseSla.toFixed(1),
+        unit: "%",
+        trend: "neutral" as const,
+        trendValue: "target",
+        trendTone: "neutral" as const,
+        status: getSlaStatus(firstResponseSla)
+      },
+      {
+        label: "Resolution SLA",
+        value: resolutionSla.toFixed(1),
+        unit: "%",
+        trend: "neutral" as const,
+        trendValue: "target",
+        trendTone: "neutral" as const,
+        status: getSlaStatus(resolutionSla)
+      }
+    ] satisfies Array<{
+      label: string;
+      value: string | number;
+      unit?: string;
+      trend?: "up" | "down" | "neutral";
+      trendValue?: string;
+      trendTone?: "positive" | "negative" | "neutral";
+      status: MetricHealthStatus;
+    }>;
+  }, [overview, overviewPrevious, sla]);
+
+  const attentionSignals = useMemo(() => {
+    if (!overview || !sla) return [];
+
+    const nextSignals: Array<{
+      healthy: boolean;
+      severity: "info" | "warning" | "error";
+      message: string;
+    }> = [];
+
+    const firstResponseSla = sla.firstResponse.complianceRate * 100;
+    const resolutionSla = sla.resolution.complianceRate * 100;
+    const pendingReviews = overview.merges?.reviews.pending ?? 0;
+    const failedReviews = overview.merges?.reviews.failedInRange ?? 0;
+
+    if (firstResponseSla < 90) {
+      nextSignals.push({
+        healthy: false,
+        severity: firstResponseSla < 80 ? "error" : "warning",
+        message: `First response SLA is at ${firstResponseSla.toFixed(1)}%. Managers should check staffing, routing, or queue spikes.`
+      });
+    } else {
+      nextSignals.push({
+        healthy: true,
+        severity: "info",
+        message: `First response SLA is holding at ${firstResponseSla.toFixed(1)}%.`
+      });
+    }
+
+    if (resolutionSla < 95) {
+      nextSignals.push({
+        healthy: false,
+        severity: resolutionSla < 90 ? "error" : "warning",
+        message: `Resolution SLA is at ${resolutionSla.toFixed(1)}%. Escalation and backlog pressure need review.`
+      });
+    }
+
+    if (pendingReviews > 0) {
+      nextSignals.push({
+        healthy: false,
+        severity: pendingReviews > 5 ? "error" : "warning",
+        message: `${pendingReviews} merge review${pendingReviews === 1 ? "" : "s"} still need human attention.`
+      });
+    }
+
+    if (failedReviews > 0) {
+      nextSignals.push({
+        healthy: false,
+        severity: "error",
+        message: `${failedReviews} failed review${failedReviews === 1 ? "" : "s"} occurred in the selected range.`
+      });
+    }
+
+    return nextSignals.slice(0, 4);
+  }, [overview, sla]);
+
+  const executiveSummary = useMemo(() => {
+    if (!overview || !sla) return null;
+    return {
+      totalTickets: overview.totalTickets,
+      ticketsCreatedToday: overview.ticketsCreatedToday,
+      ticketsSolvedToday: overview.ticketsSolvedToday,
+      avgResolutionHours: toHours(overview.avgResolutionSeconds),
+      firstResponseSla: sla.firstResponse.complianceRate * 100,
+      resolutionSla: sla.resolution.complianceRate * 100
+    };
+  }, [overview, sla]);
 
   const exportOverviewCsv = () => {
     if (!overview || !sla) return;
@@ -871,32 +925,132 @@ export function AnalyticsWorkspace() {
 
         {!loading && !error ? (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {kpiMetrics.map((metric) => (
-                <KPICard key={metric.id} metric={metric} formatValue={formatValue} />
-              ))}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+              <Card className="p-5">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Health Overview</p>
+                    <h2 className="mt-2 text-xl font-semibold text-neutral-900">Decision-ready support health</h2>
+                    <p className="mt-1 text-sm text-neutral-600">
+                      Executive summary of backlog, response speed, and compliance.
+                    </p>
+                  </div>
+                  {executiveSummary ? (
+                    <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-right">
+                      <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Today</p>
+                      <p className="mt-2 text-sm text-neutral-700">
+                        {executiveSummary.ticketsCreatedToday} created · {executiveSummary.ticketsSolvedToday} solved
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                  {healthOverviewMetrics.map((metric) => (
+                    <MetricCard
+                      key={metric.label}
+                      label={metric.label}
+                      value={metric.value}
+                      unit={metric.unit}
+                      trend={metric.trend}
+                      trendValue={metric.trendValue}
+                      trendTone={metric.trendTone}
+                      status={metric.status}
+                      size="sm"
+                    />
+                  ))}
+                </div>
+              </Card>
+
+              <Card className="p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Attention</p>
+                    <h2 className="mt-2 text-lg font-semibold text-neutral-900">What needs action</h2>
+                    <p className="mt-1 text-sm text-neutral-600">Operational flags that should drive the next decision.</p>
+                  </div>
+                  {(overview?.merges?.reviews.pending ?? 0) > 0 ? (
+                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                      {overview?.merges?.reviews.pending} pending reviews
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
+                      Stable
+                    </Badge>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {attentionSignals.length === 0 ? (
+                    <HealthIndicator healthy message="No major alerts in the current window." severity="info" />
+                  ) : (
+                    attentionSignals.map((signal) => (
+                      <HealthIndicator
+                        key={signal.message}
+                        healthy={signal.healthy}
+                        message={signal.message}
+                        severity={signal.severity}
+                        size="sm"
+                      />
+                    ))
+                  )}
+                </div>
+              </Card>
             </div>
 
-            {mergeMetrics ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-                {mergeMetrics.map((metric) => {
-                  const action = mergeMetricAction(metric.label);
-                  return (
-                    <Card key={metric.label} className="p-5">
-                      <p className="text-sm text-neutral-600">{metric.label}</p>
-                      <p className="mt-2 text-3xl font-semibold text-neutral-900">{metric.value}</p>
-                      {action ? (
-                        <div className="mt-3">
-                          <Button asChild size="sm" variant="outline">
-                            <Link href={action.href}>{action.label}</Link>
-                          </Button>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr_0.95fr]">
+              <Card className="p-5">
+                <div className="mb-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Performance</p>
+                  <h3 className="mt-2 text-lg font-semibold text-neutral-900">Volume and speed</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Metric label="Total Tickets" value={executiveSummary?.totalTickets ?? 0} />
+                  <Metric label="Avg Resolution (hrs)" value={executiveSummary?.avgResolutionHours.toFixed(1) ?? "0.0"} />
+                  <Metric label="Created Today" value={executiveSummary?.ticketsCreatedToday ?? 0} />
+                  <Metric label="Solved Today" value={executiveSummary?.ticketsSolvedToday ?? 0} />
+                </div>
+              </Card>
+
+              <Card className="p-5">
+                <div className="mb-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Compliance</p>
+                  <h3 className="mt-2 text-lg font-semibold text-neutral-900">Response and resolution confidence</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Metric label="First Response SLA" value={`${executiveSummary?.firstResponseSla.toFixed(1) ?? "0.0"}%`} />
+                  <Metric label="Resolution SLA" value={`${executiveSummary?.resolutionSla.toFixed(1) ?? "0.0"}%`} />
+                  <Metric label="WhatsApp Delivered" value={`${whatsAppRates.deliveredRate.toFixed(1)}%`} />
+                  <Metric label="Voice Connect Rate" value={`${voiceRates.connectRate.toFixed(1)}%`} />
+                </div>
+              </Card>
+
+              <Card className="p-5">
+                <div className="mb-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">Operational Signals</p>
+                  <h3 className="mt-2 text-lg font-semibold text-neutral-900">Merge and review queue</h3>
+                </div>
+                <div className="space-y-3">
+                  {(mergeMetrics ?? []).map((metric) => {
+                    const action = mergeMetricAction(metric.label);
+                    return (
+                      <div
+                        key={metric.label}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">{metric.label}</p>
+                          {action ? (
+                            <Link href={action.href} className="text-xs text-blue-700 hover:underline">
+                              {action.label}
+                            </Link>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </Card>
-                  );
-                })}
-              </div>
-            ) : null}
+                        <span className="text-2xl font-semibold text-neutral-900">{metric.value}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
 
             {overview?.merges ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1502,40 +1656,6 @@ export function AnalyticsWorkspace() {
         ) : null}
       </div>
     </div>
-  );
-}
-
-function KPICard({
-  metric,
-  formatValue
-}: {
-  metric: KpiMetric;
-  formatValue: (metric: KpiMetric) => string;
-}) {
-  const isPositiveChange = metric.trend === "up";
-  const isGoodChange =
-    (metric.id.includes("response") || metric.id.includes("resolution")) ? metric.trend === "down" : metric.trend === "up";
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-sm text-neutral-600">{metric.label}</p>
-        <div
-          className={cn(
-            "flex items-center gap-1 text-xs px-2 py-1 rounded-full",
-            isGoodChange ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-          )}
-        >
-          {isPositiveChange ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-          {Math.abs(metric.change).toFixed(1)}%
-        </div>
-      </div>
-      <div className="flex items-baseline gap-1">
-        <p className="text-3xl font-semibold">{formatValue(metric)}</p>
-        {metric.unit ? <span className="text-sm text-neutral-500">{metric.unit}</span> : null}
-      </div>
-      <p className="text-xs text-neutral-500 mt-2">vs previous period</p>
-    </Card>
   );
 }
 

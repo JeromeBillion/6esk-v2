@@ -3656,19 +3656,52 @@ function TicketDetail({
     <>
       <div ref={detailLayoutRef} className="w-full h-full flex min-w-0">
         <div className="min-w-0 flex-1 bg-white flex flex-col">
-          <div className="border-b border-neutral-200 p-6">
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
+          <div className="border-b border-neutral-200 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="mb-2 flex items-center gap-2">
                   <span className="text-sm font-medium text-neutral-600">{activeTimelineTicketIdValue}</span>
                   <Badge variant="outline" className="text-xs">
                     {toTitleCase(activeTimelineChannelValue)}
                   </Badge>
                 </div>
-                <h2 className="text-xl font-semibold mb-2">{ticket.subject}</h2>
-                <p className="text-sm text-neutral-600">
-                  {ticket.requester_name} • {ticket.requester_email}
-                </p>
+                <h2 className="mb-2 text-xl font-semibold">{ticket.subject}</h2>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <p className="text-sm text-neutral-600">
+                    {ticket.requester_name} • {ticket.requester_email}
+                  </p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 gap-2 px-3" disabled={ticketUpdating}>
+                          Status: {ticket.status}
+                          <ChevronDown className="w-3 h-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent>
+                        <DropdownMenuItem onClick={() => onStatusChange("open")}>Open</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onStatusChange("pending")}>Pending</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onStatusChange("resolved")}>Resolved</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onStatusChange("closed")}>Closed</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 gap-2 px-3" disabled={ticketUpdating}>
+                          Priority: {ticket.priority}
+                          <ChevronDown className="w-3 h-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent>
+                        <DropdownMenuItem onClick={() => onPriorityChange("low")}>Low</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onPriorityChange("medium")}>Medium</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onPriorityChange("high")}>High</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onPriorityChange("urgent")}>Urgent</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
               </div>
               <Button
                 variant="ghost"
@@ -3679,38 +3712,6 @@ function TicketDetail({
               >
                 <Clock className="w-4 h-4" />
               </Button>
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2" disabled={ticketUpdating}>
-                    Status: {ticket.status}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => onStatusChange("open")}>Open</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onStatusChange("pending")}>Pending</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onStatusChange("resolved")}>Resolved</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onStatusChange("closed")}>Closed</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2" disabled={ticketUpdating}>
-                    Priority: {ticket.priority}
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => onPriorityChange("low")}>Low</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onPriorityChange("medium")}>Medium</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onPriorityChange("high")}>High</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onPriorityChange("urgent")}>Urgent</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
           </div>
 

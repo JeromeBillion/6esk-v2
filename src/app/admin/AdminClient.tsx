@@ -6,6 +6,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bot, Phone, RefreshCw, Shield, Users, Workflow } from "lucide-react";
 import AppShell from "@/app/components/AppShell";
 import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
+import { HealthIndicator } from "@/app/workspace/components/shared/HealthIndicator";
+import { MetricCard } from "@/app/workspace/components/shared/MetricCard";
+import { StatusBadge } from "@/app/workspace/components/shared/StatusBadge";
 import { Badge } from "@/app/workspace/components/ui/badge";
 import { Button } from "@/app/workspace/components/ui/button";
 import {
@@ -123,6 +126,22 @@ type ToastState = {
   tone: "success" | "error";
   message: string;
 } | null;
+
+type SummaryMetric = {
+  label: string;
+  value: string | number;
+  unit?: string;
+  trend?: "up" | "down" | "neutral";
+  trendValue?: string;
+  trendTone?: "positive" | "negative" | "neutral";
+  status?: "healthy" | "warning" | "critical";
+};
+
+type AttentionSignal = {
+  message: string;
+  healthy: boolean;
+  severity?: "info" | "warning" | "error";
+};
 
 type UserForm = {
   email: string;
@@ -303,6 +322,36 @@ const DEFAULT_OPERATIONS_FILTERS: OperationsFilters = {
   windowHours: 24,
   eventLimit: 20,
   auditLimit: 50
+};
+
+const TAB_COPY: Record<
+  TabKey,
+  {
+    title: string;
+    description: string;
+    statusLabel: string;
+  }
+> = {
+  overview: {
+    title: "Platform governance",
+    description: "Users, roles, SLA posture, and security controls for the current workspace.",
+    statusLabel: "Governance"
+  },
+  workspace: {
+    title: "Messaging control center",
+    description: "Runtime modules, mailboxes, WhatsApp delivery, and spam controls.",
+    statusLabel: "Messaging"
+  },
+  automation: {
+    title: "Automation posture",
+    description: "Agent integrations, policy controls, and lookup quality for autonomous flows.",
+    statusLabel: "Automation"
+  },
+  operations: {
+    title: "Live operations",
+    description: "Inbound failures, call delivery, transcript QA, and audit visibility.",
+    statusLabel: "Operations"
+  }
 };
 
 function clampInteger(value: number, min: number, max: number, fallback: number) {
@@ -776,13 +825,295 @@ export default function AdminClient() {
 
   const whatsAppWebhookUrl =
     typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/inbound` : "";
-  const whatsAppStatusWarnings: string[] = [];
-  if (whatsAppForm.status === "active" && !whatsAppForm.accessToken.trim()) {
-    whatsAppStatusWarnings.push("Access token is required while the account is Active.");
-  }
-  if (whatsAppForm.provider === "meta" && !whatsAppForm.verifyToken.trim()) {
-    whatsAppStatusWarnings.push("Verify token is empty. Meta webhook verification will fail.");
-  }
+  const whatsAppStatusWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    if (whatsAppForm.status === "active" && !whatsAppForm.accessToken.trim()) {
+      warnings.push("Access token is required while the account is Active.");
+    }
+    if (whatsAppForm.provider === "meta" && !whatsAppForm.verifyToken.trim()) {
+      warnings.push("Verify token is empty. Meta webhook verification will fail.");
+    }
+    return warnings;
+  }, [whatsAppForm.accessToken, whatsAppForm.provider, whatsAppForm.status, whatsAppForm.verifyToken]);
+
+  const summaryMetrics = useMemo<SummaryMetric[]>(() => {
+    if (activeTab === "overview") {
+      const activeUsers = users.filter((user) => user.is_active).length;
+      const inactiveUsers = Math.max(0, users.length - activeUsers);
+      const missingSecrets = Number(!security?.agentSecretKeyConfigured) + Number(!security?.inboundSecretConfigured);
+      const unencryptedSecrets =
+        (security?.agentIntegrationStats.unencrypted ?? 0) + (security?.whatsappTokenStats.unencrypted ?? 0);
+      return [
+        {
+          label: "Users",
+          value: users.length,
+          trend: activeUsers > 0 ? "up" : "neutral",
+          trendValue: `${activeUsers} active`,
+          trendTone: activeUsers > 0 ? "positive" : "neutral",
+          status: inactiveUsers === 0 ? "healthy" : "warning"
+        },
+        {
+          label: "Roles",
+          value: roles.length,
+          status: roles.length >= 3 ? "healthy" : "warning"
+        },
+        {
+          label: "Secret Gaps",
+          value: missingSecrets,
+          trend: missingSecrets > 0 ? "up" : "neutral",
+          trendValue: missingSecrets > 0 ? "Action needed" : "Configured",
+          trendTone: missingSecrets > 0 ? "negative" : "positive",
+          status: missingSecrets === 0 ? "healthy" : "critical"
+        },
+        {
+          label: "Unencrypted Tokens",
+          value: unencryptedSecrets,
+          status: unencryptedSecrets === 0 ? "healthy" : "warning"
+        }
+      ];
+    }
+
+    if (activeTab === "workspace") {
+      const enabledModules = Object.values(workspaceModules?.modules ?? {}).filter(Boolean).length;
+      const billableEnabled = WORKSPACE_MODULE_FIELDS.filter(
+        (field) => field.billing === "billable" && workspaceModules?.modules[field.key]
+      ).length;
+      return [
+        {
+          label: "Mailboxes",
+          value: mailboxes.length,
+          status: mailboxes.length > 0 ? "healthy" : "warning"
+        },
+        {
+          label: "Enabled Modules",
+          value: enabledModules,
+          trend: billableEnabled > 0 ? "up" : "neutral",
+          trendValue: `${billableEnabled} billable`,
+          trendTone: billableEnabled > 0 ? "positive" : "neutral",
+          status: enabledModules > 0 ? "healthy" : "warning"
+        },
+        {
+          label: "Spam Queue",
+          value: spamMessages.length,
+          status: spamMessages.length === 0 ? "healthy" : spamMessages.length < 10 ? "warning" : "critical"
+        },
+        {
+          label: "WA Failures",
+          value: failedWhatsAppEvents.length,
+          status:
+            failedWhatsAppEvents.length === 0 ? "healthy" : failedWhatsAppEvents.length < 5 ? "warning" : "critical"
+        }
+      ];
+    }
+
+    if (activeTab === "automation") {
+      const activeAgents = agents.filter((agent) => agent.status === "active").length;
+      const failedEvents = failedAgentEvents.length;
+      return [
+        {
+          label: "Agents",
+          value: agents.length,
+          trend: activeAgents > 0 ? "up" : "neutral",
+          trendValue: `${activeAgents} active`,
+          trendTone: activeAgents > 0 ? "positive" : "neutral",
+          status: activeAgents > 0 ? "healthy" : "warning"
+        },
+        {
+          label: "Policy Mode",
+          value: selectedAgent?.policy_mode === "auto_send" ? "Auto" : "Draft",
+          status: selectedAgent?.policy_mode === "auto_send" ? "warning" : "healthy"
+        },
+        {
+          label: "Failed Events",
+          value: failedEvents,
+          status: failedEvents === 0 ? "healthy" : failedEvents < 5 ? "warning" : "critical"
+        },
+        {
+          label: "Lookup Hit Rate",
+          value: `${Math.round(profile?.summary.hitRate ?? 0)}%`,
+          status:
+            (profile?.summary.hitRate ?? 0) >= 90
+              ? "healthy"
+              : (profile?.summary.hitRate ?? 0) >= 75
+                ? "warning"
+                : "critical"
+        }
+      ];
+    }
+
+    const failedInboundCount = failedInboundEvents.length;
+    const failedCallCount = failedCallEvents.length;
+    const failedQaCount = failedCallTranscriptAiJobs.length;
+    const deadLetterCount = deadLetters.length;
+    return [
+      {
+        label: "Inbound Failures",
+        value: failedInboundCount,
+        status: failedInboundCount === 0 ? "healthy" : failedInboundCount < 5 ? "warning" : "critical"
+      },
+      {
+        label: "Call Failures",
+        value: failedCallCount,
+        status: failedCallCount === 0 ? "healthy" : failedCallCount < 5 ? "warning" : "critical"
+      },
+      {
+        label: "QA Failures",
+        value: failedQaCount,
+        status: failedQaCount === 0 ? "healthy" : failedQaCount < 5 ? "warning" : "critical"
+      },
+      {
+        label: "Dead Letters",
+        value: deadLetterCount,
+        status: deadLetterCount === 0 ? "healthy" : deadLetterCount < 5 ? "warning" : "critical"
+      }
+    ];
+  }, [
+    activeTab,
+    agents,
+    deadLetters.length,
+    failedAgentEvents.length,
+    failedCallEvents.length,
+    failedCallTranscriptAiJobs.length,
+    failedInboundEvents.length,
+    failedWhatsAppEvents.length,
+    mailboxes.length,
+    profile?.summary.hitRate,
+    roles.length,
+    security?.agentIntegrationStats.unencrypted,
+    security?.agentSecretKeyConfigured,
+    security?.inboundSecretConfigured,
+    security?.whatsappTokenStats.unencrypted,
+    selectedAgent?.policy_mode,
+    spamMessages.length,
+    users,
+    workspaceModules?.modules
+  ]);
+
+  const attentionSignals = useMemo<AttentionSignal[]>(() => {
+    if (activeTab === "overview") {
+      return [
+        {
+          healthy: Boolean(security?.agentSecretKeyConfigured),
+          severity: "error",
+          message: security?.agentSecretKeyConfigured
+            ? "Agent secret key is configured."
+            : "Agent secret key is missing."
+        },
+        {
+          healthy: Boolean(security?.inboundSecretConfigured),
+          severity: "error",
+          message: security?.inboundSecretConfigured
+            ? "Inbound secret is configured."
+            : "Inbound secret is missing."
+        },
+        {
+          healthy: (security?.whatsappTokenStats.unencrypted ?? 0) === 0,
+          severity: "warning",
+          message:
+            (security?.whatsappTokenStats.unencrypted ?? 0) === 0
+              ? "WhatsApp tokens are encrypted."
+              : `${security?.whatsappTokenStats.unencrypted ?? 0} WhatsApp tokens remain unencrypted.`
+        }
+      ];
+    }
+
+    if (activeTab === "workspace") {
+      return [
+        {
+          healthy: whatsAppStatusWarnings.length === 0,
+          severity: "warning",
+          message:
+            whatsAppStatusWarnings[0] ?? "WhatsApp account settings are complete for the current provider state."
+        },
+        {
+          healthy: failedWhatsAppEvents.length === 0,
+          severity: "error",
+          message:
+            failedWhatsAppEvents.length === 0
+              ? "No failed WhatsApp outbox events."
+              : `${failedWhatsAppEvents.length} WhatsApp outbox events need retry or review.`
+        },
+        {
+          healthy: spamMessages.length === 0,
+          severity: "warning",
+          message:
+            spamMessages.length === 0
+              ? "Spam queue is clear."
+              : `${spamMessages.length} spam-flagged messages are waiting for review.`
+        }
+      ];
+    }
+
+    if (activeTab === "automation") {
+      return [
+        {
+          healthy: agents.length > 0,
+          severity: "warning",
+          message: agents.length > 0 ? "At least one agent integration is configured." : "No agent integration is configured."
+        },
+        {
+          healthy: failedAgentEvents.length === 0,
+          severity: "error",
+          message:
+            failedAgentEvents.length === 0
+              ? "No failed automation events."
+              : `${failedAgentEvents.length} automation events need retry or operator review.`
+        },
+        {
+          healthy: (profile?.summary.hitRate ?? 0) >= 90,
+          severity: "warning",
+          message:
+            (profile?.summary.hitRate ?? 0) >= 90
+              ? "Profile lookup quality is healthy."
+              : `Profile lookup hit rate is ${Math.round(profile?.summary.hitRate ?? 0)}%.`
+        }
+      ];
+    }
+
+    return [
+      {
+        healthy: failedInboundEvents.length === 0,
+        severity: "error",
+        message:
+          failedInboundEvents.length === 0
+            ? "Inbound queue is clear."
+            : `${failedInboundEvents.length} inbound events are waiting for retry.`
+      },
+      {
+        healthy: failedCallEvents.length === 0,
+        severity: "error",
+        message:
+          failedCallEvents.length === 0
+            ? "Call outbox is healthy."
+            : `${failedCallEvents.length} failed call events need recovery.`
+      },
+      {
+        healthy: failedCallTranscriptAiJobs.length === 0,
+        severity: "warning",
+        message:
+          failedCallTranscriptAiJobs.length === 0
+            ? "Transcript QA queue is healthy."
+            : `${failedCallTranscriptAiJobs.length} transcript QA jobs failed.`
+      }
+    ];
+  }, [
+    activeTab,
+    agents.length,
+    failedAgentEvents.length,
+    failedCallEvents.length,
+    failedCallTranscriptAiJobs.length,
+    failedInboundEvents.length,
+    failedWhatsAppEvents.length,
+    profile?.summary.hitRate,
+    security?.agentSecretKeyConfigured,
+    security?.inboundSecretConfigured,
+    security?.whatsappTokenStats.unencrypted,
+    spamMessages.length,
+    whatsAppStatusWarnings
+  ]);
+
+  const activeTabCopy = TAB_COPY[activeTab];
+  const activeTabHealthy = attentionSignals.every((item) => item.healthy);
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
@@ -1207,8 +1538,71 @@ export default function AdminClient() {
             </Button>
           </div>
 
+          <div className="grid gap-6 xl:grid-cols-[1.35fr_0.8fr]">
+            <Card className="border-neutral-200 bg-white">
+              <CardHeader className="space-y-3 pb-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge
+                        status={activeTabHealthy ? "active" : activeTab === "operations" ? "failed" : "pending"}
+                        label={activeTabCopy.statusLabel}
+                      />
+                      {loaded[activeTab] ? (
+                        <Badge variant="outline">Live state loaded</Badge>
+                      ) : (
+                        <Badge variant="outline">Loading current tab</Badge>
+                      )}
+                    </div>
+                    <CardTitle>{activeTabCopy.title}</CardTitle>
+                    <CardDescription>{activeTabCopy.description}</CardDescription>
+                  </div>
+                  <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-right">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-neutral-500">Current zone</div>
+                    <div className="mt-1 text-lg font-semibold text-neutral-900">{TAB_COPY[activeTab].statusLabel}</div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {summaryMetrics.map((metric) => (
+                  <MetricCard
+                    key={metric.label}
+                    label={metric.label}
+                    value={metric.value}
+                    unit={metric.unit}
+                    trend={metric.trend}
+                    trendValue={metric.trendValue}
+                    trendTone={metric.trendTone}
+                    status={metric.status}
+                    size="sm"
+                  />
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="border-neutral-200 bg-white">
+              <CardHeader className="pb-4">
+                <CardTitle>Needs attention</CardTitle>
+                <CardDescription>
+                  Surface the current risks first, then use the tab content below to act on them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {attentionSignals.map((item) => (
+                  <HealthIndicator
+                    key={item.message}
+                    healthy={item.healthy}
+                    severity={item.severity}
+                    message={item.message}
+                    size="sm"
+                  />
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList>
+            <TabsList className="h-auto flex-wrap gap-1 rounded-2xl border border-neutral-200 bg-white p-1">
               <TabsTrigger value="overview" className="gap-2">
                 <Shield className="w-4 h-4" />
                 Overview
