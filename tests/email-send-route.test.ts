@@ -115,18 +115,21 @@ describe("POST /api/email/send", () => {
 
     const [, resendInit] = fetchMock.mock.calls[0] ?? [];
     const resendPayload = JSON.parse(String((resendInit as RequestInit).body));
-    expect(resendPayload.headers).toEqual({
+    expect(resendPayload.headers["Message-ID"]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(resendPayload.headers).toMatchObject({
       "In-Reply-To": "<parent@example.com>",
       References: "<root@example.com> <parent@example.com>"
     });
 
     const [insertSql, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(insertSql).toContain("external_message_id");
     expect(insertSql).toContain("in_reply_to");
     expect(insertSql).toContain("reference_ids");
-    expect(insertValues[2]).toBe("provider-msg-1");
+    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
     expect(insertValues[3]).toBe("<root@example.com>");
     expect(insertValues[4]).toBe("<parent@example.com>");
     expect(insertValues[5]).toEqual(["<root@example.com>", "<parent@example.com>"]);
+    expect(insertValues[6]).toBe("provider-msg-1");
   });
 
   it("creates a new local thread for non-reply compose sends", async () => {
@@ -155,12 +158,14 @@ describe("POST /api/email/send", () => {
     expect(response.status).toBe(200);
     const [, resendInit] = fetchMock.mock.calls[0] ?? [];
     const resendPayload = JSON.parse(String((resendInit as RequestInit).body));
-    expect(resendPayload.headers).toEqual({});
+    expect(resendPayload.headers["Message-ID"]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(Object.keys(resendPayload.headers)).toEqual(["Message-ID"]);
 
     const [, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(insertValues[2]).toBe("provider-msg-2");
-    expect(insertValues[3]).toBe("provider-msg-2");
+    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(insertValues[3]).toBe(insertValues[2]);
     expect(insertValues[4]).toBeNull();
     expect(insertValues[5]).toBeNull();
+    expect(insertValues[6]).toBe("provider-msg-2");
   });
 });

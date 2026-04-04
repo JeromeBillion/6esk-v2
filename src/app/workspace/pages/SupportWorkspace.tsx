@@ -2090,7 +2090,7 @@ export function SupportWorkspace() {
                   onClick={() => router.push("/tickets/new")}
                 >
                   <Plus className="h-4 w-4" />
-                  Create Ticket
+                  Create
                 </Button>
               </div>
             </div>

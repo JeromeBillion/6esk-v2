@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import LandingPageClient from "@/app/components/landing/LandingPageClient";
-import { getSessionUser } from "@/server/auth/session";
 
 export const metadata: Metadata = {
   title: "6esk | Omnichannel Support CRM",
@@ -9,7 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
-  const user = await getSessionUser();
-
-  return <LandingPageClient authenticated={Boolean(user)} workspaceHref={user ? "/tickets" : "/login"} />;
+  return <LandingPageClient signInHref="/login" demoWorkspaceHref="/tickets?demo=1" />;
 }

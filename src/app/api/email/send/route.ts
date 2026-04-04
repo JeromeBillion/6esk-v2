@@ -15,6 +15,11 @@ type ResendResponse = {
   messageId?: string;
 };
 
+function buildOutboundMessageId(fromEmail: string) {
+  const domain = fromEmail.split("@")[1]?.trim().toLowerCase() || "6esk.local";
+  return `<${randomUUID()}@${domain}>`;
+}
+
 function normalizeReferenceList(values?: string[] | null) {
   if (!values?.length) {
     return [];
@@ -100,6 +105,7 @@ export async function POST(request: Request) {
     ...(data.references ?? []),
     ...(inReplyTo ? [inReplyTo] : [])
   ]);
+  const outboundMessageId = buildOutboundMessageId(fromEmail);
 
   const resendPayload = {
     from: data.from,
@@ -111,6 +117,7 @@ export async function POST(request: Request) {
     text: data.text ?? undefined,
     reply_to: data.replyTo ?? undefined,
     headers: {
+      "Message-ID": outboundMessageId,
       ...(inReplyTo
         ? {
             "In-Reply-To": inReplyTo
@@ -149,28 +156,28 @@ export async function POST(request: Request) {
   const resendData = (await resendResponse.json()) as ResendResponse;
   const messageId = randomUUID();
   const sentAt = new Date();
-  const providerMessageId = resendData.messageId ?? resendData.id ?? null;
+  const providerMessageId = resendData.id ?? resendData.messageId ?? null;
   const threadId =
     data.threadId?.trim() ||
     references[0] ||
-    providerMessageId ||
-    messageId;
+    outboundMessageId;
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, provider, from_email,
+      id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
       to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read
     ) VALUES (
-      $1, $2, 'outbound', $3, $4, $5, $6, 'resend', $7,
-      $8, $9, $10, $11, $12, $13, true
+      $1, $2, 'outbound', $3, $4, $5, $6, $7, 'resend', $8,
+      $9, $10, $11, $12, $13, $14, true
     )`,
     [
       messageId,
       mailbox.id,
-      providerMessageId,
+      outboundMessageId,
       threadId,
       inReplyTo,
       references.length ? references : null,
+      providerMessageId,
       fromEmail,
       toList,
       ccList,
@@ -251,5 +258,5 @@ export async function POST(request: Request) {
     }
   });
 
-  return Response.json({ status: "sent", id: messageId, providerId: resendData.id });
+  return Response.json({ status: "sent", id: messageId, providerId: providerMessageId, messageId: outboundMessageId });
 }

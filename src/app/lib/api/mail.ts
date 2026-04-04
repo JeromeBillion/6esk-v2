@@ -11,6 +11,7 @@ export type ApiMailboxMessage = {
   direction: "inbound" | "outbound";
   channel: "email" | "whatsapp" | "voice";
   from_email: string;
+  to_emails: string[];
   subject: string | null;
   preview_text: string | null;
   received_at: string | null;

@@ -1,33 +1,48 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-
-export const DEMO_MODE_STORAGE_KEY = "sixesk:data-mode";
-export const DEMO_MODE_EVENT = "sixesk:demo-mode-change";
+import {
+  DEMO_MODE_COOKIE_NAME,
+  DEMO_MODE_EVENT,
+  DEMO_MODE_STORAGE_KEY,
+  parseDemoModeValue,
+  parseDemoQueryValue,
+  serializeDemoModeValue
+} from "@/app/lib/demo-mode-config";
 
 function defaultDemoModeEnabled() {
   return process.env.NODE_ENV !== "production";
 }
 
-function parseStoredValue(value: string | null) {
-  if (value === "sample") return true;
-  if (value === "live") return false;
-  return null;
+function readCookieDemoMode() {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${DEMO_MODE_COOKIE_NAME}=`));
+  return parseDemoModeValue(match ? decodeURIComponent(match.split("=")[1] ?? "") : null);
+}
+
+function readQueryDemoMode() {
+  if (typeof window === "undefined") return null;
+  return parseDemoQueryValue(new URLSearchParams(window.location.search).get("demo"));
 }
 
 export function readStoredDemoMode() {
   if (typeof window === "undefined") return null;
-  return parseStoredValue(window.localStorage.getItem(DEMO_MODE_STORAGE_KEY));
+  return parseDemoModeValue(window.localStorage.getItem(DEMO_MODE_STORAGE_KEY));
 }
 
 export function isDemoModeEnabled() {
   if (typeof window === "undefined") return false;
-  return readStoredDemoMode() ?? defaultDemoModeEnabled();
+  return readQueryDemoMode() ?? readStoredDemoMode() ?? readCookieDemoMode() ?? defaultDemoModeEnabled();
 }
 
 export function setStoredDemoMode(enabled: boolean) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(DEMO_MODE_STORAGE_KEY, enabled ? "sample" : "live");
+  const value = serializeDemoModeValue(enabled);
+  window.localStorage.setItem(DEMO_MODE_STORAGE_KEY, value);
+  document.cookie = `${DEMO_MODE_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax`;
   window.dispatchEvent(
     new CustomEvent<boolean>(DEMO_MODE_EVENT, {
       detail: enabled
@@ -36,11 +51,7 @@ export function setStoredDemoMode(enabled: boolean) {
 }
 
 export function useDemoMode() {
-  const [demoModeEnabled, setDemoModeEnabledState] = useState(false);
-
-  useEffect(() => {
-    setDemoModeEnabledState(isDemoModeEnabled());
-  }, []);
+  const [demoModeEnabled, setDemoModeEnabledState] = useState(() => isDemoModeEnabled());
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {

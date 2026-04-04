@@ -2651,6 +2651,7 @@ function toApiMailboxMessage(message: InternalMessage): ApiMailboxMessage {
     direction: message.direction,
     channel: message.channel,
     from_email: message.from,
+    to_emails: [...message.to],
     subject: message.subject,
     preview_text: message.previewText,
     received_at: message.receivedAt,

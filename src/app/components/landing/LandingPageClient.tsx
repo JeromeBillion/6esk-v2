@@ -33,12 +33,13 @@ import supportDarkSnapshot from "@/app/assets/landing-snapshots/support-dark.png
 import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
-import heroVisual from "@/app/assets/1000130704-removebg-preview.png";
+import heroVisual from "@/app/assets/1000130704-removebg-preview-hero-corrected.png";
 import landingWordmark from "@/app/assets/landing-wordmark.png";
+import { setStoredDemoMode } from "@/app/lib/demo-mode";
 
 type LandingPageClientProps = {
-  authenticated: boolean;
-  workspaceHref: string;
+  signInHref: string;
+  demoWorkspaceHref: string;
 };
 
 const CHANNELS = [
@@ -147,7 +148,7 @@ const FOOTER_SECTIONS = [
   }
 ] as const;
 
-export default function LandingPageClient({ authenticated, workspaceHref }: LandingPageClientProps) {
+export default function LandingPageClient({ signInHref, demoWorkspaceHref }: LandingPageClientProps) {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [navScrolled, setNavScrolled] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
@@ -255,8 +256,15 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
     };
   }, []);
 
-  const workspaceLabel = authenticated ? "Open Workspace" : "Sign In";
   const navCtaLabel = "Sign In";
+
+  const handleOpenWorkspace = () => {
+    setStoredDemoMode(true);
+  };
+
+  const handleSignInNavigation = () => {
+    setStoredDemoMode(false);
+  };
 
   const showcaseItems = useMemo(
     () => [
@@ -349,7 +357,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
       </div>
 
       <nav className={`${styles.nav} ${navScrolled ? styles.navScrolled : ""}`}>
-        <a href="#top" className={styles.brandLockup}>
+          <a href="#top" className={styles.brandLockup}>
           <span className={styles.brandWordmarkLockup}>
             <Image
               src={landingWordmark}
@@ -363,7 +371,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
         <div className={styles.navLinks}>
           <a href="#channels">Channels</a>
           <a href="#platform">Platform</a>
-          <Link href={workspaceHref} className={styles.navCta}>
+          <Link href={signInHref} className={styles.navCta} onClick={handleSignInNavigation}>
             {navCtaLabel}
           </Link>
         </div>
@@ -455,7 +463,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
               </p>
             </div>
             <div data-reveal className={styles.heroActions}>
-              <Link href={workspaceHref} className={styles.primaryAction}>
+              <Link href={demoWorkspaceHref} className={styles.primaryAction} onClick={handleOpenWorkspace}>
                 Open Workspace Free
                 <ArrowRight className={styles.inlineIcon} />
               </Link>
@@ -782,7 +790,7 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
               No sales process. No demo lock. Just open it and see if it fits.
             </p>
             <div className={styles.ctaActions}>
-              <Link href={workspaceHref} className={styles.primaryAction}>
+              <Link href={demoWorkspaceHref} className={styles.primaryAction} onClick={handleOpenWorkspace}>
                 Open Workspace Free
                 <ArrowRight className={styles.inlineIcon} />
               </Link>
@@ -837,8 +845,9 @@ export default function LandingPageClient({ authenticated, workspaceHref }: Land
                           <li key={`${section.title}-${item.label}`}>
                             {"href" in item && item.href ? (
                               <Link
-                                href={item.href === "workspace" ? workspaceHref : item.href}
+                                href={item.href === "workspace" ? signInHref : item.href}
                                 className={styles.footerLink}
+                                onClick={item.href === "workspace" ? handleSignInNavigation : undefined}
                               >
                                 {item.label}
                               </Link>

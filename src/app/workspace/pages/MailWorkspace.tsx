@@ -7,6 +7,7 @@ import {
   Paperclip,
   Send,
   Inbox,
+  Clock3,
   Mail,
   MailOpen,
   Reply,
@@ -37,25 +38,21 @@ import {
   patchThreadStar,
   sendMail
 } from "@/app/lib/api/mail";
+import {
+  buildMailThreads,
+  deriveNameFromEmail,
+  filterMailThreads,
+  getReplyTargetEmail,
+  getThreadCorrespondent,
+  type MailThread,
+  type MailView
+} from "@/app/lib/mail-threads";
 import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { listSupportMacros, type SupportMacro } from "@/app/lib/api/support";
 import { encodeAttachments, formatFileSize, type EncodedAttachment } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
 
-type MailView = "inbox" | "starred" | "sent" | "spam";
-
-const MAIL_VIEW_VALUES = new Set(["inbox", "starred", "sent", "spam"]);
-
-type MailThread = {
-  id: string;
-  subject: string;
-  participants: string[];
-  message_count: number;
-  last_message_at: string;
-  unread: boolean;
-  starred: boolean;
-  messages: ApiMailboxMessage[];
-};
+const MAIL_VIEW_VALUES = new Set(["inbox", "starred", "sent", "outbox", "spam"]);
 
 type FeedbackState = {
   open: boolean;
@@ -70,17 +67,6 @@ type ComposeDraft = {
   subject: string;
   body: string;
 };
-
-function toTitleCase(value: string) {
-  return value
-    .replace(/[._-]+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function deriveNameFromEmail(value: string) {
-  return toTitleCase(value.split("@")[0] ?? value);
-}
 
 function formatDate(dateString: string) {
   const date = new Date(dateString);
@@ -270,58 +256,12 @@ export function MailWorkspace() {
     return () => controller.abort();
   }, [activeMailboxId, loadMessages]);
 
-  const threads = useMemo(() => {
-    const grouped = new Map<string, ApiMailboxMessage[]>();
-    for (const message of messages) {
-      const key = message.thread_id ?? message.id;
-      const list = grouped.get(key);
-      if (list) {
-        list.push(message);
-      } else {
-        grouped.set(key, [message]);
-      }
-    }
+  const threads = useMemo(() => buildMailThreads(messages), [messages]);
 
-    const built = Array.from(grouped.entries()).map(([id, threadMessages]) => {
-      const sorted = [...threadMessages].sort(
-        (left, right) =>
-          new Date(left.sent_at ?? left.received_at ?? left.created_at).getTime() -
-          new Date(right.sent_at ?? right.received_at ?? right.created_at).getTime()
-      );
-      const last = sorted[sorted.length - 1]!;
-      const participants = Array.from(new Set(sorted.map((message) => deriveNameFromEmail(message.from_email))));
-      return {
-        id,
-        subject: last.subject ?? "(no subject)",
-        participants,
-        message_count: sorted.length,
-        last_message_at: last.sent_at ?? last.received_at ?? last.created_at,
-        unread: sorted.some((message) => message.direction === "inbound" && !message.is_read),
-        starred: sorted.some((message) => message.is_starred),
-        messages: sorted
-      } satisfies MailThread;
-    });
-
-    return built.sort(
-      (left, right) => new Date(right.last_message_at).getTime() - new Date(left.last_message_at).getTime()
-    );
-  }, [messages]);
-
-  const filteredThreads = useMemo(() => {
-    return threads.filter((thread) => {
-      const matchesView =
-        (currentView === "inbox" && !thread.messages.some((message) => message.is_spam)) ||
-        (currentView === "starred" && thread.starred) ||
-        (currentView === "sent" && thread.messages.some((message) => message.direction === "outbound")) ||
-        (currentView === "spam" && thread.messages.some((message) => message.is_spam));
-      const query = searchQuery.trim().toLowerCase();
-      const matchesSearch =
-        !query ||
-        thread.subject.toLowerCase().includes(query) ||
-        thread.participants.some((participant) => participant.toLowerCase().includes(query));
-      return matchesView && matchesSearch;
-    });
-  }, [currentView, searchQuery, threads]);
+  const filteredThreads = useMemo(
+    () => filterMailThreads(threads, currentView, searchQuery),
+    [currentView, searchQuery, threads]
+  );
 
   const selectedThread = useMemo(
     () => filteredThreads.find((thread) => thread.id === selectedThreadId) ?? null,
@@ -538,8 +478,8 @@ export function MailWorkspace() {
         openFeedback({
           tone: "success",
           title: "Message sent",
-          message: "Your email was sent and the thread list has been refreshed.",
-          autoCloseMs: 1500
+          message: "Your email was accepted by the outbound service and moved to Sent.",
+          autoCloseMs: 2000
         });
         return true;
       } catch (sendError) {
@@ -558,15 +498,19 @@ export function MailWorkspace() {
     [activeMailbox?.address, activeMailboxId, loadMessages, openFeedback]
   );
 
-  const inboxCount = useMemo(
-    () => threads.filter((thread) => !thread.messages.some((message) => message.is_spam)).length,
+  const inboxCount = useMemo(() => threads.filter((thread) => thread.hasInbound && !thread.hasSpam).length, [threads]);
+
+  const sentCount = useMemo(
+    () => threads.filter((thread) => thread.hasSentOutbound && !thread.hasSpam).length,
     [threads]
   );
 
-  const spamCount = useMemo(
-    () => threads.filter((thread) => thread.messages.some((message) => message.is_spam)).length,
+  const outboxCount = useMemo(
+    () => threads.filter((thread) => thread.hasQueuedOutbound && !thread.hasSpam).length,
     [threads]
   );
+
+  const spamCount = useMemo(() => threads.filter((thread) => thread.hasSpam).length, [threads]);
 
   return (
     <div className="h-full flex">
@@ -625,6 +569,25 @@ export function MailWorkspace() {
           >
             <Send className="w-4 h-4" />
             <span>Sent</span>
+            <Badge variant="secondary" className="ml-auto text-xs">
+              {sentCount}
+            </Badge>
+          </button>
+
+          <button
+            onClick={() => setCurrentView("outbox")}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
+              currentView === "outbox"
+                ? "bg-neutral-100 text-neutral-900 font-medium"
+                : "text-neutral-600 hover:bg-neutral-50"
+            )}
+          >
+            <Clock3 className="w-4 h-4" />
+            <span>Outbox</span>
+            <Badge variant="secondary" className="ml-auto text-xs">
+              {outboxCount}
+            </Badge>
           </button>
 
           <button
@@ -672,6 +635,7 @@ export function MailWorkspace() {
           {!loading && !error
             ? filteredThreads.map((thread) => {
                 const lastMessage = thread.messages[thread.messages.length - 1];
+                const correspondent = getThreadCorrespondent(thread, activeMailbox?.address ?? currentUser?.email ?? null);
                 return (
                   <div
                     key={thread.id}
@@ -721,18 +685,16 @@ export function MailWorkspace() {
                         aria-label={thread.unread ? "Mark thread as read" : "Mark thread as unread"}
                       >
                         {thread.unread ? (
-                          <MailOpen className="w-4 h-4" />
-                        ) : (
                           <Mail className="w-4 h-4" />
+                        ) : (
+                          <MailOpen className="w-4 h-4" />
                         )}
                       </button>
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 mb-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-sm">
-                              {deriveNameFromEmail(lastMessage.from_email)}
-                            </span>
+                            <span className="font-medium text-sm">{correspondent}</span>
                             {thread.unread ? <div className="w-2 h-2 rounded-full bg-blue-500" /> : null}
                           </div>
                           <span className="text-xs text-neutral-500 whitespace-nowrap">
@@ -750,6 +712,9 @@ export function MailWorkspace() {
                           {lastMessage.has_attachments ? <Paperclip className="w-3 h-3 text-neutral-400" /> : null}
                           {thread.messages.some((message) => message.is_pinned) ? (
                             <span className="text-xs text-neutral-500">Pinned</span>
+                          ) : null}
+                          {currentView === "outbox" ? (
+                            <span className="text-xs text-amber-700">Queued</span>
                           ) : null}
                           {thread.messages.some((message) => message.is_spam) ? (
                             <Badge variant="outline" className="h-5 text-[10px] border-red-200 bg-red-50 text-red-700">
@@ -821,7 +786,11 @@ export function MailWorkspace() {
             }}
             onSendReply={async (message, body, attachments) => {
               const detail = messageDetails[message.id];
-              const recipient = detail?.message.from ?? message.from_email;
+              const recipient = getReplyTargetEmail(
+                message,
+                detail?.message,
+                activeMailbox?.address ?? currentUser?.email ?? null
+              );
               const subject = message.subject
                 ? message.subject.toLowerCase().startsWith("re:")
                   ? message.subject

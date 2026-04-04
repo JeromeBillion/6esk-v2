@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import PublicPageFrame from "@/app/components/PublicPageFrame";
+import { setStoredDemoMode } from "@/app/lib/demo-mode";
 import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
 import { Button } from "@/app/workspace/components/ui/button";
 import { Input } from "@/app/workspace/components/ui/input";
@@ -47,6 +48,7 @@ export default function LoginPage() {
       return;
     }
 
+    setStoredDemoMode(false);
     router.push("/tickets");
   }
 

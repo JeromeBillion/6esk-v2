@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Inter } from "next/font/google";
-import { BarChart3, Info, LogOut, Mail, Moon, Settings, Sun, Ticket } from "lucide-react";
+import { BarChart3, Info, LogIn, LogOut, Mail, Moon, Settings, Sun, Ticket } from "lucide-react";
 import BrandMark from "@/app/components/BrandMark";
 import { cn } from "@/app/workspace/components/ui/utils";
 import { Button } from "@/app/workspace/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/app/workspace/components/ui/dialog";
 import { useDemoMode } from "@/app/lib/demo-mode";
+import { parseDemoQueryValue } from "@/app/lib/demo-mode-config";
+import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { useThemeMode } from "@/app/lib/theme";
 
 const inter = Inter({
@@ -27,19 +29,84 @@ const NAVIGATION = [
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
   const { theme, toggleTheme } = useThemeMode();
   const { demoModeEnabled, setDemoModeEnabled } = useDemoMode();
 
   const activeRoute = useMemo(() => pathname ?? "", [pathname]);
+  const demoQueryValue = searchParams.get("demo");
   const nextThemeLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
   const ThemeIcon = theme === "dark" ? Sun : Moon;
 
+  const buildWorkspaceHref = useMemo(() => {
+    return (href: string, demoEnabled: boolean) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (demoEnabled) {
+        params.set("demo", "1");
+      } else {
+        params.delete("demo");
+      }
+      const queryString = params.toString();
+      return queryString ? `${href}?${queryString}` : href;
+    };
+  }, [searchParams]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentSessionUser()
+      .then((user) => {
+        if (!cancelled) {
+          setCurrentUser(user);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCurrentUser(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const requestedDemoMode = parseDemoQueryValue(searchParams.get("demo"));
+    if (typeof requestedDemoMode === "boolean") {
+      setDemoModeEnabled(requestedDemoMode);
+    }
+  }, [searchParams, setDemoModeEnabled]);
+
   async function handleSignOut() {
     setSigningOut(true);
+    setDemoModeEnabled(false);
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
+  }
+
+  function handleSignIn() {
+    setDemoModeEnabled(false);
+    window.location.href = "/login";
+  }
+
+  function handleSampleDataRequest() {
+    setDemoModeEnabled(true);
+    setSettingsOpen(false);
+    router.push(buildWorkspaceHref(activeRoute || "/tickets", true));
+  }
+
+  function handleLiveDataRequest() {
+    if (currentUser) {
+      setDemoModeEnabled(false);
+      setSettingsOpen(false);
+      router.push(buildWorkspaceHref(activeRoute || "/tickets", false));
+      return;
+    }
+    handleSignIn();
   }
 
   return (
@@ -57,7 +124,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               return (
                 <Link
                   key={item.name}
-                  href={item.href}
+                  href={buildWorkspaceHref(item.href, demoModeEnabled)}
                   className={cn(
                     "mx-auto flex h-10 w-10 items-center justify-center rounded-full transition-colors",
                     isActive
@@ -118,7 +185,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   type="button"
                   variant={demoModeEnabled ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setDemoModeEnabled(true)}
+                  onClick={handleSampleDataRequest}
                 >
                   Sample Data
                 </Button>
@@ -126,7 +193,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   type="button"
                   variant={!demoModeEnabled ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setDemoModeEnabled(false)}
+                  onClick={handleLiveDataRequest}
                 >
                   Live Data
                 </Button>
@@ -136,19 +203,30 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <div className="flex items-center justify-between border border-neutral-200 rounded-lg p-4">
               <div>
                 <p className="text-sm font-medium">Session</p>
-                <p className="text-xs text-neutral-600">Sign out of the current workspace session.</p>
+                <p className="text-xs text-neutral-600">
+                  {currentUser
+                    ? "Sign out of the current workspace session."
+                    : "Open the sign-in page for a live workspace session."}
+                </p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={handleSignOut}
-                disabled={signingOut}
-              >
-                <LogOut className="h-4 w-4" />
-                {signingOut ? "Signing out..." : "Sign Out"}
-              </Button>
+              {currentUser ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={handleSignOut}
+                  disabled={signingOut}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {signingOut ? "Signing out..." : "Sign Out"}
+                </Button>
+              ) : (
+                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleSignIn}>
+                  <LogIn className="h-4 w-4" />
+                  Sign In
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>
