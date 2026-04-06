@@ -185,6 +185,13 @@ export async function GET(
       to: message.to_emails,
       direction: message.direction,
       channel: message.channel,
+      mailState:
+        (typeof message.metadata?.mail_state === "string" ? message.metadata.mail_state : null) ??
+        (message.direction === "outbound"
+          ? message.sent_at
+            ? "sent"
+            : "queued"
+          : "received"),
       origin: message.origin,
       isStarred: message.is_starred,
       isPinned: message.is_pinned,
@@ -201,6 +208,8 @@ export async function GET(
       callSession,
       transcript,
       statusEvents,
+      draftSavedAt:
+        typeof message.metadata?.draft_saved_at === "string" ? message.metadata.draft_saved_at : null,
       text,
       html,
       aiMeta: message.ai_meta ?? null

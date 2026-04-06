@@ -20,16 +20,17 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 | 6 | Voice capability | Callback correlation for status, recording, and transcript events | `in_progress` | `6esk` now owns Twilio status/recording callbacks directly, stores canonical artifacts in its own R2, and has the first managed STT backend wired behind `managed_http`; live provider rehearsal is still required |
 | 7 | Voice capability | Transcript-derived AI outputs (summary, resolution note, QA flags, action items) | `done` | `6esk` now persists transcript-AI jobs, dispatches managed analysis, stores derived artifacts separately from the raw transcript, and surfaces QA only in Admin/Analytics |
 | 8 | Voice capability | Production call rollout hardening and policy validation | `in_progress` | Runbooks now reflect the real desk-owned Twilio path, `6esk`-owned artifact storage, and mandatory transcripts; pilot and outage drills still need to be executed with live credentials |
-| 9 | Voice capability | Replace fixed operator bridge target with in-platform queue routing | `missing` | Current Twilio path still uses a single `CALLS_TWILIO_BRIDGE_TARGET`; `v1` needs customer calls to ring inside `6esk`, not on an operator handset |
-| 10 | Voice capability | Add in-platform ringing controls and in-call operator state | `missing` | Operators need browser answer / pass controls plus visible in-call state; drop is not a supported operator action |
-| 11 | Live operator experience | Add operator presence states (`online`, `away`, `offline`) | `missing` | Presence must drive notification behavior and later call routing eligibility |
-| 12 | Live operator experience | Add popup notifications and tones for email, WhatsApp, and calls | `missing` | Call queue should ring; messaging should alert only for active operators |
-| 13 | Live operator experience | Add real-time/near-real-time desk refresh | `missing` | New queue work should appear without manual reload and without wasteful polling |
+| 9 | Voice capability | Replace fixed operator bridge target with in-platform queue routing | `in_progress` | Customer calls now ring inside `6esk`, routing is sequential with operator reservation and pass-onward progression, and the remaining work is deeper fairness/team policy hardening plus live-provider validation |
+| 10 | Voice capability | Add in-platform ringing controls and in-call operator state | `done` | Operators now ring in-browser, can answer or pass onward, and the desk shows active call state without exposing a desk-side drop action |
+| 11 | Live operator experience | Add operator presence states (`online`, `away`, `offline`) | `done` | Presence is persisted and already drives voice eligibility and desk availability |
+| 12 | Live operator experience | Add popup notifications and tones for email, WhatsApp, and calls | `done` | Channel-aware popups and real audio assets are wired for support email, inbox email, WhatsApp, and incoming calls |
+| 13 | Live operator experience | Add real-time/near-real-time desk refresh | `done` | Shared desk snapshot polling refreshes Support and Mail without manual reload while the tab is active |
 | 14 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and Venus handoff policy |
 | 15 | Cross-channel merge vision | Implement compatibility rules, preflight, and review semantics | `done` | Cross-channel merge now preflights into link semantics, same-channel hard merge stays separate, and operator-linked cases are surfaced in the Support right rail |
 | 16 | Deep 6ex integration | Venus/6ex ticket creation hardening + 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; the remaining work is no longer ticket-create hardening |
 | 17 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches now promote existing identity-linked customers, and contradictory upstream identities now preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
 | 18 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths now support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
+| 19 | Live operator experience | Add recoverable personal inbox drafts with a Drafts tab | `missing` | Started-but-unsent personal emails must persist as drafts and remain resumable from a dedicated Inbox Drafts view |
 
 ## Remaining v1 Focus
 
@@ -37,11 +38,8 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 - live callback rehearsal against the chosen Twilio deployment from `6esk`
 - finalize the `6esk`-owned recording-to-R2 and transcript pipeline against live provider callbacks and Deepgram STT credentials
 - pilot hardening and outage drills with real credentials
-- replace fixed operator bridge routing with in-platform queue routing and browser-based answer flow
-- add operator presence state
-- add pop-up notifications and tones
-- add real-time or near-real-time desk liveness
-- add ringing/answer/pass call queue behavior with visible in-call state and no normal dependence on personal-phone bridging
+- harden queue-routing policy further if live traffic requires richer fairness, team, or skill-based routing beyond the current sequential reservation model
+- add recoverable personal inbox drafts and a dedicated Drafts tab/view
 
 ## Completed Build Slices
 

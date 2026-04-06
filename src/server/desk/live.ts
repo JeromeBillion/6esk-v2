@@ -131,6 +131,10 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
 
   const operatorSummary = roster.reduce(
     (summary, operator) => {
+      if (operator.status === "online" && operator.ringingCallSessionId) {
+        summary.ringing += 1;
+        return summary;
+      }
       if (operator.status === "away") {
         summary.away += 1;
         return summary;
@@ -146,7 +150,7 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
       summary.offline += 1;
       return summary;
     },
-    { online: 0, busy: 0, away: 0, offline: 0 }
+    { online: 0, ringing: 0, busy: 0, away: 0, offline: 0 }
   );
 
   return {
@@ -168,7 +172,8 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
         displayName: operator.displayName,
         email: operator.email,
         status: operator.status,
-        activeCallSessionId: operator.activeCallSessionId
+        activeCallSessionId: operator.activeCallSessionId,
+        ringingCallSessionId: operator.ringingCallSessionId
       }))
     }
   };

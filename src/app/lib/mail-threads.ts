@@ -1,6 +1,6 @@
 import type { ApiMailboxMessage, ApiMessageDetail } from "@/app/lib/api/mail";
 
-export type MailView = "inbox" | "starred" | "sent" | "outbox" | "spam";
+export type MailView = "inbox" | "starred" | "sent" | "outbox" | "drafts" | "spam";
 
 export type MailThread = {
   id: string;
@@ -14,9 +14,22 @@ export type MailThread = {
   hasOutbound: boolean;
   hasSentOutbound: boolean;
   hasQueuedOutbound: boolean;
+  hasDrafts: boolean;
   hasSpam: boolean;
   messages: ApiMailboxMessage[];
 };
+
+export function getMessageMailState(message: ApiMailboxMessage) {
+  if (message.mail_state) {
+    return message.mail_state;
+  }
+
+  if (message.direction === "outbound") {
+    return message.sent_at ? "sent" : "queued";
+  }
+
+  return "received";
+}
 
 function toTitleCase(value: string) {
   return value
@@ -45,8 +58,8 @@ export function buildMailThreads(messages: ApiMailboxMessage[]) {
     .map(([id, threadMessages]) => {
       const sorted = [...threadMessages].sort(
         (left, right) =>
-          new Date(left.sent_at ?? left.received_at ?? left.created_at).getTime() -
-          new Date(right.sent_at ?? right.received_at ?? right.created_at).getTime()
+          new Date(left.sort_at ?? left.sent_at ?? left.received_at ?? left.created_at).getTime() -
+          new Date(right.sort_at ?? right.sent_at ?? right.received_at ?? right.created_at).getTime()
       );
       const last = sorted[sorted.length - 1]!;
       return {
@@ -54,13 +67,16 @@ export function buildMailThreads(messages: ApiMailboxMessage[]) {
         subject: last.subject ?? "(no subject)",
         participants: Array.from(new Set(sorted.map((message) => deriveNameFromEmail(message.from_email)))),
         message_count: sorted.length,
-        last_message_at: last.sent_at ?? last.received_at ?? last.created_at,
+        last_message_at: last.sort_at ?? last.sent_at ?? last.received_at ?? last.created_at,
         unread: sorted.some((message) => message.direction === "inbound" && !message.is_read),
         starred: sorted.some((message) => message.is_starred),
         hasInbound: sorted.some((message) => message.direction === "inbound"),
         hasOutbound: sorted.some((message) => message.direction === "outbound"),
-        hasSentOutbound: sorted.some((message) => message.direction === "outbound" && Boolean(message.sent_at)),
-        hasQueuedOutbound: sorted.some((message) => message.direction === "outbound" && !message.sent_at),
+        hasSentOutbound: sorted.some((message) => getMessageMailState(message) === "sent"),
+        hasQueuedOutbound: sorted.some((message) =>
+          ["queued", "processing", "failed"].includes(getMessageMailState(message))
+        ),
+        hasDrafts: sorted.some((message) => getMessageMailState(message) === "draft"),
         hasSpam: sorted.some((message) => message.is_spam),
         messages: sorted
       } satisfies MailThread;
@@ -76,6 +92,7 @@ export function filterMailThreads(threads: MailThread[], view: MailView, searchQ
       (view === "starred" && thread.starred && !thread.hasSpam) ||
       (view === "sent" && thread.hasSentOutbound && !thread.hasSpam) ||
       (view === "outbox" && thread.hasQueuedOutbound && !thread.hasSpam) ||
+      (view === "drafts" && thread.hasDrafts && !thread.hasSpam) ||
       (view === "spam" && thread.hasSpam);
 
     const matchesSearch =

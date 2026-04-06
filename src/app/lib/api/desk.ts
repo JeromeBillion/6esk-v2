@@ -17,6 +17,7 @@ export type DeskLiveSnapshot = {
     userId: string;
     status: "online" | "away" | "offline";
     activeCallSessionId: string | null;
+    ringingCallSessionId: string | null;
     lastSeenAt: string | null;
     registeredAt: string | null;
   };
@@ -32,6 +33,7 @@ export type DeskLiveSnapshot = {
   operators: {
     summary: {
       online: number;
+      ringing: number;
       busy: number;
       away: number;
       offline: number;
@@ -42,6 +44,7 @@ export type DeskLiveSnapshot = {
       email: string;
       status: "online" | "away" | "offline";
       activeCallSessionId: string | null;
+      ringingCallSessionId: string | null;
     }>;
   };
 };

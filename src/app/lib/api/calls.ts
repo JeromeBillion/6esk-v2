@@ -8,6 +8,7 @@ export type VoicePresenceResponse = {
     userId: string;
     status: VoicePresenceStatus;
     activeCallSessionId: string | null;
+    ringingCallSessionId: string | null;
     lastSeenAt: string | null;
     registeredAt: string | null;
   };

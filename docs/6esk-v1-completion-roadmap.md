@@ -48,11 +48,14 @@ Strongly in place already:
 - workspace-level module entitlements and runtime guards
 - first-pass entitlement-aware usage metering surfaced in Admin
 - non-destructive cross-channel `linked_case` operator flow in Support
+- live operator presence with `online` / `away` / `offline`
+- browser-based desk calling with in-platform ringing, answer, pass-onward, and in-call state
+- real-time desk snapshot polling plus channel-aware popups and tones for email, WhatsApp, and calls
 
 Still incomplete or intentionally blocked:
 - live provider callback rehearsal and production rollout validation
 - final pilot hardening against the chosen Twilio deployment
-- remaining open work is now overwhelmingly rollout validation rather than missing core provider code
+- remaining open work is now overwhelmingly rollout validation plus deeper queue-policy hardening rather than missing core provider code
 
 ## v1 Success Criteria
 `6esk v1` is complete only when all of the following are true:
@@ -65,6 +68,7 @@ Still incomplete or intentionally blocked:
 7. Operations can observe, recover, retry, and audit every major channel flow.
 8. Operators can work the platform as a live desk, with clear online/offline/away presence, queue notifications, and real-time updates for new work.
 9. Voice queue behavior matches real support expectations: customer calls route into `6esk`, operators ring and answer inside the desk, skip/pass onward is supported, in-call presence is visible, and there is no operator-driven customer drop action.
+10. Personal inbox behavior matches normal operator expectations: Inbox, Sent, Outbox, and Drafts each reflect distinct states, and unfinished email composition is preserved as recoverable drafts instead of being lost.
 
 ## Workstream A: Finish Voice Capability
 Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs\call-capabilities-backlog.md)
@@ -75,9 +79,9 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 3. Close any remaining live-environment gaps in call recording playback/download and transcript timing.
 4. Finalize consent, policy, and blocking behaviors for live calling.
 5. Rehearse rollback and outage drills with the real provider path enabled.
-6. Replace the temporary fixed `CALLS_TWILIO_BRIDGE_TARGET` PSTN operator destination model with real in-platform queue-aware operator routing inside `6esk`.
-7. Add explicit in-call, ringing, available, away, and offline operator states so voice routing can respect real agent availability inside the desk.
-8. Add browser/platform answer and skip-pass controls for ringing calls and explicitly forbid operator-side call drop as a supported queue action.
+6. Harden in-platform queue-aware operator routing with sequential offer policy, pass-onward progression, and fair operator ordering inside `6esk`.
+7. Deepen explicit operator state visibility so routing and supervision can distinguish ringing, available, in-call, away, and offline desk operators.
+8. Keep browser/platform answer and skip-pass controls trustworthy under retry/failover paths and explicitly forbid operator-side call drop as a supported queue action.
 
 ### Required Deliverables
 - real provider adapter wired into `call_outbox_events`
@@ -91,8 +95,8 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 - QA signals must surface in Admin/metrics dashboards only; Support remains focused on the raw transcript and operational ticket state
 - full audit/event provenance for call lifecycle
 - operator-visible failure states and retry controls
-- live queue-aware call assignment inside `6esk` instead of a single hard-coded operator bridge target
-- ringing state with in-platform answer and pass-on controls
+- live queue-aware call assignment inside `6esk` with operator reservation, pass-onward progression, and fair operator ordering instead of a single hard-coded operator bridge target
+- ringing state with in-platform answer and pass-on controls, plus live roster visibility
 - in-call state visible in the UI so teammates can see who is busy
 - no explicit operator-side drop action for queued/ringing customer calls
 - pilot checklist executed against `6ex` traffic or staging mirror
@@ -109,6 +113,7 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 - operator presence and in-call state are visible and respected by routing
 - no critical mock-only assumptions remain in the main call path
 - no normal support-call flow depends on dialing or bridging to an operator's personal phone number
+- queue progression is deterministic enough that the same online operator is not repeatedly first unless desk state actually warrants it
 
 ## Workstream B: Unblock WhatsApp / Cross-Channel Merge Vision
 Current constraint: [merge-feature-roadmap.md](C:\Users\choma\Desktop\6esk\docs\merge-feature-roadmap.md) still blocks destructive cross-channel merge, but now supports a non-destructive `linked_case` path.
@@ -275,6 +280,11 @@ The platform should feel like a live operating surface, not a static backoffice 
 - real-time or near-real-time queue refresh so new work appears without manual reload
 - clear in-call state in the UI so the team can see who is currently busy on voice
 - support calls route into the desk UI itself; the normal operator experience is platform ringing/answering, not a call to the operator's personal handset
+- personal inbox composition behaves like a real mailbox, including:
+  - recoverable unsent drafts
+  - a dedicated Drafts view/tab in Inbox
+  - draft persistence when an operator starts an email and leaves before sending
+  - clear separation between Drafts, Sent, Inbox, and any pending outbound queue state
 
 ### Voice Queue Rule
 For `v1`, customer calls should not be operator-droppable from the queue surface.
@@ -291,11 +301,15 @@ If the customer abandons or hangs up, that should be reflected as a provider/cus
 - ops can explain and recover every failed send/call/merge path
 - retry/dead-letter handling is operator-usable, not only developer-usable
 - staging drills mirror production enough to de-risk rollout
+- personal inbox drafts survive partial composition and can be resumed from a dedicated Drafts view
 
 Current progress:
 - voice already had failed-event, retry, and dead-letter operator tooling
 - WhatsApp outbox now has stale-processing recovery, failed-event inspection, targeted retry, and audited admin recovery actions
 - AI agent outbox now has stale-processing recovery, failed-event inspection, targeted retry, and audited admin recovery actions
+- desk presence, browser-native ringing/answer/pass controls, and in-call state are already live in the product
+- channel-aware popups and tones are already live for support email, inbox email, WhatsApp, and calls
+- real-time desk snapshot polling is already live and refreshes Support/Mail without manual reload
 
 ## Execution Order
 ### Phase 1: finish product-critical blockers

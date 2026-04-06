@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Readable } from "stream";
 
 const globalForR2 = globalThis as unknown as { r2Client?: S3Client };
@@ -82,4 +82,19 @@ export async function getObjectBuffer(key: string) {
     buffer: Buffer.concat(chunks),
     contentType: result.ContentType ?? undefined
   };
+}
+
+export async function deleteObject(key: string) {
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) {
+    throw new Error("R2_BUCKET is required");
+  }
+
+  const client = getR2Client();
+  await client.send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key
+    })
+  );
 }

@@ -72,6 +72,28 @@ describe("mail thread filtering", () => {
     expect(filterMailThreads(threads, "inbox", "")).toHaveLength(0);
   });
 
+  it("keeps drafts out of Outbox and shows them in Drafts", () => {
+    const draft = buildMessage({
+      id: "msg-draft",
+      direction: "outbound",
+      from_email: "jerome.choma@6ex.co.za",
+      to_emails: ["customer@example.com"],
+      received_at: null,
+      sent_at: null,
+      is_read: true,
+      thread_id: "thread-draft",
+      message_id: null,
+      mail_state: "draft"
+    });
+
+    const threads = buildMailThreads([draft]);
+
+    expect(filterMailThreads(threads, "drafts", "").map((thread) => thread.id)).toEqual(["thread-draft"]);
+    expect(filterMailThreads(threads, "outbox", "")).toHaveLength(0);
+    expect(filterMailThreads(threads, "sent", "")).toHaveLength(0);
+    expect(filterMailThreads(threads, "inbox", "")).toHaveLength(0);
+  });
+
   it("keeps replied conversations in Inbox while retaining them in Sent", () => {
     const outbound = buildMessage({
       id: "msg-3",

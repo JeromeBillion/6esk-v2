@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Search,
@@ -10,6 +10,7 @@ import {
   Clock3,
   Mail,
   MailOpen,
+  FileText,
   Reply,
   Forward,
   MoreHorizontal,
@@ -30,6 +31,7 @@ import {
   ApiMailbox,
   ApiMailboxMessage,
   ApiMessageDetail,
+  deleteMailDraft,
   getMailMessageDetail,
   listMailboxMessages,
   listMailboxes,
@@ -37,12 +39,14 @@ import {
   patchThreadPin,
   patchThreadRead,
   patchThreadStar,
+  saveMailDraft,
   sendMail
 } from "@/app/lib/api/mail";
 import {
   buildMailThreads,
   deriveNameFromEmail,
   filterMailThreads,
+  getMessageMailState,
   getReplyTargetEmail,
   getThreadCorrespondent,
   type MailThread,
@@ -53,7 +57,7 @@ import { listSupportMacros, type SupportMacro } from "@/app/lib/api/support";
 import { encodeAttachments, formatFileSize, type EncodedAttachment } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
 
-const MAIL_VIEW_VALUES = new Set(["inbox", "starred", "sent", "outbox", "spam"]);
+const MAIL_VIEW_VALUES = new Set(["inbox", "starred", "sent", "outbox", "drafts", "spam"]);
 
 type FeedbackState = {
   open: boolean;
@@ -64,9 +68,13 @@ type FeedbackState = {
 };
 
 type ComposeDraft = {
+  id?: string | null;
   to: string;
   subject: string;
   body: string;
+  threadId?: string | null;
+  inReplyTo?: string | null;
+  references?: string[];
 };
 
 function formatDate(dateString: string) {
@@ -288,6 +296,14 @@ export function MailWorkspace() {
     [filteredThreads, selectedThreadId]
   );
 
+  const selectedThreadDraft = useMemo(
+    () =>
+      selectedThread
+        ? [...selectedThread.messages].reverse().find((message) => getMessageMailState(message) === "draft") ?? null
+        : null,
+    [selectedThread]
+  );
+
   useEffect(() => {
     if (!selectedThread) return;
     const missingIds = selectedThread.messages
@@ -448,8 +464,9 @@ export function MailWorkspace() {
       body: string,
       attachments?: EncodedAttachment[],
       options?: {
-        threadId?: string;
-        inReplyTo?: string;
+        draftId?: string | null;
+        threadId?: string | null;
+        inReplyTo?: string | null;
         references?: string[];
       }
     ) => {
@@ -482,8 +499,9 @@ export function MailWorkspace() {
           to: [to.trim()],
           subject: subject.trim(),
           text: body.trim(),
-          threadId: options?.threadId,
-          inReplyTo: options?.inReplyTo,
+          draftId: options?.draftId ?? undefined,
+          threadId: options?.threadId ?? undefined,
+          inReplyTo: options?.inReplyTo ?? undefined,
           references: options?.references,
           attachments:
             attachments?.map((attachment) => ({
@@ -497,8 +515,8 @@ export function MailWorkspace() {
         }
         openFeedback({
           tone: "success",
-          title: "Message sent",
-          message: "Your email was accepted by the outbound service and moved to Sent.",
+          title: "Queued for send",
+          message: "Your email entered Outbox and will move to Sent after delivery verification.",
           autoCloseMs: 2000
         });
         return true;
@@ -530,7 +548,70 @@ export function MailWorkspace() {
     [threads]
   );
 
+  const draftCount = useMemo(
+    () => threads.filter((thread) => thread.hasDrafts && !thread.hasSpam).length,
+    [threads]
+  );
+
   const spamCount = useMemo(() => threads.filter((thread) => thread.hasSpam).length, [threads]);
+
+  const upsertDraftMessage = useCallback((draft: ApiMailboxMessage) => {
+    setMessages((previous) => {
+      const next = previous.filter((message) => message.id !== draft.id);
+      return [draft, ...next];
+    });
+  }, []);
+
+  const removeDraftMessage = useCallback((draftId: string) => {
+    setMessages((previous) => previous.filter((message) => message.id !== draftId));
+  }, []);
+
+  const openDraftThread = useCallback(
+    async (thread: MailThread) => {
+      const draftMessage = [...thread.messages].reverse().find(
+        (message) => getMessageMailState(message) === "draft"
+      );
+      if (!draftMessage) {
+        return;
+      }
+
+      setLoadingDetails(true);
+      try {
+        const detail = messageDetails[draftMessage.id] ?? (await getMailMessageDetail(draftMessage.id));
+        setMessageDetails((previous) => ({
+          ...previous,
+          [detail.message.id]: detail
+        }));
+        setComposeDraft({
+          id: draftMessage.id,
+          to: detail.message.to?.[0] ?? draftMessage.to_emails[0] ?? "",
+          subject: detail.message.subject ?? draftMessage.subject ?? "",
+          body:
+            detail.message.text ??
+            (detail.message.html ? stripHtml(detail.message.html) : null) ??
+            draftMessage.preview_text ??
+            "",
+          threadId: detail.message.threadId ?? draftMessage.thread_id ?? null,
+          inReplyTo: detail.message.inReplyTo ?? null,
+          references: detail.message.references ?? []
+        });
+        setSelectedThreadId(null);
+        setReplyingToMessageId(null);
+        setComposing(true);
+      } catch (openError) {
+        const message = openError instanceof Error ? openError.message : "Failed to open draft";
+        setError(message);
+        openFeedback({
+          tone: "error",
+          title: "Draft load failed",
+          message
+        });
+      } finally {
+        setLoadingDetails(false);
+      }
+    },
+    [messageDetails, openFeedback]
+  );
 
   return (
     <div className="h-full flex">
@@ -611,6 +692,22 @@ export function MailWorkspace() {
           </button>
 
           <button
+            onClick={() => setCurrentView("drafts")}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
+              currentView === "drafts"
+                ? "bg-neutral-100 text-neutral-900 font-medium"
+                : "text-neutral-600 hover:bg-neutral-50"
+            )}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Drafts</span>
+            <Badge variant="secondary" className="ml-auto text-xs">
+              {draftCount}
+            </Badge>
+          </button>
+
+          <button
             onClick={() => setCurrentView("spam")}
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
@@ -655,6 +752,7 @@ export function MailWorkspace() {
           {!loading && !error
             ? filteredThreads.map((thread) => {
                 const lastMessage = thread.messages[thread.messages.length - 1];
+                const lastMailState = getMessageMailState(lastMessage);
                 const correspondent = getThreadCorrespondent(thread, activeMailbox?.address ?? currentUser?.email ?? null);
                 return (
                   <div
@@ -665,6 +763,10 @@ export function MailWorkspace() {
                       thread.unread && "bg-blue-50/30"
                     )}
                     onClick={() => {
+                      if (currentView === "drafts") {
+                        void openDraftThread(thread);
+                        return;
+                      }
                       setSelectedThreadId(thread.id);
                       setComposing(false);
                       setReplyingToMessageId(null);
@@ -734,7 +836,25 @@ export function MailWorkspace() {
                             <span className="text-xs text-neutral-500">Pinned</span>
                           ) : null}
                           {currentView === "outbox" ? (
-                            <span className="text-xs text-amber-700">Queued</span>
+                            <span
+                              className={cn(
+                                "text-xs",
+                                lastMailState === "failed"
+                                  ? "text-red-700"
+                                  : lastMailState === "processing"
+                                    ? "text-blue-700"
+                                    : "text-amber-700"
+                              )}
+                            >
+                              {lastMailState === "processing"
+                                ? "Sending"
+                                : lastMailState === "failed"
+                                  ? "Failed"
+                                  : "Queued"}
+                            </span>
+                          ) : null}
+                          {thread.hasDrafts ? (
+                            <span className="text-xs text-amber-700">Draft</span>
                           ) : null}
                           {thread.messages.some((message) => message.is_spam) ? (
                             <Badge variant="outline" className="h-5 text-[10px] border-red-200 bg-red-50 text-red-700">
@@ -764,6 +884,7 @@ export function MailWorkspace() {
       <div className="flex-1 bg-neutral-50 flex flex-col">
         {composing ? (
           <ComposeView
+            mailboxId={activeMailboxId}
             macros={macros}
             initialDraft={composeDraft}
             sending={sending}
@@ -771,8 +892,23 @@ export function MailWorkspace() {
               setComposing(false);
               setComposeDraft(null);
             }}
-            onSend={async (to, subject, body, attachments) => {
-              const success = await sendEmail(to, subject, body, attachments);
+            onDiscardDraft={async (draftId) => {
+              if (!activeMailboxId) {
+                return;
+              }
+              await deleteMailDraft(activeMailboxId, draftId);
+              removeDraftMessage(draftId);
+            }}
+            onSaveDraft={async (input) => {
+              if (!activeMailboxId) {
+                throw new Error("No mailbox selected.");
+              }
+              const payload = await saveMailDraft(activeMailboxId, input);
+              upsertDraftMessage(payload.draft);
+              return payload.draft;
+            }}
+            onSend={async (to, subject, body, attachments, options) => {
+              const success = await sendEmail(to, subject, body, attachments, options);
               if (success) {
                 setComposing(false);
                 setComposeDraft(null);
@@ -784,6 +920,28 @@ export function MailWorkspace() {
             thread={selectedThread}
             macros={macros}
             messageDetails={messageDetails}
+            existingDraft={
+              selectedThreadDraft
+                ? {
+                    id: selectedThreadDraft.id,
+                    body:
+                      messageDetails[selectedThreadDraft.id]?.message.text ??
+                      (messageDetails[selectedThreadDraft.id]?.message.html
+                        ? stripHtml(messageDetails[selectedThreadDraft.id]!.message.html!)
+                        : null) ??
+                      selectedThreadDraft.preview_text ??
+                      "",
+                    subject: selectedThreadDraft.subject ?? "",
+                    to: selectedThreadDraft.to_emails[0] ?? "",
+                    threadId:
+                      messageDetails[selectedThreadDraft.id]?.message.threadId ??
+                      selectedThreadDraft.thread_id ??
+                      null,
+                    inReplyTo: messageDetails[selectedThreadDraft.id]?.message.inReplyTo ?? null,
+                    references: messageDetails[selectedThreadDraft.id]?.message.references ?? []
+                  }
+                : null
+            }
             loadingDetails={loadingDetails}
             replyingToMessageId={replyingToMessageId}
             sending={sending}
@@ -817,10 +975,48 @@ export function MailWorkspace() {
                   : `Re: ${message.subject}`
                 : "Re: (no subject)";
               const threadMeta = buildReplyThreadMeta(detail?.message, message.thread_id);
-              const success = await sendEmail(recipient, subject, body, attachments, threadMeta);
+              const success = await sendEmail(recipient, subject, body, attachments, {
+                ...threadMeta,
+                draftId: selectedThreadDraft?.id ?? null
+              });
               if (success) {
                 setReplyingToMessageId(null);
               }
+            }}
+            onSaveReplyDraft={async (message, body) => {
+              if (!activeMailboxId) {
+                throw new Error("No mailbox selected.");
+              }
+              const detail = messageDetails[message.id];
+              const recipient = getReplyTargetEmail(
+                message,
+                detail?.message,
+                activeMailbox?.address ?? currentUser?.email ?? null
+              );
+              const subject = message.subject
+                ? message.subject.toLowerCase().startsWith("re:")
+                  ? message.subject
+                  : `Re: ${message.subject}`
+                : "Re: (no subject)";
+              const threadMeta = buildReplyThreadMeta(detail?.message, message.thread_id);
+              const payload = await saveMailDraft(activeMailboxId, {
+                draftId: selectedThreadDraft?.id ?? null,
+                to: recipient ? [recipient] : [],
+                subject,
+                text: body,
+                threadId: threadMeta.threadId ?? null,
+                inReplyTo: threadMeta.inReplyTo ?? null,
+                references: threadMeta.references ?? []
+              });
+              upsertDraftMessage(payload.draft);
+              return payload.draft;
+            }}
+            onDiscardReplyDraft={async (draftId) => {
+              if (!activeMailboxId) {
+                return;
+              }
+              await deleteMailDraft(activeMailboxId, draftId);
+              removeDraftMessage(draftId);
             }}
             threadUnread={selectedThread.unread}
             onToggleThreadRead={(nextReadState) => {
@@ -862,6 +1058,7 @@ function ThreadView({
   thread,
   macros,
   messageDetails,
+  existingDraft,
   loadingDetails,
   replyingToMessageId,
   sending,
@@ -869,6 +1066,8 @@ function ThreadView({
   onCancelReply,
   onForward,
   onSendReply,
+  onSaveReplyDraft,
+  onDiscardReplyDraft,
   threadUnread,
   onToggleThreadRead,
   onToggleSpam
@@ -876,6 +1075,15 @@ function ThreadView({
   thread: MailThread;
   macros: SupportMacro[];
   messageDetails: Record<string, ApiMessageDetail>;
+  existingDraft: {
+    id: string;
+    body: string;
+    subject: string;
+    to: string;
+    threadId?: string | null;
+    inReplyTo?: string | null;
+    references?: string[];
+  } | null;
   loadingDetails: boolean;
   replyingToMessageId: string | null;
   sending: boolean;
@@ -883,22 +1091,78 @@ function ThreadView({
   onCancelReply: () => void;
   onForward: (message: ApiMailboxMessage, body: string) => void;
   onSendReply: (message: ApiMailboxMessage, body: string, attachments?: EncodedAttachment[]) => Promise<void>;
+  onSaveReplyDraft: (message: ApiMailboxMessage, body: string) => Promise<ApiMailboxMessage>;
+  onDiscardReplyDraft: (draftId: string) => Promise<void>;
   threadUnread: boolean;
   onToggleThreadRead: (nextReadState: boolean) => void;
   onToggleSpam: (message: ApiMailboxMessage, nextSpamState: boolean) => void;
 }) {
   const [replyText, setReplyText] = useState("");
+  const [replyDraftId, setReplyDraftId] = useState<string | null>(existingDraft?.id ?? null);
+  const [replyDraftState, setReplyDraftState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [showDiscardReplyConfirm, setShowDiscardReplyConfirm] = useState(false);
   const [replyAttachments, setReplyAttachments] = useState<EncodedAttachment[]>([]);
   const [showMacroPicker, setShowMacroPicker] = useState(false);
   const [macroQuery, setMacroQuery] = useState("");
+  const lastSavedReplySignatureRef = useRef("");
+  const existingDraftRef = useRef(existingDraft);
 
   useEffect(() => {
-    setReplyText("");
+    existingDraftRef.current = existingDraft;
+  }, [existingDraft]);
+
+  useEffect(() => {
+    const draft = existingDraftRef.current;
+    setReplyText(draft?.body ?? "");
+    setReplyDraftId(draft?.id ?? null);
+    setReplyDraftState("idle");
     setReplyAttachments([]);
     setShowMacroPicker(false);
     setMacroQuery("");
+    lastSavedReplySignatureRef.current = JSON.stringify({
+      messageId: replyingToMessageId,
+      body: draft?.body ?? ""
+    });
   }, [replyingToMessageId]);
+
+  useEffect(() => {
+    if (!replyingToMessageId) {
+      return;
+    }
+
+    const replyMessage = thread.messages.find((message) => message.id === replyingToMessageId);
+    if (!replyMessage) {
+      return;
+    }
+
+    if (!replyText.trim() && !replyDraftId) {
+      return;
+    }
+
+    const signature = JSON.stringify({
+      messageId: replyingToMessageId,
+      body: replyText
+    });
+
+    if (signature === lastSavedReplySignatureRef.current) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setReplyDraftState("saving");
+      void onSaveReplyDraft(replyMessage, replyText)
+        .then((saved) => {
+          setReplyDraftId(saved.id);
+          setReplyDraftState("saved");
+          lastSavedReplySignatureRef.current = signature;
+        })
+        .catch(() => {
+          setReplyDraftState("error");
+        });
+    }, 900);
+
+    return () => clearTimeout(timeout);
+  }, [onSaveReplyDraft, replyDraftId, replyText, replyingToMessageId, thread.messages]);
 
   const handleAttachmentChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -908,13 +1172,29 @@ function ThreadView({
     event.target.value = "";
   }, []);
 
-  const requestCancelReply = useCallback(() => {
-    if (!replyText.trim() && replyAttachments.length === 0) {
-      onCancelReply();
-      return;
+  const requestCancelReply = useCallback(async () => {
+    const replyMessage = replyingToMessageId
+      ? thread.messages.find((message) => message.id === replyingToMessageId)
+      : null;
+    if (replyMessage && (replyText.trim() || replyDraftId)) {
+      const signature = JSON.stringify({
+        messageId: replyingToMessageId,
+        body: replyText
+      });
+      if (signature !== lastSavedReplySignatureRef.current) {
+        try {
+          setReplyDraftState("saving");
+          const saved = await onSaveReplyDraft(replyMessage, replyText);
+          setReplyDraftId(saved.id);
+          setReplyDraftState("saved");
+          lastSavedReplySignatureRef.current = signature;
+        } catch {
+          setReplyDraftState("error");
+        }
+      }
     }
-    setShowDiscardReplyConfirm(true);
-  }, [onCancelReply, replyAttachments.length, replyText]);
+    onCancelReply();
+  }, [onCancelReply, onSaveReplyDraft, replyDraftId, replyText, replyingToMessageId, thread.messages]);
 
   return (
     <div className="h-full flex flex-col bg-white">
@@ -1010,8 +1290,17 @@ function ThreadView({
                       <span className="text-sm font-medium">
                         Replying to {deriveNameFromEmail(message.from_email)}
                       </span>
+                      <span className="text-xs text-neutral-500">
+                        {replyDraftState === "saving"
+                          ? "Saving draft..."
+                          : replyDraftState === "saved"
+                            ? "Draft saved"
+                            : replyDraftState === "error"
+                              ? "Draft save failed"
+                              : null}
+                      </span>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={requestCancelReply}>
+                    <Button variant="ghost" size="sm" onClick={() => void requestCancelReply()}>
                       <X className="w-4 h-4" />
                     </Button>
                   </div>
@@ -1059,6 +1348,11 @@ function ThreadView({
                       <Button variant="ghost" size="sm" onClick={() => setShowMacroPicker(true)}>
                         Macro
                       </Button>
+                      {replyDraftId || replyText.trim() ? (
+                        <Button variant="ghost" size="sm" onClick={() => setShowDiscardReplyConfirm(true)}>
+                          Discard
+                        </Button>
+                      ) : null}
                     </div>
                     <Button
                       size="sm"
@@ -1133,6 +1427,10 @@ function ThreadView({
           setShowDiscardReplyConfirm(false);
           setReplyText("");
           setReplyAttachments([]);
+          if (replyDraftId) {
+            void onDiscardReplyDraft(replyDraftId);
+          }
+          setReplyDraftId(null);
           onCancelReply();
         }}
       />
@@ -1153,42 +1451,153 @@ function ThreadView({
 }
 
 function ComposeView({
+  mailboxId,
   onClose,
   onSend,
+  onSaveDraft,
+  onDiscardDraft,
   sending,
   initialDraft,
   macros
 }: {
+  mailboxId: string | null;
   onClose: () => void;
-  onSend: (to: string, subject: string, body: string, attachments?: EncodedAttachment[]) => Promise<void>;
+  onSend: (
+    to: string,
+    subject: string,
+    body: string,
+    attachments?: EncodedAttachment[],
+    options?: {
+      draftId?: string | null;
+      threadId?: string | null;
+      inReplyTo?: string | null;
+      references?: string[];
+    }
+  ) => Promise<void>;
+  onSaveDraft: (input: {
+    draftId?: string | null;
+    to?: string[];
+    subject?: string | null;
+    text?: string | null;
+    threadId?: string | null;
+    inReplyTo?: string | null;
+    references?: string[];
+  }) => Promise<ApiMailboxMessage>;
+  onDiscardDraft: (draftId: string) => Promise<void>;
   sending: boolean;
   initialDraft: ComposeDraft | null;
   macros: SupportMacro[];
 }) {
+  const [draftId, setDraftId] = useState(initialDraft?.id ?? null);
   const [to, setTo] = useState(initialDraft?.to ?? "");
   const [subject, setSubject] = useState(initialDraft?.subject ?? "");
   const [body, setBody] = useState(initialDraft?.body ?? "");
+  const [draftState, setDraftState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [attachments, setAttachments] = useState<EncodedAttachment[]>([]);
   const [showMacroPicker, setShowMacroPicker] = useState(false);
   const [macroQuery, setMacroQuery] = useState("");
+  const lastSavedSignatureRef = useRef("");
 
   useEffect(() => {
+    setDraftId(initialDraft?.id ?? null);
     setTo(initialDraft?.to ?? "");
     setSubject(initialDraft?.subject ?? "");
     setBody(initialDraft?.body ?? "");
+    setDraftState("idle");
+    setDraftError(null);
     setAttachments([]);
     setShowMacroPicker(false);
     setMacroQuery("");
+    lastSavedSignatureRef.current = JSON.stringify({
+      to: initialDraft?.to ?? "",
+      subject: initialDraft?.subject ?? "",
+      body: initialDraft?.body ?? "",
+      threadId: initialDraft?.threadId ?? null,
+      inReplyTo: initialDraft?.inReplyTo ?? null,
+      references: initialDraft?.references ?? []
+    });
   }, [initialDraft]);
 
-  const requestClose = useCallback(() => {
-    if (!to.trim() && !subject.trim() && !body.trim() && attachments.length === 0) {
-      onClose();
+  const persistDraft = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!mailboxId) {
+        return null;
+      }
+
+      const hasContent = Boolean(to.trim() || subject.trim() || body.trim());
+      if (!hasContent && !draftId) {
+        return null;
+      }
+
+      const signature = JSON.stringify({
+        to: to.trim(),
+        subject: subject.trim(),
+        body,
+        threadId: initialDraft?.threadId ?? null,
+        inReplyTo: initialDraft?.inReplyTo ?? null,
+        references: initialDraft?.references ?? []
+      });
+
+      if (!options?.force && signature === lastSavedSignatureRef.current) {
+        return null;
+      }
+
+      setDraftState("saving");
+      setDraftError(null);
+
+      try {
+        const saved = await onSaveDraft({
+          draftId,
+          to: to.trim() ? [to.trim()] : [],
+          subject: subject.trim() || null,
+          text: body || null,
+          threadId: initialDraft?.threadId ?? null,
+          inReplyTo: initialDraft?.inReplyTo ?? null,
+          references: initialDraft?.references ?? []
+        });
+
+        setDraftId(saved.id);
+        setDraftState("saved");
+        lastSavedSignatureRef.current = signature;
+        return saved;
+      } catch (error) {
+        setDraftState("error");
+        setDraftError(error instanceof Error ? error.message : "Failed to save draft");
+        return null;
+      }
+    },
+    [
+      body,
+      draftId,
+      initialDraft?.inReplyTo,
+      initialDraft?.references,
+      initialDraft?.threadId,
+      mailboxId,
+      onSaveDraft,
+      subject,
+      to
+    ]
+  );
+
+  useEffect(() => {
+    const hasContent = Boolean(to.trim() || subject.trim() || body.trim());
+    if (!hasContent && !draftId) {
       return;
     }
-    setShowDiscardConfirm(true);
-  }, [attachments.length, body, onClose, subject, to]);
+
+    const timeout = setTimeout(() => {
+      void persistDraft();
+    }, 900);
+
+    return () => clearTimeout(timeout);
+  }, [body, draftId, persistDraft, subject, to]);
+
+  const requestClose = useCallback(async () => {
+    await persistDraft({ force: true });
+    onClose();
+  }, [onClose, persistDraft]);
 
   const handleAttachmentChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -1201,8 +1610,19 @@ function ComposeView({
   return (
     <div className="h-full flex flex-col bg-white">
       <div className="border-b border-neutral-200 p-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">New Message</h2>
-        <Button variant="ghost" size="sm" onClick={requestClose}>
+        <div>
+          <h2 className="text-lg font-semibold">{draftId ? "Draft" : "New Message"}</h2>
+          <p className="text-xs text-neutral-500">
+            {draftState === "saving"
+              ? "Saving draft..."
+              : draftState === "saved"
+                ? "Draft saved"
+                : draftState === "error"
+                  ? draftError ?? "Draft save failed"
+                  : "Drafts save automatically."}
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => void requestClose()}>
           <X className="w-4 h-4" />
         </Button>
       </div>
@@ -1276,16 +1696,28 @@ function ComposeView({
             <Button variant="ghost" size="sm" onClick={() => setShowMacroPicker(true)}>
               Macro
             </Button>
+            {draftId || to.trim() || subject.trim() || body.trim() ? (
+              <Button variant="ghost" size="sm" onClick={() => setShowDiscardConfirm(true)}>
+                Discard
+              </Button>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={requestClose}>
-              Cancel
+            <Button variant="outline" size="sm" onClick={() => void requestClose()}>
+              Close
             </Button>
             <Button
               size="sm"
               className="gap-2"
               disabled={sending || !to.trim() || !subject.trim() || (!body.trim() && attachments.length === 0)}
-              onClick={() => void onSend(to, subject, body, attachments)}
+              onClick={() =>
+                void onSend(to, subject, body, attachments, {
+                  draftId,
+                  threadId: initialDraft?.threadId ?? null,
+                  inReplyTo: initialDraft?.inReplyTo ?? null,
+                  references: initialDraft?.references ?? []
+                })
+              }
             >
               <Send className="w-4 h-4" />
               {sending ? "Sending..." : "Send"}
@@ -1297,11 +1729,17 @@ function ComposeView({
       <ConfirmActionModal
         open={showDiscardConfirm}
         title="Discard message?"
-        description="Your unsent email draft will be removed."
+        description="This draft will be permanently removed."
         confirmLabel="Discard"
         onCancel={() => setShowDiscardConfirm(false)}
         onConfirm={() => {
           setShowDiscardConfirm(false);
+          if (draftId) {
+            void onDiscardDraft(draftId).finally(() => {
+              onClose();
+            });
+            return;
+          }
           onClose();
         }}
       />

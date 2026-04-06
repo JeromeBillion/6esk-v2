@@ -75,6 +75,7 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
   const [statusBusy, setStatusBusy] = useState(false);
   const [operatorSummary, setOperatorSummary] = useState({
     online: 0,
+    ringing: 0,
     busy: 0,
     away: 0,
     offline: 0
@@ -86,6 +87,7 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
       email: string;
       status: VoicePresenceStatus;
       activeCallSessionId: string | null;
+      ringingCallSessionId: string | null;
     }>
   >([]);
   const deviceRef = useRef<TwilioDevice | null>(null);
@@ -451,6 +453,7 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
                 <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">Desk availability</p>
                 <div className="flex items-center gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
                   <span>Online {operatorSummary.online}</span>
+                  <span>Ringing {operatorSummary.ringing}</span>
                   <span>Busy {operatorSummary.busy}</span>
                   <span>Away {operatorSummary.away}</span>
                 </div>
@@ -462,6 +465,8 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
                       operator.status === "online"
                         ? operator.activeCallSessionId
                           ? "bg-blue-500"
+                          : operator.ringingCallSessionId
+                            ? "bg-amber-500"
                           : "bg-emerald-500"
                         : operator.status === "away"
                           ? "bg-amber-500"
@@ -470,6 +475,8 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
                       operator.status === "online"
                         ? operator.activeCallSessionId
                           ? "In call"
+                          : operator.ringingCallSessionId
+                            ? "Ringing"
                           : "Available"
                         : operator.status === "away"
                           ? "Away"

@@ -8,9 +8,12 @@ const mocks = vi.hoisted(() => ({
   findMailbox: vi.fn(),
   getOrCreateMailbox: vi.fn(),
   hasMailboxAccess: vi.fn(),
+  getMessageById: vi.fn(),
   dbQuery: vi.fn(),
   putObject: vi.fn(),
-  recordModuleUsageEvent: vi.fn()
+  recordModuleUsageEvent: vi.fn(),
+  enqueueEmailOutboxEvent: vi.fn(),
+  isMailDraftRecord: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -32,7 +35,16 @@ vi.mock("@/server/email/mailbox", () => ({
 }));
 
 vi.mock("@/server/messages", () => ({
-  hasMailboxAccess: mocks.hasMailboxAccess
+  hasMailboxAccess: mocks.hasMailboxAccess,
+  getMessageById: mocks.getMessageById
+}));
+
+vi.mock("@/server/email/drafts", () => ({
+  isMailDraftRecord: mocks.isMailDraftRecord
+}));
+
+vi.mock("@/server/email/outbox", () => ({
+  enqueueEmailOutboxEvent: mocks.enqueueEmailOutboxEvent
 }));
 
 vi.mock("@/server/db", () => ({
@@ -62,7 +74,6 @@ function buildUser() {
 describe("POST /api/email/send", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal("fetch", vi.fn());
     mocks.getSessionUser.mockResolvedValue(buildUser());
     mocks.canManageTickets.mockReturnValue(true);
     mocks.isLeadAdmin.mockReturnValue(false);
@@ -75,24 +86,18 @@ describe("POST /api/email/send", () => {
     });
     mocks.getOrCreateMailbox.mockResolvedValue(null);
     mocks.hasMailboxAccess.mockResolvedValue(true);
+    mocks.getMessageById.mockResolvedValue(null);
     mocks.dbQuery.mockResolvedValue({ rows: [] });
     mocks.putObject.mockResolvedValue("messages/local/body.txt");
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+    mocks.enqueueEmailOutboxEvent.mockResolvedValue("evt-1");
+    mocks.isMailDraftRecord.mockReturnValue(true);
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
-  it("sends threaded inbox replies with stable local thread metadata", async () => {
-    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ id: "provider-msg-1" }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      })
-    );
-
+  it("queues threaded inbox replies with stable local thread metadata", async () => {
     const { POST } = await import("@/app/api/email/send/route");
     const response = await POST(
       new Request("http://localhost/api/email/send", {
@@ -111,36 +116,27 @@ describe("POST /api/email/send", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ status: "sent" });
-
-    const [, resendInit] = fetchMock.mock.calls[0] ?? [];
-    const resendPayload = JSON.parse(String((resendInit as RequestInit).body));
-    expect(resendPayload.headers["Message-ID"]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(resendPayload.headers).toMatchObject({
-      "In-Reply-To": "<parent@example.com>",
-      References: "<root@example.com> <parent@example.com>"
-    });
+    await expect(response.json()).resolves.toMatchObject({ status: "queued" });
 
     const [insertSql, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(insertSql).toContain("external_message_id");
+    expect(insertSql).toContain("metadata");
     expect(insertSql).toContain("in_reply_to");
     expect(insertSql).toContain("reference_ids");
     expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
     expect(insertValues[3]).toBe("<root@example.com>");
     expect(insertValues[4]).toBe("<parent@example.com>");
     expect(insertValues[5]).toEqual(["<root@example.com>", "<parent@example.com>"]);
-    expect(insertValues[6]).toBe("provider-msg-1");
-  });
-
-  it("creates a new local thread for non-reply compose sends", async () => {
-    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ id: "provider-msg-2" }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
+    expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageRecordId: insertValues[0],
+        from: "jerome.choma@6ex.co.za",
+        to: ["customer@example.com"],
+        subject: "Re: Need help"
       })
     );
+  });
 
+  it("creates a queued local thread for non-reply compose sends", async () => {
     const { POST } = await import("@/app/api/email/send/route");
     const response = await POST(
       new Request("http://localhost/api/email/send", {
@@ -156,16 +152,54 @@ describe("POST /api/email/send", () => {
     );
 
     expect(response.status).toBe(200);
-    const [, resendInit] = fetchMock.mock.calls[0] ?? [];
-    const resendPayload = JSON.parse(String((resendInit as RequestInit).body));
-    expect(resendPayload.headers["Message-ID"]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(Object.keys(resendPayload.headers)).toEqual(["Message-ID"]);
+    await expect(response.json()).resolves.toMatchObject({ status: "queued" });
 
     const [, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
     expect(insertValues[3]).toBe(insertValues[2]);
     expect(insertValues[4]).toBeNull();
     expect(insertValues[5]).toBeNull();
-    expect(insertValues[6]).toBe("provider-msg-2");
+    expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageRecordId: insertValues[0],
+        subject: "Fresh thread"
+      })
+    );
+  });
+
+  it("transitions the source draft into queued outbox state", async () => {
+    mocks.getMessageById.mockResolvedValue({
+      id: "11111111-1111-1111-1111-111111111111",
+      mailbox_id: "mailbox-1",
+      direction: "outbound",
+      sent_at: null,
+      metadata: { mail_state: "draft" }
+    });
+
+    const { POST } = await import("@/app/api/email/send/route");
+    const response = await POST(
+      new Request("http://localhost/api/email/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          from: "jerome.choma@6ex.co.za",
+          to: ["customer@example.com"],
+          subject: "Draft send",
+          text: "Sending a saved draft.",
+          draftId: "11111111-1111-1111-1111-111111111111"
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const [updateSql, updateValues] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(updateSql).toContain("mail_state', 'queued'");
+    expect(updateValues[10]).toBe("11111111-1111-1111-1111-111111111111");
+    expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageRecordId: "11111111-1111-1111-1111-111111111111",
+        subject: "Draft send"
+      })
+    );
   });
 });

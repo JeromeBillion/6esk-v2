@@ -6,6 +6,8 @@ export type ApiMailbox = {
   type: string;
 };
 
+export type ApiMailState = "received" | "sent" | "queued" | "processing" | "failed" | "draft";
+
 export type ApiMailboxMessage = {
   id: string;
   direction: "inbound" | "outbound";
@@ -23,6 +25,8 @@ export type ApiMailboxMessage = {
   spam_reason?: string | null;
   thread_id: string | null;
   message_id?: string | null;
+  mail_state?: ApiMailState | null;
+  sort_at?: string | null;
   created_at: string;
   has_attachments: boolean;
 };
@@ -37,9 +41,11 @@ export type ApiMessageDetail = {
     from: string;
     to: string[];
     direction: "inbound" | "outbound";
+    mailState?: ApiMailState | null;
     subject: string | null;
     sentAt: string | null;
     receivedAt: string | null;
+    draftSavedAt?: string | null;
     isStarred?: boolean;
     isPinned?: boolean;
     isSpam?: boolean;
@@ -69,6 +75,34 @@ export async function listMailboxMessages(mailboxId: string, signal?: AbortSigna
 
 export function getMailMessageDetail(messageId: string) {
   return apiFetch<ApiMessageDetail>(`/api/messages/${messageId}`);
+}
+
+export function saveMailDraft(
+  mailboxId: string,
+  input: {
+    draftId?: string | null;
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject?: string | null;
+    text?: string | null;
+    html?: string | null;
+    threadId?: string | null;
+    inReplyTo?: string | null;
+    references?: string[];
+  }
+) {
+  return apiFetch<{ draft: ApiMailboxMessage }>(`/api/mailboxes/${mailboxId}/drafts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteMailDraft(mailboxId: string, draftId: string) {
+  return apiFetch<{ status: string; id: string }>(`/api/mailboxes/${mailboxId}/drafts/${draftId}`, {
+    method: "DELETE"
+  });
 }
 
 export function patchThreadStar(messageId: string, isStarred: boolean) {
@@ -104,6 +138,7 @@ export function sendMail(input: {
   text?: string;
   html?: string;
   replyTo?: string;
+  draftId?: string;
   threadId?: string;
   inReplyTo?: string;
   references?: string[];

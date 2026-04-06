@@ -1,22 +1,33 @@
-import { createOrUpdateInboundCall } from "@/server/calls/service";
+import {
+  markVoiceOperatorQueueOutcome,
+  reserveNextVoiceDeskOperatorForCall
+} from "@/server/calls/operators";
+import {
+  buildDeskOperatorDialTwiML,
+  buildHoldAndRetryTwiML,
+  buildUnavailableTwiML,
+  buildVoiceResponse,
+  parseQueuedOperatorIds,
+  shouldContinueVoiceQueue
+} from "@/server/calls/twilio-queue";
 import {
   buildTwilioPublicUrl,
   normalizeTwilioParams,
   validateTwilioWebhook
 } from "@/server/calls/twilio";
-import { reserveNextVoiceDeskOperatorForCall } from "@/server/calls/operators";
-import {
-  buildDeskOperatorDialTwiML,
-  buildHoldAndRetryTwiML,
-  buildUnavailableTwiML,
-  buildVoiceResponse
-} from "@/server/calls/twilio-queue";
 import { recordAuditLog } from "@/server/audit";
 
-function readString(value: FormDataEntryValue | null | undefined) {
+function readString(value: FormDataEntryValue | string | null | undefined) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function buildHangupTwiML() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup />
+</Response>`;
 }
 
 export async function POST(request: Request) {
@@ -29,7 +40,7 @@ export async function POST(request: Request) {
     )
   );
   const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/voice",
+    pathname: "/api/calls/webhooks/twilio/voice/queue",
     requestUrl: request.url,
     signature: request.headers.get("x-twilio-signature"),
     params
@@ -40,7 +51,7 @@ export async function POST(request: Request) {
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
-        endpoint: "/api/calls/webhooks/twilio/voice",
+        endpoint: "/api/calls/webhooks/twilio/voice/queue",
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
@@ -48,35 +59,38 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const providerCallId = readString(formData.get("CallSid"));
-  const fromPhone = readString(formData.get("From"));
-  const toPhone = readString(formData.get("To"));
-  const attempt = Number(new URL(request.url).searchParams.get("attempt") ?? "0");
+  const requestParams = new URL(request.url).searchParams;
+  const callSessionId = readString(requestParams.get("callSessionId"));
+  const operatorUserId = readString(requestParams.get("operatorUserId"));
+  const attempt = Number(requestParams.get("attempt") ?? "0");
+  const offeredUserIds = parseQueuedOperatorIds(requestParams.get("offered"));
+  const dialStatus = readString(formData.get("DialCallStatus"));
+  const parentFromPhone = readString(formData.get("From"));
+  const parentToPhone = readString(formData.get("To"));
 
-  if (!providerCallId || !fromPhone) {
-    return Response.json({ error: "CallSid and From are required" }, { status: 400 });
+  if (!callSessionId || !operatorUserId) {
+    return Response.json({ error: "callSessionId and operatorUserId are required" }, { status: 400 });
   }
 
-  const inbound = await createOrUpdateInboundCall({
-    provider: "twilio",
-    providerCallId,
-    fromPhone,
-    toPhone,
-    status: "ringing",
-    occurredAt: new Date(),
-    metadata: {
-      source: "twilio_voice_webhook",
-      accountSid: params.AccountSid ?? null,
-      callSid: providerCallId,
-      direction: params.Direction ?? null,
-      called: params.Called ?? null,
-      callerName: params.CallerName ?? null
-    }
+  if (operatorUserId) {
+    const outcome = shouldContinueVoiceQueue(dialStatus) ? "missed" : "connected";
+    await markVoiceOperatorQueueOutcome({
+      userId: operatorUserId,
+      callSessionId,
+      outcome
+    });
+  }
+
+  if (!shouldContinueVoiceQueue(dialStatus)) {
+    return buildVoiceResponse(buildHangupTwiML());
+  }
+
+  const exhaustedOperators = Array.from(new Set([...offeredUserIds, operatorUserId]));
+  const operator = await reserveNextVoiceDeskOperatorForCall({
+    callSessionId,
+    excludeUserIds: exhaustedOperators
   });
 
-  const operator = await reserveNextVoiceDeskOperatorForCall({
-    callSessionId: inbound.callSessionId
-  });
   if (!operator) {
     const retryLimit = Math.max(
       0,
@@ -100,21 +114,20 @@ export async function POST(request: Request) {
       type: "client",
       identity: operator.identity,
       parameters: {
-        callSessionId: inbound.callSessionId,
-        ticketId: inbound.ticketId,
+        callSessionId,
         direction: "inbound",
-        fromPhone,
-        toPhone,
+        fromPhone: parentFromPhone,
+        toPhone: parentToPhone,
         operatorUserId: operator.userId,
         operatorName: operator.displayName
       }
     },
-    callerId: toPhone ?? fromPhone,
+    callerId: parentToPhone ?? parentFromPhone ?? "unknown",
     recordingCallbackUrl: recordingCallback,
     timeoutSeconds: Number(process.env.CALLS_TWILIO_OPERATOR_RING_TIMEOUT_SECONDS ?? "25"),
-    callSessionId: inbound.callSessionId,
+    callSessionId,
     attempt,
-    offeredUserIds: [operator.userId]
+    offeredUserIds: [...exhaustedOperators, operator.userId]
   });
 
   return buildVoiceResponse(twiml);

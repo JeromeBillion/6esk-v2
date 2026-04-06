@@ -4,6 +4,7 @@ const {
   CALLS_OUTBOX_SECRET,
   JOBS_RUNNER_INTERVAL_SECONDS,
   JOBS_RUNNER_ENABLE_INBOUND,
+  JOBS_RUNNER_ENABLE_EMAIL,
   JOBS_RUNNER_ENABLE_WHATSAPP,
   JOBS_RUNNER_ENABLE_CALLS,
   JOBS_RUNNER_ENABLE_TRANSCRIPTS,
@@ -25,6 +26,11 @@ const jobSpecs = [
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_INBOUND, true),
     name: "inbound-retry",
     path: "/api/admin/inbound/retry?limit=25"
+  },
+  {
+    enabled: parseBoolean(JOBS_RUNNER_ENABLE_EMAIL, true),
+    name: "email-outbox",
+    path: "/api/admin/email/outbox?limit=25"
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_WHATSAPP, true),

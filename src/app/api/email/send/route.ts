@@ -2,18 +2,15 @@ import { randomUUID } from "crypto";
 import { outboundEmailSchema } from "@/server/email/schema";
 import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize";
 import { findMailbox, getOrCreateMailbox } from "@/server/email/mailbox";
+import { enqueueEmailOutboxEvent } from "@/server/email/outbox";
+import { isMailDraftRecord } from "@/server/email/drafts";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
-import { hasMailboxAccess } from "@/server/messages";
+import { getMessageById, hasMailboxAccess } from "@/server/messages";
 import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-
-type ResendResponse = {
-  id?: string;
-  messageId?: string;
-};
 
 function buildOutboundMessageId(fromEmail: string) {
   const domain = fromEmail.split("@")[1]?.trim().toLowerCase() || "6esk.local";
@@ -100,93 +97,90 @@ export async function POST(request: Request) {
     }
   }
 
+  if (data.draftId) {
+    const draft = await getMessageById(data.draftId);
+    if (!draft || draft.mailbox_id !== mailbox.id || !isMailDraftRecord(draft)) {
+      return Response.json({ error: "Draft not found" }, { status: 404 });
+    }
+  }
+
   const inReplyTo = data.inReplyTo?.trim() || null;
   const references = normalizeReferenceList([
     ...(data.references ?? []),
     ...(inReplyTo ? [inReplyTo] : [])
   ]);
   const outboundMessageId = buildOutboundMessageId(fromEmail);
-
-  const resendPayload = {
-    from: data.from,
-    to: toList,
-    cc: ccList.length ? ccList : undefined,
-    bcc: bccList.length ? bccList : undefined,
-    subject: data.subject,
-    html: data.html ?? undefined,
-    text: data.text ?? undefined,
-    reply_to: data.replyTo ?? undefined,
-    headers: {
-      "Message-ID": outboundMessageId,
-      ...(inReplyTo
-        ? {
-            "In-Reply-To": inReplyTo
-          }
-        : {}),
-      ...(references.length
-        ? {
-            References: references.join(" ")
-          }
-        : {})
-    },
-    attachments: data.attachments?.map((attachment) => ({
-      filename: attachment.filename,
-      content: attachment.contentBase64,
-      contentType: attachment.contentType ?? undefined
-    }))
-  };
-
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(resendPayload)
-  });
-
-  if (!resendResponse.ok) {
-    const errorBody = await resendResponse.text();
-    return Response.json(
-      { error: "Resend request failed", details: errorBody },
-      { status: 502 }
-    );
-  }
-
-  const resendData = (await resendResponse.json()) as ResendResponse;
-  const messageId = randomUUID();
-  const sentAt = new Date();
-  const providerMessageId = resendData.id ?? resendData.messageId ?? null;
+  const messageId = data.draftId ?? randomUUID();
   const threadId =
     data.threadId?.trim() ||
     references[0] ||
     outboundMessageId;
 
-  await db.query(
-    `INSERT INTO messages (
-      id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
-      to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read
-    ) VALUES (
-      $1, $2, 'outbound', $3, $4, $5, $6, $7, 'resend', $8,
-      $9, $10, $11, $12, $13, $14, true
-    )`,
-    [
-      messageId,
-      mailbox.id,
-      outboundMessageId,
-      threadId,
-      inReplyTo,
-      references.length ? references : null,
-      providerMessageId,
-      fromEmail,
-      toList,
-      ccList,
-      bccList,
-      data.subject,
-      (data.text ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null,
-      sentAt
-    ]
-  );
+  const previewText = (data.text ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null;
+
+  if (data.draftId) {
+    await db.query(
+      `UPDATE messages
+       SET message_id = $1,
+           thread_id = $2,
+           in_reply_to = $3,
+           reference_ids = $4,
+           external_message_id = NULL,
+           provider = 'resend',
+           from_email = $5,
+           to_emails = $6,
+           cc_emails = $7,
+           bcc_emails = $8,
+           subject = $9,
+           preview_text = $10,
+           sent_at = NULL,
+           is_read = true,
+           metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+             'mail_state', 'queued',
+             'queued_at', now()::text,
+             'last_send_error', NULL
+           )
+       WHERE id = $11`,
+      [
+        outboundMessageId,
+        threadId,
+        inReplyTo,
+        references.length ? references : null,
+        fromEmail,
+        toList,
+        ccList,
+        bccList,
+        data.subject,
+        previewText,
+        messageId
+      ]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO messages (
+        id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
+        to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read, metadata
+      ) VALUES (
+        $1, $2, 'outbound', $3, $4, $5, $6, NULL, 'resend', $7,
+        $8, $9, $10, $11, $12, NULL, true,
+        jsonb_build_object('mail_state', 'queued', 'queued_at', now()::text)
+      )`,
+      [
+        messageId,
+        mailbox.id,
+        outboundMessageId,
+        threadId,
+        inReplyTo,
+        references.length ? references : null,
+        fromEmail,
+        toList,
+        ccList,
+        bccList,
+        data.subject,
+        previewText
+      ]
+    );
+  }
 
   const keyPrefix = `messages/${messageId}`;
   let textKey: string | null = null;
@@ -246,6 +240,16 @@ export async function POST(request: Request) {
     [textKey, htmlKey, sizeBytes || null, messageId]
   );
 
+  await enqueueEmailOutboxEvent({
+    messageRecordId: messageId,
+    from: fromEmail,
+    to: toList,
+    cc: ccList,
+    bcc: bccList,
+    subject: data.subject,
+    replyTo: data.replyTo ?? null
+  });
+
   await recordModuleUsageEvent({
     moduleKey: "email",
     usageKind: "direct_send",
@@ -258,5 +262,5 @@ export async function POST(request: Request) {
     }
   });
 
-  return Response.json({ status: "sent", id: messageId, providerId: providerMessageId, messageId: outboundMessageId });
+  return Response.json({ status: "queued", id: messageId, messageId: outboundMessageId });
 }

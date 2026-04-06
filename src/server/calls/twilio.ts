@@ -78,12 +78,14 @@ export function buildTwilioDialTwiML({
   targets,
   callerId,
   recordingCallbackUrl,
-  timeoutSeconds
+  timeoutSeconds,
+  actionUrl
 }: {
   targets: TwilioDialTarget[];
   callerId: string;
   recordingCallbackUrl: string;
   timeoutSeconds?: number;
+  actionUrl?: string | null;
 }) {
   const escapeXml = (value: string) =>
     value
@@ -95,6 +97,7 @@ export function buildTwilioDialTwiML({
 
   const escapedCallerId = escapeXml(callerId);
   const escapedRecordingCallbackUrl = escapeXml(recordingCallbackUrl);
+  const escapedActionUrl = readString(actionUrl) ? escapeXml(readString(actionUrl)!) : null;
   const dialTimeout = Number.isFinite(timeoutSeconds) ? Math.max(5, Math.floor(timeoutSeconds!)) : 20;
   const targetNodes = targets
     .map((target) => {
@@ -116,7 +119,7 @@ export function buildTwilioDialTwiML({
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial answerOnBridge="true" timeout="${dialTimeout}" callerId="${escapedCallerId}" record="record-from-answer-dual" recordingStatusCallback="${escapedRecordingCallbackUrl}" recordingStatusCallbackMethod="GET">
+  <Dial answerOnBridge="true" timeout="${dialTimeout}" callerId="${escapedCallerId}" record="record-from-answer-dual" recordingStatusCallback="${escapedRecordingCallbackUrl}" recordingStatusCallbackMethod="GET"${escapedActionUrl ? ` action="${escapedActionUrl}" method="POST"` : ""}>
     ${targetNodes}
   </Dial>
 </Response>`;

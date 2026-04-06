@@ -26,8 +26,10 @@ export type MessageRecord = {
   provider?: string | null;
   received_at: Date | null;
   sent_at: Date | null;
+  r2_key_raw: string | null;
   r2_key_text: string | null;
   r2_key_html: string | null;
+  metadata?: Record<string, unknown> | null;
   ai_meta?: Record<string, unknown> | null;
 };
 
@@ -37,7 +39,7 @@ export async function getMessageById(messageId: string) {
             channel, origin, is_spam, spam_reason, is_starred, is_pinned, message_id, thread_id,
             in_reply_to, reference_ids,
             external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
-            received_at, sent_at, r2_key_text, r2_key_html, ai_meta
+            received_at, sent_at, r2_key_raw, r2_key_text, r2_key_html, metadata, ai_meta
      FROM messages
      WHERE id = $1`,
     [messageId]
