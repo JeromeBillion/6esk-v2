@@ -405,7 +405,10 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
               <span className={landingMonoFont.className}>Support CRM for teams running every customer channel</span>
             </div>
             <div data-reveal className={styles.heroHeadlineSupport} aria-hidden="true">
-              <div className={`${styles.heroHeadlineSupportLabel} ${landingMonoFont.className}`}>Live context</div>
+              <div className={styles.heroHeadlineSupportHeader}>
+                <div className={`${styles.heroHeadlineSupportLabel} ${landingMonoFont.className}`}>Live context</div>
+                <span className={styles.heroHeadlineSupportPulse} />
+              </div>
               <div className={styles.heroHeadlineSupportRows}>
                 <div className={styles.heroHeadlineSupportRow}>
                   <Mail className={styles.heroHeadlineSupportIcon} />
