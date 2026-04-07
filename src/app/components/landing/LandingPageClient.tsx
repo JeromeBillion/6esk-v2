@@ -88,8 +88,7 @@ const CHANNELS = [
 const PLATFORM_METRICS = [
   { label: "Avg. first response", value: 1, suffix: " min" },
   { label: "Resolution rate", value: 94, suffix: "%" },
-  { label: "CSAT signal", value: 4.8, suffix: "/5" },
-  { label: "Channels unified", value: 3, suffix: "" }
+  { label: "CSAT signal", value: 4.8, suffix: "/5" }
 ] as const;
 
 const SOUTH_AFRICA_STARTUPS = [
