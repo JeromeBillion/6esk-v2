@@ -33,7 +33,7 @@ import supportDarkSnapshot from "@/app/assets/landing-snapshots/support-dark.png
 import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
-import heroVisual from "@/app/assets/1000130704-removebg-preview-hero-corrected.png";
+import heroVisual from "@/app/assets/edited hero image.png";
 import landingWordmark from "@/app/assets/landing-wordmark.png";
 import { setStoredDemoMode } from "@/app/lib/demo-mode";
 
