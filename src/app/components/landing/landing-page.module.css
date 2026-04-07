@@ -420,11 +420,11 @@
 
 .heroMetrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
-  width: min(100%, 38rem);
+  width: min(100%, 31rem);
   margin-left: auto;
-  margin-right: clamp(-2.15rem, -2.4vw, -0.9rem);
+  margin-right: auto;
   margin-top: 0.4rem;
 }
 
