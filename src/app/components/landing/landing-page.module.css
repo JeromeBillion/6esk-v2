@@ -321,24 +321,14 @@
 }
 
 .heroHeadlineSupportPulse {
-  position: relative;
   display: inline-flex;
   width: 0.7rem;
   height: 0.7rem;
   flex: 0 0 auto;
   border-radius: 999px;
   background: #ff3b30;
-  box-shadow: 0 0 0 1px rgba(255, 59, 48, 0.32);
-  animation: heroPulse 1.35s ease-in-out infinite;
-}
-
-.heroHeadlineSupportPulse::after {
-  content: "";
-  position: absolute;
-  inset: -0.28rem;
-  border-radius: inherit;
-  border: 1px solid rgba(255, 59, 48, 0.44);
-  animation: heroPulseRing 1.35s ease-out infinite;
+  box-shadow: 0 0 10px rgba(255, 59, 48, 0.5);
+  animation: heroPulse 1.05s steps(1, end) infinite;
 }
 
 .heroHeadlineSupportRows {
@@ -1101,7 +1091,7 @@
   position: absolute;
   left: 10rem;
   height: 1px;
-  background: rgba(17, 20, 27, 0.34);
+  background: rgba(255, 255, 255, 0.5);
   transform-origin: left center;
 }
 
@@ -1284,7 +1274,7 @@
 .sequenceContextThreadLineShort,
 .sequenceContextThreadLineMuted {
   height: 1px;
-  background: rgba(17, 20, 27, 0.16);
+  background: rgba(255, 255, 255, 0.34);
 }
 
 .sequenceContextThreadLineShort {
@@ -1293,7 +1283,7 @@
 
 .sequenceContextThreadLineMuted {
   width: 58%;
-  background: rgba(17, 20, 27, 0.1);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .sequenceContextHistory {
@@ -1332,7 +1322,7 @@
   top: 5.42rem;
   width: 1px;
   height: 2.18rem;
-  background: rgba(17, 20, 27, 0.28);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .sequenceResolveBetweenArrow::after {
@@ -1342,8 +1332,8 @@
   bottom: -0.06rem;
   width: 0.4rem;
   height: 0.4rem;
-  border-right: 1px solid rgba(17, 20, 27, 0.28);
-  border-bottom: 1px solid rgba(17, 20, 27, 0.28);
+  border-right: 1px solid rgba(255, 255, 255, 0.42);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.42);
   transform: rotate(45deg);
 }
 
@@ -1363,7 +1353,7 @@
   top: 50%;
   width: 0.75rem;
   height: 1px;
-  background: rgba(17, 20, 27, 0.28);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .sequenceResolveLaneTop {
@@ -1378,7 +1368,7 @@
   height: 1px;
   background-image: repeating-linear-gradient(
     90deg,
-    rgba(17, 20, 27, 0.34) 0 10px,
+    rgba(255, 255, 255, 0.48) 0 10px,
     transparent 10px 18px
   );
   animation: sequenceDash 1.5s linear infinite;
@@ -1648,23 +1638,14 @@
 @keyframes heroPulse {
   0%,
   100% {
-    opacity: 0.95;
+    opacity: 1;
     transform: scale(1);
+    box-shadow: 0 0 12px rgba(255, 59, 48, 0.55);
   }
   50% {
-    opacity: 0.65;
-    transform: scale(0.9);
-  }
-}
-
-@keyframes heroPulseRing {
-  0% {
-    opacity: 0.72;
-    transform: scale(0.75);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.45);
+    opacity: 0.14;
+    transform: scale(0.86);
+    box-shadow: 0 0 0 rgba(255, 59, 48, 0);
   }
 }
 
