@@ -1,13 +1,37 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
 type RateEntry = {
   count: number;
   resetAt: number;
 };
 
+// ⚠️ KNOWN LIMITATION: Without Upstash Redis configured, this rate limit
+// store is per-process and will NOT be shared across multiple replicas or 
+// Vercel Edge instances. For production, configure UPSTASH_REDIS_REST_URL
+// to enable the distributed Redis caching.
 const store = new Map<string, RateEntry>();
 const WINDOW_MS = 60_000;
+const GC_INTERVAL_MS = 5 * 60_000; // Sweep expired entries every 5 minutes
+
+// Periodic garbage collection to prevent unbounded memory growth.
+// Expired entries are safe to remove since they will be recreated on
+// the next request with a fresh window.
+let lastGcAt = Date.now();
+function maybeGarbageCollect() {
+  const now = Date.now();
+  if (now - lastGcAt < GC_INTERVAL_MS) {
+    return;
+  }
+  lastGcAt = now;
+  for (const [key, entry] of store) {
+    if (now > entry.resetAt) {
+      store.delete(key);
+    }
+  }
+}
 
 function parseLimit(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -49,7 +73,7 @@ function isAllowedIp(ip: string, allowlist: string[] | null) {
   return allowlist.includes(ip);
 }
 
-function checkRateLimit(key: string, limit: number) {
+function checkRateLimitLocal(key: string, limit: number) {
   const now = Date.now();
   const entry = store.get(key);
   if (!entry || now > entry.resetAt) {
@@ -119,7 +143,31 @@ function getRateBucket(pathname: string): RateBucket | null {
   return null;
 }
 
-export function middleware(request: NextRequest) {
+// Initialize Upstash Redis only if configured
+const redis =
+  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+    ? new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN
+      })
+    : null;
+
+// Cache instantiated limiters
+const limiters = new Map<number, Ratelimit>();
+function getLimiter(limit: number) {
+  let limiter = limiters.get(limit);
+  if (!limiter && redis) {
+    limiter = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(limit, "60 s"),
+      analytics: false
+    });
+    limiters.set(limit, limiter);
+  }
+  return limiter;
+}
+
+export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const bucket = getRateBucket(pathname);
   if (!bucket) {
@@ -139,10 +187,26 @@ export function middleware(request: NextRequest) {
   }
 
   const key = `${bucket.key}:${ip}`;
-  const result = checkRateLimit(key, bucket.limit);
+  const limiter = getLimiter(bucket.limit);
 
-  if (!result.allowed) {
-    const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+  let allowed = true;
+  let resetAt = 0;
+
+  if (limiter) {
+    // Distributed Rate Limit via Upstash
+    const result = await limiter.limit(key);
+    allowed = result.success;
+    resetAt = result.reset;
+  } else {
+    // Local In-Memory Fallback
+    maybeGarbageCollect();
+    const result = checkRateLimitLocal(key, bucket.limit);
+    allowed = result.allowed;
+    resetAt = result.resetAt;
+  }
+
+  if (!allowed) {
+    const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
     return NextResponse.json(
       { error: "Rate limit exceeded", retryAfter },
       {

@@ -5,12 +5,7 @@ import { getOrCreateMailbox } from "@/server/email/mailbox";
 import { sanitizeFilename } from "@/server/email/normalize";
 import { putObject } from "@/server/storage/r2";
 import {
-  addTagsToTicket,
-  createTicket,
   inferTagsFromText,
-  mergeTicketMetadata,
-  recordTicketEvent,
-  reopenTicketIfNeeded
 } from "@/server/tickets";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
@@ -20,7 +15,6 @@ import {
 } from "@/server/integrations/prediction-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
-  attachCustomerToTicket,
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
@@ -175,6 +169,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     throw new Error("Missing WhatsApp sender");
   }
 
+  // ── Idempotency check (outside transaction, read-only) ──
   if (message.messageId) {
     const existing = await db.query(
       `SELECT id, ticket_id
@@ -193,6 +188,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     }
   }
 
+  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
   const requesterProfile = await lookupPredictionProfile({ phone: from });
   const customerResolution = await resolveOrCreateCustomerForInbound({
     profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
@@ -210,8 +206,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
   const conversationId = message.conversationId ?? from;
 
-  let ticketId: string | null = await resolveWhatsAppTicketId(conversationId);
-  let createdNewTicket = false;
+  const existingTicketId: string | null = await resolveWhatsAppTicketId(conversationId);
 
   const attachments = (message.attachments ?? []).filter(Boolean);
   const fallbackCaption =
@@ -229,168 +224,22 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       ? `WhatsApp: ${attachmentHint}`
       : `WhatsApp from ${from}`;
 
-  if (!ticketId) {
-    const inferredTags = inferTagsFromText({ subject: null, text: message.text ?? null });
-    const category = inferredTags[0]?.toLowerCase() ?? null;
-    const metadata = {
-      channel: "whatsapp",
-      wa_contact: from,
-      provider: message.provider ?? "meta",
-      contact_name: message.contactName ?? null,
-      ...profileMetadataPatch
-    };
+  // Pre-compute tag inference (pure function, no DB)
+  const inferredTags = !existingTicketId
+    ? inferTagsFromText({ subject: null, text: message.text ?? null })
+    : [];
 
-    ticketId = await createTicket({
-      mailboxId: mailbox.id,
-      customerId: customerResolution?.customerId ?? null,
-      requesterEmail: formatRequester(from),
-      subject,
-      category,
-      metadata
-    });
-    createdNewTicket = true;
-    await recordTicketEvent({ ticketId, eventType: "ticket_created" });
-
-    if (inferredTags.length) {
-      await addTagsToTicket(ticketId, inferredTags);
-      await recordTicketEvent({
-        ticketId,
-        eventType: "tags_assigned",
-        data: { tags: inferredTags }
-      });
-    }
-  } else {
-    await reopenTicketIfNeeded(ticketId);
-    if (requesterProfile.status === "matched") {
-      await mergeTicketMetadata(ticketId, profileMetadataPatch);
-    }
-  }
-
-  if (ticketId && customerResolution?.customerId) {
-    const attached = await attachCustomerToTicket(ticketId, customerResolution.customerId);
-    if (createdNewTicket || attached) {
-      const identityEvent = buildAgentEvent({
-        eventType: "customer.identity.resolved",
-        ticketId,
-        mailboxId: mailbox.id,
-        excerpt: `Resolved customer ${customerResolution.customerId}`,
-        threadId: conversationId
-      });
-      await enqueueAgentEvent({
-        eventType: "customer.identity.resolved",
-        payload: {
-          ...identityEvent,
-          customer: {
-            id: customerResolution.customerId,
-            kind: customerResolution.kind
-          },
-          identity: {
-            email: null,
-            phone: from
-          },
-          matchedByProfile: requesterProfile.status === "matched",
-          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
-        }
-      });
-    }
-  }
-
-  if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
-    await upsertExternalUserLink({
-      externalSystem: "prediction-market-mvp",
-      profile: requesterProfile.profile,
-      matchedBy: requesterProfile.matchedBy,
-      inboundPhone: from,
-      ticketId,
-      channel: "whatsapp"
-    });
-  }
-
-  if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
-    await recordTicketEvent({
-      ticketId,
-      eventType: "profile_enriched",
-      data: {
-        source: "prediction-market-mvp",
-        matchedBy: requesterProfile.matchedBy,
-        externalUserId: requesterProfile.profile.id
-      }
-    });
-  } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
-    await recordTicketEvent({
-      ticketId,
-      eventType: "customer_identity_conflict",
-      data: {
-        source: "prediction-market-mvp",
-        matchedBy: requesterProfile.matchedBy,
-        conflict: customerResolution.conflict
-      }
-    });
-  }
-
-  await recordTicketEvent({ ticketId, eventType: "message_received" });
-
-  const messageId = randomUUID();
-  const receivedAt = parseTimestamp(message.timestamp);
-
-  await db.query(
-    `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
-      external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
-      from_email, to_emails, subject, preview_text, received_at, is_read
-    ) VALUES (
-      $1, $2, $3, 'inbound', 'whatsapp', $4, $5,
-      $6, $7, $8, $9, $10, $11,
-      $12, $13, $14, $15, $16, false
-    )`,
-    [
-      messageId,
-      mailbox.id,
-      ticketId,
-      message.messageId ?? null,
-      conversationId,
-      message.messageId ?? null,
-      conversationId,
-      from,
-      "received",
-      receivedAt,
-      message.provider ?? "meta",
-      from,
-      [supportAddress],
-      previewText
-        ? `WhatsApp: ${previewText.slice(0, 80)}`
-        : attachmentHint
-          ? `WhatsApp: ${attachmentHint}`
-          : null,
-      previewText || attachmentHint || null,
-      receivedAt
-    ]
-  );
-
-  await db.query(
-    `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      messageId,
-      message.messageId ?? null,
-      "received",
-      receivedAt,
-      { source: "inbound", status: "received" }
-    ]
-  );
-
-  let textKey: string | null = null;
-  let sizeBytes = 0;
-
-  if (message.text || fallbackCaption) {
-    const bodyText = message.text ?? fallbackCaption ?? "";
-    textKey = await putObject({
-      key: `messages/${messageId}/body.txt`,
-      body: bodyText,
-      contentType: "text/plain; charset=utf-8"
-    });
-    sizeBytes += Buffer.byteLength(bodyText);
-  }
+  // Download all media from Meta Graph API BEFORE starting the transaction.
+  // This isolates network failures from database state mutations.
+  type ResolvedAttachment = {
+    attachmentId: string;
+    safeFilename: string;
+    buffer: Buffer;
+    contentType: string | null;
+    size: number;
+    originalFilename: string | null;
+  };
+  const resolvedAttachments: ResolvedAttachment[] = [];
 
   if (attachments.length) {
     const accessToken = await getActiveAccessToken();
@@ -420,26 +269,266 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         continue;
       }
 
-      const key = `messages/${messageId}/attachments/${attachmentId}-${safeFilename}`;
-      await putObject({
-        key,
-        body: buffer,
-        contentType: contentType ?? undefined
+      resolvedAttachments.push({
+        attachmentId,
+        safeFilename,
+        buffer,
+        contentType,
+        size: size ?? buffer.length,
+        originalFilename: attachment.filename ?? null
       });
+    }
+  }
 
-      await db.query(
+  const messageId = randomUUID();
+  const receivedAt = parseTimestamp(message.timestamp);
+
+  // ── Phase 2: Atomic database transaction ──
+  // All database mutations happen inside a single transaction so that
+  // a failure at any point rolls back cleanly — no ghost tickets.
+  let ticketId = existingTicketId;
+  let createdNewTicket = false;
+  let attachedCustomerToTicket = false;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (!ticketId) {
+      const category = inferredTags[0]?.toLowerCase() ?? null;
+      const metadata = {
+        channel: "whatsapp",
+        wa_contact: from,
+        provider: message.provider ?? "meta",
+        contact_name: message.contactName ?? null,
+        ...profileMetadataPatch
+      };
+
+      const ticketResult = await client.query<{ id: string }>(
+        `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        [mailbox.id, customerResolution?.customerId ?? null, formatRequester(from), subject, category, metadata ?? {}]
+      );
+      ticketId = ticketResult.rows[0].id;
+      createdNewTicket = true;
+
+      await client.query(
+        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4)`,
+        [ticketId, "ticket_created", null, null]
+      );
+
+      if (inferredTags.length) {
+        // Batch-insert tags in a single pass instead of looping individual queries
+        const cleanTags = Array.from(new Set(inferredTags.map((t) => t.toLowerCase().trim()).filter(Boolean)));
+        for (const tag of cleanTags) {
+          const tagResult = await client.query<{ id: string }>(
+            `INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+            [tag]
+          );
+          await client.query(
+            `INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2) ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+            [ticketId, tagResult.rows[0].id]
+          );
+        }
+        await client.query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [ticketId, "tags_assigned", null, { tags: inferredTags }]
+        );
+      }
+    } else {
+      // Reopen ticket if it was resolved/closed
+      const statusResult = await client.query<{ status: string }>(
+        "SELECT status FROM tickets WHERE id = $1",
+        [ticketId]
+      );
+      const currentStatus = statusResult.rows[0]?.status;
+      if (currentStatus === "solved" || currentStatus === "closed") {
+        await client.query(
+          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1",
+          [ticketId]
+        );
+        await client.query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+        );
+      }
+
+      if (requesterProfile.status === "matched") {
+        await client.query(
+          `UPDATE tickets
+           SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = now()
+           WHERE id = $1`,
+          [ticketId, JSON.stringify(profileMetadataPatch)]
+        );
+      }
+    }
+
+    if (ticketId && customerResolution?.customerId) {
+      const customerAttachResult = await client.query(
+        `UPDATE tickets SET customer_id = $2, updated_at = now()
+         WHERE id = $1 AND (customer_id IS NULL OR customer_id != $2)`,
+        [ticketId, customerResolution.customerId]
+      );
+      attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
+    }
+
+    if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
+      await upsertExternalUserLink({
+        externalSystem: "prediction-market-mvp",
+        profile: requesterProfile.profile,
+        matchedBy: requesterProfile.matchedBy,
+        inboundPhone: from,
+        ticketId,
+        channel: "whatsapp"
+      });
+    }
+
+    if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
+      await client.query(
+        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4)`,
+        [ticketId, "profile_enriched", null, {
+          source: "prediction-market-mvp",
+          matchedBy: requesterProfile.matchedBy,
+          externalUserId: requesterProfile.profile.id
+        }]
+      );
+    } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
+      await client.query(
+        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4)`,
+        [ticketId, "customer_identity_conflict", null, {
+          source: "prediction-market-mvp",
+          matchedBy: requesterProfile.matchedBy,
+          conflict: customerResolution.conflict
+        }]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+       VALUES ($1, $2, $3, $4)`,
+      [ticketId, "message_received", null, null]
+    );
+
+    // Insert the message row
+    await client.query(
+      `INSERT INTO messages (
+        id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+        external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
+        from_email, to_emails, subject, preview_text, received_at, is_read
+      ) VALUES (
+        $1, $2, $3, 'inbound', 'whatsapp', $4, $5,
+        $6, $7, $8, $9, $10, $11,
+        $12, $13, $14, $15, $16, false
+      )`,
+      [
+        messageId,
+        mailbox.id,
+        ticketId,
+        message.messageId ?? null,
+        conversationId,
+        message.messageId ?? null,
+        conversationId,
+        from,
+        "received",
+        receivedAt,
+        message.provider ?? "meta",
+        from,
+        [supportAddress],
+        previewText
+          ? `WhatsApp: ${previewText.slice(0, 80)}`
+          : attachmentHint
+            ? `WhatsApp: ${attachmentHint}`
+            : null,
+        previewText || attachmentHint || null,
+        receivedAt
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        messageId,
+        message.messageId ?? null,
+        "received",
+        receivedAt,
+        { source: "inbound", status: "received" }
+      ]
+    );
+
+    // Insert attachment metadata rows (media buffers already downloaded)
+    for (const resolved of resolvedAttachments) {
+      const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+      await client.query(
         `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          attachmentId,
+          resolved.attachmentId,
           messageId,
-          attachment.filename ?? safeFilename,
-          contentType ?? null,
-          size ?? buffer.length,
-          key
+          resolved.originalFilename ?? resolved.safeFilename,
+          resolved.contentType ?? null,
+          resolved.size,
+          r2Key
         ]
       );
-      sizeBytes += size ?? buffer.length;
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  // ── Phase 3: Post-commit side effects (R2 uploads, agent events) ──
+  // These run after the transaction commits. If they fail, the DB state
+  // is consistent and the data can be backfilled or retried.
+  let textKey: string | null = null;
+  let sizeBytes = 0;
+  const failedStorageItems: Array<{ kind: string; target: string; detail: string }> = [];
+
+  if (message.text || fallbackCaption) {
+    try {
+      const bodyText = message.text ?? fallbackCaption ?? "";
+      textKey = await putObject({
+        key: `messages/${messageId}/body.txt`,
+        body: bodyText,
+        contentType: "text/plain; charset=utf-8"
+      });
+      sizeBytes += Buffer.byteLength(bodyText);
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "text",
+        target: `messages/${messageId}/body.txt`,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+    }
+  }
+
+  for (const resolved of resolvedAttachments) {
+    const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+    try {
+      await putObject({
+        key: r2Key,
+        body: resolved.buffer,
+        contentType: resolved.contentType ?? undefined
+      });
+      sizeBytes += resolved.size;
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "attachment",
+        target: resolved.originalFilename ?? resolved.safeFilename,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+      await db.query(`DELETE FROM attachments WHERE id = $1`, [resolved.attachmentId]).catch(() => {});
     }
   }
 
@@ -472,6 +561,50 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         threadId: conversationId
       });
       await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+    }
+
+    if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
+      const identityEvent = buildAgentEvent({
+        eventType: "customer.identity.resolved",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: `Resolved customer ${customerResolution.customerId}`,
+        threadId: conversationId
+      });
+      await enqueueAgentEvent({
+        eventType: "customer.identity.resolved",
+        payload: {
+          ...identityEvent,
+          customer: {
+            id: customerResolution.customerId,
+            kind: customerResolution.kind
+          },
+          identity: {
+            email: null,
+            phone: from
+          },
+          matchedByProfile: requesterProfile.status === "matched",
+          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
+        }
+      });
+    }
+
+    if (failedStorageItems.length > 0) {
+      await db
+        .query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            ticketId,
+            "message_storage_partial",
+            null,
+            {
+              messageId,
+              failedItems: failedStorageItems
+            }
+          ]
+        )
+        .catch(() => {});
     }
 
     void deliverPendingAgentEvents().catch(() => {});

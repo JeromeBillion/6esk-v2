@@ -5,6 +5,9 @@
 
 This roadmap is not the SaaS commercialization plan. It is the completion plan for the internal/custom product so the system actually delivers the vision already implied by the UI, mock state, and landing narrative.
 
+Follow-on roadmap after `v1`:
+- [6esk v2 Commercialization Roadmap](./6esk-v2-commercialization-roadmap.md)
+
 ## Product Definition
 `6esk v1` should prove that a single support operating surface can run:
 - Email
@@ -45,17 +48,28 @@ Strongly in place already:
 - queue operations and bulk actions baseline
 - merge-review workflow
 - call analytics and ops baseline
+- real email inbound/outbound flow through `6esk` for support and personal inboxes
+- personal mailbox states now behave like a real desk mailbox:
+  - Inbox
+  - Sent
+  - Outbox
+  - Drafts
+- recoverable email drafts plus verified outbound progression through Drafts -> Outbox -> Sent
 - workspace-level module entitlements and runtime guards
 - first-pass entitlement-aware usage metering surfaced in Admin
 - non-destructive cross-channel `linked_case` operator flow in Support
 - live operator presence with `online` / `away` / `offline`
 - browser-based desk calling with in-platform ringing, answer, pass-onward, and in-call state
 - real-time desk snapshot polling plus channel-aware popups and tones for email, WhatsApp, and calls
+- managed STT orchestration is wired, with Deepgram as the current `v1` transcript provider path
+- transcript-derived AI outputs and QA analysis are wired, with QA surfacing in Admin/Analytics only
 
 Still incomplete or intentionally blocked:
 - live provider callback rehearsal and production rollout validation
+- live Deepgram transcript validation against real call recordings in the live desk flow
 - final pilot hardening against the chosen Twilio deployment
-- remaining open work is now overwhelmingly rollout validation plus deeper queue-policy hardening rather than missing core provider code
+- Twilio South Africa number acquisition or porting may remain blocked until the business/incorporation path is ready
+- remaining open work is now overwhelmingly rollout validation, drills, and optional queue-policy refinement rather than missing core provider code
 
 ## v1 Success Criteria
 `6esk v1` is complete only when all of the following are true:
@@ -79,8 +93,8 @@ Source of truth: [call-capabilities-backlog.md](C:\Users\choma\Desktop\6esk\docs
 3. Close any remaining live-environment gaps in call recording playback/download and transcript timing.
 4. Finalize consent, policy, and blocking behaviors for live calling.
 5. Rehearse rollback and outage drills with the real provider path enabled.
-6. Harden in-platform queue-aware operator routing with sequential offer policy, pass-onward progression, and fair operator ordering inside `6esk`.
-7. Deepen explicit operator state visibility so routing and supervision can distinguish ringing, available, in-call, away, and offline desk operators.
+6. Validate the current in-platform queue-aware operator routing against live traffic and deepen policy only if real traffic shows the current sequential reservation model is insufficient.
+7. Validate explicit operator state visibility so routing and supervision can distinguish ringing, available, in-call, away, and offline desk operators under real load.
 8. Keep browser/platform answer and skip-pass controls trustworthy under retry/failover paths and explicitly forbid operator-side call drop as a supported queue action.
 
 ### Required Deliverables
@@ -310,29 +324,29 @@ Current progress:
 - desk presence, browser-native ringing/answer/pass controls, and in-call state are already live in the product
 - channel-aware popups and tones are already live for support email, inbox email, WhatsApp, and calls
 - real-time desk snapshot polling is already live and refreshes Support/Mail without manual reload
+- personal inbox drafts are already live with a dedicated Drafts view and resumable composition
+- email outbox verification is already live, so outbound mail now progresses through Drafts -> Outbox -> Sent instead of bypassing delivery state
 
 ## Execution Order
-### Phase 1: finish product-critical blockers
+### Phase 1: finish live-provider validation
 - voice rollout validation on the real `6esk -> Twilio` path
-- Venus/6ex ticket creation hardening + `6ex` context integration
-- `6ex` customer identity integration
+- live transcript validation on the real `Deepgram -> 6esk` path
+- transcript-derived QA validation on the real `Groq -> 6esk` path
 
 Note:
 - the real provider adapter is now implemented directly in `6esk` for Twilio outbound/status/recording ownership
-- the remaining voice task is no longer basic provider ownership; it is completion of the real desk-side ringing/answer flow plus rollout validation
+- the remaining voice task is no longer basic provider ownership; it is rollout validation, transcript proof, and operator-signoff under the real desk-side ringing/answer flow
 
-### Phase 2: modularize the platform
-- entitlement schema
-- runtime capability guards
-- module-based admin/config model
-- metering hooks
-
-### Phase 3: harden for real operation
-- telemetry expansion
-- failure drills
-- rollback paths
-- audit completeness
+### Phase 2: finish operational drills
+- outage drill
+- rollback drill
 - pilot signoff
+- queue-policy refinement only if live traffic shows a real need
+
+### Phase 3: close evidence and rollout proof
+- capture final runbook evidence
+- close any remaining live-environment transcript/callback gaps
+- confirm no mock-only assumptions remain in the real support path
 
 ## v1 Definition Of Done
 `6esk v1` is done when:

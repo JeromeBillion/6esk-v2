@@ -161,30 +161,30 @@ export async function ensureTags(tagNames: string[]) {
     return [];
   }
 
-  const ids: string[] = [];
-  for (const tag of clean) {
-    const result = await db.query<{ id: string }>(
-      `INSERT INTO tags (name)
-       VALUES ($1)
-       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`,
-      [tag]
-    );
-    ids.push(result.rows[0].id);
-  }
-  return ids;
+  // Batch upsert all tags in a single query using UNNEST
+  const result = await db.query<{ id: string }>(
+    `INSERT INTO tags (name)
+     SELECT unnest($1::text[])
+     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`,
+    [clean]
+  );
+  return result.rows.map((row) => row.id);
 }
 
 export async function addTagsToTicket(ticketId: string, tagNames: string[]) {
   const tagIds = await ensureTags(tagNames);
-  for (const tagId of tagIds) {
-    await db.query(
-      `INSERT INTO ticket_tags (ticket_id, tag_id)
-       VALUES ($1, $2)
-       ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-      [ticketId, tagId]
-    );
+  if (tagIds.length === 0) {
+    return;
   }
+
+  // Batch insert all ticket-tag associations in a single query
+  await db.query(
+    `INSERT INTO ticket_tags (ticket_id, tag_id)
+     SELECT $1, unnest($2::uuid[])
+     ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+    [ticketId, tagIds]
+  );
 }
 
 export async function removeTagsFromTicket(ticketId: string, tagNames: string[]) {

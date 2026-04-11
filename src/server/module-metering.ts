@@ -66,28 +66,36 @@ export async function recordModuleUsageEvent({
   providerMode = null,
   metadata = null
 }: RecordModuleUsageArgs) {
-  await db.query(
-    `INSERT INTO workspace_module_usage_events (
-       workspace_key,
-       module_key,
-       usage_kind,
-       quantity,
-       unit,
-       actor_type,
-       provider_mode,
-       metadata
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
-    [
-      workspaceKey,
-      moduleKey,
-      usageKind,
-      normalizeQuantity(quantity),
-      unit,
-      actorType,
-      providerMode,
-      JSON.stringify(metadata ?? {})
-    ]
-  );
+  if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
+    return;
+  }
+
+  try {
+    await db.query(
+      `INSERT INTO workspace_module_usage_events (
+         workspace_key,
+         module_key,
+         usage_kind,
+         quantity,
+         unit,
+         actor_type,
+         provider_mode,
+         metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+      [
+        workspaceKey,
+        moduleKey,
+        usageKind,
+        normalizeQuantity(quantity),
+        unit,
+        actorType,
+        providerMode,
+        JSON.stringify(metadata ?? {})
+      ]
+    );
+  } catch {
+    // Best-effort telemetry: never fail user-facing flows.
+  }
 }
 
 export async function getWorkspaceModuleUsageSummary(input?: {

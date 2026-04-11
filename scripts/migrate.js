@@ -41,6 +41,14 @@ async function main() {
       }
 
       const sql = await fs.readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      const requiresNonTransactionalRun = /create\s+index\s+concurrently/i.test(sql);
+
+      if (requiresNonTransactionalRun) {
+        await client.query(sql);
+        await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
+        console.log(`Applied ${file} (non-transactional)`);
+        continue;
+      }
 
       await client.query("BEGIN");
       try {

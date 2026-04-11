@@ -5,6 +5,10 @@
 
 This roadmap starts only after `v1` is fully working.
 
+Roadmap relationship:
+- predecessor: [6esk v1 Completion Roadmap](./6esk-v1-completion-roadmap.md)
+- mobile follow-on: [6esk v3 Mobile Roadmap](./6esk-v3-mobile-roadmap.md)
+
 ## Product Thesis
 `6esk v2` sells the operating model currently implied by the landing page:
 - every serious support channel in one surface

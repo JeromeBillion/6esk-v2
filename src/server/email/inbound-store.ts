@@ -6,12 +6,7 @@ import { resolveInboundMailbox } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import {
-  addTagsToTicket,
-  createTicket,
   inferTagsFromText,
-  mergeTicketMetadata,
-  recordTicketEvent,
-  reopenTicketIfNeeded,
   resolveTicketIdForInbound
 } from "@/server/tickets";
 import { buildAgentEvent } from "@/server/agents/events";
@@ -82,6 +77,7 @@ export async function storeInboundEmail(data: InboundEmail) {
     text: data.text
   });
 
+  // ── Idempotency check (outside transaction, read-only) ──
   if (data.messageId) {
     const existing = await db.query(
       "SELECT id, ticket_id FROM messages WHERE message_id = $1 AND mailbox_id = $2 LIMIT 1",
@@ -97,15 +93,20 @@ export async function storeInboundEmail(data: InboundEmail) {
     }
   }
 
-  let ticketId: string | null = null;
-  let createdNewTicket = false;
+  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
+  let requesterProfile: Awaited<ReturnType<typeof lookupPredictionProfile>> | null = null;
+  let customerResolution: Awaited<ReturnType<typeof resolveOrCreateCustomerForInbound>> | null = null;
+  let profileMetadataPatch: Record<string, unknown> = {};
+  let existingTicketId: string | null = null;
+  let inferredTags: string[] = [];
+
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
-    const requesterProfile = await lookupPredictionProfile({ email: fromEmail });
-    const customerResolution = await resolveOrCreateCustomerForInbound({
+    requesterProfile = await lookupPredictionProfile({ email: fromEmail });
+    customerResolution = await resolveOrCreateCustomerForInbound({
       profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
       inboundEmail: fromEmail
     });
-    const profileMetadataPatch =
+    profileMetadataPatch =
       requesterProfile.status === "matched" && customerResolution?.conflict
         ? applyIdentityConflictMetadata(
             buildProfileMetadataPatch(requesterProfile),
@@ -116,177 +117,25 @@ export async function storeInboundEmail(data: InboundEmail) {
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
     );
-    ticketId = await resolveTicketIdForInbound(references);
-    if (!ticketId) {
-      const inferredTags = data.tags?.length
+    existingTicketId = await resolveTicketIdForInbound(references);
+
+    if (!existingTicketId) {
+      inferredTags = data.tags?.length
         ? data.tags
         : inferTagsFromText({ subject: data.subject, text: data.text });
-      const category =
-        data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
-      const metadata = {
-        ...(((data.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
-        ...profileMetadataPatch
-      };
-
-      ticketId = await createTicket({
-        mailboxId: mailbox.id,
-        customerId: customerResolution?.customerId ?? null,
-        requesterEmail: fromEmail,
-        subject: data.subject,
-        category,
-        metadata
-      });
-      createdNewTicket = true;
-      await recordTicketEvent({ ticketId, eventType: "ticket_created" });
-
-      if (inferredTags.length) {
-        await addTagsToTicket(ticketId, inferredTags);
-        await recordTicketEvent({
-          ticketId,
-          eventType: "tags_assigned",
-          data: { tags: inferredTags }
-        });
-      }
-    } else {
-      await reopenTicketIfNeeded(ticketId);
-      if (requesterProfile.status === "matched") {
-        await mergeTicketMetadata(ticketId, profileMetadataPatch);
-      }
     }
-
-    if (ticketId && customerResolution?.customerId) {
-      const attached = await attachCustomerToTicket(ticketId, customerResolution.customerId);
-      if (createdNewTicket || attached) {
-        const identityEvent = buildAgentEvent({
-          eventType: "customer.identity.resolved",
-          ticketId,
-          mailboxId: mailbox.id,
-          excerpt: `Resolved customer ${customerResolution.customerId}`,
-          threadId: data.references?.[0] ?? data.messageId ?? ticketId
-        });
-        await enqueueAgentEvent({
-          eventType: "customer.identity.resolved",
-          payload: {
-            ...identityEvent,
-            customer: {
-              id: customerResolution.customerId,
-              kind: customerResolution.kind
-            },
-            identity: {
-              email: fromEmail,
-              phone: null
-            },
-            matchedByProfile: requesterProfile.status === "matched",
-            ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
-          }
-        });
-      }
-    }
-
-    if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
-      await upsertExternalUserLink({
-        externalSystem: "prediction-market-mvp",
-        profile: requesterProfile.profile,
-        matchedBy: requesterProfile.matchedBy,
-        inboundEmail: fromEmail,
-        ticketId,
-        channel: "email"
-      });
-    }
-
-    if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
-      await recordTicketEvent({
-        ticketId,
-        eventType: "profile_enriched",
-        data: {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
-          externalUserId: requesterProfile.profile.id
-        }
-      });
-    } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
-      await recordTicketEvent({
-        ticketId,
-        eventType: "customer_identity_conflict",
-        data: {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
-          conflict: customerResolution.conflict
-        }
-      });
-    }
-
-    await recordTicketEvent({ ticketId, eventType: "message_received" });
   }
 
-  const messageId = randomUUID();
-  const receivedAt = data.date ? new Date(data.date) : new Date();
-  const previewSource = data.text ?? "";
-  const previewText = previewSource.replace(/\s+/g, " ").trim().slice(0, 200);
-
-  await db.query(
-    `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
-      from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
-      received_at, is_read, is_spam, spam_reason
-    ) VALUES (
-      $1, $2, $3, 'inbound', $4, $5, $6, $7,
-      $8, $9, $10, $11, $12, $13,
-      $14, false, $15, $16
-    )`,
-    [
-      messageId,
-      mailbox.id,
-      ticketId,
-      data.messageId,
-      data.references?.[0] ?? data.messageId ?? messageId,
-      data.inReplyTo ?? null,
-      data.references ?? null,
-      fromEmail,
-      toList,
-      ccList,
-      bccList,
-      data.subject ?? null,
-      previewText || null,
-      receivedAt,
-      spamDecision.isSpam,
-      spamDecision.reason
-    ]
-  );
-
-  const keyPrefix = `messages/${messageId}`;
-  let rawKey: string | null = null;
-  let textKey: string | null = null;
-  let htmlKey: string | null = null;
-  let sizeBytes = 0;
-
-  if (data.raw) {
-    const rawBuffer = Buffer.from(data.raw, "base64");
-    rawKey = await putObject({
-      key: `${keyPrefix}/raw.eml`,
-      body: rawBuffer,
-      contentType: "message/rfc822"
-    });
-    sizeBytes += rawBuffer.length;
-  }
-
-  if (data.text) {
-    textKey = await putObject({
-      key: `${keyPrefix}/body.txt`,
-      body: data.text,
-      contentType: "text/plain; charset=utf-8"
-    });
-    sizeBytes += Buffer.byteLength(data.text);
-  }
-
-  if (data.html) {
-    htmlKey = await putObject({
-      key: `${keyPrefix}/body.html`,
-      body: data.html,
-      contentType: "text/html; charset=utf-8"
-    });
-    sizeBytes += Buffer.byteLength(data.html);
-  }
+  // Decode attachment content into memory before the transaction
+  type ResolvedAttachment = {
+    attachmentId: string;
+    safeFilename: string;
+    buffer: Buffer;
+    contentType: string | null;
+    size: number;
+    originalFilename: string;
+  };
+  const resolvedAttachments: ResolvedAttachment[] = [];
 
   if (data.attachments?.length) {
     for (const attachment of data.attachments) {
@@ -295,27 +144,292 @@ export async function storeInboundEmail(data: InboundEmail) {
       }
       const attachmentId = randomUUID();
       const safeFilename = sanitizeFilename(attachment.filename);
-      const key = `${keyPrefix}/attachments/${attachmentId}-${safeFilename}`;
       const buffer = Buffer.from(attachment.contentBase64, "base64");
 
-      await putObject({
-        key,
-        body: buffer,
-        contentType: attachment.contentType ?? undefined
+      resolvedAttachments.push({
+        attachmentId,
+        safeFilename,
+        buffer,
+        contentType: attachment.contentType ?? null,
+        size: attachment.size ?? buffer.length,
+        originalFilename: attachment.filename
       });
+    }
+  }
 
-      await db.query(
+  const messageId = randomUUID();
+  const receivedAt = data.date ? new Date(data.date) : new Date();
+  const previewSource = data.text ?? "";
+  const previewText = previewSource.replace(/\s+/g, " ").trim().slice(0, 200);
+
+  // ── Phase 2: Atomic database transaction ──
+  // All database mutations happen inside a single transaction so that
+  // a failure at any point rolls back cleanly — no ghost tickets.
+  let ticketId: string | null = null;
+  let createdNewTicket = false;
+  let attachedCustomerToTicket = false;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (mailbox.type === "platform" && !spamDecision.isSpam) {
+      ticketId = existingTicketId;
+
+      if (!ticketId) {
+        const category =
+          data.category?.toLowerCase().trim() ?? inferredTags[0]?.toLowerCase() ?? null;
+        const metadata = {
+          ...(((data.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+          ...profileMetadataPatch
+        };
+
+        const ticketResult = await client.query<{ id: string }>(
+          `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [mailbox.id, customerResolution?.customerId ?? null, fromEmail, data.subject ?? null, category, metadata ?? {}]
+        );
+        ticketId = ticketResult.rows[0].id;
+        createdNewTicket = true;
+
+        await client.query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [ticketId, "ticket_created", null, null]
+        );
+
+        if (inferredTags.length) {
+          const cleanTags = Array.from(new Set(inferredTags.map((t) => t.toLowerCase().trim()).filter(Boolean)));
+          for (const tag of cleanTags) {
+            const tagResult = await client.query<{ id: string }>(
+              `INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+              [tag]
+            );
+            await client.query(
+              `INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2) ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+              [ticketId, tagResult.rows[0].id]
+            );
+          }
+          await client.query(
+            `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4)`,
+            [ticketId, "tags_assigned", null, { tags: inferredTags }]
+          );
+        }
+      } else {
+        // Reopen ticket if it was resolved/closed
+        const statusResult = await client.query<{ status: string }>(
+          "SELECT status FROM tickets WHERE id = $1",
+          [ticketId]
+        );
+        const currentStatus = statusResult.rows[0]?.status;
+        if (currentStatus === "solved" || currentStatus === "closed") {
+          await client.query(
+            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1",
+            [ticketId]
+          );
+          await client.query(
+            `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4)`,
+            [ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+          );
+        }
+
+        if (requesterProfile?.status === "matched") {
+          await client.query(
+            `UPDATE tickets
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                 updated_at = now()
+             WHERE id = $1`,
+            [ticketId, JSON.stringify(profileMetadataPatch)]
+          );
+        }
+      }
+
+      if (ticketId && customerResolution?.customerId) {
+        const customerAttachResult = await client.query(
+          `UPDATE tickets SET customer_id = $2, updated_at = now()
+           WHERE id = $1 AND (customer_id IS NULL OR customer_id != $2)`,
+          [ticketId, customerResolution.customerId]
+        );
+        attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
+      }
+
+      if (requesterProfile?.status === "matched" && ticketId && !customerResolution?.conflict) {
+        await upsertExternalUserLink({
+          externalSystem: "prediction-market-mvp",
+          profile: requesterProfile.profile,
+          matchedBy: requesterProfile.matchedBy,
+          inboundEmail: fromEmail,
+          ticketId,
+          channel: "email"
+        });
+      }
+
+      if (createdNewTicket && requesterProfile?.status === "matched" && !customerResolution?.conflict) {
+        await client.query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [ticketId, "profile_enriched", null, {
+            source: "prediction-market-mvp",
+            matchedBy: requesterProfile.matchedBy,
+            externalUserId: requesterProfile.profile.id
+          }]
+        );
+      } else if (ticketId && requesterProfile?.status === "matched" && customerResolution?.conflict) {
+        await client.query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [ticketId, "customer_identity_conflict", null, {
+            source: "prediction-market-mvp",
+            matchedBy: requesterProfile.matchedBy,
+            conflict: customerResolution.conflict
+          }]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4)`,
+        [ticketId, "message_received", null, null]
+      );
+    }
+
+    // Insert the message row
+    await client.query(
+      `INSERT INTO messages (
+        id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
+        from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
+        received_at, is_read, is_spam, spam_reason
+      ) VALUES (
+        $1, $2, $3, 'inbound', $4, $5, $6, $7,
+        $8, $9, $10, $11, $12, $13,
+        $14, false, $15, $16
+      )`,
+      [
+        messageId,
+        mailbox.id,
+        ticketId,
+        data.messageId,
+        data.references?.[0] ?? data.messageId ?? messageId,
+        data.inReplyTo ?? null,
+        data.references ?? null,
+        fromEmail,
+        toList,
+        ccList,
+        bccList,
+        data.subject ?? null,
+        previewText || null,
+        receivedAt,
+        spamDecision.isSpam,
+        spamDecision.reason
+      ]
+    );
+
+    // Insert attachment metadata rows (buffers already decoded in memory)
+    for (const resolved of resolvedAttachments) {
+      const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+      await client.query(
         `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          attachmentId,
+          resolved.attachmentId,
           messageId,
-          attachment.filename,
-          attachment.contentType ?? null,
-          attachment.size ?? buffer.length,
-          key
+          resolved.originalFilename,
+          resolved.contentType,
+          resolved.size,
+          r2Key
         ]
       );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  // ── Phase 3: Post-commit side effects (R2 uploads, agent events) ──
+  // These run after the transaction commits. If they fail, the DB state
+  // is consistent and the data can be backfilled or retried.
+  const keyPrefix = `messages/${messageId}`;
+  let rawKey: string | null = null;
+  let textKey: string | null = null;
+  let htmlKey: string | null = null;
+  let sizeBytes = 0;
+  const failedStorageItems: Array<{ kind: string; target: string; detail: string }> = [];
+
+  if (data.raw) {
+    try {
+      const rawBuffer = Buffer.from(data.raw, "base64");
+      rawKey = await putObject({
+        key: `${keyPrefix}/raw.eml`,
+        body: rawBuffer,
+        contentType: "message/rfc822"
+      });
+      sizeBytes += rawBuffer.length;
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "raw",
+        target: `${keyPrefix}/raw.eml`,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+    }
+  }
+
+  if (data.text) {
+    try {
+      textKey = await putObject({
+        key: `${keyPrefix}/body.txt`,
+        body: data.text,
+        contentType: "text/plain; charset=utf-8"
+      });
+      sizeBytes += Buffer.byteLength(data.text);
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "text",
+        target: `${keyPrefix}/body.txt`,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+    }
+  }
+
+  if (data.html) {
+    try {
+      htmlKey = await putObject({
+        key: `${keyPrefix}/body.html`,
+        body: data.html,
+        contentType: "text/html; charset=utf-8"
+      });
+      sizeBytes += Buffer.byteLength(data.html);
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "html",
+        target: `${keyPrefix}/body.html`,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+    }
+  }
+
+  for (const resolved of resolvedAttachments) {
+    const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+    try {
+      await putObject({
+        key: r2Key,
+        body: resolved.buffer,
+        contentType: resolved.contentType ?? undefined
+      });
+      sizeBytes += resolved.size;
+    } catch (error) {
+      failedStorageItems.push({
+        kind: "attachment",
+        target: resolved.originalFilename,
+        detail: error instanceof Error ? error.message : "unknown upload error"
+      });
+      await db.query(`DELETE FROM attachments WHERE id = $1`, [resolved.attachmentId]).catch(() => {});
     }
   }
 
@@ -347,6 +461,50 @@ export async function storeInboundEmail(data: InboundEmail) {
         threadId
       });
       await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+    }
+
+    if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
+      const identityEvent = buildAgentEvent({
+        eventType: "customer.identity.resolved",
+        ticketId,
+        mailboxId: mailbox.id,
+        excerpt: `Resolved customer ${customerResolution.customerId}`,
+        threadId
+      });
+      await enqueueAgentEvent({
+        eventType: "customer.identity.resolved",
+        payload: {
+          ...identityEvent,
+          customer: {
+            id: customerResolution.customerId,
+            kind: customerResolution.kind
+          },
+          identity: {
+            email: fromEmail,
+            phone: null
+          },
+          matchedByProfile: requesterProfile?.status === "matched",
+          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
+        }
+      });
+    }
+
+    if (failedStorageItems.length > 0) {
+      await db
+        .query(
+          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            ticketId,
+            "message_storage_partial",
+            null,
+            {
+              messageId,
+              failedItems: failedStorageItems
+            }
+          ]
+        )
+        .catch(() => {});
     }
 
     void deliverPendingAgentEvents().catch(() => {});

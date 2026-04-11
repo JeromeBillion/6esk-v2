@@ -5,6 +5,10 @@
 
 This is not a lightweight feature subset in the product sense. It is a lighter interaction surface for mobile hardware, but it must preserve all `v2` business capability.
 
+Roadmap relationship:
+- foundation: [6esk v2 Commercialization Roadmap](./6esk-v2-commercialization-roadmap.md)
+- `v3` is the native client layer for the `v2` platform, not a separate product fork
+
 ## Product Thesis
 `6esk v3` should prove that the full `6esk v2` operating model can work credibly on mobile:
 - every serious support channel in one native mobile surface

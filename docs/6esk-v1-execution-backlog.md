@@ -30,7 +30,7 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 | 16 | Deep 6ex integration | Venus/6ex ticket creation hardening + 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; the remaining work is no longer ticket-create hardening |
 | 17 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches now promote existing identity-linked customers, and contradictory upstream identities now preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
 | 18 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths now support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
-| 19 | Live operator experience | Add recoverable personal inbox drafts with a Drafts tab | `missing` | Started-but-unsent personal emails must persist as drafts and remain resumable from a dedicated Inbox Drafts view |
+| 19 | Live operator experience | Add recoverable personal inbox drafts with a Drafts tab | `done` | Drafts now persist for compose/reply/forward and move through Drafts -> Outbox -> Sent |
 
 ## Remaining v1 Focus
 
@@ -39,7 +39,6 @@ This backlog converts [6esk-v1-completion-roadmap.md](C:\Users\choma\Desktop\6es
 - finalize the `6esk`-owned recording-to-R2 and transcript pipeline against live provider callbacks and Deepgram STT credentials
 - pilot hardening and outage drills with real credentials
 - harden queue-routing policy further if live traffic requires richer fairness, team, or skill-based routing beyond the current sequential reservation model
-- add recoverable personal inbox drafts and a dedicated Drafts tab/view
 
 ## Completed Build Slices
 
