@@ -279,6 +279,33 @@ This is not just DevOps. It is product-operability.
 10. operator notifications with channel-aware popups and tones
 11. browser-native ringing and answer flow for support calls, instead of operator PSTN/mobile bridging as the normal desk path
 
+### Code Review Findings To Close
+Source: full `6esk` system review on 2026-04-26. These are `v1` hardening blockers or near-blockers before live operation.
+
+1. Fix inbound email profile-link transaction ownership.
+   - Risk: matched inbound email can fail when `storeInboundEmail` inserts a new ticket inside a transaction, then calls `upsertExternalUserLink` through the global pool before the ticket commit.
+   - Required outcome: external-user link writes use the same transaction client or run after commit without breaking FK integrity.
+
+2. Make webhook authentication fail closed in production.
+   - Risk: call webhooks, email inbound, and WhatsApp inbound can accept unauthenticated traffic when their secrets are unset; call artifact endpoints can also fetch arbitrary provider URLs if authentication is misconfigured.
+   - Required outcome: production rejects missing webhook secrets, keeps any local/dev bypass explicit, and artifact fetches enforce provider allowlists, timeouts, size limits, and safe content-type handling.
+
+3. Fix Twilio voice queue callback signature validation.
+   - Risk: queue callback URLs include required query parameters, but validation reconstructs a path-only URL, so valid Twilio callbacks can be rejected.
+   - Required outcome: signature validation uses the exact public callback URL Twilio signed, including queue query parameters, with a regression test.
+
+4. Split or harden non-transactional concurrent-index migrations.
+   - Risk: migration `0033` contains multiple `CREATE INDEX CONCURRENTLY` statements executed as one non-transactional query.
+   - Required outcome: concurrent index statements are applied individually, or each concurrent index lives in its own migration.
+
+5. Add provider-level idempotency or duplicate suppression to outbound delivery.
+   - Risk: email, WhatsApp, and call outboxes are at-least-once; a crash after provider success but before local `sent` marking can duplicate customer contact.
+   - Required outcome: each provider send path has a stable idempotency key where supported, plus duplicate detection/reconciliation where provider idempotency is unavailable.
+
+6. Revoke active sessions after password reset.
+   - Risk: password reset updates the password and marks the token used, but existing sessions remain valid until expiry.
+   - Required outcome: successful password reset deletes existing sessions for the target user and records the session revocation in audit logs.
+
 ### Live Operator Experience Requirements
 The platform should feel like a live operating surface, not a static backoffice page. `v1` therefore also requires:
 - operator presence states:
@@ -327,23 +354,90 @@ Current progress:
 - personal inbox drafts are already live with a dedicated Drafts view and resumable composition
 - email outbox verification is already live, so outbound mail now progresses through Drafts -> Outbox -> Sent instead of bypassing delivery state
 
-## Execution Order
-### Phase 1: finish live-provider validation
+## Execution Status And Order
+This section is the single canonical `v1` execution backlog, keeping roadmap intent, implementation status, and remaining hardening work together.
+
+### Status Keys
+- `done`
+- `in_progress`
+- `missing`
+- `blocked_external`
+
+### Current Sequence
+| Order | Workstream | Requirement | Status | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | Modular service entitlements | Add workspace-level module storage and admin controls | `done` | Workspace storage, admin API, Admin UI, and demo-state support landed |
+| 2 | Modular service entitlements | Enforce module guards in ticket creation and outbound channel routes | `done` | Guards now cover create/send/reply/call/resend paths |
+| 3 | Modular service entitlements | Extend entitlement guards into AI action execution paths | `done` | Agent action entry is blocked when AI automation is disabled; channel-specific AI hardening can still deepen later |
+| 4 | Modular service entitlements | Add entitlement-aware metering hooks | `done` | Usage events now land on real create/send/reply/call/AI action paths and are surfaced in Admin workspace usage |
+| 5 | Voice capability | Real provider adapter for outbound dial execution (`VOICE-033`) | `done` | `6esk` now owns direct Twilio outbound execution and no longer depends on `6ex` for telephony delivery |
+| 6 | Voice capability | Callback correlation for status, recording, and transcript events | `in_progress` | `6esk` now owns Twilio status/recording callbacks directly, stores canonical artifacts in its own R2, and has the first managed STT backend wired behind `managed_http`; live provider rehearsal is still required |
+| 7 | Voice capability | Transcript-derived AI outputs: summary, resolution note, QA flags, and action items | `done` | `6esk` persists transcript-AI jobs, dispatches managed analysis, stores derived artifacts separately from the raw transcript, and surfaces QA only in Admin/Analytics |
+| 8 | Voice capability | Production call rollout hardening and policy validation | `in_progress` | Runbooks reflect the real desk-owned Twilio path, `6esk`-owned artifact storage, and mandatory transcripts; pilot and outage drills still need live credentials |
+| 9 | Voice capability | Replace fixed operator bridge target with in-platform queue routing | `in_progress` | Customer calls now ring inside `6esk`; routing is sequential with operator reservation and pass-onward progression; remaining work is deeper fairness/team policy hardening only if live traffic requires it |
+| 10 | Voice capability | Add in-platform ringing controls and in-call operator state | `done` | Operators now ring in-browser, can answer or pass onward, and the desk shows active call state without exposing a desk-side drop action |
+| 11 | Live operator experience | Add operator presence states (`online`, `away`, `offline`) | `done` | Presence is persisted and already drives voice eligibility and desk availability |
+| 12 | Live operator experience | Add popup notifications and tones for email, WhatsApp, and calls | `done` | Channel-aware popups and real audio assets are wired for support email, inbox email, WhatsApp, and incoming calls |
+| 13 | Live operator experience | Add real-time/near-real-time desk refresh | `done` | Shared desk snapshot polling refreshes Support and Mail without manual reload while the tab is active |
+| 14 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and Venus handoff policy |
+| 15 | Cross-channel merge vision | Implement compatibility rules, preflight, and review semantics | `done` | Cross-channel merge now preflights into link semantics, same-channel hard merge stays separate, and operator-linked cases are surfaced in the Support right rail |
+| 16 | Deep 6ex integration | Venus/6ex ticket creation hardening and 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; remaining work is no longer ticket-create hardening |
+| 17 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches promote existing identity-linked customers, and contradictory upstream identities preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
+| 18 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
+| 19 | Live operator experience | Add recoverable personal inbox drafts with a Drafts tab | `done` | Drafts persist for compose/reply/forward and move through Drafts -> Outbox -> Sent |
+| 20 | Product hardening | Close 2026-04-26 code review hardening findings | `in_progress` | Transaction ownership, webhook fail-closed behavior, Twilio queue signature validation, concurrent-index migration safety, outbound idempotency, and password-reset session revocation remain to close |
+
+### Remaining v1 Focus
+- live callback rehearsal against the chosen Twilio deployment from `6esk`
+- finalize the `6esk`-owned recording-to-R2 and transcript pipeline against live provider callbacks and Deepgram STT credentials
+- close the code review hardening findings listed under Workstream E
+- pilot hardening and outage drills with real credentials
+- harden queue-routing policy further only if live traffic requires richer fairness, team, or skill-based routing beyond the current sequential reservation model
+
+### Completed Build Slices
+Slice A: entitlement foundations
+- persistence model for workspace modules
+- admin API for workspace module configuration
+- admin workspace UI for module toggles
+- demo-mode support for workspace modules
+- first enforcement in `/api/tickets/create`, `/api/email/send`, and `/api/whatsapp/send`
+
+Slice A exit criteria
+- Admin can turn core billable modules on or off
+- channel-initiation routes respect those toggles
+- demo mode exposes and persists the same configuration shape
+- the feature becomes a real source of truth rather than UI-only settings
+
+Slice B: cross-channel linkage
+- `linked_case` preflight and execution endpoints
+- merge review alignment for non-destructive cross-channel linkage
+- Support right-rail linked-case surfacing and navigation
+- Venus downgrade from unsafe cross-channel merge to linked-case flow
+
+Slice C: usage metering
+- usage-event persistence for billable modules
+- Admin workspace usage summary API
+- Admin workspace usage card
+- route-level usage accounting for human and AI channel actions
+
+### Near-Term Execution Phases
+Phase 1: finish live-provider validation
 - voice rollout validation on the real `6esk -> Twilio` path
 - live transcript validation on the real `Deepgram -> 6esk` path
-- transcript-derived QA validation on the real `Groq -> 6esk` path
+- transcript-derived QA validation on the configured global AI provider path
 
-Note:
-- the real provider adapter is now implemented directly in `6esk` for Twilio outbound/status/recording ownership
-- the remaining voice task is no longer basic provider ownership; it is rollout validation, transcript proof, and operator-signoff under the real desk-side ringing/answer flow
+Phase 2: close product hardening risks
+- fix code review findings before live operation
+- verify webhook authentication and artifact-ingress behavior with production-like env
+- prove outbound delivery duplicate-suppression behavior under crash/retry drills
 
-### Phase 2: finish operational drills
+Phase 3: finish operational drills
 - outage drill
 - rollback drill
 - pilot signoff
 - queue-policy refinement only if live traffic shows a real need
 
-### Phase 3: close evidence and rollout proof
+Phase 4: close evidence and rollout proof
 - capture final runbook evidence
 - close any remaining live-environment transcript/callback gaps
 - confirm no mock-only assumptions remain in the real support path
