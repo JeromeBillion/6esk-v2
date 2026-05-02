@@ -8,6 +8,8 @@ export type SessionUser = {
   display_name: string;
   role_id: string | null;
   role_name: string | null;
+  tenant_id: string;
+  tenant_slug: string;
 };
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sixesk_session";
@@ -65,10 +67,12 @@ export async function getSessionUser() {
 
   const tokenHash = hashToken(token);
   const result = await db.query<SessionUser>(
-    `SELECT u.id, u.email, u.display_name, u.role_id, r.name AS role_name
+    `SELECT u.id, u.email, u.display_name, u.role_id, r.name AS role_name,
+            u.tenant_id, COALESCE(t.slug, 'default') AS tenant_slug
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN roles r ON r.id = u.role_id
+     LEFT JOIN tenants t ON t.id = u.tenant_id
      WHERE s.token_hash = $1
        AND s.expires_at > now()
        AND u.is_active = true
