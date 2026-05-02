@@ -16,3 +16,14 @@ export { requireTenantMatch, requireTenantWritable, guardResource } from "./guar
 
 // Scoped database
 export { createScopedDb, type ScopedDb } from "./scoped-db";
+
+// Lifecycle operations
+export {
+  provisionTenant,
+  suspendTenant,
+  reactivateTenant,
+  closeTenant,
+  getTenantById,
+  getTenantBySlug,
+  listTenants
+} from "./lifecycle";

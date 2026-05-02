@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export const DEFAULT_WORKSPACE_KEY = "primary";
 
@@ -15,6 +16,7 @@ export type WorkspaceModuleKey = keyof WorkspaceModuleFlags;
 
 export type WorkspaceModulesConfig = {
   workspaceKey: string;
+  tenantId: string;
   updatedAt: string | null;
   modules: WorkspaceModuleFlags;
 };
@@ -28,9 +30,10 @@ export const DEFAULT_WORKSPACE_MODULES: WorkspaceModuleFlags = {
   vanillaWebchat: true
 };
 
-function defaultWorkspaceConfig(workspaceKey: string): WorkspaceModulesConfig {
+function defaultWorkspaceConfig(workspaceKey: string, tenantId: string): WorkspaceModulesConfig {
   return {
     workspaceKey,
+    tenantId,
     updatedAt: null,
     modules: { ...DEFAULT_WORKSPACE_MODULES }
   };
@@ -54,17 +57,25 @@ export function normalizeWorkspaceModules(input?: Partial<WorkspaceModuleFlags> 
   };
 }
 
+/**
+ * Get workspace module flags for a tenant's workspace.
+ *
+ * v2: queries are tenant-scoped. tenantId defaults to DEFAULT_TENANT_ID
+ * during the migration period for backward compatibility.
+ */
 export async function getWorkspaceModules(
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantId = DEFAULT_TENANT_ID
 ): Promise<WorkspaceModulesConfig> {
   if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
   let result:
     | {
         rows?: Array<{
           workspace_key: string;
+          tenant_id: string;
           modules: Partial<WorkspaceModuleFlags> | null;
           updated_at: Date | string | null;
         }>;
@@ -74,22 +85,23 @@ export async function getWorkspaceModules(
   try {
     result = await db.query<{
       workspace_key: string;
+      tenant_id: string;
       modules: Partial<WorkspaceModuleFlags> | null;
       updated_at: Date | string | null;
     }>(
-      `SELECT workspace_key, modules, updated_at
+      `SELECT workspace_key, tenant_id, modules, updated_at
        FROM workspace_modules
-       WHERE workspace_key = $1
+       WHERE workspace_key = $1 AND tenant_id = $2
        LIMIT 1`,
-      [workspaceKey]
+      [workspaceKey, tenantId]
     );
   } catch {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
   const row = result?.rows?.[0];
   if (!row) {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
   const updatedAt =
@@ -101,40 +113,51 @@ export async function getWorkspaceModules(
 
   return {
     workspaceKey: row.workspace_key,
+    tenantId: row.tenant_id,
     updatedAt,
     modules: normalizeWorkspaceModules(row.modules)
   };
 }
 
+/**
+ * Save workspace module flags for a tenant's workspace.
+ */
 export async function saveWorkspaceModules(
   modules: Partial<WorkspaceModuleFlags>,
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantId = DEFAULT_TENANT_ID
 ): Promise<WorkspaceModulesConfig> {
   const normalized = normalizeWorkspaceModules(modules);
   const result = await db.query<{
     workspace_key: string;
+    tenant_id: string;
     modules: WorkspaceModuleFlags;
     updated_at: Date;
   }>(
-    `INSERT INTO workspace_modules (workspace_key, modules, updated_at)
-     VALUES ($1, $2::jsonb, now())
+    `INSERT INTO workspace_modules (workspace_key, tenant_id, modules, updated_at)
+     VALUES ($1, $2, $3::jsonb, now())
      ON CONFLICT (workspace_key)
      DO UPDATE SET modules = EXCLUDED.modules, updated_at = now()
-     RETURNING workspace_key, modules, updated_at`,
-    [workspaceKey, JSON.stringify(normalized)]
+     RETURNING workspace_key, tenant_id, modules, updated_at`,
+    [workspaceKey, tenantId, JSON.stringify(normalized)]
   );
 
   return {
     workspaceKey: result.rows[0].workspace_key,
+    tenantId: result.rows[0].tenant_id,
     updatedAt: result.rows[0].updated_at.toISOString(),
     modules: normalizeWorkspaceModules(result.rows[0].modules)
   };
 }
 
+/**
+ * Check if a specific module is enabled for a tenant's workspace.
+ */
 export async function isWorkspaceModuleEnabled(
   moduleKey: WorkspaceModuleKey,
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantId = DEFAULT_TENANT_ID
 ) {
-  const config = await getWorkspaceModules(workspaceKey);
+  const config = await getWorkspaceModules(workspaceKey, tenantId);
   return config.modules[moduleKey] === true;
 }

@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type TicketRecord = {
   id: string;
@@ -49,6 +50,7 @@ export async function resolveTicketIdForInbound(references: string[]) {
 }
 
 export async function createTicket({
+  tenantId = DEFAULT_TENANT_ID,
   mailboxId,
   customerId,
   requesterEmail,
@@ -56,6 +58,7 @@ export async function createTicket({
   category,
   metadata
 }: {
+  tenantId?: string;
   mailboxId: string;
   customerId?: string | null;
   requesterEmail: string;
@@ -64,10 +67,10 @@ export async function createTicket({
   metadata?: Record<string, unknown> | null;
 }) {
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
+    [tenantId, mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
   );
 
   return result.rows[0].id;
@@ -115,20 +118,22 @@ export function appendMergedFromMetadata(
 }
 
 export async function recordTicketEvent({
+  tenantId = DEFAULT_TENANT_ID,
   ticketId,
   eventType,
   actorUserId,
   data
 }: {
+  tenantId?: string;
   ticketId: string;
   eventType: string;
   actorUserId?: string | null;
   data?: Record<string, unknown> | null;
 }) {
   await db.query(
-    `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-     VALUES ($1, $2, $3, $4)`,
-    [ticketId, eventType, actorUserId ?? null, data ?? null]
+    `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [tenantId, ticketId, eventType, actorUserId ?? null, data ?? null]
   );
 }
 
@@ -254,6 +259,11 @@ export async function listTicketsForUser(
     "t.merged_into_ticket_id IS NULL",
     "(t.mailbox_id IS NULL OR mb.type = 'platform')"
   ];
+
+  // v2: tenant isolation — always scope to the user's tenant
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  values.push(tenantId);
+  conditions.push(`t.tenant_id = $${values.length}`);
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
