@@ -13,7 +13,7 @@ const modulesSchema = z.object({
   whatsapp: z.boolean(),
   voice: z.boolean(),
   aiAutomation: z.boolean(),
-  venusOrchestration: z.boolean(),
+  dexterOrchestration: z.boolean(),
   vanillaWebchat: z.boolean()
 });
 

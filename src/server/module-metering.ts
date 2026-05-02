@@ -41,7 +41,7 @@ const MODULE_KEYS: WorkspaceModuleKey[] = [
   "whatsapp",
   "voice",
   "aiAutomation",
-  "venusOrchestration",
+  "dexterOrchestration",
   "vanillaWebchat"
 ];
 

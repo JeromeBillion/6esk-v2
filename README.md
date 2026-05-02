@@ -1,6 +1,15 @@
-# 6esk
+# 6esk v2
 
-Lightweight support platform with a first‑class, two‑way email system.
+Multi-tenant B2B SaaS support platform with native AI orchestration.
+
+Forked from [6esk v1](https://github.com/JeromeBillion/6esk) — see `docs/6esk-v2-commercialization-roadmap.md` for the full v2 roadmap.
+
+## What's New in v2
+
+- **Native Dexter module** (`src/dexter/`) — AI orchestration agent forked from Venus, now a first-party 6esk module
+- Multi-tenant architecture foundation
+- Module entitlements and metering
+- BYO AI provider mode support
 
 ## Quick Start
 
@@ -8,14 +17,6 @@ Lightweight support platform with a first‑class, two‑way email system.
 npm install
 npm run dev
 ```
-
-`npm run dev` now verifies that your checkout already includes the latest `origin/main`.
-If your branch is behind, dev will stop and tell you whether to fast-forward `main` or rebase your branch first.
-
-One-time bypass:
-
-- PowerShell: `$env:SKIP_MAIN_SYNC_CHECK='1'; npm run dev`
-- `cmd.exe`: `set SKIP_MAIN_SYNC_CHECK=1&& npm run dev`
 
 ## Environment
 
@@ -27,28 +28,22 @@ Copy `.env.example` to `.env` and fill in the values.
 npm run db:migrate
 ```
 
-## Seed Lead Admin
+## Dexter Module
 
-```bash
-node scripts/seed-admin.js
-```
+The `src/dexter/` directory contains the native AI orchestration module, ported from the external Venus ElizaOS project. It includes:
 
-This seeds:
-- Lead Admin user
-- `support@6ex.co.za` platform mailbox
-- `jerome.choma@6ex.co.za` personal mailbox
-- Default support tags and macros
+- **Characters** — Channel-specific agent personalities (webchat, CRM, Twitter, WhatsApp)
+- **Plugins** — CRM bridge, escalation, WhatsApp, routing telemetry
+- **Reliability** — Loop breaker, run-state management
+- **Security** — Route scoping, trusted upstream telemetry
+- **Startup gates** — Environment validation and readiness checks
 
-## Sign In
-
-Visit `http://localhost:3000/login` and use the Lead Admin credentials.
-
-## Health Check
-
-Visit `http://localhost:3000/api/health`.
+Dexter channel agents are controlled via env toggles:
+- `DEXTER_ENABLE_CRM_AGENT`
+- `DEXTER_ENABLE_TWITTER_AGENT`
+- `DEXTER_ENABLE_WHATSAPP_AGENT`
+- `DEXTER_ENABLE_ESCALATION_BRIDGE`
 
 ## Docs
 
-Primary docs index: `docs/README.md`.
-
-Frontend UI/design-system guide: `docs/frontend-ui-system.md`.
+See `docs/` for roadmaps and integration guides.

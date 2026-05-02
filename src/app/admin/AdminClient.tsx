@@ -226,9 +226,9 @@ const WORKSPACE_MODULE_FIELDS: Array<{
     billing: "billable"
   },
   {
-    key: "venusOrchestration",
-    label: "Venus orchestration",
-    description: "Optional Venus-derived orchestration paths and runtime hooks.",
+    key: "dexterOrchestration",
+    label: "Dexter orchestration",
+    description: "Optional Dexter-derived orchestration paths and runtime hooks.",
     billing: "billable"
   },
   {

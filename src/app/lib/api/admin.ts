@@ -40,7 +40,7 @@ export type WorkspaceModuleFlags = {
   whatsapp: boolean;
   voice: boolean;
   aiAutomation: boolean;
-  venusOrchestration: boolean;
+  dexterOrchestration: boolean;
   vanillaWebchat: boolean;
 };
 

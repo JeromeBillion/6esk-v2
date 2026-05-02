@@ -2429,7 +2429,7 @@ function buildInitialState(): DemoState {
         whatsapp: true,
         voice: true,
         aiAutomation: true,
-        venusOrchestration: true,
+        dexterOrchestration: true,
         vanillaWebchat: true
       }
     },
@@ -2486,7 +2486,7 @@ function buildInitialState(): DemoState {
           ]
         },
         {
-          moduleKey: "venusOrchestration",
+          moduleKey: "dexterOrchestration",
           totalQuantity: 0,
           eventCount: 0,
           actorBreakdown: { human: 0, ai: 0, system: 0 },
@@ -3470,7 +3470,7 @@ function handlePost(url: URL, init?: RequestInit) {
         whatsapp: body.whatsapp === true,
         voice: body.voice === true,
         aiAutomation: body.aiAutomation === true,
-        venusOrchestration: body.venusOrchestration === true,
+        dexterOrchestration: body.dexterOrchestration === true,
         vanillaWebchat: body.vanillaWebchat === true
       }
     };

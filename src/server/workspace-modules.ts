@@ -7,7 +7,7 @@ export type WorkspaceModuleFlags = {
   whatsapp: boolean;
   voice: boolean;
   aiAutomation: boolean;
-  venusOrchestration: boolean;
+  dexterOrchestration: boolean;
   vanillaWebchat: boolean;
 };
 
@@ -24,7 +24,7 @@ export const DEFAULT_WORKSPACE_MODULES: WorkspaceModuleFlags = {
   whatsapp: true,
   voice: true,
   aiAutomation: true,
-  venusOrchestration: true,
+  dexterOrchestration: true,
   vanillaWebchat: true
 };
 
@@ -46,9 +46,9 @@ export function normalizeWorkspaceModules(input?: Partial<WorkspaceModuleFlags> 
     whatsapp: coerceBoolean(input?.whatsapp, DEFAULT_WORKSPACE_MODULES.whatsapp),
     voice: coerceBoolean(input?.voice, DEFAULT_WORKSPACE_MODULES.voice),
     aiAutomation: coerceBoolean(input?.aiAutomation, DEFAULT_WORKSPACE_MODULES.aiAutomation),
-    venusOrchestration: coerceBoolean(
-      input?.venusOrchestration,
-      DEFAULT_WORKSPACE_MODULES.venusOrchestration
+    dexterOrchestration: coerceBoolean(
+      input?.dexterOrchestration,
+      DEFAULT_WORKSPACE_MODULES.dexterOrchestration
     ),
     vanillaWebchat: coerceBoolean(input?.vanillaWebchat, DEFAULT_WORKSPACE_MODULES.vanillaWebchat)
   };
