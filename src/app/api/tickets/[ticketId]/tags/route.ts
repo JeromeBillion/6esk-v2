@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getTicketById, recordTicketEvent, addTagsToTicket, removeTagsFromTicket } from "@/server/tickets";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const schema = z
   .object({
@@ -26,7 +27,8 @@ export async function PATCH(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -61,6 +63,7 @@ export async function PATCH(
   }
 
   await recordTicketEvent({
+    tenantId,
     ticketId,
     eventType: "tags_updated",
     actorUserId: user.id,
@@ -68,6 +71,7 @@ export async function PATCH(
   });
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user.id,
     action: "ticket_tags_updated",
     entityType: "ticket",

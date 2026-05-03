@@ -4,6 +4,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { hashPassword } from "@/server/auth/password";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createUserSchema = z.object({
   email: z.string().email(),
@@ -18,12 +19,15 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT u.id, u.email, u.display_name, u.is_active, u.created_at,
             r.id as role_id, r.name as role_name
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
-     ORDER BY u.created_at DESC`
+     WHERE u.tenant_id = $1
+     ORDER BY u.created_at DESC`,
+    [tenantId]
   );
 
   return Response.json({ users: result.rows });
@@ -49,22 +53,23 @@ export async function POST(request: Request) {
 
   const { email, displayName, password, roleId } = parsed.data;
   const emailLower = email.toLowerCase();
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await db.query(
-    "SELECT id, role_id FROM users WHERE email = $1 LIMIT 1",
-    [emailLower]
+    "SELECT id, role_id FROM users WHERE email = $1 AND tenant_id = $2 LIMIT 1",
+    [emailLower, tenantId]
   );
   const existingUser = existing.rows[0] ?? null;
   const passwordHash = hashPassword(password);
 
   const result = await db.query(
-    `INSERT INTO users (email, display_name, password_hash, role_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, display_name, password_hash, role_id, tenant_id)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (email) DO UPDATE SET
        display_name = EXCLUDED.display_name,
        password_hash = EXCLUDED.password_hash,
        role_id = EXCLUDED.role_id
      RETURNING id, email, display_name, role_id`,
-    [emailLower, displayName, passwordHash, roleId]
+    [emailLower, displayName, passwordHash, roleId, tenantId]
   );
 
   const created = result.rows[0];
@@ -86,6 +91,7 @@ export async function POST(request: Request) {
   if (existingUser) {
     const roleChanged = existingUser.role_id !== created.role_id;
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: roleChanged ? "user_role_updated" : "user_updated",
       entityType: "user",
@@ -94,6 +100,7 @@ export async function POST(request: Request) {
     });
   } else {
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "user_created",
       entityType: "user",
