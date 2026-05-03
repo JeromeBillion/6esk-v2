@@ -263,7 +263,8 @@ export async function storeInboundEmail(data: InboundEmail) {
           matchedBy: requesterProfile.matchedBy,
           inboundEmail: fromEmail,
           ticketId,
-          channel: "email"
+          channel: "email",
+          queryExecutor: client
         });
       }
 

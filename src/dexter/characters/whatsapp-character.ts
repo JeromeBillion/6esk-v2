@@ -2,7 +2,7 @@ import { type Character } from '@elizaos/core';
 import { baseCharacterFields } from './base-character';
 import { knowledgeBaseTemplate } from '../knowledge/shared-knowledge';
 
-export const whatsappCharacter: Character = {
+export const whatsappCharacter = {
     ...baseCharacterFields,
     name: 'Dexter',
     settings: {
@@ -122,4 +122,4 @@ Respond with the message text only. No XML, no metadata, no tags.`,
         ],
         post: ['not applicable -- WhatsApp agent does not post publicly'],
     },
-} as Character;
+} as unknown as Character;

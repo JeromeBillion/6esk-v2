@@ -96,6 +96,12 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
 
     expect(response.status).toBe(200);
     expect(text).toContain("desk_user_22222222-2222-2222-2222-222222222222");
+    expect(mocks.validateTwilioWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: "/api/calls/webhooks/twilio/voice/queue",
+        requestUrl: expect.stringContaining("callSessionId=call-session-1")
+      })
+    );
     expect(mocks.markVoiceOperatorQueueOutcome).toHaveBeenCalledWith({
       userId: "11111111-1111-1111-1111-111111111111",
       callSessionId: "call-session-1",

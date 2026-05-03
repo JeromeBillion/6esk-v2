@@ -75,5 +75,11 @@ describe("GET /api/calls/webhooks/twilio/recording", () => {
         recordingUrl: "https://api.twilio.com/recordings/RE123"
       })
     );
+    expect(mocks.twilioValidate).toHaveBeenCalledWith(
+      "auth-token",
+      "sig",
+      "https://app.6esk.test/api/calls/webhooks/twilio/recording?CallSid=CA123&RecordingSid=RE123&RecordingUrl=https://api.twilio.com/recordings/RE123&RecordingDuration=44&Timestamp=1710000000",
+      {}
+    );
   });
 });

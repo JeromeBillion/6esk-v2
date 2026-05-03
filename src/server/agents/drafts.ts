@@ -4,6 +4,7 @@ import type { SessionUser } from "@/server/auth/session";
 
 export type AgentDraft = {
   id: string;
+  tenant_id?: string;
   integration_id: string | null;
   ticket_id: string;
   subject: string | null;
@@ -46,15 +47,18 @@ export async function getDraftById({
   return result.rows[0] ?? null;
 }
 
-export async function listDraftsForTicket(ticketId: string) {
+export async function listDraftsForTicket(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<AgentDraft>(
-    `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
+    `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
             metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE ticket_id = $1
+       ${tenantClause}
        AND status = 'pending'
      ORDER BY created_at DESC`,
-    [ticketId]
+    values
   );
   return result.rows;
 }

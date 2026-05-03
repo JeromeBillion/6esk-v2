@@ -2,6 +2,7 @@ import { db } from "@/server/db";
 import type { PredictionProfile } from "@/server/integrations/prediction-profile";
 
 type InboundChannel = "email" | "whatsapp";
+type QueryExecutor = Pick<typeof db, "query">;
 
 export function normalizeLinkEmail(value: string | null | undefined) {
   if (!value) return null;
@@ -105,7 +106,8 @@ export async function upsertExternalUserLink({
   inboundEmail,
   inboundPhone,
   ticketId,
-  channel
+  channel,
+  queryExecutor = db
 }: {
   externalSystem: string;
   profile: PredictionProfile;
@@ -114,6 +116,7 @@ export async function upsertExternalUserLink({
   inboundPhone?: string | null;
   ticketId: string;
   channel: InboundChannel;
+  queryExecutor?: QueryExecutor;
 }) {
   const email = normalizeLinkEmail(inboundEmail) ?? normalizeLinkEmail(profile.email);
   const phone = normalizeLinkPhone(inboundPhone) ?? normalizeLinkPhone(profile.phoneNumber);
@@ -124,7 +127,7 @@ export async function upsertExternalUserLink({
 
   const confidence = deriveMatchConfidence(matchedBy);
 
-  await db.query(
+  await queryExecutor.query(
     `INSERT INTO external_user_links (
       external_system,
       external_user_id,

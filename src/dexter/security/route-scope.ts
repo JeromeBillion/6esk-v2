@@ -111,7 +111,7 @@ export const withRouteScope = (
 ): Route => {
   const authConfig = options?.authConfig ?? resolveRouteScopeAuthConfig();
   const originalHandler = route.handler;
-  const wrapped: Route = {
+  const wrapped = {
     ...route,
     [ROUTE_SCOPE_META_KEY]: scope,
     handler: originalHandler
@@ -122,7 +122,7 @@ export const withRouteScope = (
           await originalHandler(req, res, runtime);
         }
       : undefined,
-  };
+  } as unknown as Route;
   scopeRegistry.set(wrapped, scope);
   return wrapped;
 };

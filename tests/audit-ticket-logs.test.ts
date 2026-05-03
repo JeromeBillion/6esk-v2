@@ -43,7 +43,16 @@ describe("listAuditLogsForTicket", () => {
 
     expect(result).toHaveLength(1);
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(sql).toContain("(a.data->>'ticketId') = $1::text");
-    expect(values).toEqual([ticketId, 50]);
+    expect(sql).toContain("(a.data->>'ticketId') = $2::text");
+    expect(values).toEqual(["00000000-0000-0000-0000-000000000001", ticketId, 50]);
+  });
+
+  it("keeps the legacy second-argument limit call shape working", async () => {
+    const ticketId = "11111111-1111-1111-1111-111111111111";
+
+    await listAuditLogsForTicket(ticketId, 25);
+
+    const [, values] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(values).toEqual(["00000000-0000-0000-0000-000000000001", ticketId, 25]);
   });
 });

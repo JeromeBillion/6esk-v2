@@ -516,7 +516,7 @@ async function aggregateLogs(runtime: any, limit = 200) {
     if (typeof runtime.getLogs !== 'function') return null;
     const logs = await runtime.getLogs({
         type: 'routing:model_used',
-        count: limit,
+        limit,
     });
     const agg: Record<string, any> = {
         total: 0,
@@ -711,7 +711,7 @@ export const routingTelemetryPlugin: Plugin = {
                     : ['routing:model_used'];
                 const rows: any[] = [];
                 for (const type of types) {
-                    const logs = await runtime.getLogs({ type, count: limit });
+                    const logs = await runtime.getLogs({ type, limit });
                     for (const log of logs || []) {
                         const body = (log as any).body || {};
                         rows.push({
@@ -755,7 +755,7 @@ export const routingTelemetryPlugin: Plugin = {
                     : ['routing:model_used'];
                 const rows: any[] = [];
                 for (const type of types) {
-                    const logs = await runtime.getLogs({ type, count: limit });
+                    const logs = await runtime.getLogs({ type, limit });
                     for (const log of logs || []) {
                         const body = (log as any).body || {};
                         rows.push({
@@ -1010,7 +1010,7 @@ export const routingTelemetryPlugin: Plugin = {
                     throw hardHaltError;
                 }
 
-                const response = await originalUseModel(effectiveModel, paramsWithCaps, provider);
+                const response = await (originalUseModel as any)(effectiveModel, paramsWithCaps, provider);
 
                 // Estimate tokens after segmentation for accurate logging
                 const segmentedPromptText = getPromptText(paramsWithCaps as any);

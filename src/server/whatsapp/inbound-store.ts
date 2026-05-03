@@ -384,7 +384,8 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         matchedBy: requesterProfile.matchedBy,
         inboundPhone: from,
         ticketId,
-        channel: "whatsapp"
+        channel: "whatsapp",
+        queryExecutor: client
       });
     }
 

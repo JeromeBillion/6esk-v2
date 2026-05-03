@@ -10,6 +10,8 @@ describe("call webhook authorization", () => {
     delete process.env.CALLS_WEBHOOK_SECRET;
     delete process.env.CALLS_WEBHOOK_MAX_SKEW_SECONDS;
     delete process.env.CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE;
+    delete process.env.CALLS_WEBHOOK_ALLOW_UNAUTHENTICATED;
+    delete process.env.VERCEL_ENV;
   });
 
   afterEach(() => {
@@ -141,6 +143,23 @@ describe("call webhook authorization", () => {
       authorized: true,
       mode: "shared_secret",
       reason: "ok"
+    });
+  });
+
+  it("fails closed in production when no webhook secret is configured", () => {
+    process.env.NODE_ENV = "production";
+
+    const result = authorizeCallWebhook({
+      rawBody: "{}",
+      providedSignature: null,
+      providedTimestamp: null,
+      providedSecret: null
+    });
+
+    expect(result).toEqual({
+      authorized: false,
+      mode: "open",
+      reason: "unsecured_mode"
     });
   });
 });

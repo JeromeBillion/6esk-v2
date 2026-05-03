@@ -182,8 +182,21 @@ export type LinkedTicketSummary = {
   reason: string | null;
 };
 
-export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketSummary[]> {
+export async function listLinkedTickets(
+  ticketId: string,
+  tenantId?: string | null
+): Promise<LinkedTicketSummary[]> {
   const client = await db.connect();
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId
+    ? `AND linked.tenant_id = $2
+       AND EXISTS (
+         SELECT 1
+         FROM tickets current_ticket
+         WHERE current_ticket.id = $1::uuid
+           AND current_ticket.tenant_id = $2::uuid
+       )`
+    : "";
   try {
     const result = await client.query<{
       link_id: string;
@@ -234,8 +247,9 @@ export async function listLinkedTickets(ticketId: string): Promise<LinkedTicketS
          END
        WHERE tl.relationship_type = 'linked_case'
          AND (tl.source_ticket_id = $1::uuid OR tl.target_ticket_id = $1::uuid)
+         ${tenantClause}
        ORDER BY tl.created_at DESC`,
-      [ticketId]
+      values
     );
 
     return result.rows.map((row) => ({

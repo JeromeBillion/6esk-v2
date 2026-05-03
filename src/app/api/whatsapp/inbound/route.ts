@@ -5,6 +5,7 @@ import {
   type NormalizedWhatsAppMessage
 } from "@/server/whatsapp/inbound-store";
 import { verifyWhatsAppSignature } from "@/server/whatsapp/signature";
+import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 
 type WhatsAppStatusUpdate = {
   messageId: string;
@@ -299,7 +300,8 @@ export async function POST(request: Request) {
   const signatureValid = verifyWhatsAppSignature({
     body: rawBody,
     providedSignature,
-    appSecret
+    appSecret,
+    requireSignature: !canAcceptUnsignedWebhookTraffic(process.env.WHATSAPP_ALLOW_UNSIGNED_WEBHOOKS)
   });
 
   if (!signatureValid) {

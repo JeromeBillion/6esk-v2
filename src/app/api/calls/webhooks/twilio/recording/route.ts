@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     pathname: "/api/calls/webhooks/twilio/recording",
     requestUrl: request.url,
     signature: request.headers.get("x-twilio-signature"),
-    params
+    params: {}
   });
 
   if (!isValid) {

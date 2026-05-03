@@ -29,7 +29,11 @@ export const sixeskWebhookRoute: Route = {
       return;
     }
 
-    const rawBody = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.body ?? {});
+    const bodyRequest = req as typeof req & { rawBody?: string; body?: unknown };
+    const rawBody =
+      typeof bodyRequest.rawBody === 'string'
+        ? bodyRequest.rawBody
+        : JSON.stringify(bodyRequest.body ?? {});
     if (!service.verifyWebhookSignature(signature, timestamp, rawBody)) {
       logger.warn({ src: 'plugin:6esk' }, 'Invalid webhook signature rejected');
       res.status(401).json({ error: 'Invalid signature' });

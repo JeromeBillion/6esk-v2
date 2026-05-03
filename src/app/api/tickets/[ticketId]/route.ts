@@ -13,6 +13,7 @@ import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/ou
 import { listDraftsForTicket } from "@/server/agents/drafts";
 import { listAuditLogsForTicket } from "@/server/audit";
 import { listLinkedTickets } from "@/server/merges";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -32,7 +33,8 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -43,11 +45,11 @@ export async function GET(
   }
 
   const [messages, events, drafts, auditLogs, linkedTickets] = await Promise.all([
-    listTicketMessages(ticketId),
-    listTicketEvents(ticketId),
-    listDraftsForTicket(ticketId),
-    listAuditLogsForTicket(ticketId, 50),
-    listLinkedTickets(ticketId)
+    listTicketMessages(ticketId, tenantId),
+    listTicketEvents(ticketId, tenantId),
+    listDraftsForTicket(ticketId, tenantId),
+    listAuditLogsForTicket(ticketId, tenantId, 50),
+    listLinkedTickets(ticketId, tenantId)
   ]);
   return Response.json({ ticket, messages, events, drafts, auditLogs, linkedTickets });
 }
@@ -65,7 +67,8 @@ export async function PATCH(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -139,19 +142,23 @@ export async function PATCH(
   }
 
   fields.push("updated_at = now()");
-  values.push(ticketId);
+  const ticketIdParam = index++;
+  const tenantIdParam = index++;
+  values.push(ticketId, tenantId);
 
   await db.query(
     `UPDATE tickets
      SET ${fields.join(", ")}
-     WHERE id = $${index}
+     WHERE id = $${ticketIdParam}
+       AND tenant_id = $${tenantIdParam}
      RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
     values
   );
-  const updated = await getTicketById(ticketId);
+  const updated = await getTicketById(ticketId, tenantId);
 
   if (parsed.data.status && parsed.data.status !== ticket.status) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "status_updated",
       actorUserId: user.id,
@@ -171,6 +178,7 @@ export async function PATCH(
 
   if (parsed.data.priority && parsed.data.priority !== ticket.priority) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "priority_updated",
       actorUserId: user.id,
@@ -180,6 +188,7 @@ export async function PATCH(
 
   if (assignProvided && parsed.data.assignedUserId !== ticket.assigned_user_id) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "assignment_updated",
       actorUserId: user.id,

@@ -186,7 +186,7 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
   }
 }
 
-function buildMetaPayload(payload: Record<string, unknown>) {
+function buildMetaPayload(payload: Record<string, unknown>, eventId: string) {
   const to = typeof payload.to === "string" ? payload.to : "";
   const template = typeof payload.template === "object" && payload.template
     ? (payload.template as Record<string, unknown>)
@@ -203,6 +203,7 @@ function buildMetaPayload(payload: Record<string, unknown>) {
         messaging_product: "whatsapp",
         to,
         type: "template",
+        biz_opaque_callback_data: eventId,
         template: {
           name,
           language: { code: language },
@@ -218,6 +219,7 @@ function buildMetaPayload(payload: Record<string, unknown>) {
       messaging_product: "whatsapp",
       to,
       type: "text",
+      biz_opaque_callback_data: eventId,
       text: { body: text }
     }
   };
@@ -269,7 +271,7 @@ async function uploadMetaMedia(
   return data.id ?? null;
 }
 
-async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string, unknown>) {
+async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string, unknown>, eventId: string) {
   const accessToken = account.access_token ? decryptSecret(account.access_token) : "";
   if (!accessToken) {
     throw new Error("Missing WhatsApp access token");
@@ -321,6 +323,7 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
       messaging_product: "whatsapp",
       to: typeof payload.to === "string" ? payload.to : "",
       type: mediaType,
+      biz_opaque_callback_data: eventId,
       [mediaType]: {
         id: mediaId,
         ...(caption && mediaType !== "audio" ? { caption } : {})
@@ -347,7 +350,7 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
     return { providerMessageId };
   }
 
-  const { body, to } = buildMetaPayload(payload);
+  const { body, to } = buildMetaPayload(payload, eventId);
   if (!to) {
     throw new Error("Missing WhatsApp recipient");
   }
@@ -394,7 +397,7 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
       if (account.provider !== "meta") {
         throw new Error(`Provider ${account.provider} not supported yet`);
       }
-      const { providerMessageId } = await sendMetaMessage(account, payload);
+      const { providerMessageId } = await sendMetaMessage(account, payload, event.id);
       await markDelivered(event.id, messageRecordId, providerMessageId);
       delivered += 1;
     } catch (error) {

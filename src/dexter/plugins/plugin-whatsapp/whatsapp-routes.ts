@@ -55,8 +55,11 @@ export const whatsappWebhookRoute: Route = {
       return;
     }
 
+    const bodyRequest = req as typeof req & { rawBody?: string; body?: unknown };
     const rawBody =
-      typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.body ?? {});
+      typeof bodyRequest.rawBody === 'string'
+        ? bodyRequest.rawBody
+        : JSON.stringify(bodyRequest.body ?? {});
     if (!service.verifyWebhookSignature(signature, rawBody)) {
       logger.warn({ src: 'plugin:whatsapp' }, 'Invalid webhook signature rejected');
       res.status(401).json({ error: 'Invalid signature' });

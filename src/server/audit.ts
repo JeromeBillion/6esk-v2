@@ -32,8 +32,14 @@ export async function recordAuditLog({
   );
 }
 
-export async function listAuditLogsForTicket(ticketId: string, tenantId?: string | null, limit = 50) {
-  const effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
+export async function listAuditLogsForTicket(
+  ticketId: string,
+  tenantIdOrLimit?: string | number | null,
+  limit = 50
+) {
+  const effectiveTenantId =
+    typeof tenantIdOrLimit === "string" ? tenantIdOrLimit : DEFAULT_TENANT_ID;
+  const effectiveLimit = typeof tenantIdOrLimit === "number" ? tenantIdOrLimit : limit;
   const result = await db.query(
     `SELECT a.id, a.action, a.entity_type, a.entity_id, a.data, a.created_at,
             u.display_name as actor_name, u.email as actor_email
@@ -43,7 +49,7 @@ export async function listAuditLogsForTicket(ticketId: string, tenantId?: string
        AND (a.entity_id = $2 OR (a.data->>'ticketId') = $2::text)
      ORDER BY a.created_at DESC
      LIMIT $3`,
-    [effectiveTenantId, ticketId, limit]
+    [effectiveTenantId, ticketId, effectiveLimit]
   );
   return result.rows.map((row) => ({
     ...row,

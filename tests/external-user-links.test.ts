@@ -14,7 +14,8 @@ import {
   deriveMatchConfidence,
   findExternalUserLinkByIdentity,
   normalizeLinkEmail,
-  normalizeLinkPhone
+  normalizeLinkPhone,
+  upsertExternalUserLink
 } from "@/server/integrations/external-user-links";
 
 describe("external user link helpers", () => {
@@ -80,5 +81,30 @@ describe("external user link helpers", () => {
       "user@example.com",
       "+27710000001"
     ]);
+  });
+
+  test("can write through a transaction client instead of the global pool", async () => {
+    const queryExecutor = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+
+    await upsertExternalUserLink({
+      externalSystem: "prediction-market-mvp",
+      profile: {
+        id: "user-123",
+        email: "User@Example.com",
+        secondaryEmail: null,
+        fullName: null,
+        phoneNumber: null,
+        kycStatus: null,
+        accountStatus: null
+      },
+      matchedBy: "email",
+      inboundEmail: "user@example.com",
+      ticketId: "ticket-1",
+      channel: "email",
+      queryExecutor
+    });
+
+    expect(queryExecutor.query).toHaveBeenCalledTimes(1);
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

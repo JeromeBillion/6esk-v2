@@ -87,6 +87,9 @@ describe("email outbox", () => {
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, requestInit] = fetchMock.mock.calls[0] ?? [];
+    expect((requestInit as RequestInit).headers).toMatchObject({
+      "Idempotency-Key": "email-outbox:evt-1"
+    });
     const payload = JSON.parse(String((requestInit as RequestInit).body));
     expect(payload).toMatchObject({
       from: "jerome.choma@6ex.co.za",

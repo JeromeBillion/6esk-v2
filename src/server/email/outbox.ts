@@ -185,7 +185,8 @@ async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "Idempotency-Key": `email-outbox:${eventId}`
     },
     body: JSON.stringify(resendPayload)
   });

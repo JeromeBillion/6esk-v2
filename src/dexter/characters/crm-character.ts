@@ -2,7 +2,7 @@ import { type Character } from '@elizaos/core';
 import { baseCharacterFields } from './base-character';
 import { knowledgeBaseTemplate } from '../knowledge/shared-knowledge';
 
-export const crmCharacter: Character = {
+export const crmCharacter = {
   ...baseCharacterFields,
   name: 'Dexter',
   settings: {
@@ -93,4 +93,4 @@ Respond with the email reply text only. No XML tags, no metadata.`,
     ],
     post: ['not applicable -- CRM agent does not post publicly'],
   },
-} as Character;
+} as unknown as Character;

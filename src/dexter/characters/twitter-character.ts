@@ -2,7 +2,7 @@ import { type Character } from '@elizaos/core';
 import { baseCharacterFields } from './base-character';
 import { knowledgeBaseTemplate } from '../knowledge/shared-knowledge';
 
-export const twitterCharacter: Character = {
+export const twitterCharacter = {
   ...baseCharacterFields,
   name: 'Dexter',
   username: '6ex_dex',
@@ -255,4 +255,4 @@ Respond with a single tweet-length reply. No XML or tags.`,
       'link to 6ex.co.za when driving action',
     ],
   },
-} as Character;
+} as unknown as Character;

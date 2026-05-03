@@ -20,7 +20,7 @@ export const baseCharacterFields: Partial<Character> = {
       model: 'en_US-hfc_female-medium',
     },
   },
-  knowledge: sharedKnowledge,
+  knowledge: sharedKnowledge as unknown as Character['knowledge'],
   topics: [
     'predictions markets',
     'AMM mechanics',

@@ -74,11 +74,8 @@ describe("GET /api/calls/webhooks/twilio/status", () => {
     expect(mocks.twilioValidate).toHaveBeenCalledWith(
       "auth-token",
       "sig",
-      "https://app.6esk.test/api/calls/webhooks/twilio/status",
-      expect.objectContaining({
-        CallSid: "CA123",
-        CallStatus: "ringing"
-      })
+      "https://app.6esk.test/api/calls/webhooks/twilio/status?CallSid=CA123&CallStatus=ringing&CallDuration=12&Timestamp=1710000000",
+      {}
     );
     expect(mocks.updateCallSessionStatus).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -136,7 +136,7 @@ export async function saveWorkspaceModules(
   }>(
     `INSERT INTO workspace_modules (workspace_key, tenant_id, modules, updated_at)
      VALUES ($1, $2, $3::jsonb, now())
-     ON CONFLICT (workspace_key)
+     ON CONFLICT (tenant_id, workspace_key)
      DO UPDATE SET modules = EXCLUDED.modules, updated_at = now()
      RETURNING workspace_key, tenant_id, modules, updated_at`,
     [workspaceKey, tenantId, JSON.stringify(normalized)]

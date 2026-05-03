@@ -2,7 +2,7 @@ import { type Character } from '@elizaos/core';
 import { baseCharacterFields } from './base-character';
 import { knowledgeBaseTemplate } from '../knowledge/shared-knowledge';
 
-export const webchatCharacter: Character = {
+export const webchatCharacter = {
   ...baseCharacterFields,
   name: 'Dexter',
   settings: {
@@ -221,4 +221,4 @@ Return ONLY this XML (no extra text before or after):
     ],
     post: ['captivating but factual', 'avoid excessive hype', 'include a brief risk reminder'],
   },
-} as Character;
+} as unknown as Character;

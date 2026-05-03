@@ -729,6 +729,78 @@ function getSupportAddress() {
   return domain ? `support@${domain}`.toLowerCase() : "";
 }
 
+function getRecordingFetchTimeoutMs() {
+  const configured = Number(process.env.CALL_RECORDING_FETCH_TIMEOUT_MS ?? "10000");
+  if (!Number.isFinite(configured) || configured < 500) {
+    return 10000;
+  }
+  return Math.floor(configured);
+}
+
+function getRecordingMaxBytes() {
+  const configured = Number(process.env.CALL_RECORDING_MAX_BYTES ?? `${50 * 1024 * 1024}`);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return 50 * 1024 * 1024;
+  }
+  return Math.floor(configured);
+}
+
+function isSafeRecordingContentType(value: string | null | undefined) {
+  const contentType = (value ?? "").split(";")[0].trim().toLowerCase();
+  return (
+    contentType.startsWith("audio/") ||
+    contentType === "application/octet-stream" ||
+    contentType === "binary/octet-stream"
+  );
+}
+
+async function fetchRecordingMedia(url: string, headers?: Record<string, string>) {
+  const parsedUrl = new URL(url);
+  if (parsedUrl.protocol !== "https:") {
+    throw new Error("Recording URL must use HTTPS.");
+  }
+
+  const maxBytes = getRecordingMaxBytes();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), getRecordingFetchTimeoutMs());
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") || "audio/mpeg";
+    if (!isSafeRecordingContentType(contentType)) {
+      throw new Error("Recording response content type is not allowed.");
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      throw new Error("Recording response exceeds maximum allowed size.");
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > maxBytes) {
+      throw new Error("Recording response exceeds maximum allowed size.");
+    }
+
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      contentType
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Recording fetch timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 type CallEventQueryExecutor = Pick<typeof db, "query">;
 
 function buildCallEventIdempotencyKey(callSessionId: string, sequence: number) {
@@ -1039,13 +1111,11 @@ export async function attachCallRecording({
   if (!session.recording_r2_key && session.message_id) {
     try {
       const twilioMediaConfig = providerValue === "twilio" ? buildTwilioMediaFetchConfig(url) : null;
-      const response = twilioMediaConfig
-        ? await fetch(twilioMediaConfig.url, { headers: twilioMediaConfig.headers })
-        : await fetch(url);
-      if (response.ok) {
-        const contentType = response.headers.get("content-type") || "audio/mpeg";
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+      const media = twilioMediaConfig
+        ? await fetchRecordingMedia(twilioMediaConfig.url, twilioMediaConfig.headers)
+        : await fetchRecordingMedia(url);
+      if (media) {
+        const { buffer, contentType } = media;
         const ext = contentType.includes("wav")
           ? "wav"
           : contentType.includes("ogg")

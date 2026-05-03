@@ -22,6 +22,14 @@ function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
 
+function appendRequestSearch(path: string, requestUrl?: string) {
+  if (!requestUrl) {
+    return path;
+  }
+  const url = new URL(requestUrl);
+  return `${path}${url.search}`;
+}
+
 export function buildTwilioPublicUrl(path: string, requestUrl?: string) {
   const configured = readString(process.env.APP_URL);
   if (configured) {
@@ -185,18 +193,35 @@ export function validateTwilioWebhook({
   signature: string | null | undefined;
   params: Record<string, string>;
 }) {
-  const { authToken } = getTwilioCredentials();
+  const authToken = readString(process.env.CALLS_TWILIO_AUTH_TOKEN);
+  if (!authToken) {
+    return false;
+  }
   const providedSignature = readString(signature);
   if (!providedSignature) {
     return false;
   }
-  const validationUrl = buildTwilioPublicUrl(pathname, requestUrl);
+  const validationPath = appendRequestSearch(pathname, requestUrl);
+  const validationUrl = buildTwilioPublicUrl(validationPath, requestUrl);
   return twilio.validateRequest(authToken, providedSignature, validationUrl, params);
 }
 
 export function buildTwilioMediaFetchConfig(recordingUrl: string) {
   const { accountSid, authToken } = getTwilioCredentials();
+  const allowedHosts = new Set(
+    (process.env.CALLS_TWILIO_MEDIA_ALLOWED_HOSTS ?? "api.twilio.com")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+  );
   const upstreamUrl = /\.(mp3|wav)$/i.test(recordingUrl) ? recordingUrl : `${recordingUrl}.mp3`;
+  const parsed = new URL(upstreamUrl);
+  if (parsed.protocol !== "https:") {
+    throw new Error("Twilio recording URL must use HTTPS.");
+  }
+  if (!allowedHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error("Twilio recording URL host is not allowed.");
+  }
   return {
     url: upstreamUrl,
     headers: {

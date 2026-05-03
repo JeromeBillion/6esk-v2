@@ -5,6 +5,7 @@ import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type TicketRecord = {
   id: string;
+  tenant_id: string;
   ticket_number: number;
   mailbox_id: string | null;
   customer_id: string | null;
@@ -315,7 +316,9 @@ export async function listTicketsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id
+              AND channel_msg.tenant_id = t.tenant_id
+              AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -331,7 +334,9 @@ export async function listTicketsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id
+              AND channel_msg.tenant_id = t.tenant_id
+              AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -350,14 +355,18 @@ export async function listTicketsForUser(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${whatsappPlaceholder}
+          WHERE channel_msg.ticket_id = t.id
+            AND channel_msg.tenant_id = t.tenant_id
+            AND channel_msg.channel = ${whatsappPlaceholder}
         )`
       );
       conditions.push(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${voicePlaceholder}
+          WHERE channel_msg.ticket_id = t.id
+            AND channel_msg.tenant_id = t.tenant_id
+            AND channel_msg.channel = ${voicePlaceholder}
         )`
       );
       conditions.push(`t.requester_email NOT ILIKE ${whatsappRequesterPlaceholder}`);
@@ -368,18 +377,18 @@ export async function listTicketsForUser(
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.tenant_id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'whatsapp'
             ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
@@ -394,32 +403,37 @@ export async function listTicketsForUser(
   return result.rows;
 }
 
-export async function getTicketById(ticketId: string) {
+export async function getTicketById(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND t.tenant_id = $2" : "";
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.tenant_id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'whatsapp'
             ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
      LEFT JOIN tags tag ON tag.id = tt.tag_id
      WHERE t.id = $1
+       ${tenantClause}
      GROUP BY t.id`,
-    [ticketId]
+    values
   );
   return result.rows[0] ?? null;
 }
 
-export async function listTicketMessages(ticketId: string) {
+export async function listTicketMessages(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND m.tenant_id = $2" : "";
   const result = await db.query(
     `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.subject,
             m.preview_text, m.received_at, m.sent_at, m.wa_status, m.wa_timestamp,
@@ -436,22 +450,26 @@ export async function listTicketMessages(ticketId: string) {
               '[]'
             ) AS attachments
      FROM messages m
-     LEFT JOIN attachments a ON a.message_id = m.id
+     LEFT JOIN attachments a ON a.message_id = m.id AND a.tenant_id = m.tenant_id
      WHERE m.ticket_id = $1
+       ${tenantClause}
      GROUP BY m.id
      ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) ASC`,
-    [ticketId]
+    values
   );
   return result.rows;
 }
 
-export async function listTicketEvents(ticketId: string) {
+export async function listTicketEvents(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query(
     `SELECT id, event_type, actor_user_id, data, created_at
      FROM ticket_events
      WHERE ticket_id = $1
+       ${tenantClause}
      ORDER BY created_at ASC`,
-    [ticketId]
+    values
   );
   return result.rows;
 }
