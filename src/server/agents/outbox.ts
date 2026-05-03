@@ -6,6 +6,7 @@ import {
   getAgentIntegrationById
 } from "@/server/agents/integrations";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
+import { processInternalDexterMessage } from "@/server/dexter-runtime";
 
 type EnqueueArgs = {
   eventType: string;
@@ -139,6 +140,17 @@ async function markFailed(id: string, attemptCount: number, errorMessage: string
 }
 
 async function postToAgent(integration: AgentIntegration, payload: Record<string, unknown>) {
+  if (
+    integration.base_url.startsWith("internal://") ||
+    integration.base_url.startsWith("native://")
+  ) {
+    const success = await processInternalDexterMessage(payload);
+    if (!success) {
+      throw new Error("Internal agent processing failed or not ready");
+    }
+    return;
+  }
+
   const body = JSON.stringify(payload);
   const timestamp = new Date().toISOString();
   const signature = signPayload(integration.shared_secret, timestamp, body);
