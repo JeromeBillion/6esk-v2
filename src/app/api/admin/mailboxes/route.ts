@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createMailboxSchema = z.object({
   address: z.string().email(),
@@ -15,6 +16,7 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT
         m.id,
@@ -38,8 +40,10 @@ export async function GET() {
      LEFT JOIN users owner ON owner.id = m.owner_user_id
      LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
      LEFT JOIN users member ON member.id = mm.user_id
+     WHERE m.tenant_id = $1
      GROUP BY m.id, owner.email
-     ORDER BY m.type, m.address`
+     ORDER BY m.type, m.address`,
+    [tenantId]
   );
 
   return Response.json({ mailboxes: result.rows });
@@ -104,12 +108,13 @@ export async function POST(request: Request) {
     }
   }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const mailboxResult = await db.query<{ id: string; address: string; type: "platform"; created_at: string }>(
-    `INSERT INTO mailboxes (type, address, owner_user_id)
-     VALUES ('platform', $1, NULL)
+    `INSERT INTO mailboxes (type, address, owner_user_id, tenant_id)
+     VALUES ('platform', $1, NULL, $2)
      ON CONFLICT (address) DO UPDATE SET address = EXCLUDED.address
      RETURNING id, address, type, created_at`,
-    [address]
+    [address, tenantId]
   );
   const mailbox = mailboxResult.rows[0];
 
@@ -123,6 +128,7 @@ export async function POST(request: Request) {
   }
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: existingMailbox ? "mailbox_updated" : "mailbox_created",
     entityType: "mailbox",

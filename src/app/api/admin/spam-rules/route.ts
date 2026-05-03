@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createSchema = z.object({
   ruleType: z.enum(["allow", "block"]),
@@ -16,10 +17,13 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT id, rule_type, scope, pattern, is_active, created_at
      FROM spam_rules
-     ORDER BY created_at DESC`
+     WHERE tenant_id = $1
+     ORDER BY created_at DESC`,
+    [tenantId]
   );
   return Response.json({ rules: result.rows });
 }
@@ -49,7 +53,9 @@ export async function POST(request: Request) {
     [parsed.data.ruleType, parsed.data.scope, parsed.data.pattern.toLowerCase()]
   );
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "spam_rule_created",
     entityType: "spam_rule",

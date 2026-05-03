@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   provider: z.string().min(1).optional(),
@@ -72,10 +73,13 @@ export async function PATCH(
   fields.push("updated_at = now()");
   values.push(templateId);
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  values.push(tenantId);
+
   const result = await db.query(
     `UPDATE whatsapp_templates
      SET ${fields.join(", ")}
-     WHERE id = $${index}
+     WHERE id = $${index} AND tenant_id = $${index + 1}
      RETURNING id, provider, name, language, category, status, components`,
     values
   );
@@ -86,6 +90,7 @@ export async function PATCH(
   }
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_updated",
     entityType: "whatsapp_template",
@@ -106,11 +111,12 @@ export async function DELETE(
   }
 
   const { templateId } = await params;
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `DELETE FROM whatsapp_templates
-     WHERE id = $1
+     WHERE id = $1 AND tenant_id = $2
      RETURNING id, name, language`,
-    [templateId]
+    [templateId, tenantId]
   );
 
   const deleted = result.rows[0];
@@ -119,6 +125,7 @@ export async function DELETE(
   }
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_deleted",
     entityType: "whatsapp_template",

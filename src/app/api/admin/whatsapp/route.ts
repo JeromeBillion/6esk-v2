@@ -4,6 +4,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const payloadSchema = z.object({
   provider: z.string().min(1),
@@ -20,11 +21,14 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT id, provider, phone_number, waba_id, access_token, verify_token, status, created_at, updated_at
      FROM whatsapp_accounts
+     WHERE tenant_id = $1
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenantId]
   );
 
   const account = result.rows[0] ?? null;
@@ -66,8 +70,10 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await db.query(
-    `SELECT id FROM whatsapp_accounts ORDER BY created_at DESC LIMIT 1`
+    `SELECT id FROM whatsapp_accounts WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [tenantId]
   );
   const existingId = existing.rows[0]?.id ?? null;
   const status = data.status ?? "inactive";
@@ -84,7 +90,7 @@ export async function POST(request: Request) {
            verify_token = $5,
            status = $6,
            updated_at = now()
-       WHERE id = $7`,
+       WHERE id = $7 AND tenant_id = $8`,
       [
         data.provider,
         data.phoneNumber,
@@ -92,13 +98,14 @@ export async function POST(request: Request) {
         storedToken,
         data.verifyToken ?? null,
         status,
-        existingId
+        existingId,
+        tenantId
       ]
     );
   } else {
     const insert = await db.query<{ id: string }>(
-      `INSERT INTO whatsapp_accounts (provider, phone_number, waba_id, access_token, verify_token, status)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO whatsapp_accounts (provider, phone_number, waba_id, access_token, verify_token, status, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         data.provider,
@@ -106,13 +113,15 @@ export async function POST(request: Request) {
         data.wabaId ?? null,
         storedToken,
         data.verifyToken ?? null,
-        status
+        status,
+        tenantId
       ]
     );
     accountId = insert.rows[0].id;
   }
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: existingId ? "whatsapp_account_updated" : "whatsapp_account_created",
     entityType: "whatsapp_account",

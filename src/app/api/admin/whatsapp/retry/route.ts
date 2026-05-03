@@ -2,6 +2,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedWhatsAppEvents } from "@/server/whatsapp/outbox";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
   try {
     const result = await retryFailedWhatsAppEvents({ limit, eventIds });
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_triggered",
       entityType: "whatsapp_events",
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed WhatsApp outbox events";
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_failed",
       entityType: "whatsapp_events",

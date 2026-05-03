@@ -2,6 +2,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { deliverPendingEmailOutboxEvents, getEmailOutboxMetrics } from "@/server/email/outbox";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     const result = await deliverPendingEmailOutboxEvents({ limit });
 
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "email_outbox_triggered",
       entityType: "email_outbox_events",
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run email outbox";
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "email_outbox_trigger_failed",
       entityType: "email_outbox_events",

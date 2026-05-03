@@ -3,6 +3,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { deliverPendingWhatsAppEvents } from "@/server/whatsapp/outbox";
 import { getWhatsAppOutboxMetrics } from "@/server/whatsapp/outbox-metrics";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     const result = await deliverPendingWhatsAppEvents({ limit });
 
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_triggered",
       entityType: "whatsapp_events",
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run WhatsApp outbox";
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_trigger_failed",
       entityType: "whatsapp_events",

@@ -6,6 +6,7 @@ import {
   getInboundAlertConfig,
   saveInboundAlertConfig
 } from "@/server/email/inbound-alert-config";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const settingsSchema = z.object({
   webhookUrl: z.union([z.string().url(), z.literal("")]),
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
 
   const config = await saveInboundAlertConfig(parsed.data);
   await recordAuditLog({
+    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
     actorUserId: user?.id ?? null,
     action: "inbound_alert_config_updated",
     entityType: "inbound_alert_config",

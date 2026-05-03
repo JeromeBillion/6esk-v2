@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   isActive: z.boolean().optional(),
@@ -64,6 +65,7 @@ export async function PATCH(
   }
 
   await recordAuditLog({
+    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
     actorUserId: user?.id ?? null,
     action: "spam_rule_updated",
     entityType: "spam_rule",
@@ -89,6 +91,7 @@ export async function DELETE(
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
+    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
     actorUserId: user?.id ?? null,
     action: "spam_rule_deleted",
     entityType: "spam_rule",

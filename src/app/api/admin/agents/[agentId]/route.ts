@@ -6,6 +6,7 @@ import {
   getAgentIntegrationById,
   updateAgentIntegration
 } from "@/server/agents/integrations";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -66,6 +67,7 @@ export async function PATCH(
   }
 
   await recordAuditLog({
+    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
     actorUserId: user?.id ?? null,
     action: "agent_integration_updated",
     entityType: "agent_integration",

@@ -3,13 +3,17 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { sendInboundFailureAlert } from "@/server/email/inbound-alerts";
 
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+
 async function safeRecordAuditLog(data: {
+  tenantId: string;
   actorUserId: string | null;
   action: string;
   payload: Record<string, unknown>;
 }) {
   try {
     await recordAuditLog({
+      tenantId: data.tenantId,
       actorUserId: data.actorUserId,
       action: data.action,
       entityType: "inbound_events",
@@ -33,6 +37,7 @@ export async function POST(request: Request) {
     const result = await sendInboundFailureAlert();
 
     await safeRecordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "inbound_alert_checked",
       payload: result as Record<string, unknown>
@@ -42,6 +47,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     await safeRecordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "inbound_alert_check_failed",
       payload: { error: detail }

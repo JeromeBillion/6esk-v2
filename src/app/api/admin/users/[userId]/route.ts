@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   roleId: z.string().uuid().optional(),
@@ -31,9 +32,10 @@ export async function PATCH(
   }
 
   const { userId } = await params;
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await db.query(
-    "SELECT id, email, role_id, is_active FROM users WHERE id = $1",
-    [userId]
+    "SELECT id, email, role_id, is_active FROM users WHERE id = $1 AND tenant_id = $2",
+    [userId, tenantId]
   );
   const current = existing.rows[0];
   if (!current) {
@@ -65,13 +67,15 @@ export async function PATCH(
     `UPDATE users
      SET ${fields.join(", ")}
      WHERE id = $${index}
+       AND tenant_id = $${index + 1}
      RETURNING id, email, display_name, role_id, is_active, created_at`,
-    values
+    [...values, tenantId]
   );
 
   const updated = result.rows[0];
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "user_updated",
     entityType: "user",

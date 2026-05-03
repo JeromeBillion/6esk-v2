@@ -2,6 +2,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { retryFailedInboundEvents } from "@/server/email/inbound-retry";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
 
   const result = await retryFailedInboundEvents({ limit, eventIds });
   await recordAuditLog({
+    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
     actorUserId: user?.id ?? null,
     action: "inbound_retry_triggered",
     entityType: "inbound_events",

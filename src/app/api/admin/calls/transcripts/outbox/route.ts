@@ -3,6 +3,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getTranscriptJobMetrics } from "@/server/calls/transcript-jobs";
 import { deliverPendingTranscriptJobs } from "@/server/calls/transcript-worker";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     const result = await deliverPendingTranscriptJobs({ limit });
 
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_transcript_outbox_triggered",
       entityType: "call_transcript_jobs",
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run transcript outbox";
     await recordAuditLog({
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_transcript_outbox_trigger_failed",
       entityType: "call_transcript_jobs",
