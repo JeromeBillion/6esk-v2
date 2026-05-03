@@ -8,8 +8,10 @@ export type SessionUser = {
   display_name: string;
   role_id: string | null;
   role_name: string | null;
-  tenant_id: string;
-  tenant_slug: string;
+  tenant_id: string; // Effective tenant
+  tenant_slug: string; // Effective slug
+  real_tenant_id: string; // Home tenant
+  is_impersonating: boolean;
 };
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sixesk_session";
@@ -66,13 +68,17 @@ export async function getSessionUser() {
   }
 
   const tokenHash = hashToken(token);
-  const result = await db.query<SessionUser>(
+  const result = await db.query<SessionUser & { _impersonated_tenant_id: string | null; _impersonated_slug: string | null }>(
     `SELECT u.id, u.email, u.display_name, u.role_id, r.name AS role_name,
-            u.tenant_id, COALESCE(t.slug, 'default') AS tenant_slug
+            u.tenant_id AS real_tenant_id,
+            COALESCE(t.slug, 'default') AS _real_slug,
+            s.impersonated_tenant_id AS _impersonated_tenant_id,
+            it.slug AS _impersonated_slug
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN roles r ON r.id = u.role_id
      LEFT JOIN tenants t ON t.id = u.tenant_id
+     LEFT JOIN tenants it ON it.id = s.impersonated_tenant_id
      WHERE s.token_hash = $1
        AND s.expires_at > now()
        AND u.is_active = true
@@ -80,5 +86,21 @@ export async function getSessionUser() {
     [tokenHash]
   );
 
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row) return null;
+
+  const isInternal = row.role_name === "internal_admin" || row.role_name === "internal_support";
+  const isImpersonating = isInternal && row._impersonated_tenant_id !== null;
+
+  return {
+    id: row.id,
+    email: row.email,
+    display_name: row.display_name,
+    role_id: row.role_id,
+    role_name: row.role_name,
+    real_tenant_id: row.real_tenant_id,
+    tenant_id: isImpersonating ? row._impersonated_tenant_id! : row.real_tenant_id,
+    tenant_slug: isImpersonating ? row._impersonated_slug! : (row as any)._real_slug,
+    is_impersonating: isImpersonating
+  };
 }

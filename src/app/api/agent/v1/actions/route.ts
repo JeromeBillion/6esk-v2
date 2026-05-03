@@ -20,7 +20,7 @@ import { deliverPendingCallEvents } from "@/server/calls/outbox";
 import { getLatestVoiceConsentState } from "@/server/calls/consent";
 import { evaluateVoiceCallPolicy } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
 
 const actionSchema = z.object({
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
   if (integration.status !== "active") {
     return Response.json({ error: "Integration paused" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("aiAutomation"))) {
+  if (!(await checkModuleEntitlement("aiAutomation"))) {
     return Response.json(
       {
         error: "AI automation module is not enabled for this workspace.",
@@ -305,7 +305,7 @@ export async function POST(request: Request) {
           requesterEmail: ticket.requester_email,
           hasTemplate: Boolean(action.template)
         });
-        if (!(await isWorkspaceModuleEnabled(replyModule))) {
+        if (!(await checkModuleEntitlement(replyModule))) {
           results.push({
             type: action.type,
             status: "blocked",
@@ -428,7 +428,7 @@ export async function POST(request: Request) {
           });
           break;
         }
-        if (!(await isWorkspaceModuleEnabled("voice"))) {
+        if (!(await checkModuleEntitlement("voice"))) {
           results.push({
             type: action.type,
             status: "blocked",

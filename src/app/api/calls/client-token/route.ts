@@ -2,7 +2,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { createDeskVoiceAccessToken } from "@/server/calls/voice-client";
 import { getVoiceOperatorPresence } from "@/server/calls/operators";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -12,7 +12,7 @@ export async function GET() {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("voice"))) {
+  if (!(await checkModuleEntitlement("voice"))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",

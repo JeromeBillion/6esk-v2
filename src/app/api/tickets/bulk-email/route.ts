@@ -8,7 +8,7 @@ import { getCustomerById, listCustomerIdentities } from "@/server/customers";
 import { recordTicketEvent } from "@/server/tickets";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const bulkEmailSchema = z.object({
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("email"))) {
+  if (!(await checkModuleEntitlement("email"))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",

@@ -8,7 +8,8 @@ const {
   JOBS_RUNNER_ENABLE_WHATSAPP,
   JOBS_RUNNER_ENABLE_CALLS,
   JOBS_RUNNER_ENABLE_TRANSCRIPTS,
-  JOBS_RUNNER_ENABLE_TRANSCRIPT_AI
+  JOBS_RUNNER_ENABLE_TRANSCRIPT_AI,
+  JOBS_RUNNER_ENABLE_METERING_SYNC
 } = process.env;
 
 const secret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
@@ -51,6 +52,11 @@ const jobSpecs = [
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_TRANSCRIPT_AI, true),
     name: "calls-transcripts-ai",
     path: "/api/admin/calls/transcripts/ai?limit=25"
+  },
+  {
+    enabled: parseBoolean(JOBS_RUNNER_ENABLE_METERING_SYNC, true),
+    name: "metering-sync",
+    path: "/api/admin/metering/sync?limit=100"
   }
 ].filter((job) => job.enabled);
 

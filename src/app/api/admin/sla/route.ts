@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     `INSERT INTO sla_configs (first_response_target_minutes, resolution_target_minutes, is_active, tenant_id)
      VALUES ($1, $2, true, $3)
      RETURNING first_response_target_minutes, resolution_target_minutes`,
-    [firstResponseMinutes, resolutionMinutes, tenantId]
+    [parsed.data.firstResponseMinutes, parsed.data.resolutionMinutes, tenantId]
   );
 
   const row = result.rows[0];

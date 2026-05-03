@@ -3,7 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const replySchema = z.object({
@@ -97,7 +97,7 @@ export async function POST(
     recipient,
     hasTemplate: Boolean(template)
   });
-  if (!(await isWorkspaceModuleEnabled(replyModule))) {
+  if (!(await checkModuleEntitlement(replyModule))) {
     const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
     return Response.json(
       {

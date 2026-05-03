@@ -66,17 +66,23 @@ async function lockPendingEvents(
            last_error = NULL,
            updated_at = now()
        WHERE id IN (
-         SELECT id
-         FROM whatsapp_events
-         WHERE direction = 'outbound'
-           AND (
-             (status = 'queued' AND next_attempt_at <= now())
-             OR (
-               status = 'processing'
-               AND updated_at <= now() - make_interval(secs => $2::int)
+         SELECT fair_q.id FROM (
+           SELECT e.id,
+                  ROW_NUMBER() OVER (PARTITION BY e.tenant_id ORDER BY e.created_at ASC) as rn
+           FROM whatsapp_events e
+           JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
+           WHERE e.direction = 'outbound'
+             AND (wm.modules->>'whatsapp')::boolean = true
+             AND (
+               (e.status = 'queued' AND e.next_attempt_at <= now())
+               OR (
+                 e.status = 'processing'
+                 AND e.updated_at <= now() - make_interval(secs => $2::int)
+               )
              )
-           )
-         ORDER BY created_at ASC
+         ) fair_q
+         WHERE fair_q.rn <= GREATEST(1, $1::int / 2)
+         ORDER BY fair_q.rn ASC, fair_q.id ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )

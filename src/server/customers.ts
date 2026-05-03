@@ -2,6 +2,7 @@ import { db } from "@/server/db";
 import type { PredictionProfile } from "@/server/integrations/prediction-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { deleteObject } from "@/server/storage/r2";
 
 export type CustomerKind = "registered" | "unregistered";
 
@@ -919,3 +920,84 @@ export async function listCustomerHistory(
 
   return { items, nextCursor };
 }
+
+/**
+ * Executes a full POPIA/Data Subject Deletion request.
+ * Removes the customer and all associated DB records (via CASCADE),
+ * and permanently deletes all files (emails, attachments, call recordings) from Object Storage.
+ */
+export async function deleteCustomerAndData(customerId: string, tenantId: string) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Verify ownership
+    const verify = await client.query("SELECT id FROM customers WHERE id = $1 AND tenant_id = $2", [customerId, tenantId]);
+    if (verify.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    // Get all R2 keys to delete
+    const messageKeys = await client.query(`
+      SELECT m.r2_key_text, m.r2_key_html 
+      FROM messages m 
+      JOIN tickets t ON t.id = m.ticket_id 
+      WHERE t.customer_id = $1 AND t.tenant_id = $2
+    `, [customerId, tenantId]);
+
+    const attachmentKeys = await client.query(`
+      SELECT a.r2_key 
+      FROM attachments a 
+      JOIN messages m ON m.id = a.message_id 
+      JOIN tickets t ON t.id = m.ticket_id 
+      WHERE t.customer_id = $1 AND t.tenant_id = $2
+    `, [customerId, tenantId]);
+
+    const callRecordingKeys = await client.query(`
+      SELECT recording_r2_key, transcript_r2_key 
+      FROM call_sessions 
+      WHERE customer_id = $1 AND tenant_id = $2
+    `, [customerId, tenantId]);
+
+    // Gather all keys
+    const keysToDelete: string[] = [];
+    
+    for (const row of messageKeys.rows) {
+      if (row.r2_key_text) keysToDelete.push(row.r2_key_text);
+      if (row.r2_key_html) keysToDelete.push(row.r2_key_html);
+    }
+    for (const row of attachmentKeys.rows) {
+      if (row.r2_key) keysToDelete.push(row.r2_key);
+    }
+    for (const row of callRecordingKeys.rows) {
+      if (row.recording_r2_key) keysToDelete.push(row.recording_r2_key);
+      if (row.transcript_r2_key) keysToDelete.push(row.transcript_r2_key);
+    }
+
+    // Delete the customer. The DB uses ON DELETE CASCADE for tickets, messages, etc.
+    const deleteRes = await client.query(
+      `DELETE FROM customers WHERE id = $1 AND tenant_id = $2 RETURNING id`,
+      [customerId, tenantId]
+    );
+
+    await client.query("COMMIT");
+
+    // Attempt to delete objects from R2
+    // We do this after commit. If it fails, the objects are orphaned but data subject is gone from DB.
+    if (deleteRes.rows.length > 0 && keysToDelete.length > 0) {
+      // Run deletions in parallel with catch to prevent one failure from stopping all
+      await Promise.allSettled(
+        keysToDelete.map(key => deleteObject(key).catch(e => console.error("Failed to delete R2 object", key, e)))
+      );
+    }
+
+    return deleteRes.rows.length > 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+

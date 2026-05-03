@@ -167,6 +167,7 @@ export async function getTicketCallContext(ticketId: string) {
   const result = await db.query<TicketCallContext>(
     `SELECT
        t.id,
+       t.tenant_id,
        t.mailbox_id,
        t.customer_id,
        t.requester_email,
@@ -508,9 +509,10 @@ export async function queueOutboundCall({
     });
 
     await client.query(
-      `INSERT INTO call_outbox_events (direction, payload, status)
-       VALUES ('outbound', $1, 'queued')`,
+      `INSERT INTO call_outbox_events (tenant_id, direction, payload, status)
+       VALUES ($1, 'outbound', $2, 'queued')`,
       [
+        (ticket as any).tenant_id || "00000000-0000-0000-0000-000000000001",
         {
           callSessionId,
           ticketId,

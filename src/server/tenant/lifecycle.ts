@@ -305,14 +305,8 @@ export async function listTenants(filters?: {
 // Plan defaults
 // -------------------------------------------------------------------------
 
+import { getPlanTier } from "./catalog";
+
 function planModuleDefaults(plan: string): string[] {
-  switch (plan) {
-    case "enterprise":
-      return ["email", "whatsapp", "voice", "aiAutomation", "dexterOrchestration", "vanillaWebchat"];
-    case "professional":
-      return ["email", "whatsapp", "voice", "aiAutomation", "vanillaWebchat"];
-    case "starter":
-    default:
-      return ["email", "vanillaWebchat"];
-  }
+  return getPlanTier(plan).features.includedModules;
 }

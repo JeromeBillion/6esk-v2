@@ -4,7 +4,7 @@ import { canManageTickets } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const payloadSchema = z.object({
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("whatsapp"))) {
+  if (!(await checkModuleEntitlement("whatsapp"))) {
     return Response.json(
       {
         error: "WhatsApp module is not enabled for this workspace.",

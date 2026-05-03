@@ -36,7 +36,7 @@ import {
 } from "@/server/calls/policy";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const createTicketSchema = z.object({
@@ -276,13 +276,13 @@ export async function POST(request: Request) {
         ? "whatsapp"
         : "email";
 
-  if (contactMode === "call" && !(await isWorkspaceModuleEnabled("voice"))) {
+  if (contactMode === "call" && !(await checkModuleEntitlement("voice"))) {
     return moduleDisabledResponse("voice");
   }
-  if (contactMode === "whatsapp" && !(await isWorkspaceModuleEnabled("whatsapp"))) {
+  if (contactMode === "whatsapp" && !(await checkModuleEntitlement("whatsapp"))) {
     return moduleDisabledResponse("whatsapp");
   }
-  if (contactMode === "email" && !(await isWorkspaceModuleEnabled("email"))) {
+  if (contactMode === "email" && !(await checkModuleEntitlement("email"))) {
     return moduleDisabledResponse("email");
   }
 

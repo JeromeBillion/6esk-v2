@@ -5,7 +5,7 @@ import { getDraftById, updateDraftStatus } from "@/server/agents/drafts";
 import { sendTicketReply } from "@/server/email/replies";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 function inferDraftReplyModule(input: {
   requesterEmail: string | null | undefined;
@@ -67,7 +67,7 @@ export async function POST(
     requesterEmail: ticket.requester_email,
     hasTemplate: Boolean(template)
   });
-  if (!(await isWorkspaceModuleEnabled(replyModule))) {
+  if (!(await checkModuleEntitlement(replyModule))) {
     const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
     return Response.json(
       {

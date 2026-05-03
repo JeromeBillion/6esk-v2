@@ -9,7 +9,7 @@ import { putObject } from "@/server/storage/r2";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getMessageById, hasMailboxAccess } from "@/server/messages";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 function buildOutboundMessageId(fromEmail: string) {
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("email"))) {
+  if (!(await checkModuleEntitlement("email"))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",
@@ -248,7 +248,7 @@ export async function POST(request: Request) {
     bcc: bccList,
     subject: data.subject,
     replyTo: data.replyTo ?? null
-  });
+  }, user.tenant_id);
 
   await recordModuleUsageEvent({
     moduleKey: "email",

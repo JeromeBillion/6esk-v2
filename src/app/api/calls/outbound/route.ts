@@ -15,7 +15,7 @@ import {
   getHumanVoicePolicyFromEnv
 } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 const outboundCallSchema = z.object({
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("voice"))) {
+  if (!(await checkModuleEntitlement("voice"))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",

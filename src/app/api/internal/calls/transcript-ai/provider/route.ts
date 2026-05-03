@@ -1,9 +1,7 @@
 import { z } from "zod";
 
-import {
-  getGlobalAiProviderConfig,
-  getGlobalAiResponsesUrl
-} from "@/server/ai/global-provider";
+import { getTenantAiProviderConfig } from "@/server/tenant/ai-provider";
+import { getGlobalAiResponsesUrl } from "@/server/ai/global-provider";
 
 export const runtime = "nodejs";
 
@@ -122,10 +120,13 @@ export async function POST(request: Request) {
 
   let config;
   try {
-    config = getGlobalAiProviderConfig();
+    const tenantId = typeof parsedJob.metadata?.tenantId === "string" 
+      ? parsedJob.metadata.tenantId 
+      : "00000000-0000-0000-0000-000000000001";
+    config = await getTenantAiProviderConfig(tenantId);
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Global AI provider is not configured." },
+      { error: error instanceof Error ? error.message : "Tenant AI provider is not configured." },
       { status: 500 }
     );
   }

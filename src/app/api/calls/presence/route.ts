@@ -6,7 +6,7 @@ import {
   upsertVoiceOperatorPresence,
   VOICE_OPERATOR_STATUSES
 } from "@/server/calls/operators";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 const updatePresenceSchema = z.object({
   status: z.enum(VOICE_OPERATOR_STATUSES).optional(),
@@ -23,7 +23,7 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const voiceEnabled = await isWorkspaceModuleEnabled("voice");
+  const voiceEnabled = await checkModuleEntitlement("voice");
   const presence = await getVoiceOperatorPresence(user.id);
   return Response.json({
     voiceEnabled,
@@ -39,7 +39,7 @@ export async function PATCH(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("voice"))) {
+  if (!(await checkModuleEntitlement("voice"))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",
