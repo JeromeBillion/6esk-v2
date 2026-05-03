@@ -51,7 +51,9 @@ function buildUser(roleName: "lead_admin" | "agent" | "viewer") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: "00000000-0000-0000-0000-000000000001",
+    tenant_slug: "default"
   };
 }
 
@@ -177,6 +179,7 @@ describe("PATCH /api/customers/[customerId]", () => {
       primaryPhone: "+27 710 000 009"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith({
+      tenantId: "00000000-0000-0000-0000-000000000001",
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       action: "customer_profile_updated",
       entityType: "customer",

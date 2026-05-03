@@ -1,11 +1,13 @@
 import { db } from "@/server/db";
 import type { PredictionProfile } from "@/server/integrations/prediction-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type CustomerKind = "registered" | "unregistered";
 
 export type CustomerRecord = {
   id: string;
+  tenant_id?: string;
   kind: CustomerKind;
   external_system: string | null;
   external_user_id: string | null;
@@ -512,25 +514,31 @@ export async function attachCustomerToTicket(ticketId: string, customerId: strin
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function getCustomerByTicketId(ticketId: string) {
+export async function getCustomerByTicketId(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND t.tenant_id = $2" : "";
   const result = await db.query<{ customer_id: string | null }>(
     `SELECT customer_id
-     FROM tickets
-     WHERE id = $1`,
-    [ticketId]
+     FROM tickets t
+     WHERE t.id = $1
+       ${tenantClause}`,
+    values
   );
   return result.rows[0]?.customer_id ?? null;
 }
 
-export async function getCustomerById(customerId: string) {
+export async function getCustomerById(customerId: string, tenantId?: string | null) {
+  const values = tenantId ? [customerId, tenantId] : [customerId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<CustomerRecord>(
-    `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+    `SELECT id, tenant_id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
             address,
             merged_into_customer_id,
             merged_at
      FROM customers
-     WHERE id = $1`,
-    [customerId]
+     WHERE id = $1
+       ${tenantClause}`,
+    values
   );
   return result.rows[0] ?? null;
 }
@@ -722,13 +730,16 @@ export async function updateCustomerProfile(
   }
 }
 
-export async function listCustomerIdentities(customerId: string) {
+export async function listCustomerIdentities(customerId: string, tenantId?: string | null) {
+  const values = tenantId ? [customerId, tenantId] : [customerId];
+  const tenantClause = tenantId ? "AND ci.tenant_id = $2" : "";
   const result = await db.query<CustomerIdentityRecord>(
-    `SELECT identity_type, identity_value, is_primary
-     FROM customer_identities
-     WHERE customer_id = $1
-     ORDER BY is_primary DESC, identity_type ASC, identity_value ASC`,
-    [customerId]
+    `SELECT ci.identity_type, ci.identity_value, ci.is_primary
+     FROM customer_identities ci
+     WHERE ci.customer_id = $1
+       ${tenantClause}
+     ORDER BY ci.is_primary DESC, ci.identity_type ASC, ci.identity_value ASC`,
+    values
   );
   return result.rows;
 }
