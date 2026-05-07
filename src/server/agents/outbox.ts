@@ -8,10 +8,13 @@ import {
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
 
+import { recordModuleUsageEvent } from "@/server/module-metering";
+
 type EnqueueArgs = {
   eventType: string;
   payload: Record<string, unknown>;
   integrationId?: string | null;
+  tenantId?: string;
 };
 
 type DeliverArgs = {
@@ -67,10 +70,10 @@ export async function enqueueAgentEvent({ eventType, payload, integrationId }: E
   }
 
   const result = await db.query(
-    `INSERT INTO agent_outbox (integration_id, event_type, payload)
-     VALUES ($1, $2, $3)
+    `INSERT INTO agent_outbox (integration_id, tenant_id, event_type, payload)
+     VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [integration.id, eventType, payload]
+    [integration.id, integration.tenant_id, eventType, payload]
   );
 
   return result.rows[0]?.id ?? null;
@@ -80,7 +83,7 @@ async function lockPendingEvents(
   integrationId: string,
   limit: number,
   processingRecoverySeconds: number
-): Promise<Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>> {
+): Promise<Array<{ id: string; tenant_id: string; payload: Record<string, unknown>; attempt_count: number }>> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -102,7 +105,7 @@ async function lockPendingEvents(
          LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
+       RETURNING id, tenant_id, payload, attempt_count`,
       [integrationId, limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
@@ -200,6 +203,18 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
     try {
       await postToAgent(integration, event.payload);
       await markDelivered(event.id);
+
+      // Record usage for FinOps as an orchestration action.
+      await recordModuleUsageEvent({
+        tenantId: event.tenant_id,
+        moduleKey: "dexterOrchestration",
+        usageKind: "agent_event_delivered",
+        actorType: "system",
+        quantity: 1,
+        costCent: 0, // No external COGS for webhook delivery itself
+        metadata: { eventId: event.id, integrationId: integration.id }
+      });
+
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";

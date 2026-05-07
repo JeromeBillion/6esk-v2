@@ -1,10 +1,12 @@
 import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 type NumericLike = number | string | null | undefined;
 
 type EmailOutboxEventRow = {
   id: string;
+  tenant_id: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -89,7 +91,7 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
+       RETURNING id, tenant_id, payload, attempt_count`,
       [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
@@ -302,6 +304,18 @@ export async function deliverPendingEmailOutboxEvents({ limit = 5 }: DeliverArgs
 
       const { providerMessageId } = await sendQueuedEmail(event.id, payload);
       await markDelivered(event.id, messageRecordId, providerMessageId);
+
+      // Record FinOps usage: Resend cost is $1 per 1000 = $0.001 (0.1 cents)
+      await recordModuleUsageEvent({
+        tenantId: event.tenant_id,
+        moduleKey: "email",
+        usageKind: "outbound_email",
+        actorType: "system",
+        quantity: 1,
+        costCent: 1.7, 
+        metadata: { eventId: event.id, messageId: messageRecordId }
+      });
+
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Email outbox delivery failed";

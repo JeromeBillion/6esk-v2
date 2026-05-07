@@ -1,9 +1,11 @@
 import { db } from "@/server/db";
 import { decryptSecret } from "@/server/agents/secret";
 import { getObjectBuffer } from "@/server/storage/r2";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 type WhatsAppEventRow = {
   id: string;
+  tenant_id: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -86,7 +88,7 @@ async function lockPendingEvents(
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
+       RETURNING id, tenant_id, payload, attempt_count`,
       [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
@@ -405,6 +407,18 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
       }
       const { providerMessageId } = await sendMetaMessage(account, payload, event.id);
       await markDelivered(event.id, messageRecordId, providerMessageId);
+
+      // Record FinOps usage: WhatsApp cost approx 5 cents (placeholder)
+      await recordModuleUsageEvent({
+        tenantId: event.tenant_id,
+        moduleKey: "whatsapp",
+        usageKind: "outbound_whatsapp",
+        actorType: "system",
+        quantity: 1,
+        costCent: 85.0, 
+        metadata: { eventId: event.id, messageId: messageRecordId }
+      });
+
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "WhatsApp delivery failed";

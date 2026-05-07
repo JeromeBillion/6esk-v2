@@ -1,9 +1,11 @@
 import { db } from "@/server/db";
 import { updateCallSessionStatus } from "@/server/calls/service";
 import { sendOutboundCall } from "@/server/calls/provider";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 type CallOutboxEventRow = {
   id: string;
+  tenant_id: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -96,7 +98,7 @@ async function lockPendingEvents(
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
+       RETURNING id, tenant_id, payload, attempt_count`,
       [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
@@ -204,6 +206,18 @@ export async function deliverPendingCallEvents({ limit = 5 }: DeliverCallOutboxA
         provider,
         providerCallId
       });
+
+      // Record FinOps usage: Call base cost approx 10 cents (placeholder)
+      await recordModuleUsageEvent({
+        tenantId: event.tenant_id,
+        moduleKey: "voice",
+        usageKind: "outbound_call",
+        actorType: "system",
+        quantity: 1,
+        costCent: 170.0, 
+        metadata: { eventId: event.id, callSessionId }
+      });
+
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Call delivery failed";

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getTenantAiProviderConfig } from "@/server/tenant/ai-provider";
 import { getGlobalAiResponsesUrl } from "@/server/ai/global-provider";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 export const runtime = "nodejs";
 
@@ -234,6 +235,33 @@ export async function POST(request: Request) {
       { status: 502 }
     );
   }
+
+  const tenantId = typeof parsedJob.metadata?.tenantId === "string" 
+    ? parsedJob.metadata.tenantId 
+    : "00000000-0000-0000-0000-000000000001";
+
+  const usage = body?.usage as any;
+  const inputTokens = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
+  const outputTokens = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
+
+  // Record usage for FinOps. 
+  // We record tokens. The billing system will apply the zero-markup pricing logic.
+  await recordModuleUsageEvent({
+    tenantId,
+    moduleKey: "aiAutomation",
+    usageKind: "transcript_analysis",
+    actorType: "ai",
+    providerMode: config.isByo ? "byo" : "managed",
+    quantity: inputTokens + outputTokens,
+    unit: "tokens",
+    metadata: {
+      model: config.model,
+      inputTokens,
+      outputTokens,
+      jobId: parsedJob.jobId,
+      callSessionId: parsedJob.callSessionId
+    }
+  });
 
   return Response.json({
     status: "completed",

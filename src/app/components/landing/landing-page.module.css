@@ -1934,3 +1934,348 @@
     grid-template-columns: 1fr;
   }
 }
+
+.pricingSection {
+  background: transparent;
+  padding: 8rem 0;
+}
+
+.pricingHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: flex-end;
+  margin-top: 1.8rem;
+  margin-bottom: 4rem;
+}
+
+.pricingGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.pricingCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 2rem;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 1.8rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.pricingCard:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.05);
+}
+
+.pricingCardHeader {
+  margin-bottom: 1.25rem;
+}
+
+.pricingCardTitle {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pricingPrice {
+  margin-top: 0.5rem;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--landing-ink);
+}
+
+.pricingPeriod {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--landing-ink-soft);
+  margin-left: 0.2rem;
+}
+
+.pricingCardBody {
+  margin: 0 0 1.5rem 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--landing-ink-soft);
+}
+
+.pricingCardList {
+  margin: auto 0 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.pricingCardList li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--landing-ink);
+}
+
+.pricingCardList li::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  background: var(--landing-blue);
+  border-radius: 999px;
+}
+
+.calculatorWrap {
+  margin-top: 4rem;
+  display: grid;
+  gap: 2.5rem;
+}
+
+.moduleGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.25rem;
+}
+
+.moduleCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 1.75rem;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 1.5rem;
+  cursor: pointer;
+  transition: all 200ms ease;
+  user-select: none;
+}
+
+.moduleCard:hover {
+  border-color: rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.moduleCardMandatory {
+  cursor: default;
+}
+
+.moduleCardMandatory:hover {
+  background: rgba(255, 255, 255, 0.4);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.moduleCardSelected {
+  background: #fff;
+  border-color: var(--landing-blue);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06), 0 0 0 1px var(--landing-blue);
+}
+
+.moduleCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.moduleCardCheckbox {
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 4px;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 180ms ease;
+}
+
+.moduleCardSelected .moduleCardCheckbox {
+  background: var(--landing-blue);
+  border-color: var(--landing-blue);
+}
+
+.moduleCardCheckIcon {
+  color: #fff;
+  width: 0.75rem;
+  height: 0.75rem;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: all 180ms ease;
+}
+
+.moduleCardSelected .moduleCardCheckIcon {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.moduleName {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--landing-ink);
+}
+
+.modulePrice {
+  font-size: 0.8rem;
+  color: var(--landing-ink-soft);
+  font-weight: 500;
+}
+
+.moduleDescription {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--landing-ink-soft);
+}
+
+.calculatorTotal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2.5rem 3rem;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 2rem;
+  backdrop-filter: blur(12px);
+}
+
+.totalLabelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.totalLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--landing-ink-soft);
+}
+
+.totalDisclaimer {
+  font-size: 0.78rem;
+  color: var(--landing-ink-soft);
+  opacity: 0.7;
+}
+
+.totalValueGroup {
+  text-align: right;
+}
+
+.totalValue {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--landing-ink);
+  line-height: 1;
+}
+
+.totalPeriod {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--landing-ink-soft);
+  margin-left: 0.2rem;
+}
+
+.orchestrationTable {
+  margin-top: 4rem;
+  padding: 2.5rem;
+  background: rgba(18, 21, 29, 0.03);
+  border-radius: 2rem;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.orchestrationHeader {
+  margin-bottom: 1.5rem;
+}
+
+.orchestrationHeader span {
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.orchestrationGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2rem;
+}
+
+.orchestrationRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.orchestrationRow span {
+  font-size: 0.84rem;
+  color: var(--landing-ink-soft);
+}
+
+.orchestrationRow strong {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--landing-ink);
+}
+
+.setupBanner {
+  margin-top: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2.2rem 3rem;
+  background: var(--landing-ink);
+  color: #fff;
+  border-radius: 2.2rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+}
+
+.setupTitle {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.setupBody {
+  margin: 0.25rem 0 0 0;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.95rem;
+}
+
+@media (max-width: 1024px) {
+  .moduleGrid,
+  .orchestrationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .pricingHeader {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  .setupBanner {
+    flex-direction: column;
+    text-align: center;
+    gap: 1.5rem;
+    padding: 2.5rem 2rem;
+  }
+  .moduleGrid,
+  .orchestrationGrid {
+    grid-template-columns: 1fr;
+  }
+  .calculatorTotal {
+    flex-direction: column;
+    text-align: center;
+    gap: 1.5rem;
+    padding: 2rem;
+  }
+  .totalValueGroup {
+    text-align: center;
+  }
+}

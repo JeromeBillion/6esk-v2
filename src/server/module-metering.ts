@@ -17,6 +17,7 @@ export type RecordModuleUsageArgs = {
   unit?: string;
   actorType: ModuleUsageActorType;
   providerMode?: ModuleUsageProviderMode | null;
+  costCent?: number; // Exact COGS for the action (e.g. $0.001 = 0.1)
   metadata?: Record<string, unknown> | null;
 };
 
@@ -76,16 +77,17 @@ export async function recordModuleUsageEvent({
   try {
     await db.query(
       `INSERT INTO workspace_module_usage_events (
-         tenant_id,
-         workspace_key,
-         module_key,
-         usage_kind,
-         quantity,
-         unit,
-         actor_type,
-         provider_mode,
-         metadata
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+          tenant_id,
+          workspace_key,
+          module_key,
+          usage_kind,
+          quantity,
+          unit,
+          actor_type,
+          provider_mode,
+          cost_cent,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
       [
         tenantId,
         workspaceKey,
@@ -95,6 +97,7 @@ export async function recordModuleUsageEvent({
         unit,
         actorType,
         providerMode,
+        costCent || 0,
         JSON.stringify(metadata ?? {})
       ]
     );
