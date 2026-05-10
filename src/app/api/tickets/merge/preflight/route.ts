@@ -3,6 +3,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { MergeError, preflightTicketMerge } from "@/server/merges";
 import { getTicketById } from "@/server/tickets";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const preflightSchema = z.object({
   sourceTicketId: z.string().uuid(),
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId } = parsed.data;
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (sourceTicketId === targetTicketId) {
     return Response.json(
       {
@@ -43,8 +45,8 @@ export async function POST(request: Request) {
   }
 
   const [source, target] = await Promise.all([
-    getTicketById(sourceTicketId),
-    getTicketById(targetTicketId)
+    getTicketById(sourceTicketId, tenantId),
+    getTicketById(targetTicketId, tenantId)
   ]);
 
   if (!source || !target) {

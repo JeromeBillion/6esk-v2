@@ -12,7 +12,11 @@ export async function GET() {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("voice"))) {
+  const tenantId = user.tenant_id;
+  if (!tenantId) {
+    return Response.json({ error: "Tenant missing" }, { status: 403 });
+  }
+  if (!(await checkModuleEntitlement("voice", tenantId))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",

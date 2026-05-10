@@ -12,6 +12,7 @@ const inboundCallSchema = z.object({
   timestamp: z.union([z.string(), z.number()]).optional().nullable(),
   durationSeconds: z.number().optional().nullable(),
   ticketId: z.string().uuid().optional().nullable(),
+  tenantId: z.string().uuid().optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable()
 });
 
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
       occurredAt: occurredAt ?? undefined,
       durationSeconds: data.durationSeconds ?? null,
       ticketId: data.ticketId ?? null,
+      tenantId: data.tenantId ?? null,
       metadata: (data.metadata as Record<string, unknown> | null) ?? null
     });
     return Response.json({ acknowledged: true, ...result });

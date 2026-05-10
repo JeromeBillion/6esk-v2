@@ -2042,60 +2042,136 @@
   gap: 1.25rem;
 }
 
+.moduleGlowCard {
+  min-height: 11rem;
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.moduleGlowCard:hover {
+  transform: translateY(-3px);
+}
+
+.moduleGlowCardSelected {
+  box-shadow:
+    0 24px 54px rgba(6, 9, 18, 0.18),
+    0 0 0 1px rgba(192, 132, 252, 0.16);
+}
+
 .moduleCard {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  padding: 1.75rem;
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 1.5rem;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  min-height: 11rem;
+  padding: 1.18rem;
+  overflow: hidden;
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.92);
+  background: #0b0d11;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.75rem;
   cursor: pointer;
-  transition: all 200ms ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -22px 34px rgba(255, 255, 255, 0.015);
+  transition:
+    background 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
   user-select: none;
 }
 
-.moduleCard:hover {
-  border-color: rgba(0, 0, 0, 0.16);
-  background: rgba(255, 255, 255, 0.6);
+.moduleCard:focus-visible {
+  outline: 2px solid rgba(90, 131, 255, 0.72);
+  outline-offset: -5px;
 }
 
 .moduleCardMandatory {
   cursor: default;
 }
 
-.moduleCardMandatory:hover {
-  background: rgba(255, 255, 255, 0.4);
-  border-color: rgba(0, 0, 0, 0.08);
+.moduleCardMandatory,
+.moduleCard[aria-disabled="true"] {
+  color: rgba(255, 255, 255, 0.92);
+  opacity: 1;
 }
 
 .moduleCardSelected {
-  background: #fff;
-  border-color: var(--landing-blue);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06), 0 0 0 1px var(--landing-blue);
+  background: #120f17;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -24px 38px rgba(255, 255, 255, 0.025);
 }
 
 .moduleCardHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.moduleIconFrame {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.85rem;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.095);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    color 220ms ease,
+    background 220ms ease,
+    border-color 220ms ease,
+    transform 220ms ease;
+}
+
+.moduleCardSelected .moduleIconFrame {
+  color: #f5d0fe;
+  background: rgba(255, 255, 255, 0.085);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.moduleCardBody {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.moduleSelectionRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .moduleCardCheckbox {
   width: 1.15rem;
   height: 1.15rem;
   border-radius: 4px;
-  border: 2px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.035);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 180ms ease;
+  flex: 0 0 auto;
 }
 
 .moduleCardSelected .moduleCardCheckbox {
-  background: var(--landing-blue);
-  border-color: var(--landing-blue);
+  background: rgba(192, 132, 252, 0.92);
+  border-color: rgba(244, 214, 255, 0.8);
+  box-shadow: 0 0 18px rgba(192, 132, 252, 0.34);
 }
 
 .moduleCardCheckIcon {
@@ -2116,20 +2192,34 @@
   margin: 0;
   font-size: 1rem;
   font-weight: 700;
-  color: var(--landing-ink);
+  color: rgba(255, 255, 255, 0.94);
+  line-height: 1.15;
 }
 
 .modulePrice {
   font-size: 0.8rem;
-  color: var(--landing-ink-soft);
-  font-weight: 500;
+  color: #090a0d;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 0.26rem 0.56rem;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 10px 24px rgba(255, 255, 255, 0.12);
+}
+
+.moduleCardSelected .modulePrice {
+  color: #090a0d;
+  background: #ffffff;
+  border-color: #ffffff;
 }
 
 .moduleDescription {
-  margin: 0.5rem 0 0;
+  display: block;
+  margin: 0;
   font-size: 0.82rem;
   line-height: 1.45;
-  color: var(--landing-ink-soft);
+  color: rgba(255, 255, 255, 0.58);
 }
 
 .calculatorTotal {

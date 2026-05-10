@@ -12,6 +12,7 @@ type WhatsAppEventRow = {
 
 export type FailedWhatsAppOutboxEvent = {
   id: string;
+  tenant_id: string;
   status: string;
   attempt_count: number;
   last_error: string | null;
@@ -23,6 +24,7 @@ export type FailedWhatsAppOutboxEvent = {
 
 type WhatsAppAccount = {
   id: string;
+  tenant_id: string;
   provider: string;
   phone_number: string;
   access_token: string | null;
@@ -31,6 +33,7 @@ type WhatsAppAccount = {
 
 type DeliverArgs = {
   limit?: number;
+  tenantId?: string | null;
 };
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
@@ -44,24 +47,34 @@ function getProcessingRecoverySeconds() {
   return Math.floor(configured);
 }
 
-async function getActiveAccount() {
+async function getActiveAccount(tenantId?: string | null) {
+  const values = tenantId ? [tenantId] : [];
+  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
   const result = await db.query<WhatsAppAccount>(
-    `SELECT id, provider, phone_number, access_token, status
+    `SELECT id, tenant_id, provider, phone_number, access_token, status
      FROM whatsapp_accounts
      WHERE status = 'active'
+       ${tenantClause}
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    values
   );
   return result.rows[0] ?? null;
 }
 
 async function lockPendingEvents(
   limit: number,
-  processingRecoverySeconds: number
+  processingRecoverySeconds: number,
+  tenantId?: string | null
 ): Promise<WhatsAppEventRow[]> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    const values: Array<number | string> = [limit, processingRecoverySeconds];
+    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
+    if (tenantId) {
+      values.push(tenantId);
+    }
     const result = await client.query(
       `UPDATE whatsapp_events
        SET status = 'processing',
@@ -74,6 +87,7 @@ async function lockPendingEvents(
            FROM whatsapp_events e
            JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
            WHERE e.direction = 'outbound'
+             ${tenantClause}
              AND (wm.modules->>'whatsapp')::boolean = true
              AND (
                (e.status = 'queued' AND e.next_attempt_at <= now())
@@ -89,7 +103,7 @@ async function lockPendingEvents(
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, payload, attempt_count`,
-      [limit, processingRecoverySeconds]
+      values
     );
     await client.query("COMMIT");
     return result.rows;
@@ -103,6 +117,7 @@ async function lockPendingEvents(
 
 async function markDelivered(
   eventId: string,
+  tenantId: string,
   messageRecordId?: string | null,
   providerMessageId?: string | null
 ) {
@@ -110,15 +125,17 @@ async function markDelivered(
     `UPDATE whatsapp_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_id = $2`,
+    [eventId, tenantId]
   );
 
   const sentAt = new Date();
   await db.query(
-    `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
+      tenantId,
       messageRecordId ?? null,
       providerMessageId ?? null,
       "sent",
@@ -138,21 +155,29 @@ async function markDelivered(
        SET external_message_id = $1,
            wa_status = 'sent',
            wa_timestamp = $2
-       WHERE id = $3`,
-      [providerMessageId, sentAt, messageRecordId]
+       WHERE id = $3
+         AND tenant_id = $4`,
+      [providerMessageId, sentAt, messageRecordId, tenantId]
     );
   } else if (messageRecordId) {
     await db.query(
       `UPDATE messages
        SET wa_status = 'sent',
            wa_timestamp = $2
-       WHERE id = $1`,
-      [messageRecordId, sentAt]
+       WHERE id = $1
+         AND tenant_id = $3`,
+      [messageRecordId, sentAt, tenantId]
     );
   }
 }
 
-async function markFailed(eventId: string, attemptCount: number, errorMessage: string, messageRecordId?: string | null) {
+async function markFailed(
+  eventId: string,
+  tenantId: string,
+  attemptCount: number,
+  errorMessage: string,
+  messageRecordId?: string | null
+) {
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
   await db.query(
@@ -162,15 +187,17 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_id = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, tenantId]
   );
 
   if (messageRecordId) {
     await db.query(
-      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
+        tenantId,
         messageRecordId,
         null,
         "failed",
@@ -188,8 +215,9 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
       `UPDATE messages
        SET wa_status = 'failed',
            wa_timestamp = now()
-       WHERE id = $1`,
-      [messageRecordId]
+       WHERE id = $1
+         AND tenant_id = $2`,
+      [messageRecordId, tenantId]
     );
   }
 }
@@ -385,28 +413,33 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
   return { providerMessageId };
 }
 
-export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = {}) {
-  const account = await getActiveAccount();
-  if (!account) {
-    return { delivered: 0, skipped: 0, error: "No active WhatsApp account" };
-  }
-
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds());
+export async function deliverPendingWhatsAppEvents({ limit = 5, tenantId = null }: DeliverArgs = {}) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
 
   let delivered = 0;
+  const accountByTenant = new Map<string, WhatsAppAccount | null>();
   for (const event of pending) {
     const payload = event.payload ?? {};
     const messageRecordId =
       typeof payload.messageRecordId === "string" ? payload.messageRecordId : null;
     try {
+      let account = accountByTenant.get(event.tenant_id);
+      if (account === undefined) {
+        account = await getActiveAccount(event.tenant_id);
+        accountByTenant.set(event.tenant_id, account);
+      }
+      if (!account) {
+        await markFailed(event.id, event.tenant_id, event.attempt_count + 1, "No active WhatsApp account", messageRecordId);
+        continue;
+      }
       if (account.provider !== "meta") {
         throw new Error(`Provider ${account.provider} not supported yet`);
       }
       const { providerMessageId } = await sendMetaMessage(account, payload, event.id);
-      await markDelivered(event.id, messageRecordId, providerMessageId);
+      await markDelivered(event.id, event.tenant_id, messageRecordId, providerMessageId);
 
       // Record FinOps usage: WhatsApp cost approx 5 cents (placeholder)
       await recordModuleUsageEvent({
@@ -423,18 +456,24 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
     } catch (error) {
       const message = error instanceof Error ? error.message : "WhatsApp delivery failed";
       const attempts = event.attempt_count + 1;
-      await markFailed(event.id, attempts, message, messageRecordId);
+      await markFailed(event.id, event.tenant_id, attempts, message, messageRecordId);
     }
   }
 
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function listFailedWhatsAppOutboxEvents(limit = 50) {
+export async function listFailedWhatsAppOutboxEvents(limit = 50, tenantId?: string | null) {
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+  const values: Array<number | string> = [normalizedLimit];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
+  if (tenantId) {
+    values.push(tenantId);
+  }
   const result = await db.query<FailedWhatsAppOutboxEvent>(
     `SELECT
        id,
+       tenant_id,
        status,
        attempt_count,
        last_error,
@@ -445,9 +484,10 @@ export async function listFailedWhatsAppOutboxEvents(limit = 50) {
      FROM whatsapp_events
      WHERE direction = 'outbound'
        AND status = 'failed'
+       ${tenantClause}
      ORDER BY updated_at DESC
      LIMIT $1`,
-    [normalizedLimit]
+    values
   );
   return result.rows;
 }
@@ -455,6 +495,7 @@ export async function listFailedWhatsAppOutboxEvents(limit = 50) {
 type RetryFailedWhatsAppOutboxInput = {
   limit?: number;
   eventIds?: string[];
+  tenantId?: string | null;
 };
 
 export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutboxInput = {}) {
@@ -475,8 +516,9 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
              WHERE direction = 'outbound'
                AND status = 'failed'
                AND id::text = ANY($1::text[])
+               ${input.tenantId ? "AND tenant_id = $2" : ""}
              RETURNING id`,
-            [eventIds]
+            input.tenantId ? [eventIds, input.tenantId] : [eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
@@ -484,6 +526,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
                FROM whatsapp_events
                WHERE direction = 'outbound'
                  AND status = 'failed'
+                 ${input.tenantId ? "AND tenant_id = $2" : ""}
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -495,7 +538,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
              FROM failed
              WHERE evt.id = failed.id
              RETURNING evt.id`,
-            [normalizedLimit]
+            input.tenantId ? [normalizedLimit, input.tenantId] : [normalizedLimit]
           );
     await client.query("COMMIT");
     return {

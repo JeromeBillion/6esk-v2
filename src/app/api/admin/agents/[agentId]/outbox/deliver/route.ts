@@ -3,6 +3,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(
   request: Request,
@@ -14,7 +15,8 @@ export async function POST(
   }
 
   const { agentId } = await params;
-  const integration = await getAgentIntegrationById(agentId);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -28,10 +30,12 @@ export async function POST(
   try {
     const result = await deliverPendingAgentEvents({
       integrationId: agentId,
+      tenantId,
       limit
     });
 
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_delivery_triggered",
       entityType: "agent_integration",
@@ -48,6 +52,7 @@ export async function POST(
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to deliver agent outbox";
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_delivery_failed",
       entityType: "agent_integration",

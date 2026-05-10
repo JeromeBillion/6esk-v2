@@ -14,6 +14,8 @@ vi.mock("@/server/db", () => ({
 
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 function buildClient() {
   return {
     query: mocks.dbQuery,
@@ -41,6 +43,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await resolveOrCreateCustomerForInbound({
+      tenantId: TENANT_ID,
       profile: {
         id: "user-123",
         email: "olivia.parker@brightpath.co",
@@ -60,7 +63,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
     });
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM customers"),
-      ["prediction-market-mvp", "user-123"]
+      [TENANT_ID, "prediction-market-mvp", "user-123"]
     );
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE customers"),
@@ -97,6 +100,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await resolveOrCreateCustomerForInbound({
+      tenantId: TENANT_ID,
       profile: {
         id: "user-123",
         email: "olivia.parker@brightpath.co",

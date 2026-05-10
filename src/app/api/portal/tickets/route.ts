@@ -13,6 +13,7 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -32,6 +33,14 @@ function getSupportAddress() {
 }
 
 export async function POST(request: Request) {
+  // Portal callers must provide a shared secret. Without this the endpoint
+  // is completely unauthenticated and attackable.
+  const portalSecret = process.env.PORTAL_SHARED_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
+  const provided = request.headers.get("x-portal-secret") ?? request.headers.get("x-6esk-secret");
+  if (!portalSecret || provided !== portalSecret) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let payload: unknown;
   try {
     payload = await request.json();
@@ -45,12 +54,16 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
+  const tenantId = DEFAULT_TENANT_ID;
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
     return Response.json({ error: "Support address not configured" }, { status: 500 });
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
+  if (mailbox.tenant_id !== tenantId) {
+    return Response.json({ error: "Support mailbox belongs to another tenant" }, { status: 500 });
+  }
   const fromEmail = normalizeAddressList(data.from)[0];
   if (!fromEmail) {
     return Response.json({ error: "Invalid sender address" }, { status: 400 });
@@ -64,10 +77,12 @@ export async function POST(request: Request) {
     ...(data.metadata ?? {})
   };
   const customerResolution = await resolveOrCreateCustomerForInbound({
+    tenantId,
     inboundEmail: fromEmail
   });
 
   const ticketId = await createTicket({
+    tenantId,
     mailboxId: mailbox.id,
     customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
@@ -76,11 +91,12 @@ export async function POST(request: Request) {
     metadata
   });
 
-  await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+  await recordTicketEvent({ tenantId, ticketId, eventType: "ticket_created" });
 
   if (inferredTags.length) {
     await addTagsToTicket(ticketId, inferredTags);
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "tags_assigned",
       data: { tags: inferredTags }
@@ -93,13 +109,14 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, received_at, is_read
     ) VALUES (
-      $1, $2, $3, 'inbound', $4, $5, $6,
-      $7, $8, $9, $10, false
+      $1, $2, $3, $4, 'inbound', $5, $6, $7,
+      $8, $9, $10, $11, false
     )`,
     [
+      tenantId,
       messageId,
       mailbox.id,
       ticketId,
@@ -127,7 +144,7 @@ export async function POST(request: Request) {
     [textKey, Buffer.byteLength(data.description), messageId]
   );
 
-  await recordTicketEvent({ ticketId, eventType: "message_received" });
+  await recordTicketEvent({ tenantId, ticketId, eventType: "message_received" });
 
   const threadId = messageId;
   const messageEvent = buildAgentEvent({
@@ -135,6 +152,7 @@ export async function POST(request: Request) {
     ticketId,
     messageId,
     mailboxId: mailbox.id,
+    tenantId,
     excerpt: previewText,
     threadId
   });
@@ -142,13 +160,14 @@ export async function POST(request: Request) {
     eventType: "ticket.created",
     ticketId,
     mailboxId: mailbox.id,
+    tenantId,
     excerpt: previewText,
     threadId
   });
 
-  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
-  void deliverPendingAgentEvents().catch(() => {});
+  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
+  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
   return Response.json({ status: "created", ticketId, messageId });
 }

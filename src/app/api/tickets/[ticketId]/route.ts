@@ -169,11 +169,12 @@ export async function PATCH(
       eventType: "ticket.status.changed",
       ticketId,
       mailboxId: ticket.mailbox_id,
+      tenantId,
       actorUserId: user.id,
       excerpt: `Status changed from ${ticket.status} to ${parsed.data.status}`
     });
-    await enqueueAgentEvent({ eventType: "ticket.status.changed", payload: statusEvent });
-    void deliverPendingAgentEvents().catch(() => {});
+    await enqueueAgentEvent({ eventType: "ticket.status.changed", payload: statusEvent, tenantId });
+    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
   }
 
   if (parsed.data.priority && parsed.data.priority !== ticket.priority) {

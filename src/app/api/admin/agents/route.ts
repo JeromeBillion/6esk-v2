@@ -6,6 +6,7 @@ import {
   createAgentIntegration,
   listAgentIntegrations
 } from "@/server/agents/integrations";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -26,7 +27,8 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const agents = await listAgentIntegrations();
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const agents = await listAgentIntegrations(tenantId);
   return Response.json({ agents });
 }
 
@@ -48,8 +50,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const agent = await createAgentIntegration(parsed.data);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const agent = await createAgentIntegration({ ...parsed.data, tenantId });
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "agent_integration_created",
     entityType: "agent_integration",

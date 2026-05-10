@@ -18,7 +18,7 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const ticket = await getTicketById(ticketId, integration.tenant_id);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

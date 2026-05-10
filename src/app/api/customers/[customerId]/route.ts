@@ -129,7 +129,7 @@ export async function PATCH(
   }
 
   try {
-    const updatedCustomer = await updateCustomerProfile(customerId, updateInput);
+    const updatedCustomer = await updateCustomerProfile(customerId, tenantId, updateInput);
     if (!updatedCustomer) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }

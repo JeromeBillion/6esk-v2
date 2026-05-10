@@ -7,6 +7,7 @@ import {
 } from "@/server/agents/integrations";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
@@ -14,11 +15,12 @@ type EnqueueArgs = {
   eventType: string;
   payload: Record<string, unknown>;
   integrationId?: string | null;
-  tenantId?: string;
+  tenantId?: string | null;
 };
 
 type DeliverArgs = {
   integrationId?: string | null;
+  tenantId?: string | null;
   limit?: number;
 };
 
@@ -36,6 +38,7 @@ export type FailedAgentOutboxEvent = {
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getProcessingRecoverySeconds() {
   const configured = Number(process.env.AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
@@ -60,10 +63,51 @@ function signPayload(secret: string, timestamp: string, body: string) {
   return `sha256=${signature}`;
 }
 
-export async function enqueueAgentEvent({ eventType, payload, integrationId }: EnqueueArgs) {
+function readTenantId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return UUID_RE.test(trimmed) ? trimmed : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function resolveEventTenantId(tenantId: unknown, payload: Record<string, unknown>) {
+  const resource = readRecord(payload.resource);
+  return (
+    readTenantId(tenantId) ??
+    readTenantId(payload.tenantId) ??
+    readTenantId(payload.tenant_id) ??
+    readTenantId(resource?.tenantId) ??
+    readTenantId(resource?.tenant_id)
+  );
+}
+
+function tenantScopedPayload(payload: Record<string, unknown>, tenantId: string) {
+  const resource = readRecord(payload.resource);
+  return {
+    ...payload,
+    tenant_id: tenantId,
+    resource: {
+      ...(resource ?? {}),
+      tenant_id: tenantId
+    }
+  };
+}
+
+export async function enqueueAgentEvent({ eventType, payload, integrationId, tenantId }: EnqueueArgs) {
+  const effectiveTenantId = resolveEventTenantId(tenantId, payload);
+  if (!effectiveTenantId) {
+    console.warn(`[AgentOutbox] Skipping tenantless agent event ${eventType}`);
+    return null;
+  }
+
   const integration = integrationId
-    ? await getAgentIntegrationById(integrationId)
-    : await getActiveAgentIntegration();
+    ? await getAgentIntegrationById(integrationId, effectiveTenantId)
+    : await getActiveAgentIntegration(effectiveTenantId);
 
   if (!integration || integration.status !== "active") {
     return null;
@@ -73,7 +117,7 @@ export async function enqueueAgentEvent({ eventType, payload, integrationId }: E
     `INSERT INTO agent_outbox (integration_id, tenant_id, event_type, payload)
      VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [integration.id, integration.tenant_id, eventType, payload]
+    [integration.id, effectiveTenantId, eventType, tenantScopedPayload(payload, effectiveTenantId)]
   );
 
   return result.rows[0]?.id ?? null;
@@ -81,6 +125,7 @@ export async function enqueueAgentEvent({ eventType, payload, integrationId }: E
 
 async function lockPendingEvents(
   integrationId: string,
+  tenantId: string,
   limit: number,
   processingRecoverySeconds: number
 ): Promise<Array<{ id: string; tenant_id: string; payload: Record<string, unknown>; attempt_count: number }>> {
@@ -94,19 +139,20 @@ async function lockPendingEvents(
          SELECT id
          FROM agent_outbox
          WHERE integration_id = $1
+           AND tenant_id = $2
            AND (
              (status = 'pending' AND next_attempt_at <= now())
              OR (
                status = 'processing'
-               AND updated_at <= now() - make_interval(secs => $3::int)
+               AND updated_at <= now() - make_interval(secs => $4::int)
              )
            )
          ORDER BY created_at ASC
-         LIMIT $2
+         LIMIT $3
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, payload, attempt_count`,
-      [integrationId, limit, processingRecoverySeconds]
+      [integrationId, tenantId, limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -176,10 +222,11 @@ async function postToAgent(integration: AgentIntegration, payload: Record<string
   }
 }
 
-export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: DeliverArgs = {}) {
+export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
+  const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
   const integration = integrationId
-    ? await getAgentIntegrationById(integrationId)
-    : await getActiveAgentIntegration();
+    ? await getAgentIntegrationById(integrationId, effectiveTenantId)
+    : await getActiveAgentIntegration(effectiveTenantId);
 
   if (!integration || integration.status !== "active") {
     return { delivered: 0, skipped: 0, limitUsed: 0 };
@@ -191,6 +238,7 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
   });
   const pending = await lockPendingEvents(
     integration.id,
+    integration.tenant_id,
     limitUsed,
     getProcessingRecoverySeconds()
   );
@@ -226,8 +274,14 @@ export async function deliverPendingAgentEvents({ integrationId, limit = 5 }: De
   return { delivered, skipped: pending.length - delivered, limitUsed };
 }
 
-export async function listFailedAgentEvents(integrationId: string, limit = 50) {
+export async function listFailedAgentEvents(integrationId: string, limit = 50, tenantId?: string | null) {
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+  const values: Array<string | number> = [integrationId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
+  if (tenantId) {
+    values.push(tenantId);
+  }
+  values.push(normalizedLimit);
   const result = await db.query<FailedAgentOutboxEvent>(
     `SELECT
        id,
@@ -242,16 +296,18 @@ export async function listFailedAgentEvents(integrationId: string, limit = 50) {
        payload
      FROM agent_outbox
      WHERE integration_id = $1
+       ${tenantClause}
        AND status = 'failed'
      ORDER BY updated_at DESC
-     LIMIT $2`,
-    [integrationId, normalizedLimit]
+     LIMIT $${values.length}`,
+    values
   );
   return result.rows;
 }
 
 type RetryFailedAgentOutboxInput = {
   integrationId: string;
+  tenantId?: string | null;
   limit?: number;
   eventIds?: string[];
 };
@@ -272,16 +328,18 @@ export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput)
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE integration_id = $1
+               ${input.tenantId ? "AND tenant_id = $3" : ""}
                AND status = 'failed'
                AND id::text = ANY($2::text[])
              RETURNING id`,
-            [input.integrationId, eventIds]
+            input.tenantId ? [input.integrationId, eventIds, input.tenantId] : [input.integrationId, eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM agent_outbox
                WHERE integration_id = $1
+                 ${input.tenantId ? "AND tenant_id = $3" : ""}
                  AND status = 'failed'
                ORDER BY updated_at ASC
                LIMIT $2
@@ -294,7 +352,7 @@ export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput)
              FROM failed
              WHERE evt.id = failed.id
              RETURNING evt.id`,
-            [input.integrationId, normalizedLimit]
+            input.tenantId ? [input.integrationId, normalizedLimit, input.tenantId] : [input.integrationId, normalizedLimit]
           );
     await client.query("COMMIT");
     return {

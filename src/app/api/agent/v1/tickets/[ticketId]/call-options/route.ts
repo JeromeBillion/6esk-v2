@@ -17,7 +17,7 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const ticket = await getTicketById(ticketId, integration.tenant_id);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -26,7 +26,7 @@ export async function GET(
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const options = await getTicketCallOptions(ticketId);
+  const options = await getTicketCallOptions(ticketId, integration.tenant_id);
   if (!options) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

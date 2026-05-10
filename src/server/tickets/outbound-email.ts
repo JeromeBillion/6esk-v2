@@ -5,6 +5,7 @@ import { syncVoiceConsentFromMetadata } from "@/server/calls/consent";
 import { sendTicketReply } from "@/server/email/replies";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type OutboundEmailAttachment = {
   filename: string;
@@ -14,6 +15,7 @@ type OutboundEmailAttachment = {
 };
 
 export type CreateOutboundEmailTicketArgs = {
+  tenantId?: string;
   actorUserId: string;
   toEmail: string;
   subject: string;
@@ -46,6 +48,7 @@ function toPlainText(text?: string | null, html?: string | null) {
 }
 
 export async function createOutboundEmailTicket({
+  tenantId = DEFAULT_TENANT_ID,
   actorUserId,
   toEmail,
   subject,
@@ -69,14 +72,19 @@ export async function createOutboundEmailTicket({
     throw new Error("Description is required");
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
+  if (mailbox.tenant_id !== tenantId) {
+    throw new Error("Support mailbox belongs to another tenant.");
+  }
   const inferredTags = (tags?.length ? tags : inferTagsFromText({ subject, text: plainText || null }))
     .map((tag) => tag.trim().toLowerCase())
     .filter(Boolean);
   const normalizedTags = Array.from(new Set(inferredTags));
   const resolvedCategory = category?.toLowerCase().trim() ?? normalizedTags[0]?.toLowerCase() ?? null;
   const resolvedCustomerId =
-    customerId ?? (await resolveOrCreateCustomerForInbound({ inboundEmail: toEmail }))?.customerId ?? null;
+    customerId ??
+    (await resolveOrCreateCustomerForInbound({ tenantId, inboundEmail: toEmail }))?.customerId ??
+    null;
 
   await syncVoiceConsentFromMetadata({
     metadata: metadata ?? null,
@@ -95,6 +103,7 @@ export async function createOutboundEmailTicket({
   });
 
   const ticketId = await createTicket({
+    tenantId,
     mailboxId: mailbox.id,
     customerId: resolvedCustomerId,
     requesterEmail: toEmail,
@@ -104,6 +113,7 @@ export async function createOutboundEmailTicket({
   });
 
   await recordTicketEvent({
+    tenantId,
     ticketId,
     eventType: "ticket_created",
     actorUserId
@@ -112,6 +122,7 @@ export async function createOutboundEmailTicket({
   if (normalizedTags.length > 0) {
     await addTagsToTicket(ticketId, normalizedTags);
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "tags_assigned",
       actorUserId,
@@ -120,6 +131,7 @@ export async function createOutboundEmailTicket({
   }
 
   const sendResult = await sendTicketReply({
+    tenantId,
     ticketId,
     subject,
     text: plainText || null,
@@ -136,11 +148,12 @@ export async function createOutboundEmailTicket({
     eventType: "ticket.created",
     ticketId,
     mailboxId: mailbox.id,
+    tenantId,
     actorUserId,
     excerpt: previewText || subject,
     threadId
   });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
 
   if (messageId) {
     const messageEvent = buildAgentEvent({
@@ -148,15 +161,16 @@ export async function createOutboundEmailTicket({
       ticketId,
       messageId,
       mailboxId: mailbox.id,
+      tenantId,
       actorUserId,
       excerpt: previewText || subject,
       threadId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
   }
 
   if (deliverAgentEvents) {
-    void deliverPendingAgentEvents().catch(() => {});
+    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
   }
 
   return {

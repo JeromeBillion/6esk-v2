@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     [emailLower, tenantId]
   );
   const existingUser = existing.rows[0] ?? null;
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
 
   const result = await db.query(
     `INSERT INTO users (email, display_name, password_hash, role_id, tenant_id)

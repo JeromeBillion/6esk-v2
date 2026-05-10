@@ -3,8 +3,10 @@ import { db } from "@/server/db";
 import { sanitizeFilename } from "@/server/email/normalize";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type SendWhatsAppArgs = {
+  tenantId?: string | null;
   ticketId?: string | null;
   to: string;
   text?: string | null;
@@ -25,18 +27,21 @@ function formatContact(contact: string) {
   return contact.replace(/\s+/g, "").trim();
 }
 
-async function getActiveAccount() {
+async function getActiveAccount(tenantId: string) {
   const result = await db.query(
-    `SELECT id, provider, phone_number, status
+    `SELECT id, tenant_id, provider, phone_number, status
      FROM whatsapp_accounts
      WHERE status = 'active'
+       AND tenant_id = $1
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenantId]
   );
   return result.rows[0] ?? null;
 }
 
 export async function queueWhatsAppSend({
+  tenantId,
   ticketId,
   to,
   text,
@@ -47,6 +52,7 @@ export async function queueWhatsAppSend({
   aiMeta,
   messageMetadata
 }: SendWhatsAppArgs) {
+  let effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
   const attachmentList = attachments ?? [];
   if (attachmentList.length > 1) {
     throw new Error("WhatsApp supports one attachment per message.");
@@ -60,13 +66,9 @@ export async function queueWhatsAppSend({
     throw new Error("Missing WhatsApp recipient");
   }
 
-  const account = await getActiveAccount();
-  if (!account) {
-    throw new Error("WhatsApp account not configured");
-  }
-
   let messageRecordId: string | null = null;
   let ticketMailboxId: string | null = null;
+  let ticket: Awaited<ReturnType<typeof getTicketById>> | null = null;
   const payloadAttachments: Array<{
     filename: string;
     contentType: string | null;
@@ -75,7 +77,18 @@ export async function queueWhatsAppSend({
   }> = [];
 
   if (ticketId) {
-    const ticket = await getTicketById(ticketId);
+    ticket = await getTicketById(ticketId, effectiveTenantId);
+    if (ticket) {
+      effectiveTenantId = ticket.tenant_id;
+    }
+  }
+
+  const account = await getActiveAccount(effectiveTenantId);
+  if (!account) {
+    throw new Error("WhatsApp account not configured for tenant");
+  }
+
+  if (ticketId) {
     if (ticket) {
       ticketMailboxId = ticket.mailbox_id ?? null;
       const from = account.phone_number ? `whatsapp:${account.phone_number}` : "whatsapp:unknown";
@@ -97,15 +110,16 @@ export async function queueWhatsAppSend({
 
       await db.query(
         `INSERT INTO messages (
-          id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+          tenant_id, id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
           external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
           from_email, to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
         ) VALUES (
-          $1, $2, $3, 'outbound', 'whatsapp', $4, $5,
-          $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, true, $17, $18, $19
+          $1, $2, $3, $4, 'outbound', 'whatsapp', $5, $6,
+          $7, $8, $9, $10, $11, $12,
+          $13, $14, $15, $16, $17, true, $18, $19, $20
         )`,
         [
+          effectiveTenantId,
           messageId,
           ticket.mailbox_id ?? null,
           ticketId,
@@ -149,9 +163,10 @@ export async function queueWhatsAppSend({
             contentType: attachment.contentType ?? undefined
           });
           await db.query(
-            `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
+            `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [
+              effectiveTenantId,
               attachmentId,
               messageId,
               attachment.filename,
@@ -173,11 +188,13 @@ export async function queueWhatsAppSend({
       await db.query(
         `UPDATE messages
          SET r2_key_text = $1, size_bytes = $2
-         WHERE id = $3`,
-        [textKey, sizeBytes || null, messageId]
+         WHERE id = $3
+           AND tenant_id = $4`,
+        [textKey, sizeBytes || null, messageId, effectiveTenantId]
       );
 
       await recordTicketEvent({
+        tenantId: effectiveTenantId,
         ticketId,
         eventType: origin === "ai" ? "ai_reply_sent" : "reply_sent",
         actorUserId: actorUserId ?? null,
@@ -185,16 +202,18 @@ export async function queueWhatsAppSend({
       });
 
       await db.query(
-        `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [messageId, null, "queued", sentAt, { source: "outbox", status: "queued" }]
+        `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [effectiveTenantId, messageId, null, "queued", sentAt, { source: "outbox", status: "queued" }]
       );
 
       if (ticket.status === "new" || ticket.status === "pending") {
-        await db.query("UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1", [
-          ticketId
-        ]);
+        await db.query(
+          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
+          [ticketId, effectiveTenantId]
+        );
         await recordTicketEvent({
+          tenantId: effectiveTenantId,
           ticketId,
           eventType: "status_updated",
           actorUserId: actorUserId ?? null,
@@ -221,9 +240,9 @@ export async function queueWhatsAppSend({
   };
 
   await db.query(
-    `INSERT INTO whatsapp_events (direction, payload, status)
-     VALUES ($1, $2, $3)`,
-    ["outbound", payload, "queued"]
+    `INSERT INTO whatsapp_events (tenant_id, direction, payload, status)
+     VALUES ($1, $2, $3, $4)`,
+    [effectiveTenantId, "outbound", payload, "queued"]
   );
 
   return { status: "queued", messageId: messageRecordId ?? undefined };

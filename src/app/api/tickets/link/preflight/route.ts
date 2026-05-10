@@ -3,6 +3,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { MergeError, preflightTicketLink } from "@/server/merges";
 import { getTicketById } from "@/server/tickets";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const preflightSchema = z.object({
   sourceTicketId: z.string().uuid(),
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId } = parsed.data;
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (sourceTicketId === targetTicketId) {
     return Response.json(
       { error: "Source and target tickets must be different.", code: "invalid_input" },
@@ -39,7 +41,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const [source, target] = await Promise.all([getTicketById(sourceTicketId), getTicketById(targetTicketId)]);
+  const [source, target] = await Promise.all([
+    getTicketById(sourceTicketId, tenantId),
+    getTicketById(targetTicketId, tenantId)
+  ]);
   if (!source || !target) {
     return Response.json({ error: "Source or target ticket not found" }, { status: 404 });
   }

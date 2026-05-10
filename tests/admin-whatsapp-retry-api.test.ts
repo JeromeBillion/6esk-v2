@@ -21,6 +21,7 @@ vi.mock("@/server/audit", () => ({
 import { POST } from "@/app/api/admin/whatsapp/retry/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
@@ -28,7 +29,8 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -68,7 +70,8 @@ describe("POST /api/admin/whatsapp/retry", () => {
     expect(body).toMatchObject({ status: "ok", retried: 3 });
     expect(mocks.retryFailedWhatsAppEvents).toHaveBeenCalledWith({
       limit: 10,
-      eventIds: []
+      eventIds: [],
+      tenantId: TENANT_ID
     });
   });
 

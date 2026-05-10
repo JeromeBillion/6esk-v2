@@ -18,7 +18,6 @@ import {
 } from "@/server/integrations/prediction-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
-  attachCustomerToTicket,
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
@@ -70,6 +69,7 @@ export async function storeInboundEmail(data: InboundEmail) {
   if (!mailbox) {
     throw new Error(`Mailbox ${primaryRecipient} is not configured.`);
   }
+  const tenantId = mailbox.tenant_id;
 
   const spamDecision = await evaluateSpam({
     fromEmail,
@@ -80,8 +80,8 @@ export async function storeInboundEmail(data: InboundEmail) {
   // ── Idempotency check (outside transaction, read-only) ──
   if (data.messageId) {
     const existing = await db.query(
-      "SELECT id, ticket_id FROM messages WHERE message_id = $1 AND mailbox_id = $2 LIMIT 1",
-      [data.messageId, mailbox.id]
+      "SELECT id, ticket_id FROM messages WHERE message_id = $1 AND mailbox_id = $2 AND tenant_id = $3 LIMIT 1",
+      [data.messageId, mailbox.id, tenantId]
     );
     if ((existing.rowCount ?? 0) > 0) {
       return {
@@ -103,6 +103,7 @@ export async function storeInboundEmail(data: InboundEmail) {
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
     requesterProfile = await lookupPredictionProfile({ email: fromEmail });
     customerResolution = await resolveOrCreateCustomerForInbound({
+      tenantId,
       profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
       inboundEmail: fromEmail
     });
@@ -117,7 +118,7 @@ export async function storeInboundEmail(data: InboundEmail) {
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
     );
-    existingTicketId = await resolveTicketIdForInbound(references);
+    existingTicketId = await resolveTicketIdForInbound(references, tenantId);
 
     if (!existingTicketId) {
       inferredTags = data.tags?.length
@@ -185,18 +186,26 @@ export async function storeInboundEmail(data: InboundEmail) {
         };
 
         const ticketResult = await client.query<{ id: string }>(
-          `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id`,
-          [mailbox.id, customerResolution?.customerId ?? null, fromEmail, data.subject ?? null, category, metadata ?? {}]
+          [
+            tenantId,
+            mailbox.id,
+            customerResolution?.customerId ?? null,
+            fromEmail,
+            data.subject ?? null,
+            category,
+            metadata ?? {}
+          ]
         );
         ticketId = ticketResult.rows[0].id;
         createdNewTicket = true;
 
         await client.query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
-          [ticketId, "ticket_created", null, null]
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, ticketId, "ticket_created", null, null]
         );
 
         if (inferredTags.length) {
@@ -212,37 +221,38 @@ export async function storeInboundEmail(data: InboundEmail) {
             );
           }
           await client.query(
-            `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-             VALUES ($1, $2, $3, $4)`,
-            [ticketId, "tags_assigned", null, { tags: inferredTags }]
+            `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [tenantId, ticketId, "tags_assigned", null, { tags: inferredTags }]
           );
         }
       } else {
         // Reopen ticket if it was resolved/closed
         const statusResult = await client.query<{ status: string }>(
-          "SELECT status FROM tickets WHERE id = $1",
-          [ticketId]
+          "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
+          [ticketId, tenantId]
         );
         const currentStatus = statusResult.rows[0]?.status;
         if (currentStatus === "solved" || currentStatus === "closed") {
           await client.query(
-            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1",
-            [ticketId]
+            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
+            [ticketId, tenantId]
           );
           await client.query(
-            `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-             VALUES ($1, $2, $3, $4)`,
-            [ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+            `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [tenantId, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
           );
         }
 
         if (requesterProfile?.status === "matched") {
           await client.query(
-            `UPDATE tickets
+          `UPDATE tickets
              SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                  updated_at = now()
-             WHERE id = $1`,
-            [ticketId, JSON.stringify(profileMetadataPatch)]
+             WHERE id = $1
+               AND tenant_id = $3`,
+            [ticketId, JSON.stringify(profileMetadataPatch), tenantId]
           );
         }
       }
@@ -250,8 +260,16 @@ export async function storeInboundEmail(data: InboundEmail) {
       if (ticketId && customerResolution?.customerId) {
         const customerAttachResult = await client.query(
           `UPDATE tickets SET customer_id = $2, updated_at = now()
-           WHERE id = $1 AND (customer_id IS NULL OR customer_id != $2)`,
-          [ticketId, customerResolution.customerId]
+           WHERE id = $1
+             AND tenant_id = $3
+             AND (customer_id IS NULL OR customer_id != $2)
+             AND EXISTS (
+               SELECT 1
+               FROM customers c
+               WHERE c.id = $2
+                 AND c.tenant_id = $3
+             )`,
+          [ticketId, customerResolution.customerId, tenantId]
         );
         attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
       }
@@ -270,9 +288,9 @@ export async function storeInboundEmail(data: InboundEmail) {
 
       if (createdNewTicket && requesterProfile?.status === "matched" && !customerResolution?.conflict) {
         await client.query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
-          [ticketId, "profile_enriched", null, {
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, ticketId, "profile_enriched", null, {
             source: "prediction-market-mvp",
             matchedBy: requesterProfile.matchedBy,
             externalUserId: requesterProfile.profile.id
@@ -280,9 +298,9 @@ export async function storeInboundEmail(data: InboundEmail) {
         );
       } else if (ticketId && requesterProfile?.status === "matched" && customerResolution?.conflict) {
         await client.query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
-          [ticketId, "customer_identity_conflict", null, {
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, ticketId, "customer_identity_conflict", null, {
             source: "prediction-market-mvp",
             matchedBy: requesterProfile.matchedBy,
             conflict: customerResolution.conflict
@@ -291,24 +309,25 @@ export async function storeInboundEmail(data: InboundEmail) {
       }
 
       await client.query(
-        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4)`,
-        [ticketId, "message_received", null, null]
+        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, ticketId, "message_received", null, null]
       );
     }
 
     // Insert the message row
     await client.query(
       `INSERT INTO messages (
-        id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
+        tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
         from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
         received_at, is_read, is_spam, spam_reason
       ) VALUES (
-        $1, $2, $3, 'inbound', $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13,
-        $14, false, $15, $16
+        $1, $2, $3, $4, 'inbound', $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14,
+        $15, false, $16, $17
       )`,
       [
+        tenantId,
         messageId,
         mailbox.id,
         ticketId,
@@ -332,9 +351,10 @@ export async function storeInboundEmail(data: InboundEmail) {
     for (const resolved of resolvedAttachments) {
       const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
       await client.query(
-        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
+          tenantId,
           resolved.attachmentId,
           messageId,
           resolved.originalFilename,
@@ -430,15 +450,21 @@ export async function storeInboundEmail(data: InboundEmail) {
         target: resolved.originalFilename,
         detail: error instanceof Error ? error.message : "unknown upload error"
       });
-      await db.query(`DELETE FROM attachments WHERE id = $1`, [resolved.attachmentId]).catch(() => {});
+      await db
+        .query(`DELETE FROM attachments WHERE id = $1 AND tenant_id = $2`, [
+          resolved.attachmentId,
+          tenantId
+        ])
+        .catch(() => {});
     }
   }
 
   await db.query(
     `UPDATE messages
      SET r2_key_raw = $1, r2_key_text = $2, r2_key_html = $3, size_bytes = $4
-     WHERE id = $5`,
-    [rawKey, textKey, htmlKey, sizeBytes || null, messageId]
+     WHERE id = $5
+       AND tenant_id = $6`,
+    [rawKey, textKey, htmlKey, sizeBytes || null, messageId, tenantId]
   );
 
   if (mailbox.type === "platform" && ticketId && !spamDecision.isSpam) {
@@ -448,20 +474,22 @@ export async function storeInboundEmail(data: InboundEmail) {
       ticketId,
       messageId,
       mailboxId: mailbox.id,
+      tenantId,
       excerpt: previewText,
       threadId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
 
     if (createdNewTicket) {
       const ticketEvent = buildAgentEvent({
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: previewText,
         threadId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
     }
 
     if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
@@ -469,11 +497,13 @@ export async function storeInboundEmail(data: InboundEmail) {
         eventType: "customer.identity.resolved",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: `Resolved customer ${customerResolution.customerId}`,
         threadId
       });
       await enqueueAgentEvent({
         eventType: "customer.identity.resolved",
+        tenantId,
         payload: {
           ...identityEvent,
           customer: {
@@ -493,9 +523,10 @@ export async function storeInboundEmail(data: InboundEmail) {
     if (failedStorageItems.length > 0) {
       await db
         .query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
           [
+            tenantId,
             ticketId,
             "message_storage_partial",
             null,
@@ -508,7 +539,7 @@ export async function storeInboundEmail(data: InboundEmail) {
         .catch(() => {});
     }
 
-    void deliverPendingAgentEvents().catch(() => {});
+    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

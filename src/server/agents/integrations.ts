@@ -1,11 +1,13 @@
 import { db } from "@/server/db";
 import { getPlatformMailbox } from "@/server/mailboxes";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type AgentPolicyMode = "draft_only" | "auto_send";
 
 export type AgentIntegration = {
   id: string;
+  tenant_id: string;
   name: string;
   provider: string;
   base_url: string;
@@ -21,6 +23,7 @@ export type AgentIntegration = {
 };
 
 type AgentIntegrationInput = {
+  tenantId?: string;
   name: string;
   provider?: string;
   baseUrl: string;
@@ -33,12 +36,14 @@ type AgentIntegrationInput = {
   policy?: Record<string, unknown>;
 };
 
-export async function listAgentIntegrations() {
+export async function listAgentIntegrations(tenantId = DEFAULT_TENANT_ID) {
   const result = await db.query<AgentIntegration>(
-    `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
-     ORDER BY created_at DESC`
+     WHERE tenant_id = $1
+     ORDER BY created_at DESC`,
+    [tenantId]
   );
   return result.rows.map((row) => ({
     ...row,
@@ -46,13 +51,16 @@ export async function listAgentIntegrations() {
   }));
 }
 
-export async function getAgentIntegrationById(id: string) {
+export async function getAgentIntegrationById(id: string, tenantId?: string | null) {
+  const values = tenantId ? [id, tenantId] : [id];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<AgentIntegration>(
-    `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
-     WHERE id = $1`,
-    [id]
+     WHERE id = $1
+       ${tenantClause}`,
+    values
   );
   const row = result.rows[0];
   if (!row) {
@@ -61,14 +69,16 @@ export async function getAgentIntegrationById(id: string) {
   return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }
 
-export async function getActiveAgentIntegration() {
+export async function getActiveAgentIntegration(tenantId = DEFAULT_TENANT_ID) {
   const result = await db.query<AgentIntegration>(
-    `SELECT id, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      WHERE status = 'active'
+       AND tenant_id = $1
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenantId]
   );
   const row = result.rows[0];
   if (!row) {
@@ -83,15 +93,16 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
   const storedSecret = encryptSecret(input.sharedSecret);
   const result = await db.query<AgentIntegration>(
     `INSERT INTO agent_integrations (
-      name, provider, base_url, auth_type, shared_secret,
+      tenant_id, name, provider, base_url, auth_type, shared_secret,
       status, policy_mode, scopes, capabilities, policy
     ) VALUES (
-      $1, $2, $3, $4, $5,
-      $6, $7, $8, $9, $10
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10, $11
     )
-    RETURNING id, name, provider, base_url, auth_type, shared_secret, status,
+    RETURNING id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
               policy_mode, scopes, capabilities, policy, created_at, updated_at`,
     [
+      input.tenantId ?? DEFAULT_TENANT_ID,
       input.name,
       input.provider ?? "elizaos",
       input.baseUrl,
@@ -110,7 +121,8 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
 
 export async function updateAgentIntegration(
   id: string,
-  updates: Partial<AgentIntegrationInput>
+  updates: Partial<AgentIntegrationInput>,
+  tenantId?: string | null
 ) {
   const fields: string[] = [];
   const values: Array<string | Record<string, unknown>> = [];
@@ -167,17 +179,23 @@ export async function updateAgentIntegration(
   }
 
   if (fields.length === 0) {
-    return getAgentIntegrationById(id);
+    return getAgentIntegrationById(id, tenantId);
   }
 
   fields.push("updated_at = now()");
   values.push(id);
+  const idParam = index++;
+  const tenantClause = tenantId ? `AND tenant_id = $${index}` : "";
+  if (tenantId) {
+    values.push(tenantId);
+  }
 
   const result = await db.query<AgentIntegration>(
     `UPDATE agent_integrations
      SET ${fields.join(", ")}
-     WHERE id = $${index}
-     RETURNING id, name, provider, base_url, auth_type, shared_secret, status,
+     WHERE id = $${idParam}
+       ${tenantClause}
+     RETURNING id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
                policy_mode, scopes, capabilities, policy, created_at, updated_at`,
     values
   );

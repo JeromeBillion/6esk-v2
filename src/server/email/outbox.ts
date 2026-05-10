@@ -166,48 +166,98 @@ async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>
     throw new Error("Queued email payload is incomplete");
   }
 
-  const resendPayload = {
-    from,
-    to,
-    cc: cc.length ? cc : undefined,
-    bcc: bcc.length ? bcc : undefined,
-    subject,
-    html: html ?? undefined,
-    text: text ?? undefined,
-    reply_to: replyTo,
-    headers: {
-      ...(message.message_id ? { "Message-ID": message.message_id } : {}),
-      ...(message.in_reply_to ? { "In-Reply-To": message.in_reply_to } : {}),
-      ...(message.reference_ids?.length ? { References: message.reference_ids.join(" ") } : {})
-    },
-    attachments: attachments.length
-      ? attachments.map((attachment) => ({
-          filename: attachment.filename,
-          content: attachment.contentBase64,
-          contentType: attachment.contentType
-        }))
-      : undefined
-  };
+  const connection = await import("@/server/oauth/connections").then(m => m.getActiveConnectionForMailbox(from));
 
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": `email-outbox:${eventId}`
-    },
-    body: JSON.stringify(resendPayload)
-  });
+  let providerMessageId: string | null = null;
+  let finalProvider = "resend";
 
-  if (!resendResponse.ok) {
-    const errorBody = await resendResponse.text();
-    throw new Error(errorBody || `Resend request failed for outbox event ${eventId}`);
+  if (connection?.provider === "google" || connection?.provider === "microsoft" || connection?.provider === "zoho") {
+    const { getConnectionTokens } = await import("@/server/oauth/connections");
+    const { decryptToken } = await import("@/server/oauth/crypto");
+
+    const tokens = await getConnectionTokens(connection.id);
+    if (!tokens) throw new Error("Connection tokens missing");
+
+    const combinedStr = decryptToken(tokens.accessTokenEnc, tokens.tokenIv);
+    const { accessToken } = JSON.parse(combinedStr);
+
+    const emailPayload = {
+      to,
+      cc: cc.length ? cc : undefined,
+      bcc: bcc.length ? bcc : undefined,
+      subject,
+      html: html ?? undefined,
+      text: text ?? undefined,
+      replyTo,
+      inReplyTo: message.in_reply_to ?? undefined,
+      references: message.reference_ids?.length ? message.reference_ids : undefined
+    };
+
+    if (connection.provider === "google") {
+      const { sendGmailMessage } = await import("@/server/oauth/providers/google");
+      const result = await sendGmailMessage(accessToken, emailPayload);
+      providerMessageId = result.messageId;
+      finalProvider = "google";
+    } else if (connection.provider === "microsoft") {
+      const { sendOutlookMessage } = await import("@/server/oauth/providers/microsoft");
+      const result = await sendOutlookMessage(accessToken, emailPayload);
+      providerMessageId = result.messageId;
+      finalProvider = "microsoft";
+    } else if (connection.provider === "zoho") {
+      const { sendZohoMessage } = await import("@/server/oauth/providers/zoho");
+      // Zoho needs accountId which we stored in provider_account_id
+      const result = await sendZohoMessage(accessToken, connection.provider_account_id!, emailPayload);
+      providerMessageId = result.messageId;
+      finalProvider = "zoho";
+    }
+  } else {
+    // Fallback to Resend
+    const resendPayload = {
+      from,
+      to,
+      cc: cc.length ? cc : undefined,
+      bcc: bcc.length ? bcc : undefined,
+      subject,
+      html: html ?? undefined,
+      text: text ?? undefined,
+      reply_to: replyTo,
+      headers: {
+        ...(message.message_id ? { "Message-ID": message.message_id } : {}),
+        ...(message.in_reply_to ? { "In-Reply-To": message.in_reply_to } : {}),
+        ...(message.reference_ids?.length ? { References: message.reference_ids.join(" ") } : {})
+      },
+      attachments: attachments.length
+        ? attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: attachment.contentBase64,
+            contentType: attachment.contentType
+          }))
+        : undefined
+    };
+
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `email-outbox:${eventId}`
+      },
+      body: JSON.stringify(resendPayload)
+    });
+
+    if (!resendResponse.ok) {
+      const errorBody = await resendResponse.text();
+      throw new Error(errorBody || `Resend request failed for outbox event ${eventId}`);
+    }
+
+    const resendData = (await resendResponse.json()) as { id?: string; messageId?: string };
+    providerMessageId = resendData.id ?? resendData.messageId ?? null;
   }
 
-  const resendData = (await resendResponse.json()) as { id?: string; messageId?: string };
   return {
     messageRecordId,
-    providerMessageId: resendData.id ?? resendData.messageId ?? null
+    providerMessageId,
+    provider: finalProvider
   };
 }
 

@@ -6,8 +6,12 @@
 This roadmap starts only after `v1` is fully working.
 
 Roadmap relationship:
-- predecessor: [6esk v1 Completion Roadmap](./6esk-v1-completion-roadmap.md)
+- predecessor: `6esk v1` is treated as locked legacy scope; this file is the current canonical v2 roadmap
 - mobile follow-on: [6esk v3 Mobile Roadmap](./6esk-v3-mobile-roadmap.md)
+
+Handover note:
+- no standalone Claude/Codex handover document exists in this worktree by filename or content search
+- this roadmap, the dirty diff, and the test suite are the source of truth for unpushed production-readiness work
 
 ## Product Thesis
 `6esk v2` sells the operating model currently implied by the landing page:
@@ -236,6 +240,19 @@ Commercial packaging must be enforced by system design, not sales promises.
 4. Downgrade/upgrade behavior with safe transitions.
 5. Tenant-facing visibility into enabled modules and usage.
 
+### Admin Usage and Billing Visibility
+Customers and internal operators need a usage page in Admin before paid rollout.
+
+Required page capabilities:
+- current-month estimated bill, split by base modules, add-ons, usage charges, credits, and VAT where applicable
+- module-level usage counters for email, WhatsApp, voice, AI automation, Dexter orchestration, and webchat
+- usage-over-time charts by day/week/month with filters for module, channel, actor type, provider mode, and workspace
+- drill-down from invoice line item to the source usage events that explain the charge
+- clear separation between human-only, AI-assisted, fully autonomous AI, managed-provider, and BYO-provider usage
+- budget guardrails, usage warnings, and unusual-spend indicators by tenant/module
+- exportable usage CSV/PDF that is tenant-scoped and reconciliation-safe
+- role-gated access so customers can view their own usage while only authorized internal roles can see cross-tenant finance views
+
 ### Revenue-Supporting Requirement
 The system must distinguish:
 - human-only channel usage
@@ -280,6 +297,21 @@ Customers must be able to choose between:
 - least-privilege provider scopes with documented customer-facing consent language
 - token revocation, rotation, and re-consent flows
 - tenant-safe sync checkpoints and replay behavior
+
+#### OAuth Implementation Architecture (Approved Plan)
+1. **Sync Frequency**: The sync engine will run via a cron job every **60 seconds** to poll for new mail from all connected providers.
+2. **Shared vs. Personal Mailboxes**:
+   - **Shared/Support Space (Domain)**: Mails bound for organizational emails (e.g., `support@acme.com`) become tickets visible to everyone in the tenant. Admins will configure these domain mailboxes.
+   - **Personal Inbox (Assignee)**: Mails bound for an individual agent's unique account (e.g., `alice@acme.com`) stay in their private inbox, inaccessible to others.
+3. **Historical Backfill**: We will **start fresh**. No historical emails will be imported upon connecting an OAuth provider; only new mail going forward will be synced.
+4. **IMAP/SMTP Support**: Included in **Phase 1** alongside Google and Microsoft, ensuring self-hosted and alternative business email users aren't blocked at launch.
+5. **Encryption at Rest**: Refresh tokens are encrypted using AES-256-GCM.
+6. **Provider Routing**: Outbound sending natively falls back to Resend if an OAuth provider is not attached to the sending mailbox.
+
+**Development Phases**:
+- **Phase 1**: Base `oauth_connections` schema, Crypto AES-GCM layer, API routes (Auth/Callback), Google + Microsoft + IMAP providers, Provider routing in outbox/replies, and the 60s Sync Engine.
+- **Phase 2**: Push notifications (Google Pub/Sub / Microsoft Webhooks) for real-time delivery, OAuth connection health dashboard, Zoho Mail support.
+- **Phase 3 (Enterprise)**: Admin-consent flows for M365 org-wide delegation, Google domain-wide delegation, and DKIM/SPF verifications.
 
 ### Managed Email Service Requirements
 - customer domain onboarding flow
@@ -353,6 +385,81 @@ The current Venus-derived capability must become an optional `6esk` module, not 
 - BYO AI keys are tenant secrets and must never be visible to other tenants or broad internal roles
 - provider responses, embeddings, transcripts, summaries, and QA flags must not cross tenant boundaries in caches, traces, prompts, eval datasets, or analytics
 - human review is mandatory for high-impact or irreversible workflows until the product has proven controls and customer-approved policy
+
+### AI Production Readiness Sequence
+This work must proceed in small, reversible slices. The AI module cannot be treated as "done" just because the Venus-derived code exists in the repo.
+
+Completed production-readiness slices:
+- transcript AI jobs now require a tenant boundary before provider execution
+- tenant AI provider resolution fails closed for unknown tenants, disabled AI mode, missing BYO keys, and undecryptable BYO keys
+- AI usage metering records the resolved provider mode rather than inferring it from incomplete state
+- transcript AI worker dispatch carries the job tenant into provider calls and audit events
+- agent integration records include tenant ownership so outbox usage can be tied back to a tenant
+- production build and focused transcript AI / agent outbox tests pass after the tenant-boundary changes
+- tenant-scoped agent events now carry tenant identity from ticket, message, call, reply, merge/link, draft, inbound email, WhatsApp, and portal producers
+- agent outbox enqueue, delivery, failed-event listing, retry, and metrics now select integrations within the event tenant rather than a global active integration
+- agent event payloads include tenant-safe resource correlation, and tenantless events are rejected instead of silently falling into the default integration
+- high-impact merge/link entry points now validate source and target tickets within the caller tenant before executing or publishing agent events
+- email replies, WhatsApp sends, approved AI drafts, and outbound bulk email now preserve tenant identity through message, event, audit, and usage writes
+- Dexter runtime startup now has an explicit native ElizaOS lifecycle behind `DEXTER_RUNTIME_ENABLED`, deduped startup, disabled/starting/active/degraded/failed states, active agent counts, dispatcher readiness, startup failure reasons, and fail-closed internal event dispatch
+- lead admins can read Dexter runtime readiness from `GET /api/admin/agents/runtime` without mutating runtime state
+- focused Dexter runtime/admin readiness tests, focused agent/call tests, and the production build pass after the runtime-readiness slice
+- agent action execution now binds module entitlement checks to the authenticated integration tenant instead of session/default tenant context, and integrations without tenant ownership fail closed before any AI side effect
+- focused agent action safety tests cover missing integration tenant ownership and tenant-scoped module entitlement enforcement
+- agent action execution now enforces a per-integration action rate limit from `capabilities.max_actions_per_minute` / `maxActionsPerMinute` or `AGENT_ACTIONS_MAX_PER_MINUTE`, records rate-limit audits, and rejects bursts before ticket side effects
+- focused action tests now cover AI module gating, merge/action safety, voice policy/idempotency behavior, and action rate-limit denial before side effects
+- non-call agent actions with `idempotencyKey` now claim a tenant-scoped `agent_action_idempotency` ledger before side effects, replay stored responses for duplicate requests, and reject reused keys when the action payload differs
+- focused action tests now cover non-call idempotency claim, replay suppression, and conflict behavior before draft side effects
+- high-risk agent actions now fail closed without an `idempotencyKey` before executable side effects such as customer contact, approved voice calls, ticket mutation, human-review writeback, merge proposals, direct ticket merges/links, and customer merges
+- focused action tests now cover required idempotency for auto-send replies, approved voice calls, ticket priority mutation, and direct ticket merge execution
+- agent action execution now supports explicit `dry_run`, `draft_only`, `limited_auto`, and `auto` rollout modes from agent policy/capabilities, blocking before ticket mutation, customer contact, provider calls, or direct merge execution when the mode does not allow the action
+- focused action tests now cover dry-run no-side-effect behavior, draft-only mutation blocking, limited-auto customer-contact blocking, and explicit limited-auto allowlisting
+- lead admins can read and update tenant-scoped Dexter rollout controls from `GET/PATCH /api/admin/agents/[agentId]/rollout`, with canonical `actionRolloutMode`, `allowedAutoActions`, and `maxActionsPerMinute` persistence plus audit logging
+- focused admin rollout tests now cover tenant-scoped lookup, secret-free read responses, invalid rollout rejection, stale alias stripping, canonical policy/capability writes, and audit emission
+- agent customer-merge actions and customer-merge review proposals now validate source and target customer IDs inside the authenticated tenant before merge/review side effects
+- focused cross-tenant action tests now cover primary ticket lookup, merge target lookup, and customer merge ID validation so unscoped lookups cannot silently use foreign tenant records
+- primary agent-action tenant lookup regression coverage now spans draft replies, tag mutation, priority mutation, assignment, human-review requests, and voice call initiation before any action-specific side effects can run
+- customer profile, identity, history, bulk-email recipient resolution, inbound-call ticket reopen, and ticket-customer attachment paths now require tenant-scoped service/API contracts instead of optional tenant filters
+- focused customer service/API tests now assert tenant predicates for direct customer reads, identity reads, customer history SQL, customer attachment, ticket reopen, customer-history API, customer-profile update API, and bulk-email recipient resolution
+- WhatsApp outbox operations now preserve tenant boundaries for admin metrics, failed-event listing, retry, and manual delivery while retaining all-tenant worker execution for shared-secret jobs
+- focused WhatsApp outbox tests now assert tenant predicates for failed-event listing, retry SQL, metrics SQL, and admin route calls into tenant-scoped outbox services
+- message detail, message mutation, spam marking, attachment fetch, WhatsApp resend, email send, and mailbox draft paths now thread authenticated tenant context through message, attachment, ticket-assignment, mailbox-access, status-event, resend-event, and draft persistence calls
+- focused message-service/API tests now assert tenant predicates for message reads, message attachments, ticket assignment checks, mailbox membership checks, thread updates, WhatsApp resend queueing, email send persistence, and draft save/delete routing
+- inbound email now derives tenant ownership from the resolved mailbox and writes duplicate checks, customer resolution, tickets, ticket events, messages, attachments, storage cleanup, and agent events inside that tenant
+- inbound WhatsApp now derives tenant ownership from the active account/recipient, scopes duplicate checks, ticket/message/status/attachment/storage writes, scopes outbound account selection by tenant, and avoids raw/status persistence when webhook tenant ownership cannot be resolved
+- focused inbound tenant-isolation tests now assert tenant predicates for inbound email and WhatsApp store paths; the full Vitest suite and production build pass after this ingress slice
+- `/api/health` now reports non-secret Dexter runtime readiness alongside database health, marking enabled-but-inactive runtime states as degraded without exposing startup failure details on the public health surface
+- focused health tests cover disabled, degraded, and database-down health responses
+- voice call option, outbound queue, and agent voice-action paths now pass authenticated tenant scope into the call service instead of relying on ticket IDs alone
+- inbound voice calls now accept trusted tenant scope, validate explicit ticket IDs inside that tenant before attaching messages, write voice messages under the resolved tenant, and require `CALLS_TENANT_ID` for unscoped production ingress instead of silently falling into the default tenant
+- call recording/transcript attachments and transcript job enqueue/completion now carry the call session tenant, and transcript job failure audits include tenant context
+- focused call-service, recording-storage, outbound-call, inbound-call, Twilio voice webhook, and agent voice-action tests pass after the voice tenant-readiness slice
+- OAuth connected-mail sync, outbound sends, and ticket replies now decrypt the actual combined encrypted token payload from `access_token_enc`, refresh back into the same storage shape, and have regression coverage for the sync path
+- OAuth mailbox connection writes now use a pinned transaction client for mailbox changes and set provider push subscriptions after commit so external network calls do not hold the transaction open
+- the mailbox sync cron fails closed in production when `CRON_SECRET` is absent, and Microsoft webhook validation no longer accepts a static fallback client state
+- customer-contact module gates now pass explicit tenant scope for email, WhatsApp, voice, ticket creation, replies, draft sends, and AI action execution instead of relying on default tenant context
+- AI call review writebacks now have a tenant-scoped migration and tenant-bound idempotency checks so duplicated AI call summaries cannot cross tenant boundaries
+
+Remaining launch gates:
+1. Bounded AI tool execution:
+   - every tool/action must pass tenant, entitlement, role/policy, rate-limit, and idempotency checks before side effects
+   - autonomous actions must support dry-run, draft-only, human-review, and auto-send modes
+   - LLM output must never directly authorize customer contact, billing, identity, compliance, or destructive operations
+   - remaining work: broaden cross-tenant regression tests across the remaining action classes and services
+2. Observability and operations:
+   - queue depth, provider latency, provider errors, model/token usage, spend, denied actions, retries, and hard failures must be visible by tenant/module
+   - alerts must exist for AI provider failure spikes, BYO key failures, abnormal tenant spend, action denials, and runtime health degradation
+   - support diagnostics must show why AI did or did not act without exposing prompts or cross-tenant data
+   - remaining work: promote runtime/outbox/provider signals into tenant-aware dashboards, alerts, and operational runbooks
+3. Rollout and rollback:
+   - per-tenant AI mode toggles must support `none`, managed, BYO, dry-run, draft-only, and limited auto-action rollout
+   - rollback must stop new AI work safely while preserving historical transcripts, summaries, usage, and audit trails
+   - failed or disabled AI must degrade to human workflow, not block ticket handling
+
+Outstanding tally after the May 2026 consolidation pass:
+- AI module launch blockers: 3 remaining P0 gates: bounded tool execution, observability/operations, and rollout/rollback. Bounded execution is substantially closed for the current action route, customer-service paths, WhatsApp outbox operator paths, message/attachment/resend/draft paths, inbound email/WhatsApp store paths, voice call write paths, OAuth mail provider sends/sync, and call-review writebacks, but still needs broader cross-tenant regression coverage for remaining admin, worker, analytics, export, and support-tool paths before external tenants.
+- Wider `v2` security blockers: tenant-guarded repository/service APIs, cross-tenant regression coverage, tenant-safe secrets and rotation, remaining fail-closed provider ingress, support impersonation controls, export/delete lifecycle, and backup/restore proof.
+- Commercial blockers: admin usage/billing page with charts and invoice drill-down, tenant-facing module controls, production pricing reconciliation, and internal `6esk Work` backoffice.
 
 ### Explicit Commercial Rule
 BYO AI should reduce customer cost materially, but 6esk still owns:
@@ -538,6 +645,7 @@ A SaaS business dies if it cannot:
 6. finance reconciliation against provider spend
 7. margin reporting by tenant/module
 8. hosted-email cost and margin tracking separate from connected-email mode
+9. tenant-facing Admin usage and billing page with charts, estimated invoice, usage exports, and explainable line items
 
 ### Financial Control Requirements
 - usage records must be tenant-scoped, append-only or reconciliation-safe, and traceable to source events
@@ -545,6 +653,8 @@ A SaaS business dies if it cannot:
 - billing suspension must stop new billable usage without corrupting historical records or audit trails
 - invoices and usage exports must never include another tenant's usage, identifiers, or metadata
 - manual credits, refunds, write-offs, and plan overrides require role checks and audit trails
+- customer-facing usage totals must reconcile to the same source events used for invoices
+- usage charting must make invoice shock visible before month end through budget warnings and forecasted totals
 
 ### Missing From Current Internal-Tool Shape
 The platform currently behaves like a product. `v2` must also behave like a business system.
@@ -629,11 +739,86 @@ These are the gaps teams usually underestimate:
 16. provider-token compromise response and customer re-consent workflows
 17. delete/export/restore flows that pass happy-path demos but fail under legal or incident pressure
 
+## Production-Readiness Audit Findings (May 2026)
+
+A full backend audit was conducted against the current `v2` codebase. Findings are mapped to the roadmap workstreams and security gates they block.
+
+**Overall risk assessment:** MEDIUM — strong fundamentals (parameterized SQL, Zod validation, rate limiting, 90+ tests), but several issues will cause failures under production load or block security gate sign-off.
+
+Current status after the May 10, 2026 consolidation pass:
+
+| Status | Items |
+|---|---|
+| Closed in code | C-1 async password hashing, C-2 portal ticket authentication, C-3 escaped ticket search wildcards, C-4 password-reset rate limiting, H-1 DB pool/timeouts, H-2 batched WhatsApp status lookup/update shape, H-3 logged WhatsApp store failures, H-4 ticket list limit, M-1 failing health check returns `503`, M-3 ticket detail/message/event tenant arguments are required |
+| Closed or clarified in migrations | M-6 duplicate migration names were replaced with `0015b_*` and `0038b_*`; the remaining missing `0041` number is a numbering gap, not an ordering risk for the current lexicographic migration runner |
+| Newly closed in this consolidation | OAuth combined-token decrypt/refresh shape, production cron fail-closed behavior, Microsoft webhook static-client-state fallback, OAuth callback mailbox transaction ownership, explicit tenant-scoped contact module checks, tenant-scoped call review writebacks |
+| Still open | M-2 fail-fast env validation, M-4 structured logging rollout, M-5 auth/session type cleanup, D-1 API versioning, D-2 ticket-create route decomposition, D-3 shared error envelope, D-4 ElizaOS alpha dependency risk decision, D-5 dependency vulnerability baseline |
+
+### P0 — Critical (must fix before any external tenant data)
+
+These block **Gate 1 (Tenant Isolation)**, **Gate 2 (Identity/Authorization)**, and **Gate 3 (Secrets/Ingress)**.
+
+| ID | Issue | File | Workstream |
+|---|---|---|---|
+| C-1 | `scryptSync` blocks the event loop on every login and password reset. Under load this is a denial-of-service vector against the entire application. Must migrate to async `scrypt`. | `src/server/auth/password.ts:L7,L19` | B (Auth) |
+| C-2 | `/api/portal/tickets` has **zero authentication**. Any attacker can flood the system with fake tickets, pollute customer records, and trigger agent events. Needs an API key or CAPTCHA gate. | `src/app/api/portal/tickets/route.ts:L35` | G (Security) |
+| C-3 | ILIKE search does not escape `%` and `_` wildcards in user input, enabling wildcard injection for data extraction via timing or pattern probing. | `src/server/tickets.ts:L293` | G (Security) |
+| C-4 | `/api/auth/password-reset` is not in the rate-limit middleware matcher. Token brute-force is unrestricted. | `middleware.ts:L224-L236` | B (Auth), G (Security) |
+
+### P1 — High (will cause failures at scale)
+
+These block **Gate 4 (Telemetry/Incident Response)** and **Workstream H (Reliability)**.
+
+| ID | Issue | File | Workstream |
+|---|---|---|---|
+| H-1 | Database pool has no `max`, `idleTimeoutMillis`, `connectionTimeoutMillis`, or `statement_timeout`. Default `max:10` will exhaust under production concurrency; runaway queries hold connections forever. | `src/server/db.ts:L7-9` | H (Reliability) |
+| H-2 | `applyStatusUpdates` runs 3 sequential queries per WhatsApp status update inside a loop. A single Meta webhook with 20 statuses causes 60+ serial queries. Must batch. | `src/app/api/whatsapp/inbound/route.ts:L258-291` | H (Reliability) |
+| H-3 | WhatsApp inbound silently drops messages on `storeInboundWhatsApp` failure — bare `catch { continue }` with no logging. Customer messages can vanish without a trace. | `src/app/api/whatsapp/inbound/route.ts:L336-338` | H (Reliability) |
+| H-4 | `listTicketsForUser` has no `LIMIT` or pagination. Tenants with thousands of tickets will trigger OOM and request timeouts. | `src/server/tickets.ts:L383-407` | A (Multi-Tenant) |
+| H-5 | 50+ bare `catch {}` blocks across the codebase silently swallow errors. Production debugging will be extremely difficult. Needs at minimum structured logging in every block. | Throughout `src/server/`, `src/app/api/` | H (Telemetry) |
+
+### P2 — Medium (maintainability / reliability gaps)
+
+These block **Workstream H (Supportability)** and weaken **Gate 1 (Tenant Isolation)**.
+
+| ID | Issue | File | Workstream |
+|---|---|---|---|
+| M-1 | Health check returns `200 OK` even when the database is unreachable. Load balancers and orchestrators will keep routing traffic to broken instances. | `src/app/api/health/route.ts` | H (Reliability) |
+| M-2 | Environment variable validation (`env.ts`) is lazy — only runs on first `getEnv()` call. App boots successfully with missing secrets, then crashes on first request. Must fail-fast at startup. | `src/server/env.ts:L29` | G (Security) |
+| M-3 | `getTicketById`, `listTicketMessages`, `listTicketEvents` accept `tenantId` as **optional**. Any caller that forgets to pass it queries across all tenants — a cross-tenant data leak vector. Parameter must be required. | `src/server/tickets.ts:L410-479` | A (Tenant Isolation) |
+| M-4 | No structured logging. Only scattered `console.log`/`console.error` with no log levels, request IDs, or tenant context. Production log analysis will be impractical. | Codebase-wide | H (Telemetry) |
+| M-5 | `session.ts` uses `(row as any)._real_slug` — type-safety hole in the authentication layer. | `src/server/auth/session.ts:L103` | B (Auth) |
+| M-6 | Migration numbering collision: two `0015_` files and two `0038_` files. Also missing `0041_`. Order-dependent migration runners may produce unpredictable schema states. | `db/migrations/` | A (Multi-Tenant) |
+
+### P3 — Cleanup (tech debt / scalability blockers)
+
+| ID | Issue | Workstream |
+|---|---|---|
+| D-1 | No API versioning. Breaking changes to agent webhook, portal, or WhatsApp formats have no buffer. | K (GTM) |
+| D-2 | `tickets/create/route.ts` is 822 lines of mixed auth, validation, customer resolution, call policy, message creation, and event dispatch. No separation of concerns. | H (Supportability) |
+| D-3 | Inconsistent error response shapes across endpoints (`{ error }` vs `{ error, details }` vs `{ error, code }`). No shared error envelope. | H (Supportability) |
+| D-4 | `@elizaos/core@^2.0.0-alpha.77` is an alpha dependency in production, and `next build` still emits bundler warnings for its `import.meta` and dynamic dependency usage through `src/server/dexter-runtime.ts`. Decide whether to pin, isolate, replace, or explicitly accept this runtime risk before launch. | E (AI) |
+| D-5 | No `npm audit` baseline or dependency vulnerability tracking. | G (Security) |
+
+### Recommended Fix Sequence
+
+The first audit quick-fix set is now closed in code. The next sequence should focus on remaining launch-gate proof rather than more feature work:
+
+1. **M-2** — make production env validation fail fast at startup, including OAuth, webhook, cron, AI, STT, storage, and provider secrets
+2. **M-4** — finish structured logging with tenant ID, request/correlation ID, actor, provider, queue/job ID, and safe error detail
+3. **M-5** — remove auth/session type holes and make impersonation/support access contracts explicit
+4. **D-5** — add dependency audit baseline and remediation workflow
+5. **D-1/D-3** — stabilize public API versioning and shared error envelopes before external integration customers build against the API
+6. **D-2** — decompose `tickets/create/route.ts` after the security surfaces are stable, preserving current tests as the safety net
+
+The remaining P1/P2 work should be addressed in Phase 1 alongside security gate evidence, not after commercialization.
+
 ## Recommended Execution Order
 ### Phase 0: lock v1 first
 - do not commercialize before `v1` is truly complete
 
 ### Phase 1: security and tenant-isolation foundation
+- **remaining production-readiness quick-fixes: fail-fast env validation, structured logging, session type cleanup, dependency audit baseline**
 - threat model and security launch gates
 - multi-tenant model
 - tenant-bound data migration strategy
@@ -641,11 +826,13 @@ These are the gaps teams usually underestimate:
 - auth/identity/authorization model
 - secrets management and provider-ingress fail-closed behavior
 - audit event model and privileged-access policy
+- remaining production audit P1/P2 items (H-2 through M-6)
 
 ### Phase 2: commercial architecture foundation
 - entitlements
 - tenant-safe connectors
 - module-safe queues and provider adapters
+- tenant-scoped AI job/provider execution and agent event routing
 - tenant lifecycle operations
 - support-safe admin tooling
 
@@ -659,6 +846,7 @@ These are the gaps teams usually underestimate:
 ### Phase 4: packaging and monetization
 - billing/metering/catalog
 - AI provider modes
+- Admin usage and billing page with charts, estimated invoice, and usage exports
 - customer-facing plan structure
 
 ### Phase 5: bizops operating system

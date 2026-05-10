@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const MESSAGE_ID = "11111111-1111-1111-1111-111111111111";
 const THREAD_ID = "thread-123";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -35,7 +36,8 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -91,6 +93,7 @@ describe("PATCH /api/messages/[messageId]", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.hasMailboxAccess).toHaveBeenCalledWith("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "mailbox-1", TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -103,6 +106,7 @@ describe("PATCH /api/messages/[messageId]", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketAssignment).toHaveBeenCalledWith("ticket-1", TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -126,7 +130,8 @@ describe("PATCH /api/messages/[messageId]", () => {
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("is_read = $1");
     expect(sql).toContain("WHERE (thread_id = $2 OR id = $3)");
-    expect(values).toEqual([true, THREAD_ID, MESSAGE_ID, "mailbox-1"]);
+    expect(sql).toContain("AND tenant_id = $5");
+    expect(values).toEqual([true, THREAD_ID, MESSAGE_ID, "mailbox-1", TENANT_ID]);
   });
 
   it("updates a single message when thread_id is missing", async () => {
@@ -145,6 +150,7 @@ describe("PATCH /api/messages/[messageId]", () => {
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("is_read = $2");
     expect(sql).toContain("is_pinned = $1");
-    expect(values).toEqual([true, false, MESSAGE_ID]);
+    expect(sql).toContain("AND tenant_id = $4");
+    expect(values).toEqual([true, false, MESSAGE_ID, TENANT_ID]);
   });
 });

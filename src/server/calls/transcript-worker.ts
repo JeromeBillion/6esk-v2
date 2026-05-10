@@ -86,6 +86,7 @@ export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: numb
         errorMessage: detail
       });
       await recordAuditLog({
+        tenantId: job.tenant_id,
         action: "call_transcript_job_failed",
         entityType: "call_transcript_jobs",
         entityId: job.id,

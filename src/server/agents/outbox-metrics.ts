@@ -29,9 +29,10 @@ function toIso(value: Date | null | undefined) {
 
 export async function getAgentOutboxMetrics(
   agentId: string,
-  requestedLimit?: number | null
+  requestedLimit?: number | null,
+  tenantId?: string | null
 ) {
-  const integration = await getAgentIntegrationById(agentId);
+  const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return null;
   }
@@ -51,19 +52,21 @@ export async function getAgentOutboxMetrics(
        MAX(updated_at) FILTER (WHERE status = 'delivered') AS last_delivered_at,
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM agent_outbox
-     WHERE integration_id = $1`,
-    [integration.id]
+     WHERE integration_id = $1
+       AND tenant_id = $2`,
+    [integration.id, integration.tenant_id]
   );
 
   const errorResult = await db.query<OutboxErrorRow>(
     `SELECT last_error
      FROM agent_outbox
      WHERE integration_id = $1
+       AND tenant_id = $2
        AND status = 'failed'
        AND last_error IS NOT NULL
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [integration.id]
+    [integration.id, integration.tenant_id]
   );
 
   const summary = summaryResult.rows[0] ?? {

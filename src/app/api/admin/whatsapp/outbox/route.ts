@@ -11,7 +11,7 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const metrics = await getWhatsAppOutboxMetrics();
+  const metrics = await getWhatsAppOutboxMetrics(user?.tenant_id ?? DEFAULT_TENANT_ID);
   return Response.json(metrics);
 }
 
@@ -28,12 +28,13 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 10) || 10, 1), 100);
+  const tenantId = user?.tenant_id ?? null;
 
   try {
-    const result = await deliverPendingWhatsAppEvents({ limit });
+    const result = await deliverPendingWhatsAppEvents({ limit, tenantId });
 
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_triggered",
       entityType: "whatsapp_events",
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run WhatsApp outbox";
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_trigger_failed",
       entityType: "whatsapp_events",

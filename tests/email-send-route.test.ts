@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   isMailDraftRecord: vi.fn()
 }));
 
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
+
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
 }));
@@ -67,7 +69,8 @@ function buildUser() {
     email: "jerome.choma@6ex.co.za",
     display_name: "Jerome",
     role_id: "role-1",
-    role_name: "lead_admin"
+    role_name: "lead_admin",
+    tenant_id: TENANT_ID
   };
 }
 
@@ -80,6 +83,7 @@ describe("POST /api/email/send", () => {
     mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
     mocks.findMailbox.mockResolvedValue({
       id: "mailbox-1",
+      tenant_id: TENANT_ID,
       type: "personal",
       address: "jerome.choma@6ex.co.za",
       owner_user_id: "user-1"
@@ -122,17 +126,20 @@ describe("POST /api/email/send", () => {
     expect(insertSql).toContain("metadata");
     expect(insertSql).toContain("in_reply_to");
     expect(insertSql).toContain("reference_ids");
-    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(insertValues[3]).toBe("<root@example.com>");
-    expect(insertValues[4]).toBe("<parent@example.com>");
-    expect(insertValues[5]).toEqual(["<root@example.com>", "<parent@example.com>"]);
+    expect(insertSql).toContain("tenant_id");
+    expect(insertValues[0]).toBe(TENANT_ID);
+    expect(insertValues[3]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(insertValues[4]).toBe("<root@example.com>");
+    expect(insertValues[5]).toBe("<parent@example.com>");
+    expect(insertValues[6]).toEqual(["<root@example.com>", "<parent@example.com>"]);
     expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        messageRecordId: insertValues[0],
+        messageRecordId: insertValues[1],
         from: "jerome.choma@6ex.co.za",
         to: ["customer@example.com"],
         subject: "Re: Need help"
-      })
+      }),
+      TENANT_ID
     );
   });
 
@@ -155,15 +162,17 @@ describe("POST /api/email/send", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
 
     const [, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(insertValues[3]).toBe(insertValues[2]);
-    expect(insertValues[4]).toBeNull();
+    expect(insertValues[0]).toBe(TENANT_ID);
+    expect(insertValues[3]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(insertValues[4]).toBe(insertValues[3]);
     expect(insertValues[5]).toBeNull();
+    expect(insertValues[6]).toBeNull();
     expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        messageRecordId: insertValues[0],
+        messageRecordId: insertValues[1],
         subject: "Fresh thread"
-      })
+      }),
+      TENANT_ID
     );
   });
 
@@ -195,11 +204,13 @@ describe("POST /api/email/send", () => {
     const [updateSql, updateValues] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(updateSql).toContain("mail_state', 'queued'");
     expect(updateValues[10]).toBe("11111111-1111-1111-1111-111111111111");
+    expect(updateValues[11]).toBe(TENANT_ID);
     expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         messageRecordId: "11111111-1111-1111-1111-111111111111",
         subject: "Draft send"
-      })
+      }),
+      TENANT_ID
     );
   });
 });

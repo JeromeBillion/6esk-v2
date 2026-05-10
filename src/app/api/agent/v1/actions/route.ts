@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { z } from "zod";
 import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
@@ -9,6 +10,7 @@ import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { sendTicketReply } from "@/server/email/replies";
 import { addTagsToTicket, getTicketById, recordTicketEvent } from "@/server/tickets";
+import { getCustomerById } from "@/server/customers";
 import { linkTickets, mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
 import { createMergeReviewTask, MergeReviewError } from "@/server/merge-reviews";
 import {
@@ -70,7 +72,38 @@ const payloadSchema = z.object({
   actions: z.array(actionSchema).max(10).optional()
 });
 
+type AgentAction = z.infer<typeof actionSchema>;
+type ActionResult = {
+  type: string;
+  status: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+};
+type AgentActionRolloutMode = "dry_run" | "draft_only" | "limited_auto" | "auto";
+
 const DEFAULT_AGENT_MERGE_MIN_CONFIDENCE = 0.85;
+const DEFAULT_AGENT_ACTIONS_MAX_PER_MINUTE = 120;
+const DRAFT_ONLY_ROLLOUT_ACTIONS = new Set(["draft_reply", "request_human_review", "propose_merge"]);
+const REQUIRED_IDEMPOTENCY_ACTIONS = new Set<AgentAction["type"]>([
+  "send_reply",
+  "initiate_call",
+  "set_tags",
+  "set_priority",
+  "assign_to",
+  "request_human_review",
+  "propose_merge",
+  "merge_tickets",
+  "link_tickets",
+  "merge_customers"
+]);
+const DEFAULT_LIMITED_AUTO_ACTIONS = new Set([
+  "draft_reply",
+  "request_human_review",
+  "propose_merge",
+  "set_tags",
+  "set_priority",
+  "assign_to"
+]);
 
 function getAgentMergeMinConfidence() {
   const raw = Number.parseFloat(
@@ -82,6 +115,34 @@ function getAgentMergeMinConfidence() {
   if (raw < 0) return 0;
   if (raw > 1) return 1;
   return raw;
+}
+
+function readPositiveInteger(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
+
+function getAgentActionsMaxPerMinute(capabilities: Record<string, unknown> | null | undefined) {
+  return (
+    readPositiveInteger(capabilities?.max_actions_per_minute) ??
+    readPositiveInteger(capabilities?.maxActionsPerMinute) ??
+    readPositiveInteger(process.env.AGENT_ACTIONS_MAX_PER_MINUTE) ??
+    DEFAULT_AGENT_ACTIONS_MAX_PER_MINUTE
+  );
+}
+
+async function getRecentAgentActionCount(tenantId: string, integrationId: string) {
+  const result = await db.query<{ used: number | string }>(
+    `SELECT COUNT(*)::int AS used
+     FROM audit_logs
+     WHERE tenant_id = $1
+       AND data->>'agentId' = $2
+       AND action LIKE 'ai_%'
+       AND created_at >= now() - interval '1 minute'`,
+    [tenantId, integrationId]
+  );
+  return Number(result.rows[0]?.used ?? 0);
 }
 
 function validateMergeSafety(
@@ -166,6 +227,171 @@ function readString(value: unknown) {
   return trimmed || null;
 }
 
+function readStringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => readString(item))
+      .filter((item): item is string => Boolean(item));
+  }
+  const raw = readString(value);
+  return raw ? raw.split(",").map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function normalizeAgentActionRolloutMode(value: unknown): AgentActionRolloutMode | null {
+  const normalized = readString(value)?.toLowerCase().replace(/-/g, "_");
+  if (!normalized) return null;
+  if (normalized === "dry_run" || normalized === "dryrun" || normalized === "audit_only") {
+    return "dry_run";
+  }
+  if (normalized === "draft_only" || normalized === "review_only" || normalized === "human_review") {
+    return "draft_only";
+  }
+  if (normalized === "limited_auto" || normalized === "limited" || normalized === "limited_auto_action") {
+    return "limited_auto";
+  }
+  if (normalized === "auto" || normalized === "auto_send" || normalized === "full_auto") {
+    return "auto";
+  }
+  return null;
+}
+
+function readActionRolloutModeFrom(record: Record<string, unknown> | null | undefined) {
+  if (!record) return null;
+  if (record.dryRun === true || record.dry_run === true) {
+    return "dry_run" as const;
+  }
+  return (
+    normalizeAgentActionRolloutMode(record.actionRolloutMode) ??
+    normalizeAgentActionRolloutMode(record.action_rollout_mode) ??
+    normalizeAgentActionRolloutMode(record.autonomousActionMode) ??
+    normalizeAgentActionRolloutMode(record.autonomous_action_mode) ??
+    normalizeAgentActionRolloutMode(record.rolloutMode) ??
+    normalizeAgentActionRolloutMode(record.rollout_mode)
+  );
+}
+
+function getAgentActionRolloutMode(input: {
+  policy?: Record<string, unknown> | null;
+  capabilities?: Record<string, unknown> | null;
+}) {
+  return readActionRolloutModeFrom(input.policy) ?? readActionRolloutModeFrom(input.capabilities) ?? "auto";
+}
+
+function getConfiguredLimitedAutoActions(input: {
+  policy?: Record<string, unknown> | null;
+  capabilities?: Record<string, unknown> | null;
+}) {
+  const actions = [
+    ...readStringList(input.policy?.limitedAutoActions),
+    ...readStringList(input.policy?.limited_auto_actions),
+    ...readStringList(input.policy?.allowedAutoActions),
+    ...readStringList(input.policy?.allowed_auto_actions),
+    ...readStringList(input.capabilities?.limitedAutoActions),
+    ...readStringList(input.capabilities?.limited_auto_actions),
+    ...readStringList(input.capabilities?.allowedAutoActions),
+    ...readStringList(input.capabilities?.allowed_auto_actions)
+  ];
+  return new Set(actions);
+}
+
+function getActionRolloutDecision(input: {
+  action: AgentAction;
+  rolloutMode: AgentActionRolloutMode;
+  allowedLimitedAutoActions: Set<string>;
+}): ActionResult | null {
+  if (input.rolloutMode === "dry_run") {
+    return {
+      type: input.action.type,
+      status: "dry_run",
+      detail: "Dry-run mode; no side effects executed.",
+      data: {
+        rolloutMode: input.rolloutMode,
+        wouldExecute: input.action.type
+      }
+    };
+  }
+
+  if (
+    input.rolloutMode === "draft_only" &&
+    !DRAFT_ONLY_ROLLOUT_ACTIONS.has(input.action.type)
+  ) {
+    return {
+      type: input.action.type,
+      status: "blocked",
+      detail: "Action blocked by draft-only AI rollout mode.",
+      data: {
+        rolloutMode: input.rolloutMode,
+        errorCode: "action_rollout_blocked"
+      }
+    };
+  }
+
+  if (
+    input.rolloutMode === "limited_auto" &&
+    !DEFAULT_LIMITED_AUTO_ACTIONS.has(input.action.type) &&
+    !input.allowedLimitedAutoActions.has(input.action.type)
+  ) {
+    return {
+      type: input.action.type,
+      status: "blocked",
+      detail: "Action blocked by limited auto-action rollout mode.",
+      data: {
+        rolloutMode: input.rolloutMode,
+        errorCode: "action_rollout_blocked"
+      }
+    };
+  }
+
+  return null;
+}
+
+function getRequiredIdempotencyFailure(action: AgentAction): ActionResult | null {
+  if (!REQUIRED_IDEMPOTENCY_ACTIONS.has(action.type) || readString(action.idempotencyKey)) {
+    return null;
+  }
+
+  return {
+    type: action.type,
+    status: "failed",
+    detail: "idempotencyKey is required for this AI action.",
+    data: {
+      errorCode: "idempotency_required"
+    }
+  };
+}
+
+async function recordRequiredIdempotencyFailure(input: {
+  tenantId: string;
+  integrationId: string;
+  action: AgentAction;
+}) {
+  await recordAuditLog({
+    tenantId: input.tenantId,
+    action: "ai_action_idempotency_required",
+    entityType: "ticket",
+    entityId: input.action.ticketId,
+    data: {
+      agentId: input.integrationId,
+      actionType: input.action.type
+    }
+  });
+}
+
+async function validateCustomerPairForTenant(input: {
+  sourceCustomerId: string;
+  targetCustomerId: string;
+  tenantId: string;
+}) {
+  const [sourceCustomer, targetCustomer] = await Promise.all([
+    getCustomerById(input.sourceCustomerId, input.tenantId),
+    getCustomerById(input.targetCustomerId, input.tenantId)
+  ]);
+  if (!sourceCustomer || !targetCustomer) {
+    return "Source or target customer not found for customer merge.";
+  }
+  return null;
+}
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -190,6 +416,205 @@ function extractCallSessionId(metadata: Record<string, unknown> | null | undefin
   return null;
 }
 
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForStableJson(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => [key, normalizeForStableJson(entryValue)])
+  );
+}
+
+function stableStringify(value: unknown) {
+  return JSON.stringify(normalizeForStableJson(value));
+}
+
+function buildActionRequestHash(action: AgentAction) {
+  return createHash("sha256")
+    .update(stableStringify({ ...action, idempotencyKey: undefined }))
+    .digest("hex");
+}
+
+function shouldUseActionIdempotency(action: AgentAction) {
+  const idempotencyKey = readString(action.idempotencyKey);
+  if (!idempotencyKey) return null;
+
+  if (action.type === "initiate_call") {
+    return null;
+  }
+  if (action.type === "request_human_review" && extractCallSessionId(action.metadata ?? null)) {
+    return null;
+  }
+
+  return idempotencyKey;
+}
+
+function isActionResult(value: unknown): value is ActionResult {
+  const record = asRecord(value);
+  return Boolean(record && typeof record.type === "string" && typeof record.status === "string");
+}
+
+function withDedupedData(result: ActionResult, idempotencyKey: string): ActionResult {
+  return {
+    ...result,
+    data: {
+      ...(result.data ?? {}),
+      idempotencyKey,
+      deduplicated: true
+    }
+  };
+}
+
+type ActionIdempotencyClaim =
+  | { mode: "new"; idempotencyKey: string; requestHash: string }
+  | { mode: "duplicate"; response: ActionResult }
+  | { mode: "conflict"; idempotencyKey: string };
+type NewActionIdempotencyClaim = Extract<ActionIdempotencyClaim, { mode: "new" }>;
+
+async function claimAgentActionIdempotency(input: {
+  tenantId: string;
+  integrationId: string;
+  action: AgentAction;
+  idempotencyKey: string;
+}): Promise<ActionIdempotencyClaim> {
+  const requestHash = buildActionRequestHash(input.action);
+  const claimed = await db.query<{ id: string }>(
+    `INSERT INTO agent_action_idempotency (
+       tenant_id,
+       integration_id,
+       idempotency_key,
+       action_type,
+       ticket_id,
+       request_hash
+     ) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (tenant_id, integration_id, idempotency_key) DO NOTHING
+     RETURNING id`,
+    [
+      input.tenantId,
+      input.integrationId,
+      input.idempotencyKey,
+      input.action.type,
+      input.action.ticketId,
+      requestHash
+    ]
+  );
+
+  if (claimed.rows[0]?.id) {
+    return { mode: "new", idempotencyKey: input.idempotencyKey, requestHash };
+  }
+
+  const existing = await db.query<{
+    request_hash: string;
+    status: string;
+    response: ActionResult | null;
+  }>(
+    `SELECT request_hash, status, response
+     FROM agent_action_idempotency
+     WHERE tenant_id = $1
+       AND integration_id = $2
+       AND idempotency_key = $3`,
+    [input.tenantId, input.integrationId, input.idempotencyKey]
+  );
+  const existingRow = existing.rows[0];
+  if (!existingRow) {
+    return {
+      mode: "duplicate",
+      response: {
+        type: input.action.type,
+        status: "processing",
+        detail: "A matching action is already processing.",
+        data: { idempotencyKey: input.idempotencyKey, deduplicated: true }
+      }
+    };
+  }
+
+  await db.query(
+    `UPDATE agent_action_idempotency
+     SET last_seen_at = now(),
+         updated_at = now()
+     WHERE tenant_id = $1
+       AND integration_id = $2
+       AND idempotency_key = $3`,
+    [input.tenantId, input.integrationId, input.idempotencyKey]
+  );
+
+  if (existingRow.request_hash !== requestHash) {
+    return { mode: "conflict", idempotencyKey: input.idempotencyKey };
+  }
+
+  if (isActionResult(existingRow.response)) {
+    return {
+      mode: "duplicate",
+      response: withDedupedData(existingRow.response, input.idempotencyKey)
+    };
+  }
+
+  return {
+    mode: "duplicate",
+    response: {
+      type: input.action.type,
+      status: existingRow.status === "failed" ? "failed" : "processing",
+      detail: "A matching action is already processing.",
+      data: { idempotencyKey: input.idempotencyKey, deduplicated: true }
+    }
+  };
+}
+
+async function completeAgentActionIdempotency(input: {
+  tenantId: string;
+  integrationId: string;
+  idempotencyKey: string;
+  requestHash: string;
+  result: ActionResult;
+}) {
+  await db.query(
+    `UPDATE agent_action_idempotency
+     SET status = $5,
+         response = $6::jsonb,
+         last_seen_at = now(),
+         updated_at = now()
+     WHERE tenant_id = $1
+       AND integration_id = $2
+       AND idempotency_key = $3
+       AND request_hash = $4`,
+    [
+      input.tenantId,
+      input.integrationId,
+      input.idempotencyKey,
+      input.requestHash,
+      input.result.status === "failed" ? "failed" : "completed",
+      JSON.stringify(input.result)
+    ]
+  );
+}
+
+async function completeForbiddenActionIdempotency(input: {
+  tenantId: string;
+  integrationId: string;
+  action: AgentAction;
+  claim: NewActionIdempotencyClaim | null;
+}) {
+  if (!input.claim) return;
+  await completeAgentActionIdempotency({
+    tenantId: input.tenantId,
+    integrationId: input.integrationId,
+    idempotencyKey: input.claim.idempotencyKey,
+    requestHash: input.claim.requestHash,
+    result: {
+      type: input.action.type,
+      status: "forbidden",
+      detail: "Forbidden"
+    }
+  });
+}
+
 export async function POST(request: Request) {
   const integration = await getAgentFromRequest(request);
   if (!integration) {
@@ -199,7 +624,11 @@ export async function POST(request: Request) {
   if (integration.status !== "active") {
     return Response.json({ error: "Integration paused" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("aiAutomation"))) {
+  const tenantId = integration.tenant_id;
+  if (!tenantId) {
+    return Response.json({ error: "Integration tenant missing" }, { status: 403 });
+  }
+  if (!(await checkModuleEntitlement("aiAutomation", tenantId))) {
     return Response.json(
       {
         error: "AI automation module is not enabled for this workspace.",
@@ -227,12 +656,34 @@ export async function POST(request: Request) {
     return Response.json({ error: "No actions provided" }, { status: 400 });
   }
 
-  const results: Array<{
-    type: string;
-    status: string;
-    detail?: string;
-    data?: Record<string, unknown>;
-  }> = [];
+  const maxActionsPerMinute = getAgentActionsMaxPerMinute(integration.capabilities);
+  const recentActionCount = await getRecentAgentActionCount(tenantId, integration.id);
+  if (recentActionCount + actions.length > maxActionsPerMinute) {
+    await recordAuditLog({
+      tenantId,
+      action: "ai_action_rate_limited",
+      entityType: "agent_integration",
+      entityId: integration.id,
+      data: {
+        agentId: integration.id,
+        attemptedActions: actions.length,
+        usedInWindow: recentActionCount,
+        limit: maxActionsPerMinute,
+        windowSeconds: 60
+      }
+    });
+    return Response.json(
+      {
+        error: "Agent action rate limit exceeded.",
+        code: "agent_action_rate_limited",
+        limit: maxActionsPerMinute,
+        windowSeconds: 60
+      },
+      { status: 429 }
+    );
+  }
+
+  const results: ActionResult[] = [];
   const allowMergeActions =
     integration.capabilities?.allow_merge_actions === true ||
     integration.capabilities?.allowMergeActions === true;
@@ -240,9 +691,17 @@ export async function POST(request: Request) {
     integration.capabilities?.allow_voice_actions === true ||
     integration.capabilities?.allowVoiceActions === true;
   const mergeMinConfidence = getAgentMergeMinConfidence();
+  const actionRolloutMode = getAgentActionRolloutMode({
+    policy: integration.policy,
+    capabilities: integration.capabilities
+  });
+  const allowedLimitedAutoActions = getConfiguredLimitedAutoActions({
+    policy: integration.policy,
+    capabilities: integration.capabilities
+  });
 
   for (const action of actions) {
-    const ticket = await getTicketById(action.ticketId);
+    const ticket = await getTicketById(action.ticketId, tenantId);
     if (!ticket) {
       results.push({ type: action.type, status: "not_found" });
       continue;
@@ -251,6 +710,81 @@ export async function POST(request: Request) {
     if (!hasMailboxScope(integration, ticket.mailbox_id)) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    const idempotencyKey = shouldUseActionIdempotency(action);
+    let idempotencyClaim: NewActionIdempotencyClaim | null = null;
+    if (idempotencyKey) {
+      const claim = await claimAgentActionIdempotency({
+        tenantId,
+        integrationId: integration.id,
+        action,
+        idempotencyKey
+      });
+
+      if (claim.mode === "duplicate") {
+        results.push(claim.response);
+        continue;
+      }
+
+      if (claim.mode === "conflict") {
+        await recordAuditLog({
+          tenantId,
+          action: "ai_action_idempotency_conflict",
+          entityType: "ticket",
+          entityId: action.ticketId,
+          data: {
+            agentId: integration.id,
+            idempotencyKey: claim.idempotencyKey,
+            actionType: action.type
+          }
+        });
+        results.push({
+          type: action.type,
+          status: "failed",
+          detail: "idempotencyKey was already used for a different action payload.",
+          data: {
+            idempotencyKey: claim.idempotencyKey,
+            errorCode: "idempotency_conflict"
+          }
+        });
+        continue;
+      }
+
+      idempotencyClaim = claim;
+    }
+
+    const rolloutDecision = getActionRolloutDecision({
+      action,
+      rolloutMode: actionRolloutMode,
+      allowedLimitedAutoActions
+    });
+    if (rolloutDecision) {
+      await recordAuditLog({
+        tenantId,
+        action: rolloutDecision.status === "dry_run" ? "ai_action_dry_run" : "ai_action_rollout_blocked",
+        entityType: "ticket",
+        entityId: action.ticketId,
+        data: {
+          agentId: integration.id,
+          actionType: action.type,
+          rolloutMode: actionRolloutMode,
+          idempotencyKey: idempotencyKey ?? null
+        }
+      });
+      results.push(rolloutDecision);
+      if (idempotencyClaim) {
+        await completeAgentActionIdempotency({
+          tenantId,
+          integrationId: integration.id,
+          idempotencyKey: idempotencyClaim.idempotencyKey,
+          requestHash: idempotencyClaim.requestHash,
+          result: rolloutDecision
+        });
+      }
+      continue;
+    }
+
+    const resultStartIndex = results.length;
 
     switch (action.type) {
       case "draft_reply": {
@@ -262,6 +796,7 @@ export async function POST(request: Request) {
           ? { ...(action.metadata ?? {}), template: action.template }
           : (action.metadata ?? null);
         await createDraft({
+          tenantId,
           integrationId: integration.id,
           ticketId: action.ticketId,
           subject: action.subject ?? null,
@@ -271,17 +806,20 @@ export async function POST(request: Request) {
           metadata: draftMetadata
         });
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "ai_draft_created",
           data: { agentId: integration.id, confidence: action.confidence ?? null }
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_draft_created",
           entityType: "ticket",
           entityId: action.ticketId,
           data: { agentId: integration.id }
         });
         await recordModuleUsageEvent({
+          tenantId,
           moduleKey: "aiAutomation",
           usageKind: "draft_reply",
           actorType: "ai",
@@ -305,7 +843,7 @@ export async function POST(request: Request) {
           requesterEmail: ticket.requester_email,
           hasTemplate: Boolean(action.template)
         });
-        if (!(await checkModuleEntitlement(replyModule))) {
+        if (!(await checkModuleEntitlement(replyModule, tenantId))) {
           results.push({
             type: action.type,
             status: "blocked",
@@ -317,10 +855,21 @@ export async function POST(request: Request) {
         if (!isAutoSendAllowed(integration)) {
           const escalation = readOutOfHoursEscalation(integration.policy);
           if (escalation.mode === "draft_only" && (action.text || action.html || action.template)) {
+            const idempotencyFailure = getRequiredIdempotencyFailure(action);
+            if (idempotencyFailure) {
+              await recordRequiredIdempotencyFailure({
+                tenantId,
+                integrationId: integration.id,
+                action
+              });
+              results.push(idempotencyFailure);
+              break;
+            }
             const draftMetadata = action.template
               ? { ...(action.metadata ?? {}), template: action.template }
               : (action.metadata ?? null);
             await createDraft({
+              tenantId,
               integrationId: integration.id,
               ticketId: action.ticketId,
               subject: action.subject ?? null,
@@ -330,6 +879,7 @@ export async function POST(request: Request) {
               metadata: draftMetadata
             });
             await recordTicketEvent({
+              tenantId,
               ticketId: action.ticketId,
               eventType: "ai_draft_created",
               data: {
@@ -341,12 +891,14 @@ export async function POST(request: Request) {
             if (escalation.tag) {
               await addTagsToTicket(action.ticketId, [escalation.tag]);
               await recordTicketEvent({
+                tenantId,
                 ticketId: action.ticketId,
                 eventType: "tags_assigned",
                 data: { tags: [escalation.tag], source: "out_of_hours_escalation" }
               });
             }
             await recordAuditLog({
+              tenantId,
               action: "ai_reply_escalated_out_of_hours",
               entityType: "ticket",
               entityId: action.ticketId,
@@ -368,8 +920,19 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "blocked", detail: "Outside working hours" });
           break;
         }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
         try {
           await sendTicketReply({
+            tenantId,
             ticketId: action.ticketId,
             subject: action.subject ?? null,
             text: action.text ?? null,
@@ -383,12 +946,14 @@ export async function POST(request: Request) {
             }
           });
           await recordAuditLog({
+            tenantId,
             action: "ai_reply_sent",
             entityType: "ticket",
             entityId: action.ticketId,
             data: { agentId: integration.id }
           });
           await recordModuleUsageEvent({
+            tenantId,
             moduleKey: replyModule,
             usageKind: "reply_sent",
             actorType: "ai",
@@ -400,6 +965,7 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantId,
             moduleKey: "aiAutomation",
             usageKind: "send_reply",
             actorType: "ai",
@@ -428,7 +994,7 @@ export async function POST(request: Request) {
           });
           break;
         }
-        if (!(await checkModuleEntitlement("voice"))) {
+        if (!(await checkModuleEntitlement("voice", tenantId))) {
           results.push({
             type: action.type,
             status: "blocked",
@@ -446,7 +1012,7 @@ export async function POST(request: Request) {
           break;
         }
 
-        const callOptions = await getTicketCallOptions(action.ticketId);
+        const callOptions = await getTicketCallOptions(action.ticketId, tenantId);
         if (!callOptions) {
           results.push({
             type: action.type,
@@ -510,10 +1076,21 @@ export async function POST(request: Request) {
           });
           break;
         }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
 
         try {
           const queued = await queueOutboundCall({
             ticketId: action.ticketId,
+            tenantId,
             toPhone: resolved.phone,
             fromPhone: action.fromPhone ?? null,
             reason: action.reason,
@@ -523,10 +1100,11 @@ export async function POST(request: Request) {
             metadata: {
               ...(action.metadata ?? {}),
               selectedCandidateId: resolved.selectedCandidateId
-              }
-            });
+            }
+          });
           void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
           await recordAuditLog({
+            tenantId,
             action: "ai_call_queued",
             entityType: "call_session",
             entityId: queued.callSessionId,
@@ -538,6 +1116,7 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantId,
             moduleKey: "voice",
             usageKind: "call_queued",
             actorType: "ai",
@@ -552,6 +1131,7 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantId,
             moduleKey: "aiAutomation",
             usageKind: "initiate_call",
             actorType: "ai",
@@ -592,13 +1172,25 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: "No tags provided" });
           break;
         }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
         await addTagsToTicket(action.ticketId, tags);
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "tags_assigned",
           data: { tags }
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_tags_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -612,16 +1204,29 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: "Missing priority" });
           break;
         }
-        await db.query("UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2", [
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
+        await db.query("UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3", [
           action.priority,
-          action.ticketId
+          action.ticketId,
+          tenantId
         ]);
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "priority_updated",
           data: { to: action.priority }
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_priority_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -631,16 +1236,28 @@ export async function POST(request: Request) {
         break;
       }
       case "assign_to": {
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
         await db.query(
-          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2",
-          [action.assignedUserId ?? null, action.ticketId]
+          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3",
+          [action.assignedUserId ?? null, action.ticketId, tenantId]
         );
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "assignment_updated",
           data: { to: action.assignedUserId ?? null }
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_assignment_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -666,22 +1283,24 @@ export async function POST(request: Request) {
         if (callSessionId && idempotencyKey) {
           const claimed = await db.query<{ id: string }>(
             `INSERT INTO call_review_writebacks (
-               ticket_id, call_session_id, idempotency_key, payload
-             ) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (call_session_id, idempotency_key) DO NOTHING
+               tenant_id, ticket_id, call_session_id, idempotency_key, payload
+             ) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (tenant_id, call_session_id, idempotency_key) DO NOTHING
              RETURNING id`,
-            [action.ticketId, callSessionId, idempotencyKey, reviewMetadata ?? {}]
+            [tenantId, action.ticketId, callSessionId, idempotencyKey, reviewMetadata ?? {}]
           );
           if (!claimed.rows[0]?.id) {
             await db.query(
               `UPDATE call_review_writebacks
                SET last_seen_at = now(),
                    updated_at = now()
-               WHERE call_session_id = $1
-                 AND idempotency_key = $2`,
-              [callSessionId, idempotencyKey]
+               WHERE tenant_id = $1
+                 AND call_session_id = $2
+                 AND idempotency_key = $3`,
+              [tenantId, callSessionId, idempotencyKey]
             );
             await recordAuditLog({
+              tenantId,
               action: "ai_review_writeback_deduplicated",
               entityType: "call_session",
               entityId: callSessionId,
@@ -704,13 +1323,25 @@ export async function POST(request: Request) {
             break;
           }
         }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
 
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "ai_review_requested",
           data: reviewMetadata
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_review_requested",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -784,6 +1415,27 @@ export async function POST(request: Request) {
           }
           sourceCustomerId = action.sourceCustomerId ?? null;
           targetCustomerId = action.targetCustomerId ?? null;
+          if (!sourceCustomerId || !targetCustomerId) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              detail: "Missing source or target customer id for merge proposal."
+            });
+            break;
+          }
+          const customerScopeError = await validateCustomerPairForTenant({
+            sourceCustomerId,
+            targetCustomerId,
+            tenantId
+          });
+          if (customerScopeError) {
+            results.push({
+              type: action.type,
+              status: "not_found",
+              detail: customerScopeError
+            });
+            break;
+          }
         } else {
           sourceTicketId = proposedSourceTicketId;
           targetTicketId = action.targetTicketId ?? null;
@@ -796,7 +1448,17 @@ export async function POST(request: Request) {
             break;
           }
 
-          const targetTicket = await getTicketById(targetTicketId);
+          const sourceTicket = sourceTicketId === action.ticketId ? ticket : await getTicketById(sourceTicketId, tenantId);
+          if (!sourceTicket) {
+            results.push({
+              type: action.type,
+              status: "not_found",
+              detail: "Source ticket not found for merge proposal."
+            });
+            break;
+          }
+
+          const targetTicket = await getTicketById(targetTicketId, tenantId);
           if (!targetTicket) {
             results.push({
               type: action.type,
@@ -807,11 +1469,28 @@ export async function POST(request: Request) {
           }
           targetTicketMailboxId = targetTicket.mailbox_id;
           if (
-            !hasMailboxScope(integration, ticket.mailbox_id) ||
+            !hasMailboxScope(integration, sourceTicket.mailbox_id) ||
             !hasMailboxScope(integration, targetTicket.mailbox_id)
           ) {
+            await completeForbiddenActionIdempotency({
+              tenantId,
+              integrationId: integration.id,
+              action,
+              claim: idempotencyClaim
+            });
             return Response.json({ error: "Forbidden" }, { status: 403 });
           }
+        }
+
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
         }
 
         try {
@@ -840,6 +1519,7 @@ export async function POST(request: Request) {
         }
 
         await recordTicketEvent({
+          tenantId,
           ticketId: action.ticketId,
           eventType: "ai_merge_proposed",
           data: {
@@ -855,6 +1535,7 @@ export async function POST(request: Request) {
           }
         });
         await recordAuditLog({
+          tenantId,
           action: "ai_merge_proposed",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -876,6 +1557,7 @@ export async function POST(request: Request) {
           eventType: "merge.review.required",
           ticketId: action.ticketId,
           mailboxId: targetTicketMailboxId ?? ticket.mailbox_id,
+          tenantId,
           excerpt:
             reviewProposalType === "ticket"
               ? `Merge review required for tickets ${sourceTicketId} -> ${targetTicketId}`
@@ -883,6 +1565,7 @@ export async function POST(request: Request) {
         });
         await enqueueAgentEvent({
           eventType: "merge.review.required",
+          tenantId,
           payload: {
             ...reviewEvent,
             review: {
@@ -897,7 +1580,7 @@ export async function POST(request: Request) {
             }
           }
         });
-        void deliverPendingAgentEvents().catch(() => {});
+        void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
         results.push({ type: action.type, status: "ok" });
         break;
@@ -919,17 +1602,39 @@ export async function POST(request: Request) {
           break;
         }
 
-        const targetTicket = await getTicketById(targetTicketId);
+        const sourceTicket = sourceTicketId === action.ticketId ? ticket : await getTicketById(sourceTicketId, tenantId);
+        if (!sourceTicket) {
+          results.push({ type: action.type, status: "not_found", detail: "Source ticket not found" });
+          break;
+        }
+
+        const targetTicket = await getTicketById(targetTicketId, tenantId);
         if (!targetTicket) {
           results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
           break;
         }
 
         if (
-          !hasMailboxScope(integration, ticket.mailbox_id) ||
+          !hasMailboxScope(integration, sourceTicket.mailbox_id) ||
           !hasMailboxScope(integration, targetTicket.mailbox_id)
         ) {
+          await completeForbiddenActionIdempotency({
+            tenantId,
+            integrationId: integration.id,
+            action,
+            claim: idempotencyClaim
+          });
           return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
         }
 
         try {
@@ -940,6 +1645,7 @@ export async function POST(request: Request) {
             reason: action.reason ?? null
           });
           await recordAuditLog({
+            tenantId,
             action: "ai_ticket_merged",
             entityType: "ticket",
             entityId: sourceTicketId,
@@ -974,17 +1680,39 @@ export async function POST(request: Request) {
           break;
         }
 
-        const targetTicket = await getTicketById(targetTicketId);
+        const sourceTicket = sourceTicketId === action.ticketId ? ticket : await getTicketById(sourceTicketId, tenantId);
+        if (!sourceTicket) {
+          results.push({ type: action.type, status: "not_found", detail: "Source ticket not found" });
+          break;
+        }
+
+        const targetTicket = await getTicketById(targetTicketId, tenantId);
         if (!targetTicket) {
           results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
           break;
         }
 
         if (
-          !hasMailboxScope(integration, ticket.mailbox_id) ||
+          !hasMailboxScope(integration, sourceTicket.mailbox_id) ||
           !hasMailboxScope(integration, targetTicket.mailbox_id)
         ) {
+          await completeForbiddenActionIdempotency({
+            tenantId,
+            integrationId: integration.id,
+            action,
+            claim: idempotencyClaim
+          });
           return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
         }
 
         try {
@@ -996,6 +1724,7 @@ export async function POST(request: Request) {
             metadata: action.metadata ?? null
           });
           await recordAuditLog({
+            tenantId,
             action: "ai_ticket_linked_case",
             entityType: "ticket",
             entityId: sourceTicketId,
@@ -1029,6 +1758,29 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: mergeSafetyError });
           break;
         }
+        const customerScopeError = await validateCustomerPairForTenant({
+          sourceCustomerId,
+          targetCustomerId,
+          tenantId
+        });
+        if (customerScopeError) {
+          results.push({
+            type: action.type,
+            status: "not_found",
+            detail: customerScopeError
+          });
+          break;
+        }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
         try {
           const result = await mergeCustomers({
             sourceCustomerId,
@@ -1037,6 +1789,7 @@ export async function POST(request: Request) {
             reason: action.reason ?? null
           });
           await recordAuditLog({
+            tenantId,
             action: "ai_customer_merged",
             entityType: "ticket",
             entityId: action.ticketId,
@@ -1057,6 +1810,16 @@ export async function POST(request: Request) {
       default:
         results.push({ type: action.type, status: "ignored" });
         break;
+    }
+
+    if (idempotencyClaim && results.length > resultStartIndex) {
+      await completeAgentActionIdempotency({
+        tenantId,
+        integrationId: integration.id,
+        idempotencyKey: idempotencyClaim.idempotencyKey,
+        requestHash: idempotencyClaim.requestHash,
+        result: results[resultStartIndex]
+      });
     }
   }
 

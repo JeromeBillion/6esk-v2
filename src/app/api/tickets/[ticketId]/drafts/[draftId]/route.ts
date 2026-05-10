@@ -34,7 +34,8 @@ export async function PATCH(
   }
 
   const { ticketId, draftId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const tenantId = user.tenant_id ?? "";
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

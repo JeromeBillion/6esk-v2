@@ -21,6 +21,7 @@ import {
   reopenTicketIfNeeded
 } from "@/server/tickets";
 import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type CallCandidateSource =
   | "customer_primary"
@@ -47,6 +48,7 @@ export type TicketCallOptions = {
 
 type TicketCallContext = {
   id: string;
+  tenant_id: string;
   mailbox_id: string | null;
   customer_id: string | null;
   requester_email: string;
@@ -75,6 +77,7 @@ export type ResolveCallPhoneResult =
 
 export type QueueOutboundCallArgs = {
   ticketId: string;
+  tenantId?: string | null;
   toPhone: string;
   reason: string;
   fromPhone?: string | null;
@@ -163,7 +166,8 @@ function extractMetadataPhones(metadata: Record<string, unknown> | null) {
   return values;
 }
 
-export async function getTicketCallContext(ticketId: string) {
+export async function getTicketCallContext(ticketId: string, tenantId?: string | null) {
+  const scopedTenantId = readString(tenantId);
   const result = await db.query<TicketCallContext>(
     `SELECT
        t.id,
@@ -176,14 +180,18 @@ export async function getTicketCallContext(ticketId: string) {
      FROM tickets t
      LEFT JOIN customers c ON c.id = t.customer_id
      WHERE t.id = $1
+       AND ($2::uuid IS NULL OR t.tenant_id = $2::uuid)
      LIMIT 1`,
-    [ticketId]
+    [ticketId, scopedTenantId]
   );
   return result.rows[0] ?? null;
 }
 
-export async function getTicketCallOptions(ticketId: string): Promise<TicketCallOptions | null> {
-  const ticket = await getTicketCallContext(ticketId);
+export async function getTicketCallOptions(
+  ticketId: string,
+  tenantId?: string | null
+): Promise<TicketCallOptions | null> {
+  const ticket = await getTicketCallContext(ticketId, tenantId);
   if (!ticket) {
     return null;
   }
@@ -236,9 +244,10 @@ export async function getTicketCallOptions(ticketId: string): Promise<TicketCall
       `SELECT id, identity_value, is_primary
        FROM customer_identities
        WHERE customer_id = $1
+         AND tenant_id = $2
          AND identity_type = 'phone'
        ORDER BY is_primary DESC, updated_at ASC`,
-      [ticket.customer_id]
+      [ticket.customer_id, ticket.tenant_id]
     );
     for (const identity of identities.rows) {
       pushCandidate({
@@ -361,6 +370,7 @@ export function resolveCallPhoneForRequest({
 
 export async function queueOutboundCall({
   ticketId,
+  tenantId: requestedTenantId,
   toPhone,
   reason,
   fromPhone,
@@ -370,13 +380,14 @@ export async function queueOutboundCall({
   actorIntegrationId,
   metadata
 }: QueueOutboundCallArgs): Promise<QueueOutboundCallResult> {
-  const ticket = await getTicketCallContext(ticketId);
+  const ticket = await getTicketCallContext(ticketId, requestedTenantId);
   if (!ticket) {
     throw new Error("Ticket not found.");
   }
   if (!ticket.mailbox_id) {
     throw new Error("Ticket mailbox is missing.");
   }
+  const tenantId = ticket.tenant_id;
 
   const normalizedTo = normalizeCallPhone(toPhone);
   if (!normalizedTo) {
@@ -442,13 +453,14 @@ export async function queueOutboundCall({
 
     await client.query(
       `INSERT INTO messages (
-        id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+        tenant_id, id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
         from_email, to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
       ) VALUES (
-        $1, $2, $3, 'outbound', 'voice', $4, $5,
-        $6, $7, $8, $9, $10, true, $11, $12, $13
+        $1, $2, $3, $4, 'outbound', 'voice', $5, $6,
+        $7, $8, $9, $10, $11, true, $12, $13, $14
       )`,
       [
+        ticket.tenant_id,
         messageId,
         ticket.mailbox_id,
         ticketId,
@@ -512,7 +524,7 @@ export async function queueOutboundCall({
       `INSERT INTO call_outbox_events (tenant_id, direction, payload, status)
        VALUES ($1, 'outbound', $2, 'queued')`,
       [
-        (ticket as any).tenant_id || "00000000-0000-0000-0000-000000000001",
+        tenantId,
         {
           callSessionId,
           ticketId,
@@ -562,6 +574,7 @@ export async function queueOutboundCall({
   }
 
   await recordTicketEvent({
+    tenantId,
     ticketId,
     eventType: origin === "ai" ? "ai_call_queued" : "call_queued",
     actorUserId: actorUserId ?? null,
@@ -576,11 +589,13 @@ export async function queueOutboundCall({
     ticketId,
     messageId,
     mailboxId: ticket.mailbox_id,
+    tenantId,
     excerpt: previewText,
     threadId: callSessionId
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.queued",
+    tenantId,
     payload: {
       ...callEvent,
       call: {
@@ -594,7 +609,7 @@ export async function queueOutboundCall({
       }
     }
   });
-  void deliverPendingAgentEvents().catch(() => {});
+  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
   return {
     status: "queued",
@@ -621,6 +636,7 @@ export type CallStatus = (typeof CALL_STATUSES)[number];
 
 type CallSessionRow = {
   id: string;
+  tenant_id: string;
   ticket_id: string;
   mailbox_id: string | null;
   message_id: string | null;
@@ -729,6 +745,17 @@ function getSupportAddress() {
   }
   const domain = process.env.RESEND_FROM_DOMAIN ?? "";
   return domain ? `support@${domain}`.toLowerCase() : "";
+}
+
+function getFallbackCallTenantId() {
+  const configured = readString(process.env.CALLS_TENANT_ID);
+  if (configured) {
+    return configured;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("CALLS_TENANT_ID is required for tenant-scoped call ingress.");
+  }
+  return DEFAULT_TENANT_ID;
 }
 
 function getRecordingFetchTimeoutMs() {
@@ -862,12 +889,15 @@ async function appendCallEvent({
 
 async function getCallSessionByProvider(provider: string, providerCallId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
-            recording_url, recording_r2_key, transcript_r2_key, metadata
-     FROM call_sessions
-     WHERE provider = $1
-       AND provider_call_id = $2
-     ORDER BY created_at DESC
+    `SELECT session.id, ticket.tenant_id, session.ticket_id, session.mailbox_id, session.message_id,
+            session.provider, session.provider_call_id, session.status, session.event_sequence,
+            session.to_phone, session.from_phone, session.recording_url, session.recording_r2_key,
+            session.transcript_r2_key, session.metadata
+     FROM call_sessions session
+     JOIN tickets ticket ON ticket.id = session.ticket_id
+     WHERE session.provider = $1
+       AND session.provider_call_id = $2
+     ORDER BY session.created_at DESC
      LIMIT 1`,
     [provider, providerCallId]
   );
@@ -876,10 +906,13 @@ async function getCallSessionByProvider(provider: string, providerCallId: string
 
 async function getCallSessionById(callSessionId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
-            recording_url, recording_r2_key, transcript_r2_key, metadata
-     FROM call_sessions
-     WHERE id = $1
+    `SELECT session.id, ticket.tenant_id, session.ticket_id, session.mailbox_id, session.message_id,
+            session.provider, session.provider_call_id, session.status, session.event_sequence,
+            session.to_phone, session.from_phone, session.recording_url, session.recording_r2_key,
+            session.transcript_r2_key, session.metadata
+     FROM call_sessions session
+     JOIN tickets ticket ON ticket.id = session.ticket_id
+     WHERE session.id = $1
      LIMIT 1`,
     [callSessionId]
   );
@@ -982,6 +1015,7 @@ export async function updateCallSessionStatus({
   if (!isNoop) {
     if (statusValue === "in_progress") {
       await recordTicketEvent({
+        tenantId: session.tenant_id,
         ticketId: session.ticket_id,
         eventType: "call_started",
         data: {
@@ -995,11 +1029,13 @@ export async function updateCallSessionStatus({
         ticketId: session.ticket_id,
         messageId: session.message_id,
         mailboxId: session.mailbox_id,
+        tenantId: session.tenant_id,
         excerpt: `Call started to ${session.to_phone}`,
         threadId: session.id
       });
       await enqueueAgentEvent({
         eventType: "ticket.call.started",
+        tenantId: session.tenant_id,
         payload: {
           ...startedEvent,
           call: {
@@ -1013,11 +1049,12 @@ export async function updateCallSessionStatus({
           }
         }
       });
-      void deliverPendingAgentEvents().catch(() => {});
+      void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
     }
 
     if (isTerminalCallStatus(statusValue)) {
       await recordTicketEvent({
+        tenantId: session.tenant_id,
         ticketId: session.ticket_id,
         eventType: statusValue === "failed" ? "call_failed" : "call_ended",
         data: {
@@ -1031,11 +1068,13 @@ export async function updateCallSessionStatus({
         ticketId: session.ticket_id,
         messageId: session.message_id,
         mailboxId: session.mailbox_id,
+        tenantId: session.tenant_id,
         excerpt: `Call ${statusValue.replace(/_/g, " ")}`,
         threadId: session.id
       });
       await enqueueAgentEvent({
         eventType: statusValue === "failed" ? "ticket.call.failed" : "ticket.call.ended",
+        tenantId: session.tenant_id,
         payload: {
           ...terminalEvent,
           call: {
@@ -1050,7 +1089,7 @@ export async function updateCallSessionStatus({
           }
         }
       });
-      void deliverPendingAgentEvents().catch(() => {});
+      void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
     }
   }
 
@@ -1132,13 +1171,22 @@ export async function attachCallRecording({
         });
         attachmentId = randomUUID();
         await db.query(
-          `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [attachmentId, session.message_id, `Call Recording.${ext}`, contentType, buffer.length, uploadedKey]
+          `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            session.tenant_id,
+            attachmentId,
+            session.message_id,
+            `Call Recording.${ext}`,
+            contentType,
+            buffer.length,
+            uploadedKey
+          ]
         );
         canonicalRecordingUrl = `/api/attachments/${attachmentId}?disposition=inline`;
       }
-    } catch {
+    } catch (error) {
+      console.error("[Calls] Recording upload failed for session", session.id, error instanceof Error ? error.message : error);
       uploadedKey = null;
       attachmentId = null;
       canonicalRecordingUrl = url;
@@ -1175,6 +1223,7 @@ export async function attachCallRecording({
   });
 
   await recordTicketEvent({
+    tenantId: session.tenant_id,
     ticketId: session.ticket_id,
     eventType: "call_recording_ready",
     data: {
@@ -1189,11 +1238,13 @@ export async function attachCallRecording({
     ticketId: session.ticket_id,
     messageId: session.message_id,
     mailboxId: session.mailbox_id,
+    tenantId: session.tenant_id,
     excerpt: "Call recording ready",
     threadId: session.id
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.recording.ready",
+    tenantId: session.tenant_id,
     payload: {
       ...recordingEvent,
       call: {
@@ -1207,10 +1258,11 @@ export async function attachCallRecording({
       }
     }
   });
-  void deliverPendingAgentEvents().catch(() => {});
+  void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
 
   if (uploadedKey && !session.transcript_r2_key) {
     await enqueueCallTranscriptJob({
+      tenantId: session.tenant_id,
       callSessionId: session.id,
       recordingR2Key: uploadedKey,
       metadata: {
@@ -1268,7 +1320,8 @@ export async function attachCallTranscript({
         const text = await response.text();
         transcript = readString(text);
       }
-    } catch {
+    } catch (error) {
+      console.error("[Calls] Transcript fetch failed from", transcriptUrlValue, error instanceof Error ? error.message : error);
       transcript = null;
     }
   }
@@ -1294,9 +1347,10 @@ export async function attachCallTranscript({
         `SELECT id
          FROM attachments
          WHERE message_id = $1
+           AND tenant_id = $2
            AND filename = 'Call Transcript.txt'
          LIMIT 1`,
-        [session.message_id]
+        [session.message_id, session.tenant_id]
       );
       attachmentId = existingAttachment.rows[0]?.id ?? randomUUID();
 
@@ -1306,14 +1360,16 @@ export async function attachCallTranscript({
            SET content_type = $2,
                size_bytes = $3,
                r2_key = $4
-           WHERE id = $1`,
-          [attachmentId, "text/plain; charset=utf-8", buffer.length, uploadedKey]
+           WHERE id = $1
+             AND tenant_id = $5`,
+          [attachmentId, "text/plain; charset=utf-8", buffer.length, uploadedKey, session.tenant_id]
         );
       } else {
         await db.query(
-          `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
+            session.tenant_id,
             attachmentId,
             session.message_id,
             "Call Transcript.txt",
@@ -1323,7 +1379,8 @@ export async function attachCallTranscript({
           ]
         );
       }
-    } catch {
+    } catch (error) {
+      console.error("[Calls] Transcript upload failed for session", session.id, error instanceof Error ? error.message : error);
       uploadedKey = null;
       attachmentId = null;
     }
@@ -1339,6 +1396,7 @@ export async function attachCallTranscript({
 
   await markTranscriptJobCompleted({
     callSessionId: session.id,
+    tenantId: session.tenant_id,
     transcriptR2Key: uploadedKey
   });
 
@@ -1356,6 +1414,7 @@ export async function attachCallTranscript({
   });
 
   await recordTicketEvent({
+    tenantId: session.tenant_id,
     ticketId: session.ticket_id,
     eventType: "call_transcript_ready",
     data: {
@@ -1370,11 +1429,13 @@ export async function attachCallTranscript({
     ticketId: session.ticket_id,
     messageId: session.message_id,
     mailboxId: session.mailbox_id,
+    tenantId: session.tenant_id,
     excerpt: "Call transcript ready",
     threadId: session.id
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.transcript.ready",
+    tenantId: session.tenant_id,
     payload: {
       ...transcriptEvent,
       call: {
@@ -1387,13 +1448,15 @@ export async function attachCallTranscript({
       }
     }
   });
-  void deliverPendingAgentEvents().catch(() => {});
+  void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
 
   if (uploadedKey) {
     await enqueueCallTranscriptAiJob({
+      tenantId: session.tenant_id,
       callSessionId: session.id,
       transcriptR2Key: uploadedKey,
       metadata: {
+        tenantId: session.tenant_id,
         source: "transcript_ready",
         ticketId: session.ticket_id,
         messageId: session.message_id,
@@ -1412,18 +1475,20 @@ export async function attachCallTranscript({
   };
 }
 
-async function findActiveTicketForInboundPhone(phone: string) {
+async function findActiveTicketForInboundPhone(phone: string, tenantId: string) {
   const requesterKey = `voice:${phone}`;
   const result = await db.query<{ id: string; mailbox_id: string | null }>(
     `SELECT t.id, t.mailbox_id
      FROM tickets t
      WHERE t.merged_into_ticket_id IS NULL
+       AND t.tenant_id = $3
        AND (
          t.requester_email = $1
          OR EXISTS (
            SELECT 1
            FROM messages m
            WHERE m.ticket_id = t.id
+             AND m.tenant_id = t.tenant_id
              AND m.channel IN ('voice', 'whatsapp')
              AND (
                m.from_email = $1
@@ -1434,7 +1499,7 @@ async function findActiveTicketForInboundPhone(phone: string) {
        )
      ORDER BY t.updated_at DESC
      LIMIT 1`,
-    [requesterKey, phone]
+    [requesterKey, phone, tenantId]
   );
   return result.rows[0] ?? null;
 }
@@ -1448,6 +1513,7 @@ export async function createOrUpdateInboundCall({
   occurredAt,
   durationSeconds,
   ticketId,
+  tenantId: requestedTenantId,
   metadata
 }: {
   provider?: string | null;
@@ -1458,6 +1524,7 @@ export async function createOrUpdateInboundCall({
   occurredAt?: Date;
   durationSeconds?: number | null;
   ticketId?: string | null;
+  tenantId?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
   const normalizedFrom = normalizeCallPhone(fromPhone);
@@ -1470,6 +1537,7 @@ export async function createOrUpdateInboundCall({
   const providerCallIdValue = readString(providerCallId);
   const statusValue = parseStatus(status ?? undefined) ?? "ringing";
   const at = occurredAt ?? new Date();
+  const requestedTenantIdValue = readString(requestedTenantId);
 
   if (providerCallIdValue) {
     const existing = await getCallSessionByProvider(providerValue, providerCallIdValue);
@@ -1492,9 +1560,15 @@ export async function createOrUpdateInboundCall({
     }
   }
 
+  const tenantId = requestedTenantIdValue ?? getFallbackCallTenantId();
+
   const supportAddress = getSupportAddress();
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
+  if (mailbox.tenant_id !== tenantId) {
+    throw new Error("Support mailbox belongs to another tenant.");
+  }
   const inboundCustomer = await resolveOrCreateCustomerForInbound({
+    tenantId,
     inboundPhone: normalizedFrom
   });
 
@@ -1506,17 +1580,18 @@ export async function createOrUpdateInboundCall({
         `SELECT id, mailbox_id
          FROM tickets
          WHERE customer_id = $1
+           AND tenant_id = $2
            AND merged_into_ticket_id IS NULL
          ORDER BY updated_at DESC
          LIMIT 1`,
-        [inboundCustomer.customerId]
+        [inboundCustomer.customerId, tenantId]
       );
       resolvedTicketId = customerTicket.rows[0]?.id ?? null;
       resolvedMailboxId = customerTicket.rows[0]?.mailbox_id ?? null;
     }
   }
   if (!resolvedTicketId) {
-    const byPhone = await findActiveTicketForInboundPhone(normalizedFrom);
+    const byPhone = await findActiveTicketForInboundPhone(normalizedFrom, tenantId);
     resolvedTicketId = byPhone?.id ?? null;
     resolvedMailboxId = byPhone?.mailbox_id ?? null;
   }
@@ -1526,6 +1601,7 @@ export async function createOrUpdateInboundCall({
     const subject = `Inbound call from ${normalizedFrom}`;
     const inferredTags = inferTagsFromText({ subject, text: null });
     resolvedTicketId = await createTicket({
+      tenantId,
       mailboxId: mailbox.id,
       customerId: inboundCustomer?.customerId ?? null,
       requesterEmail: `voice:${normalizedFrom}`,
@@ -1540,10 +1616,11 @@ export async function createOrUpdateInboundCall({
     });
     resolvedMailboxId = mailbox.id;
     createdTicket = true;
-    await recordTicketEvent({ ticketId: resolvedTicketId, eventType: "ticket_created" });
+    await recordTicketEvent({ tenantId, ticketId: resolvedTicketId, eventType: "ticket_created" });
     if (inferredTags.length) {
       await addTagsToTicket(resolvedTicketId, inferredTags);
       await recordTicketEvent({
+        tenantId,
         ticketId: resolvedTicketId,
         eventType: "tags_assigned",
         data: { tags: inferredTags }
@@ -1554,15 +1631,20 @@ export async function createOrUpdateInboundCall({
       const existingTicket = await db.query<{ mailbox_id: string | null }>(
         `SELECT mailbox_id
          FROM tickets
-         WHERE id = $1
-         LIMIT 1`,
-        [resolvedTicketId]
+          WHERE id = $1
+            AND tenant_id = $2
+          LIMIT 1`,
+        [resolvedTicketId, tenantId]
       );
-      resolvedMailboxId = existingTicket.rows[0]?.mailbox_id ?? null;
+      const existingTicketRow = existingTicket.rows[0];
+      if (!existingTicketRow) {
+        throw new Error("Ticket not found for tenant.");
+      }
+      resolvedMailboxId = existingTicketRow.mailbox_id ?? null;
     }
-    await reopenTicketIfNeeded(resolvedTicketId);
+    await reopenTicketIfNeeded(resolvedTicketId, tenantId);
     if (inboundCustomer?.customerId) {
-      await attachCustomerToTicket(resolvedTicketId, inboundCustomer.customerId);
+      await attachCustomerToTicket(resolvedTicketId, inboundCustomer.customerId, tenantId);
     }
   }
   const mailboxIdForTicket = resolvedMailboxId ?? mailbox.id;
@@ -1574,13 +1656,14 @@ export async function createOrUpdateInboundCall({
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+      tenant_id, id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
       from_email, to_emails, subject, preview_text, received_at, is_read, metadata
     ) VALUES (
-      $1, $2, $3, 'inbound', 'voice', $4, $5,
-      $6, $7, $8, $9, $10, false, $11
+      $1, $2, $3, $4, 'inbound', 'voice', $5, $6,
+      $7, $8, $9, $10, $11, false, $12
     )`,
     [
+      tenantId,
       messageId,
       mailboxIdForTicket,
       resolvedTicketId,
@@ -1633,6 +1716,7 @@ export async function createOrUpdateInboundCall({
   });
 
   await recordTicketEvent({
+    tenantId,
     ticketId: resolvedTicketId,
     eventType: "call_received",
     data: {
@@ -1647,11 +1731,13 @@ export async function createOrUpdateInboundCall({
     ticketId: resolvedTicketId,
     messageId,
     mailboxId: mailboxIdForTicket,
+    tenantId,
     excerpt: preview,
     threadId: callSessionId
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.received",
+    tenantId,
     payload: {
       ...inboundEvent,
       call: {
@@ -1672,12 +1758,13 @@ export async function createOrUpdateInboundCall({
       eventType: "ticket.created",
       ticketId: resolvedTicketId,
       mailboxId: mailboxIdForTicket,
+      tenantId,
       excerpt: preview,
       threadId: callSessionId
     });
-    await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+    await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
   }
-  void deliverPendingAgentEvents().catch(() => {});
+  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
   return {
     status: "created" as const,

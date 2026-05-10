@@ -91,6 +91,7 @@ vi.mock("@/server/agents/outbox", () => ({
 import { POST } from "@/app/api/tickets/create/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 describe("POST /api/tickets/create call-mode voice policy", () => {
   beforeEach(() => {
@@ -101,10 +102,11 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
       email: "agent@6ex.co.za",
       display_name: "Agent",
       role_id: "role-1",
-      role_name: "agent"
+      role_name: "agent",
+      tenant_id: TENANT_ID
     });
     mocks.canManageTickets.mockReturnValue(true);
-    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1" });
+    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1", tenant_id: TENANT_ID });
     mocks.inferTagsFromText.mockReturnValue([]);
     mocks.normalizeCallPhone.mockReturnValue("+15551234567");
     mocks.getHumanVoicePolicyFromEnv.mockReturnValue({ voice: {} });

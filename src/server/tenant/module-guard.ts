@@ -2,22 +2,29 @@ import { NextResponse } from "next/server";
 import { isWorkspaceModuleEnabled, type WorkspaceModuleKey } from "@/server/workspace-modules";
 import { getTenantContext } from "@/server/tenant/context";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { logger } from "@/server/logger";
 
 /**
  * Checks if the given module is enabled for the current tenant context.
  * Useful for inline checks within route handlers.
  */
-export async function checkModuleEntitlement(moduleKey: WorkspaceModuleKey): Promise<boolean> {
-  let tenantId = DEFAULT_TENANT_ID;
-  try {
-    const ctx = await getTenantContext();
-    if (ctx?.tenantId) {
-      tenantId = ctx.tenantId;
+export async function checkModuleEntitlement(
+  moduleKey: WorkspaceModuleKey,
+  tenantId?: string | null
+): Promise<boolean> {
+  let effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
+  if (!tenantId) {
+    try {
+      const ctx = await getTenantContext();
+      if (ctx?.tenantId) {
+        effectiveTenantId = ctx.tenantId;
+      }
+    } catch (error) {
+      // If we're not in a request context (e.g., background worker), fallback to default
+      logger.warn("Tenant context unavailable, using default", { error, moduleKey });
     }
-  } catch {
-    // If we're not in a request context (e.g., background worker), fallback to default
   }
-  return isWorkspaceModuleEnabled(moduleKey, "primary", tenantId);
+  return isWorkspaceModuleEnabled(moduleKey, "primary", effectiveTenantId);
 }
 
 /**

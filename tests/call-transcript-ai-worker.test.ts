@@ -50,6 +50,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-1",
+        tenant_id: "33333333-3333-3333-3333-333333333333",
         call_session_id: "11111111-1111-1111-1111-111111111111",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -101,7 +102,10 @@ describe("deliverPendingTranscriptAiJobs", () => {
         callSessionId: "11111111-1111-1111-1111-111111111111",
         transcriptR2Key: "messages/msg/transcript.txt",
         transcriptText: "Customer asked for a refund and escalation.",
-        metadata: { ticketId: "ticket-1" }
+        metadata: {
+          ticketId: "ticket-1",
+          tenantId: "33333333-3333-3333-3333-333333333333"
+        }
       })
     );
     expect(mocks.markTranscriptAiJobCompleted).toHaveBeenCalledWith(
@@ -118,6 +122,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-2",
+        tenant_id: "33333333-3333-3333-3333-333333333333",
         call_session_id: "22222222-2222-2222-2222-222222222222",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -145,6 +150,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: "33333333-3333-3333-3333-333333333333",
         action: "call_transcript_ai_job_failed",
         entityId: "job-2"
       })

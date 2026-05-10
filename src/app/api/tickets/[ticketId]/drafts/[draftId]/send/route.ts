@@ -6,6 +6,7 @@ import { sendTicketReply } from "@/server/email/replies";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function inferDraftReplyModule(input: {
   requesterEmail: string | null | undefined;
@@ -31,7 +32,8 @@ export async function POST(
   }
 
   const { ticketId, draftId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -41,7 +43,7 @@ export async function POST(
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const draft = await getDraftById({ ticketId, draftId });
+  const draft = await getDraftById({ ticketId, draftId, tenantId });
   if (!draft) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -67,7 +69,7 @@ export async function POST(
     requesterEmail: ticket.requester_email,
     hasTemplate: Boolean(template)
   });
-  if (!(await checkModuleEntitlement(replyModule))) {
+  if (!(await checkModuleEntitlement(replyModule, tenantId))) {
     const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
     return Response.json(
       {
@@ -81,6 +83,7 @@ export async function POST(
 
   try {
     const result = await sendTicketReply({
+      tenantId,
       ticketId,
       text: draft.body_text,
       html: draft.body_html,
@@ -98,6 +101,7 @@ export async function POST(
     const updated = await updateDraftStatus({
       draftId,
       ticketId,
+      tenantId,
       status: "used"
     });
 
@@ -106,12 +110,14 @@ export async function POST(
     }
 
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "ai_draft_used",
       actorUserId: user.id,
       data: { draftId }
     });
     await recordAuditLog({
+      tenantId,
       actorUserId: user.id,
       action: "ai_draft_used",
       entityType: "agent_draft",
@@ -119,6 +125,7 @@ export async function POST(
       data: { ticketId }
     });
     await recordModuleUsageEvent({
+      tenantId,
       moduleKey: replyModule,
       usageKind: "reply_sent",
       actorType: "human",
@@ -131,6 +138,7 @@ export async function POST(
       }
     });
     await recordModuleUsageEvent({
+      tenantId,
       moduleKey: "aiAutomation",
       usageKind: "approved_draft_send",
       actorType: "ai",

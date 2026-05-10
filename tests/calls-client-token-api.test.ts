@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   getVoiceOperatorPresence: vi.fn()
 }));
 
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
 }));
@@ -38,7 +40,8 @@ describe("GET /api/calls/client-token", () => {
       email: "jerome@6ex.co.za",
       display_name: "Jerome",
       role_id: "role-1",
-      role_name: "lead_admin"
+      role_name: "lead_admin",
+      tenant_id: TENANT_ID
     });
     mocks.canManageTickets.mockReturnValue(true);
     mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
@@ -69,5 +72,6 @@ describe("GET /api/calls/client-token", () => {
         status: "online"
       }
     });
+    expect(mocks.isWorkspaceModuleEnabled).toHaveBeenCalledWith("voice", "primary", TENANT_ID);
   });
 });

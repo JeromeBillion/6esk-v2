@@ -38,6 +38,7 @@ import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createTicketSchema = z.object({
   contactMode: z.enum(["email", "whatsapp", "call"]).optional(),
@@ -239,6 +240,7 @@ export async function POST(request: Request) {
   if (!sessionUser && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionUser?.tenant_id ?? DEFAULT_TENANT_ID;
 
   let payload: unknown;
   try {
@@ -261,7 +263,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Support address not configured" }, { status: 500 });
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
+  if (mailbox.tenant_id !== tenantId) {
+    return Response.json({ error: "Support mailbox belongs to another tenant" }, { status: 500 });
+  }
   const inferredTags = data.tags?.length
     ? data.tags
     : inferTagsFromText({ subject: data.subject, text: data.description ?? null });
@@ -276,13 +281,13 @@ export async function POST(request: Request) {
         ? "whatsapp"
         : "email";
 
-  if (contactMode === "call" && !(await checkModuleEntitlement("voice"))) {
+  if (contactMode === "call" && !(await checkModuleEntitlement("voice", tenantId))) {
     return moduleDisabledResponse("voice");
   }
-  if (contactMode === "whatsapp" && !(await checkModuleEntitlement("whatsapp"))) {
+  if (contactMode === "whatsapp" && !(await checkModuleEntitlement("whatsapp", tenantId))) {
     return moduleDisabledResponse("whatsapp");
   }
-  if (contactMode === "email" && !(await checkModuleEntitlement("email"))) {
+  if (contactMode === "email" && !(await checkModuleEntitlement("email", tenantId))) {
     return moduleDisabledResponse("email");
   }
 
@@ -302,6 +307,7 @@ export async function POST(request: Request) {
       } as Record<string, unknown>;
 
       const customerResolution = await resolveOrCreateCustomerForInbound({
+        tenantId,
         inboundPhone: toPhone
       });
       await syncVoiceConsentFromMetadata({
@@ -343,6 +349,7 @@ export async function POST(request: Request) {
       }
 
       const ticketId = await createTicket({
+        tenantId,
         mailboxId: mailbox.id,
         customerId: customerResolution?.customerId ?? null,
         requesterEmail: `voice:${toPhone}`,
@@ -352,6 +359,7 @@ export async function POST(request: Request) {
       });
 
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "ticket_created",
         actorUserId: sessionUser.id
@@ -360,6 +368,7 @@ export async function POST(request: Request) {
       if (inferredTags.length) {
         await addTagsToTicket(ticketId, inferredTags);
         await recordTicketEvent({
+          tenantId,
           ticketId,
           eventType: "tags_assigned",
           actorUserId: sessionUser.id,
@@ -369,6 +378,7 @@ export async function POST(request: Request) {
 
       const queuedCall = await queueOutboundCall({
         ticketId,
+        tenantId,
         toPhone,
         reason: descriptionText || data.subject,
         origin: "human",
@@ -381,13 +391,15 @@ export async function POST(request: Request) {
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: previewText || data.subject,
         threadId: queuedCall.callSessionId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
-      void deliverPendingAgentEvents().catch(() => {});
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+      void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
       await recordModuleUsageEvent({
+        tenantId,
         moduleKey: "voice",
         usageKind: "ticket_created_outbound",
         actorType: "human",
@@ -422,6 +434,7 @@ export async function POST(request: Request) {
       }
 
       const customerResolution = await resolveOrCreateCustomerForInbound({
+        tenantId,
         inboundPhone: toPhone
       });
       const whatsappTicketMetadata = {
@@ -444,6 +457,7 @@ export async function POST(request: Request) {
       });
 
       const ticketId = await createTicket({
+        tenantId,
         mailboxId: mailbox.id,
         customerId: customerResolution?.customerId ?? null,
         requesterEmail: `whatsapp:${toPhone}`,
@@ -453,6 +467,7 @@ export async function POST(request: Request) {
       });
 
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "ticket_created",
         actorUserId: sessionUser.id
@@ -461,6 +476,7 @@ export async function POST(request: Request) {
       if (inferredTags.length) {
         await addTagsToTicket(ticketId, inferredTags);
         await recordTicketEvent({
+          tenantId,
           ticketId,
           eventType: "tags_assigned",
           actorUserId: sessionUser.id,
@@ -469,6 +485,7 @@ export async function POST(request: Request) {
       }
 
       const queuedMessage = await queueWhatsAppSend({
+        tenantId,
         ticketId,
         to: toPhone,
         text: descriptionText || undefined,
@@ -482,10 +499,11 @@ export async function POST(request: Request) {
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: previewText || data.subject,
         threadId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
 
       if (queuedMessage.messageId) {
         const messageEvent = buildAgentEvent({
@@ -493,14 +511,16 @@ export async function POST(request: Request) {
           ticketId,
           messageId: queuedMessage.messageId,
           mailboxId: mailbox.id,
+          tenantId,
           excerpt: previewText || data.subject,
           threadId
         });
-        await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+        await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
       }
 
-      void deliverPendingAgentEvents().catch(() => {});
+      void deliverPendingAgentEvents({ tenantId }).catch(() => {});
       await recordModuleUsageEvent({
+        tenantId,
         moduleKey: "whatsapp",
         usageKind: "ticket_created_outbound",
         actorType: "human",
@@ -532,6 +552,7 @@ export async function POST(request: Request) {
       ...(data.metadata ?? {})
     } as Record<string, unknown>;
     const created = await createOutboundEmailTicket({
+      tenantId,
       actorUserId: sessionUser.id,
       toEmail,
       subject: data.subject,
@@ -547,6 +568,7 @@ export async function POST(request: Request) {
     const ticketId = created.ticketId;
     const messageId = created.messageId;
     await recordModuleUsageEvent({
+      tenantId,
       moduleKey: "email",
       usageKind: "ticket_created_outbound",
       actorType: "human",
@@ -580,6 +602,7 @@ export async function POST(request: Request) {
   });
   const resolvedProfile = readProfileFromMetadata(enrichedMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
+    tenantId,
     profile: resolvedProfile,
     inboundEmail: fromEmail
   });
@@ -600,6 +623,7 @@ export async function POST(request: Request) {
   });
 
   const ticketId = await createTicket({
+    tenantId,
     mailboxId: mailbox.id,
     customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
@@ -608,11 +632,12 @@ export async function POST(request: Request) {
     metadata: enrichedMetadata
   });
 
-  await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+  await recordTicketEvent({ tenantId, ticketId, eventType: "ticket_created" });
 
   if (inferredTags.length) {
     await addTagsToTicket(ticketId, inferredTags);
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "tags_assigned",
       data: { tags: inferredTags }
@@ -629,6 +654,7 @@ export async function POST(request: Request) {
       channel: "email"
     });
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "profile_enriched",
       data: {
@@ -639,6 +665,7 @@ export async function POST(request: Request) {
     });
   } else if (resolvedProfile && customerResolution?.conflict) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "customer_identity_conflict",
       data: {
@@ -654,13 +681,14 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, received_at, is_read
     ) VALUES (
-      $1, $2, $3, 'inbound', $4, $5, $6,
-      $7, $8, $9, $10, false
+      $1, $2, $3, $4, 'inbound', $5, $6, $7,
+      $8, $9, $10, $11, false
     )`,
     [
+      tenantId,
       messageId,
       mailbox.id,
       ticketId,
@@ -735,28 +763,30 @@ export async function POST(request: Request) {
       eventType: "customer.identity.resolved",
       ticketId,
       mailboxId: mailbox.id,
+      tenantId,
       excerpt: `Resolved customer ${customerResolution.customerId}`,
       threadId: messageId
     });
     await enqueueAgentEvent({
       eventType: "customer.identity.resolved",
+      tenantId,
       payload: {
         ...identityEvent,
         customer: {
           id: customerResolution.customerId,
           kind: customerResolution.kind
         },
-          identity: {
-            email: fromEmail,
-            phone: readLookupPhoneFromMetadata(enrichedMetadata)
-          },
-          matchedByProfile: Boolean(resolvedProfile),
-          ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
-        }
-      });
+        identity: {
+          email: fromEmail,
+          phone: readLookupPhoneFromMetadata(enrichedMetadata)
+        },
+        matchedByProfile: Boolean(resolvedProfile),
+        ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
+      }
+    });
   }
 
-  await recordTicketEvent({ ticketId, eventType: "message_received" });
+  await recordTicketEvent({ tenantId, ticketId, eventType: "message_received" });
 
   const threadId = messageId;
   const messageEvent = buildAgentEvent({
@@ -764,6 +794,7 @@ export async function POST(request: Request) {
     ticketId,
     messageId,
     mailboxId: mailbox.id,
+    tenantId,
     excerpt: previewText,
     threadId
   });
@@ -771,15 +802,17 @@ export async function POST(request: Request) {
     eventType: "ticket.created",
     ticketId,
     mailboxId: mailbox.id,
+    tenantId,
     excerpt: previewText,
     threadId
   });
 
-  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
-  void deliverPendingAgentEvents().catch(() => {});
+  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
+  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
 
   await recordModuleUsageEvent({
+    tenantId,
     moduleKey: "email",
     usageKind: "ticket_created_inbound",
     actorType: "system",

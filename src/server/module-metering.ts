@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import {
   DEFAULT_WORKSPACE_KEY,
   type WorkspaceModuleKey
@@ -68,6 +69,7 @@ export async function recordModuleUsageEvent({
   unit = "event",
   actorType,
   providerMode = null,
+  costCent = 0,
   metadata = null
 }: RecordModuleUsageArgs) {
   if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
@@ -101,8 +103,9 @@ export async function recordModuleUsageEvent({
         JSON.stringify(metadata ?? {})
       ]
     );
-  } catch {
+  } catch (error) {
     // Best-effort telemetry: never fail user-facing flows.
+    logger.error("Metering event insert failed", { error, fn: "recordModuleUsage" });
   }
 }
 

@@ -33,7 +33,10 @@ export function formatTicketDisplayId(ticketNumber: number | null | undefined) {
   return `#${ticketNumber}`;
 }
 
-export async function resolveTicketIdForInbound(references: string[]) {
+export async function resolveTicketIdForInbound(
+  references: string[],
+  tenantId = DEFAULT_TENANT_ID
+) {
   if (references.length === 0) {
     return null;
   }
@@ -42,9 +45,10 @@ export async function resolveTicketIdForInbound(references: string[]) {
     `SELECT ticket_id
      FROM messages
      WHERE message_id = ANY($1)
+       AND tenant_id = $2
        AND ticket_id IS NOT NULL
      LIMIT 1`,
-    [references]
+    [references, tenantId]
   );
 
   return result.rows[0]?.ticket_id ?? null;
@@ -138,10 +142,10 @@ export async function recordTicketEvent({
   );
 }
 
-export async function reopenTicketIfNeeded(ticketId: string) {
+export async function reopenTicketIfNeeded(ticketId: string, tenantId: string) {
   const result = await db.query<{ status: string }>(
-    "SELECT status FROM tickets WHERE id = $1",
-    [ticketId]
+    "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
+    [ticketId, tenantId]
   );
   const status = result.rows[0]?.status;
   if (!status) {
@@ -150,10 +154,11 @@ export async function reopenTicketIfNeeded(ticketId: string) {
 
   if (status === "solved" || status === "closed") {
     await db.query(
-      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1",
-      [ticketId]
+      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
+      [ticketId, tenantId]
     );
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "ticket_reopened",
       data: { previousStatus: status }
@@ -286,7 +291,12 @@ export async function listTicketsForUser(
   }
 
   if (filters?.search) {
-    values.push(`%${filters.search}%`);
+    // Escape ILIKE wildcards to prevent pattern injection (C-3)
+    const escaped = filters.search
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
+    values.push(`%${escaped}%`);
     conditions.push(
       `(t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length})`
     );
@@ -396,16 +406,17 @@ export async function listTicketsForUser(
      LEFT JOIN tags tag ON tag.id = tt.tag_id
      ${whereClause}
      GROUP BY t.id
-     ORDER BY t.created_at DESC`,
+     ORDER BY t.created_at DESC
+     LIMIT 200`,
     values
   );
 
   return result.rows;
 }
 
-export async function getTicketById(ticketId: string, tenantId?: string | null) {
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId ? "AND t.tenant_id = $2" : "";
+export async function getTicketById(ticketId: string, tenantId: string) {
+  const values = [ticketId, tenantId];
+  const tenantClause = "AND t.tenant_id = $2";
   const result = await db.query<TicketRecord>(
     `SELECT t.id, t.tenant_id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.ticket_number,
@@ -431,9 +442,9 @@ export async function getTicketById(ticketId: string, tenantId?: string | null) 
   return result.rows[0] ?? null;
 }
 
-export async function listTicketMessages(ticketId: string, tenantId?: string | null) {
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId ? "AND m.tenant_id = $2" : "";
+export async function listTicketMessages(ticketId: string, tenantId: string) {
+  const values = [ticketId, tenantId];
+  const tenantClause = "AND m.tenant_id = $2";
   const result = await db.query(
     `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.subject,
             m.preview_text, m.received_at, m.sent_at, m.wa_status, m.wa_timestamp,
@@ -460,9 +471,9 @@ export async function listTicketMessages(ticketId: string, tenantId?: string | n
   return result.rows;
 }
 
-export async function listTicketEvents(ticketId: string, tenantId?: string | null) {
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
+export async function listTicketEvents(ticketId: string, tenantId: string) {
+  const values = [ticketId, tenantId];
+  const tenantClause = "AND tenant_id = $2";
   const result = await db.query(
     `SELECT id, event_type, actor_user_id, data, created_at
      FROM ticket_events

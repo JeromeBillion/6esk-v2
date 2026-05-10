@@ -92,6 +92,7 @@ vi.mock("@/server/db", () => ({
 import { POST } from "@/app/api/support/tickets/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 describe("POST /api/support/tickets", () => {
   beforeEach(() => {
@@ -104,7 +105,7 @@ describe("POST /api/support/tickets", () => {
 
     mocks.getSessionUser.mockResolvedValue(null);
     mocks.canManageTickets.mockReturnValue(true);
-    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1" });
+    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1", tenant_id: TENANT_ID });
     mocks.inferTagsFromText.mockReturnValue(["general"]);
     mocks.createTicket.mockResolvedValue("ticket-1");
     mocks.recordTicketEvent.mockResolvedValue(undefined);
@@ -230,7 +231,8 @@ describe("POST /api/support/tickets", () => {
       email: "agent@6ex.co.za",
       display_name: "Agent",
       role_id: "role-1",
-      role_name: "agent"
+      role_name: "agent",
+      tenant_id: TENANT_ID
     });
     mocks.evaluateVoiceCallPolicy.mockResolvedValue({
       allowed: false,

@@ -68,7 +68,7 @@ export async function getSessionUser() {
   }
 
   const tokenHash = hashToken(token);
-  const result = await db.query<SessionUser & { _impersonated_tenant_id: string | null; _impersonated_slug: string | null }>(
+  const result = await db.query<SessionUser & { _impersonated_tenant_id: string | null; _impersonated_slug: string | null; _real_slug: string }>(
     `SELECT u.id, u.email, u.display_name, u.role_id, r.name AS role_name,
             u.tenant_id AS real_tenant_id,
             COALESCE(t.slug, 'default') AS _real_slug,
@@ -100,7 +100,7 @@ export async function getSessionUser() {
     role_name: row.role_name,
     real_tenant_id: row.real_tenant_id,
     tenant_id: isImpersonating ? row._impersonated_tenant_id! : row.real_tenant_id,
-    tenant_slug: isImpersonating ? row._impersonated_slug! : (row as any)._real_slug,
+    tenant_slug: isImpersonating ? row._impersonated_slug! : row._real_slug,
     is_impersonating: isImpersonating
   };
 }

@@ -15,13 +15,16 @@ vi.mock("@/server/whatsapp/outbox", () => ({
 
 import { GET } from "@/app/api/admin/whatsapp/failed/route";
 
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
+
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -66,6 +69,6 @@ describe("GET /api/admin/whatsapp/failed", () => {
         to: "+27821234567"
       }
     });
-    expect(mocks.listFailedWhatsAppOutboxEvents).toHaveBeenCalledWith(25);
+    expect(mocks.listFailedWhatsAppOutboxEvents).toHaveBeenCalledWith(25, TENANT_ID);
   });
 });

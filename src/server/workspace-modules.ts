@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export const DEFAULT_WORKSPACE_KEY = "primary";
@@ -95,7 +96,8 @@ export async function getWorkspaceModules(
        LIMIT 1`,
       [workspaceKey, tenantId]
     );
-  } catch {
+  } catch (error) {
+    logger.error("Workspace config load failed, using defaults", { error, workspaceKey, tenantId });
     return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 

@@ -5,6 +5,7 @@ const TICKET_2 = "22222222-2222-2222-2222-222222222222";
 const TICKET_3 = "33333333-3333-3333-3333-333333333333";
 const TICKET_4 = "44444444-4444-4444-4444-444444444444";
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -55,6 +56,10 @@ vi.mock("@/server/workspace-modules", () => ({
   isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
 }));
 
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.isWorkspaceModuleEnabled
+}));
+
 vi.mock("@/server/module-metering", () => ({
   recordModuleUsageEvent: mocks.recordModuleUsageEvent
 }));
@@ -67,7 +72,8 @@ function buildUser(roleName: "lead_admin" | "agent" | "viewer", id = AGENT_ID) {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -313,6 +319,9 @@ describe("POST /api/tickets/bulk-email", () => {
     });
 
     expect(mocks.createOutboundEmailTicket).toHaveBeenCalledTimes(2);
+    expect(mocks.getCustomerById).toHaveBeenCalledWith("customer-1", TENANT_ID);
+    expect(mocks.getCustomerById).toHaveBeenCalledWith("customer-4", TENANT_ID);
+    expect(mocks.listCustomerIdentities).toHaveBeenCalledWith("customer-3", TENANT_ID);
     expect(mocks.createOutboundEmailTicket).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

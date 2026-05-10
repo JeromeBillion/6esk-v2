@@ -1,6 +1,7 @@
 # Docs
 
 This directory is intentionally compact and only keeps implementation-critical docs.
+`docs/6esk-v2-commercialization-roadmap.md` is the canonical roadmap for the current productization work.
 
 ## Keep
 - `docs/figma-ai-crm-ui-target-state.md`
@@ -15,10 +16,6 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Current customer identity, customer history, and merge behavior/spec
 - `docs/webagent-escalation-dependencies.md`
   - Cross-repo env/secret map for prediction backend, Venus runtime, and 6esk
-- `docs/call-capabilities-plan.md`
-  - Inbound/outbound voice capability roadmap and implementation phases
-- `docs/call-capabilities-backlog.md`
-  - Ticketized execution backlog with dependencies, estimates, and sprint cut
 - `docs/call-ops-runbook.md`
   - Call operations runbook (replay drill, outbox load/retry drill, rollback)
 - `docs/call-crm-staging-e2e.md`
@@ -29,13 +26,20 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Current pilot/rollout checklist for the voice feature
 - `docs/Venus-Voice.md`
   - Venus-to-6esk AI voice integration contract and safety model
-- `docs/6esk-v1-completion-roadmap.md`
-  - Canonical roadmap, execution sequence, and hardening backlog for the `6ex`-custom proprietary `6esk v1` product
+- `docs/pricing-model.md`
+  - Working v2 modular pricing assumptions and usage-fee model
+- `docs/deploy-migrations.md`
+  - Migration deployment checklist
 - `docs/6esk-v2-commercialization-roadmap.md`
-  - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including South Africa readiness and BizOps
+  - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including security launch gates, AI readiness, usage/billing, South Africa readiness, and BizOps
+- `docs/6esk-v3-mobile-roadmap.md`
+  - Mobile follow-on roadmap after v2 SaaS foundations
 
 ## Culled
 Removed as stale/duplicative:
+- `docs/6esk-v1-completion-roadmap.md`
+- `docs/call-capabilities-plan.md`
+- `docs/call-capabilities-backlog.md`
 - `docs/email-payload.md`
 - `docs/merge-review-plan.md`
 - `docs/PRD.md`

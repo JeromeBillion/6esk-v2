@@ -31,7 +31,8 @@ export async function GET(
   }
 
   const { agentId } = await params;
-  const agent = await getAgentIntegrationById(agentId);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const agent = await getAgentIntegrationById(agentId, tenantId);
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -61,13 +62,14 @@ export async function PATCH(
   }
 
   const { agentId } = await params;
-  const agent = await updateAgentIntegration(agentId, parsed.data);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const agent = await updateAgentIntegration(agentId, parsed.data, tenantId);
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   await recordAuditLog({
-    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "agent_integration_updated",
     entityType: "agent_integration",

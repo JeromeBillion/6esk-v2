@@ -11,6 +11,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getMessageById, hasMailboxAccess } from "@/server/messages";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function buildOutboundMessageId(fromEmail: string) {
   const domain = fromEmail.split("@")[1]?.trim().toLowerCase() || "6esk.local";
@@ -44,10 +45,11 @@ export async function POST(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("email"))) {
+  if (!(await checkModuleEntitlement("email", tenantId))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",
@@ -89,16 +91,21 @@ export async function POST(request: Request) {
     if (!isLeadAdmin(user)) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    mailbox = await getOrCreateMailbox(fromEmail, supportAddress);
+    mailbox = await getOrCreateMailbox(fromEmail, supportAddress, tenantId);
+    if (mailbox.tenant_id !== tenantId) {
+      return Response.json({ error: "Mailbox belongs to another tenant" }, { status: 403 });
+    }
+  } else if (mailbox.tenant_id !== tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   } else if (!isLeadAdmin(user)) {
-    const allowed = await hasMailboxAccess(user.id, mailbox.id);
+    const allowed = await hasMailboxAccess(user.id, mailbox.id, tenantId);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
   }
 
   if (data.draftId) {
-    const draft = await getMessageById(data.draftId);
+    const draft = await getMessageById(data.draftId, tenantId);
     if (!draft || draft.mailbox_id !== mailbox.id || !isMailDraftRecord(draft)) {
       return Response.json({ error: "Draft not found" }, { status: 404 });
     }
@@ -140,7 +147,8 @@ export async function POST(request: Request) {
              'queued_at', now()::text,
              'last_send_error', NULL
            )
-       WHERE id = $11`,
+       WHERE id = $11
+         AND tenant_id = $12`,
       [
         outboundMessageId,
         threadId,
@@ -152,20 +160,22 @@ export async function POST(request: Request) {
         bccList,
         data.subject,
         previewText,
-        messageId
+        messageId,
+        tenantId
       ]
     );
   } else {
     await db.query(
       `INSERT INTO messages (
-        id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
+        tenant_id, id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
         to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read, metadata
       ) VALUES (
-        $1, $2, 'outbound', $3, $4, $5, $6, NULL, 'resend', $7,
-        $8, $9, $10, $11, $12, NULL, true,
+        $1, $2, $3, 'outbound', $4, $5, $6, $7, NULL, 'resend', $8,
+        $9, $10, $11, $12, $13, NULL, true,
         jsonb_build_object('mail_state', 'queued', 'queued_at', now()::text)
       )`,
       [
+        tenantId,
         messageId,
         mailbox.id,
         outboundMessageId,
@@ -219,9 +229,10 @@ export async function POST(request: Request) {
       });
 
       await db.query(
-        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
+          tenantId,
           attachmentId,
           messageId,
           attachment.filename,
@@ -236,8 +247,9 @@ export async function POST(request: Request) {
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
-     WHERE id = $4`,
-    [textKey, htmlKey, sizeBytes || null, messageId]
+     WHERE id = $4
+       AND tenant_id = $5`,
+    [textKey, htmlKey, sizeBytes || null, messageId, tenantId]
   );
 
   await enqueueEmailOutboxEvent({
@@ -248,9 +260,10 @@ export async function POST(request: Request) {
     bcc: bccList,
     subject: data.subject,
     replyTo: data.replyTo ?? null
-  }, user.tenant_id);
+  }, tenantId);
 
   await recordModuleUsageEvent({
+    tenantId,
     moduleKey: "email",
     usageKind: "direct_send",
     actorType: "human",

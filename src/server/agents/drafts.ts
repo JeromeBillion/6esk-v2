@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type AgentDraft = {
   id: string;
@@ -31,18 +32,23 @@ export type DraftQueueItem = AgentDraft & {
 
 export async function getDraftById({
   draftId,
-  ticketId
+  ticketId,
+  tenantId
 }: {
   draftId: string;
   ticketId: string;
+  tenantId?: string | null;
 }) {
+  const values = tenantId ? [draftId, ticketId, tenantId] : [draftId, ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $3" : "";
   const result = await db.query<AgentDraft>(
-    `SELECT id, integration_id, ticket_id, subject, body_text, body_html, confidence,
+    `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
             metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE id = $1 AND ticket_id = $2
+       ${tenantClause}
      LIMIT 1`,
-    [draftId, ticketId]
+    values
   );
   return result.rows[0] ?? null;
 }
@@ -182,6 +188,7 @@ export async function listPendingDraftsForUser(
 }
 
 export async function createDraft({
+  tenantId = DEFAULT_TENANT_ID,
   integrationId,
   ticketId,
   subject,
@@ -190,6 +197,7 @@ export async function createDraft({
   confidence,
   metadata
 }: {
+  tenantId?: string;
   integrationId: string;
   ticketId: string;
   subject?: string | null;
@@ -199,11 +207,12 @@ export async function createDraft({
   metadata?: Record<string, unknown> | null;
 }) {
   const result = await db.query<AgentDraft>(
-    `INSERT INTO agent_drafts (integration_id, ticket_id, subject, body_text, body_html, confidence, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
+    `INSERT INTO agent_drafts (tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
     [
+      tenantId,
       integrationId,
       ticketId,
       subject ?? null,
@@ -219,19 +228,25 @@ export async function createDraft({
 export async function updateDraftStatus({
   draftId,
   ticketId,
-  status
+  status,
+  tenantId
 }: {
   draftId: string;
   ticketId: string;
   status: DraftStatus;
+  tenantId?: string | null;
 }) {
+  const values = tenantId ? [status, draftId, ticketId, tenantId] : [status, draftId, ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $4" : "";
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET status = $1, updated_at = now()
-     WHERE id = $2 AND ticket_id = $3 AND status = 'pending'
-     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
+     WHERE id = $2 AND ticket_id = $3
+       ${tenantClause}
+       AND status = 'pending'
+     RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
-    [status, draftId, ticketId]
+    values
   );
   return result.rows[0] ?? null;
 }

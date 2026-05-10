@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   deleteMailDraft: vi.fn()
 }));
 
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
+
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
 }));
@@ -25,7 +27,8 @@ describe("mail draft routes", () => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue({
       id: "user-1",
-      email: "jerome.choma@6ex.co.za"
+      email: "jerome.choma@6ex.co.za",
+      tenant_id: TENANT_ID
     });
     mocks.listInboxMailboxesForUser.mockResolvedValue([
       {
@@ -78,6 +81,7 @@ describe("mail draft routes", () => {
     expect(response.status).toBe(200);
     expect(mocks.upsertMailDraft).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         mailboxId: "mailbox-1",
         fromEmail: "jerome.choma@6ex.co.za",
         to: ["customer@example.com"],
@@ -98,6 +102,6 @@ describe("mail draft routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.deleteMailDraft).toHaveBeenCalledWith("draft-1", "mailbox-1");
+    expect(mocks.deleteMailDraft).toHaveBeenCalledWith("draft-1", TENANT_ID, "mailbox-1");
   });
 });

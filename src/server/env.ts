@@ -19,7 +19,17 @@ const envSchema = z.object({
   R2_ENDPOINT: z.string().min(1),
   R2_ACCESS_KEY_ID: z.string().min(1),
   R2_SECRET_ACCESS_KEY: z.string().min(1),
-  R2_BUCKET: z.string().min(1)
+  R2_BUCKET: z.string().min(1),
+
+  // OAuth
+  OAUTH_ENCRYPTION_KEY: z.string().min(64).optional(), // 32-byte hex = 64 chars
+  GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+  MICROSOFT_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  MICROSOFT_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  MICROSOFT_OAUTH_TENANT_ID: z.string().min(1).optional(),
+  MICROSOFT_OAUTH_REDIRECT_URI: z.string().url().optional()
 });
 
 export type Env = z.infer<typeof envSchema>;

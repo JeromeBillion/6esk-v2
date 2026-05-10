@@ -860,6 +860,30 @@ export function updateInboundSettings(input: {
   });
 }
 
+export type OAuthConnectionRecord = {
+  id: string;
+  tenant_id: string;
+  provider: "google" | "microsoft" | "resend" | "imap" | "zoho";
+  email_address: string;
+  token_expires_at: string | null;
+  provider_account_id: string | null;
+  provider_tenant_id: string | null;
+  scopes: Record<string, unknown> | null;
+  sync_cursor: string | null;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+  sync_status: "active" | "revoked" | "pending";
+  connected_by: string;
+  created_at: string;
+  updated_at: string;
+  revoked_at: string | null;
+};
+
+export async function listOAuthConnections() {
+  const payload = await apiFetch<{ connections: OAuthConnectionRecord[] }>("/api/admin/oauth-connections");
+  return payload.connections ?? [];
+}
+
 export function retryInboundEvents(limit = 10, eventIds?: string[]) {
   return apiFetch<{ status: string; requested: number; retried: number; failed: number; ids: string[] }>(
     `/api/admin/inbound/retry?limit=${limit}`,

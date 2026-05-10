@@ -40,6 +40,15 @@ export type NormalizedWhatsAppMessage = {
   attachments?: NormalizedWhatsAppAttachment[] | null;
 };
 
+type WhatsAppInboundAccount = {
+  id: string;
+  tenant_id: string;
+  provider: string;
+  phone_number: string;
+  waba_id: string | null;
+  access_token: string | null;
+};
+
 function getSupportAddress() {
   const explicit = process.env.SUPPORT_ADDRESS;
   if (explicit) {
@@ -73,6 +82,10 @@ function normalizeContact(value: string) {
   return value.replace(/\s+/g, "").trim();
 }
 
+function normalizeDigits(value: string | null | undefined) {
+  return (value ?? "").replace(/\D/g, "");
+}
+
 function formatRequester(contact: string) {
   if (!contact) return "whatsapp:unknown";
   return contact.startsWith("whatsapp:") ? contact : `whatsapp:${contact}`;
@@ -94,16 +107,58 @@ function parseTimestamp(value?: string | number | null) {
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
 
-async function getActiveAccessToken() {
-  const result = await db.query<{ access_token: string | null; provider: string }>(
-    `SELECT access_token, provider
+async function listActiveWhatsAppAccounts(provider?: string | null) {
+  const result = await db.query<WhatsAppInboundAccount>(
+    `SELECT id, tenant_id, provider, phone_number, waba_id, access_token
      FROM whatsapp_accounts
      WHERE status = 'active'
+       AND ($1::text IS NULL OR provider = $1)
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 20`,
+    [provider || null]
   );
-  const record = result.rows[0];
-  if (!record) return null;
+  return result.rows;
+}
+
+export async function resolveWhatsAppAccountForInbound(
+  message?: Pick<NormalizedWhatsAppMessage, "provider" | "to"> | null
+) {
+  const provider = message?.provider || null;
+  const accounts = await listActiveWhatsAppAccounts(provider);
+  if (accounts.length === 0) {
+    return null;
+  }
+
+  const rawRecipient = message?.to?.trim() ?? "";
+  const recipientDigits = normalizeDigits(rawRecipient);
+  if (rawRecipient) {
+    const matches = accounts.filter((account) => {
+      const accountDigits = normalizeDigits(account.phone_number);
+      return (
+        account.phone_number === rawRecipient ||
+        (recipientDigits.length > 0 && accountDigits === recipientDigits) ||
+        account.waba_id === rawRecipient
+      );
+    });
+    if (matches.length === 1) {
+      return matches[0];
+    }
+    if (matches.length > 1) {
+      throw new Error("Ambiguous WhatsApp recipient account.");
+    }
+    if (accounts.length > 1) {
+      throw new Error("No active WhatsApp account matches the webhook recipient.");
+    }
+  }
+
+  if (accounts.length === 1) {
+    return accounts[0];
+  }
+
+  throw new Error("Unable to resolve WhatsApp tenant for inbound webhook.");
+}
+
+function getAccountAccessToken(record: WhatsAppInboundAccount) {
   if (record.provider !== "meta") return null;
   const token = record.access_token ? decryptSecret(record.access_token) : "";
   return token || null;
@@ -144,16 +199,17 @@ async function fetchMetaMedia(accessToken: string, mediaId: string) {
   };
 }
 
-async function resolveWhatsAppTicketId(conversationId: string) {
+async function resolveWhatsAppTicketId(conversationId: string, tenantId: string) {
   const result = await db.query<{ ticket_id: string }>(
     `SELECT ticket_id
      FROM messages
      WHERE channel = 'whatsapp'
        AND conversation_id = $1
+       AND tenant_id = $2
        AND ticket_id IS NOT NULL
      ORDER BY created_at DESC
      LIMIT 1`,
-    [conversationId]
+    [conversationId, tenantId]
   );
   return result.rows[0]?.ticket_id ?? null;
 }
@@ -169,6 +225,12 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     throw new Error("Missing WhatsApp sender");
   }
 
+  const account = await resolveWhatsAppAccountForInbound(message);
+  if (!account) {
+    throw new Error("No active WhatsApp account configured for inbound webhook.");
+  }
+  const tenantId = account.tenant_id;
+
   // ── Idempotency check (outside transaction, read-only) ──
   if (message.messageId) {
     const existing = await db.query(
@@ -176,8 +238,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
        FROM messages
        WHERE channel = 'whatsapp'
          AND external_message_id = $1
+         AND tenant_id = $2
        LIMIT 1`,
-      [message.messageId]
+      [message.messageId, tenantId]
     );
     if ((existing.rowCount ?? 0) > 0) {
       return {
@@ -191,6 +254,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
   const requesterProfile = await lookupPredictionProfile({ phone: from });
   const customerResolution = await resolveOrCreateCustomerForInbound({
+    tenantId,
     profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
     inboundPhone: from,
     displayName: message.contactName ?? null
@@ -203,10 +267,13 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         )
       : buildProfileMetadataPatch(requesterProfile);
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
+  if (mailbox.tenant_id !== tenantId) {
+    throw new Error("WhatsApp support mailbox belongs to another tenant.");
+  }
   const conversationId = message.conversationId ?? from;
 
-  const existingTicketId: string | null = await resolveWhatsAppTicketId(conversationId);
+  const existingTicketId: string | null = await resolveWhatsAppTicketId(conversationId, tenantId);
 
   const attachments = (message.attachments ?? []).filter(Boolean);
   const fallbackCaption =
@@ -242,7 +309,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   const resolvedAttachments: ResolvedAttachment[] = [];
 
   if (attachments.length) {
-    const accessToken = await getActiveAccessToken();
+    const accessToken = getAccountAccessToken(account);
     for (const attachment of attachments) {
       const attachmentId = randomUUID();
       const safeFilename = sanitizeFilename(
@@ -299,24 +366,32 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       const metadata = {
         channel: "whatsapp",
         wa_contact: from,
-        provider: message.provider ?? "meta",
+        provider: message.provider ?? account.provider,
         contact_name: message.contactName ?? null,
         ...profileMetadataPatch
       };
 
       const ticketResult = await client.query<{ id: string }>(
-        `INSERT INTO tickets (mailbox_id, customer_id, requester_email, subject, category, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
-        [mailbox.id, customerResolution?.customerId ?? null, formatRequester(from), subject, category, metadata ?? {}]
+        [
+          tenantId,
+          mailbox.id,
+          customerResolution?.customerId ?? null,
+          formatRequester(from),
+          subject,
+          category,
+          metadata ?? {}
+        ]
       );
       ticketId = ticketResult.rows[0].id;
       createdNewTicket = true;
 
       await client.query(
-        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4)`,
-        [ticketId, "ticket_created", null, null]
+        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, ticketId, "ticket_created", null, null]
       );
 
       if (inferredTags.length) {
@@ -333,37 +408,38 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
           );
         }
         await client.query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
-          [ticketId, "tags_assigned", null, { tags: inferredTags }]
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, ticketId, "tags_assigned", null, { tags: inferredTags }]
         );
       }
     } else {
       // Reopen ticket if it was resolved/closed
       const statusResult = await client.query<{ status: string }>(
-        "SELECT status FROM tickets WHERE id = $1",
-        [ticketId]
+        "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
+        [ticketId, tenantId]
       );
       const currentStatus = statusResult.rows[0]?.status;
       if (currentStatus === "solved" || currentStatus === "closed") {
         await client.query(
-          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1",
-          [ticketId]
+          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
+          [ticketId, tenantId]
         );
         await client.query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
-          [ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
         );
       }
 
       if (requesterProfile.status === "matched") {
         await client.query(
-          `UPDATE tickets
+        `UPDATE tickets
            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                updated_at = now()
-           WHERE id = $1`,
-          [ticketId, JSON.stringify(profileMetadataPatch)]
+           WHERE id = $1
+             AND tenant_id = $3`,
+          [ticketId, JSON.stringify(profileMetadataPatch), tenantId]
         );
       }
     }
@@ -371,8 +447,16 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     if (ticketId && customerResolution?.customerId) {
       const customerAttachResult = await client.query(
         `UPDATE tickets SET customer_id = $2, updated_at = now()
-         WHERE id = $1 AND (customer_id IS NULL OR customer_id != $2)`,
-        [ticketId, customerResolution.customerId]
+         WHERE id = $1
+           AND tenant_id = $3
+           AND (customer_id IS NULL OR customer_id != $2)
+           AND EXISTS (
+             SELECT 1
+             FROM customers c
+             WHERE c.id = $2
+               AND c.tenant_id = $3
+           )`,
+        [ticketId, customerResolution.customerId, tenantId]
       );
       attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
     }
@@ -391,9 +475,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
 
     if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
       await client.query(
-        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4)`,
-        [ticketId, "profile_enriched", null, {
+        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, ticketId, "profile_enriched", null, {
           source: "prediction-market-mvp",
           matchedBy: requesterProfile.matchedBy,
           externalUserId: requesterProfile.profile.id
@@ -401,9 +485,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       );
     } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
       await client.query(
-        `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4)`,
-        [ticketId, "customer_identity_conflict", null, {
+        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, ticketId, "customer_identity_conflict", null, {
           source: "prediction-market-mvp",
           matchedBy: requesterProfile.matchedBy,
           conflict: customerResolution.conflict
@@ -412,23 +496,24 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     }
 
     await client.query(
-      `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-       VALUES ($1, $2, $3, $4)`,
-      [ticketId, "message_received", null, null]
+      `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [tenantId, ticketId, "message_received", null, null]
     );
 
     // Insert the message row
     await client.query(
       `INSERT INTO messages (
-        id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+        tenant_id, id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
         external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
         from_email, to_emails, subject, preview_text, received_at, is_read
       ) VALUES (
-        $1, $2, $3, 'inbound', 'whatsapp', $4, $5,
-        $6, $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, false
+        $1, $2, $3, $4, 'inbound', 'whatsapp', $5, $6,
+        $7, $8, $9, $10, $11, $12,
+        $13, $14, $15, $16, $17, false
       )`,
       [
+        tenantId,
         messageId,
         mailbox.id,
         ticketId,
@@ -439,7 +524,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         from,
         "received",
         receivedAt,
-        message.provider ?? "meta",
+        message.provider ?? account.provider,
         from,
         [supportAddress],
         previewText
@@ -453,9 +538,10 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     );
 
     await client.query(
-      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
+        tenantId,
         messageId,
         message.messageId ?? null,
         "received",
@@ -468,9 +554,10 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     for (const resolved of resolvedAttachments) {
       const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
       await client.query(
-        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
+          tenantId,
           resolved.attachmentId,
           messageId,
           resolved.originalFilename ?? resolved.safeFilename,
@@ -529,7 +616,12 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         target: resolved.originalFilename ?? resolved.safeFilename,
         detail: error instanceof Error ? error.message : "unknown upload error"
       });
-      await db.query(`DELETE FROM attachments WHERE id = $1`, [resolved.attachmentId]).catch(() => {});
+      await db
+        .query(`DELETE FROM attachments WHERE id = $1 AND tenant_id = $2`, [
+          resolved.attachmentId,
+          tenantId
+        ])
+        .catch(() => {});
     }
   }
 
@@ -537,8 +629,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     await db.query(
       `UPDATE messages
        SET r2_key_text = $1, size_bytes = $2
-       WHERE id = $3`,
-      [textKey, sizeBytes || null, messageId]
+       WHERE id = $3
+         AND tenant_id = $4`,
+      [textKey, sizeBytes || null, messageId, tenantId]
     );
   }
 
@@ -548,20 +641,22 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       ticketId,
       messageId,
       mailboxId: mailbox.id,
+      tenantId,
       excerpt: previewText,
       threadId: conversationId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
 
     if (createdNewTicket) {
       const ticketEvent = buildAgentEvent({
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: previewText,
         threadId: conversationId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
     }
 
     if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
@@ -569,11 +664,13 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         eventType: "customer.identity.resolved",
         ticketId,
         mailboxId: mailbox.id,
+        tenantId,
         excerpt: `Resolved customer ${customerResolution.customerId}`,
         threadId: conversationId
       });
       await enqueueAgentEvent({
         eventType: "customer.identity.resolved",
+        tenantId,
         payload: {
           ...identityEvent,
           customer: {
@@ -593,9 +690,10 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     if (failedStorageItems.length > 0) {
       await db
         .query(
-          `INSERT INTO ticket_events (ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4)`,
+          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5)`,
           [
+            tenantId,
             ticketId,
             "message_storage_partial",
             null,
@@ -608,7 +706,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         .catch(() => {});
     }
 
-    void deliverPendingAgentEvents().catch(() => {});
+    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

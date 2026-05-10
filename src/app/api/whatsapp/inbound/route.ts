@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import {
+  resolveWhatsAppAccountForInbound,
   storeInboundWhatsApp,
   type NormalizedWhatsAppAttachment,
   type NormalizedWhatsAppMessage
@@ -14,12 +15,21 @@ type WhatsAppStatusUpdate = {
   payload: Record<string, unknown>;
 };
 
-async function getVerifyToken() {
+async function getVerifyTokens() {
   const result = await db.query(
-    `SELECT verify_token FROM whatsapp_accounts ORDER BY created_at DESC LIMIT 1`
+    `SELECT verify_token
+     FROM whatsapp_accounts
+     WHERE status = 'active'
+       AND verify_token IS NOT NULL
+     ORDER BY created_at DESC`
   );
-  const stored = result.rows[0]?.verify_token ?? "";
-  return stored || process.env.WHATSAPP_VERIFY_TOKEN || "";
+  const tokens = result.rows
+    .map((row) => (typeof row.verify_token === "string" ? row.verify_token : ""))
+    .filter(Boolean);
+  if (process.env.WHATSAPP_VERIFY_TOKEN) {
+    tokens.push(process.env.WHATSAPP_VERIFY_TOKEN);
+  }
+  return tokens;
 }
 
 export async function GET(request: Request) {
@@ -29,8 +39,8 @@ export async function GET(request: Request) {
   const challenge = url.searchParams.get("hub.challenge");
 
   if (mode === "subscribe" && token) {
-    const verifyToken = await getVerifyToken();
-    if (verifyToken && token === verifyToken) {
+    const verifyTokens = await getVerifyTokens();
+    if (verifyTokens.includes(token)) {
       return new Response(challenge ?? "", { status: 200 });
     }
   }
@@ -143,6 +153,16 @@ function extractMetaMessages(payload: Record<string, unknown>) {
       if (!change || typeof change !== "object") continue;
       const changeRecord = change as Record<string, unknown>;
       const value = (changeRecord.value ?? {}) as Record<string, unknown>;
+      const metadata =
+        value.metadata && typeof value.metadata === "object"
+          ? (value.metadata as Record<string, unknown>)
+          : {};
+      const recipientPhone =
+        typeof metadata.display_phone_number === "string"
+          ? metadata.display_phone_number
+          : typeof metadata.phone_number_id === "string"
+            ? metadata.phone_number_id
+            : null;
 
       const contacts = Array.isArray(value.contacts) ? value.contacts : [];
       const messagesList = Array.isArray(value.messages) ? value.messages : [];
@@ -193,6 +213,7 @@ function extractMetaMessages(payload: Record<string, unknown>) {
           messageId,
           conversationId: from,
           from,
+          to: recipientPhone,
           text: text ?? attachments[0]?.caption ?? null,
           timestamp,
           contactName,
@@ -210,6 +231,9 @@ function extractMetaMessages(payload: Record<string, unknown>) {
           source: "webhook",
           provider: "meta"
         };
+        if (recipientPhone) {
+          eventPayload.recipientPhone = recipientPhone;
+        }
         if (typeof record.recipient_id === "string") {
           eventPayload.recipientId = record.recipient_id;
         }
@@ -255,39 +279,115 @@ function parseStatusTimestamp(value: string | number | null | undefined) {
 async function applyStatusUpdates(
   statuses: WhatsAppStatusUpdate[]
 ) {
-  for (const status of statuses) {
-    if (!status.messageId) continue;
-    const timestamp = parseStatusTimestamp(status.timestamp ?? null);
-    const messageResult = await db.query<{ id: string }>(
-      `SELECT id
+  const validStatuses = statuses.filter((s) => s.messageId);
+  if (!validStatuses.length) return;
+
+  // Batch lookup: resolve all external message IDs in a single query
+  const externalIds = [...new Set(validStatuses.map((s) => s.messageId!))];
+  const lookupResult = await db.query<{ id: string; tenant_id: string; external_message_id: string }>(
+    `SELECT id, tenant_id, external_message_id
+     FROM messages
+     WHERE channel = 'whatsapp' AND external_message_id = ANY($1::text[])`,
+    [externalIds]
+  );
+  const messageIdMap = new Map(
+    lookupResult.rows.map((row) => [
+      row.external_message_id,
+      { id: row.id, tenantId: row.tenant_id }
+    ])
+  );
+  let fallbackTenantId: string | null = null;
+  if (lookupResult.rows.length < externalIds.length) {
+    try {
+      fallbackTenantId = (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
+    } catch {
+      fallbackTenantId = null;
+    }
+  }
+
+  // Process each status update with parallelized INSERT + UPDATE
+  await Promise.all(
+    validStatuses.map(async (status) => {
+      const timestamp = parseStatusTimestamp(status.timestamp ?? null);
+      const match = messageIdMap.get(status.messageId!) ?? null;
+      const tenantId = match?.tenantId ?? fallbackTenantId;
+      if (!tenantId) {
+        return;
+      }
+      const eventPayload = {
+        status: status.status ?? null,
+        ...status.payload
+      };
+
+      await Promise.all([
+        db.query(
+          `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            tenantId,
+            match?.id ?? null,
+            status.messageId,
+            status.status ?? "unknown",
+            timestamp ?? new Date(),
+            eventPayload
+          ]
+        ),
+        db.query(
+          `UPDATE messages
+           SET wa_status = $1,
+               wa_timestamp = COALESCE($2, wa_timestamp)
+           WHERE channel = 'whatsapp'
+             AND external_message_id = $3
+             AND tenant_id = $4`,
+          [status.status ?? null, timestamp, status.messageId, tenantId]
+        )
+      ]);
+    })
+  );
+}
+
+async function resolveWebhookTenantId(
+  messages: NormalizedWhatsAppMessage[],
+  statuses: WhatsAppStatusUpdate[]
+) {
+  const tenants = new Set<string>();
+
+  for (const message of messages) {
+    try {
+      const account = await resolveWhatsAppAccountForInbound(message);
+      if (account?.tenant_id) {
+        tenants.add(account.tenant_id);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  const statusIds = [...new Set(statuses.map((status) => status.messageId).filter(Boolean))];
+  if (statusIds.length) {
+    const result = await db.query<{ tenant_id: string }>(
+      `SELECT DISTINCT tenant_id
        FROM messages
-       WHERE channel = 'whatsapp' AND external_message_id = $1
-       LIMIT 1`,
-      [status.messageId]
+       WHERE channel = 'whatsapp'
+         AND external_message_id = ANY($1::text[])`,
+      [statusIds]
     );
-    const messageId = messageResult.rows[0]?.id ?? null;
-    const eventPayload = {
-      status: status.status ?? null,
-      ...status.payload
-    };
-    await db.query(
-      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        messageId,
-        status.messageId,
-        status.status ?? "unknown",
-        timestamp ?? new Date(),
-        eventPayload
-      ]
-    );
-    await db.query(
-      `UPDATE messages
-       SET wa_status = $1,
-           wa_timestamp = COALESCE($2, wa_timestamp)
-       WHERE channel = 'whatsapp' AND external_message_id = $3`,
-      [status.status ?? null, timestamp, status.messageId]
-    );
+    for (const row of result.rows) {
+      tenants.add(row.tenant_id);
+    }
+  }
+
+  if (tenants.size === 1) {
+    return [...tenants][0];
+  }
+  if (tenants.size > 1) {
+    return null;
+  }
+
+  try {
+    return (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -314,12 +414,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  await db.query(
-    `INSERT INTO whatsapp_events (direction, payload, status)
-     VALUES ($1, $2, $3)`,
-    ["inbound", payload, "received"]
-  );
-
   const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const { messages: normalizedMessages, statuses: normalizedStatuses } =
     extractNormalizedMessages(normalizedPayload);
@@ -327,6 +421,16 @@ export async function POST(request: Request) {
 
   const messages = normalizedMessages.length ? normalizedMessages : metaMessages;
   const statuses = normalizedStatuses.length ? normalizedStatuses : metaStatuses;
+  const eventTenantId = await resolveWebhookTenantId(messages, statuses);
+  if (eventTenantId) {
+    await db.query(
+      `INSERT INTO whatsapp_events (tenant_id, direction, payload, status)
+       VALUES ($1, $2, $3, $4)`,
+      [eventTenantId, "inbound", payload, "received"]
+    );
+  } else {
+    console.warn("[WhatsApp Inbound] Skipped raw event persistence without tenant resolution.");
+  }
 
   let processed = 0;
   for (const message of messages) {
@@ -334,6 +438,9 @@ export async function POST(request: Request) {
       await storeInboundWhatsApp(message);
       processed += 1;
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : "Unknown";
+      console.error(`[WhatsApp Inbound] Failed to store message from ${message.from}: ${errMsg}`);
+      // The raw payload is already persisted in whatsapp_events for retry
       continue;
     }
   }

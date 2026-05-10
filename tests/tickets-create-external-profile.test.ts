@@ -120,6 +120,7 @@ vi.mock("@/server/storage/r2", () => ({
 import { POST } from "@/app/api/tickets/create/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 describe("POST /api/tickets/create external identity enrichment", () => {
   beforeEach(() => {
@@ -132,7 +133,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
 
     mocks.getSessionUser.mockResolvedValue(null);
     mocks.canManageTickets.mockReturnValue(true);
-    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1" });
+    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1", tenant_id: TENANT_ID });
     mocks.inferTagsFromText.mockReturnValue([]);
     mocks.createTicket.mockResolvedValue("ticket-1");
     mocks.recordTicketEvent.mockResolvedValue(undefined);

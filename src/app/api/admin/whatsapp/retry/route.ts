@@ -17,6 +17,7 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 25) || 25, 1), 100);
+  const tenantId = user?.tenant_id ?? null;
   let eventIds: string[] = [];
   try {
     const payload = (await request.json()) as { eventIds?: unknown };
@@ -32,9 +33,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await retryFailedWhatsAppEvents({ limit, eventIds });
+    const result = await retryFailedWhatsAppEvents({ limit, eventIds, tenantId });
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_triggered",
       entityType: "whatsapp_events",
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed WhatsApp outbox events";
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_failed",
       entityType: "whatsapp_events",

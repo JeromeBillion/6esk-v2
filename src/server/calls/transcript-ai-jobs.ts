@@ -59,6 +59,7 @@ type TranscriptAiErrorRow = {
 
 type TranscriptAiLockRow = {
   id: string;
+  tenant_id: string;
   call_session_id: string;
   provider: string;
   transcript_r2_key: string;
@@ -90,6 +91,7 @@ type TranscriptAiFailedRow = {
 };
 
 type EnqueueTranscriptAiJobArgs = {
+  tenantId: string;
   callSessionId: string;
   transcriptR2Key: string;
   metadata?: Record<string, unknown> | null;
@@ -124,6 +126,7 @@ function getProcessingRecoverySeconds() {
 }
 
 export async function enqueueCallTranscriptAiJob({
+  tenantId,
   callSessionId,
   transcriptR2Key,
   metadata = null
@@ -136,16 +139,18 @@ export async function enqueueCallTranscriptAiJob({
     transcript_r2_key: string;
   }>(
     `INSERT INTO call_transcript_ai_jobs (
+       tenant_id,
        call_session_id,
        provider,
        transcript_r2_key,
        status,
        next_attempt_at,
        metadata
-     ) VALUES ($1, $2, $3, 'queued', now(), $4::jsonb)
+     ) VALUES ($1, $2, $3, $4, 'queued', now(), $5::jsonb)
      ON CONFLICT (call_session_id)
      DO UPDATE
-       SET provider = EXCLUDED.provider,
+       SET tenant_id = EXCLUDED.tenant_id,
+           provider = EXCLUDED.provider,
            transcript_r2_key = EXCLUDED.transcript_r2_key,
            status = CASE
              WHEN call_transcript_ai_jobs.status = 'completed'
@@ -222,7 +227,13 @@ export async function enqueueCallTranscriptAiJob({
            metadata = COALESCE(call_transcript_ai_jobs.metadata, '{}'::jsonb) || EXCLUDED.metadata,
            updated_at = now()
      RETURNING id, status, provider, transcript_r2_key`,
-    [callSessionId, provider, transcriptR2Key, JSON.stringify(metadata ?? {})]
+    [
+      tenantId,
+      callSessionId,
+      provider,
+      transcriptR2Key,
+      JSON.stringify({ ...(metadata ?? {}), tenantId })
+    ]
   );
 
   return {
@@ -259,7 +270,7 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, call_session_id, provider, transcript_r2_key, metadata, attempt_count`,
+       RETURNING id, tenant_id, call_session_id, provider, transcript_r2_key, metadata, attempt_count`,
       [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");

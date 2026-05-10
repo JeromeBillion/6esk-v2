@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const TICKET_ID = "11111111-1111-1111-1111-111111111111";
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 const mocks = vi.hoisted(() => {
   class MergeError extends Error {
@@ -35,6 +36,7 @@ const mocks = vi.hoisted(() => {
     recordTicketEvent: vi.fn(),
     mergeCustomers: vi.fn(),
     mergeTickets: vi.fn(),
+    linkTickets: vi.fn(),
     createMergeReviewTask: vi.fn(),
     getTicketCallOptions: vi.fn(),
     resolveCallPhoneForRequest: vi.fn(),
@@ -86,6 +88,7 @@ vi.mock("@/server/tickets", () => ({
 vi.mock("@/server/merges", () => ({
   mergeCustomers: mocks.mergeCustomers,
   mergeTickets: mocks.mergeTickets,
+  linkTickets: mocks.linkTickets,
   MergeError: mocks.MergeError
 }));
 vi.mock("@/server/merge-reviews", () => ({
@@ -136,6 +139,7 @@ describe("agent initiate_call action", () => {
     vi.clearAllMocks();
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-voice",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "auto_send",
       scopes: {},
@@ -189,11 +193,39 @@ describe("agent initiate_call action", () => {
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+    mocks.dbQuery.mockResolvedValue({ rowCount: 1, rows: [] });
+  });
+
+  it("does not use unscoped ticket lookup before voice side effects", async () => {
+    mocks.getTicketById.mockImplementation(async (ticketId: string, tenantId?: string) => {
+      if (!tenantId && ticketId === TICKET_ID) {
+        return { id: TICKET_ID, mailbox_id: "foreign-mailbox" };
+      }
+      return null;
+    });
+
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Follow-up by phone",
+      candidateId: "primary",
+      idempotencyKey: "tenant-call-1"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "not_found"
+    });
+    expect(mocks.getTicketById).toHaveBeenCalledWith(TICKET_ID, TENANT_ID);
+    expect(mocks.getTicketCallOptions).not.toHaveBeenCalled();
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
   });
 
   it("blocks when allowVoiceActions capability is disabled", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-voice",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "auto_send",
       scopes: {},
@@ -364,7 +396,8 @@ describe("agent initiate_call action", () => {
       type: "initiate_call",
       ticketId: TICKET_ID,
       reason: "Manual override call",
-      toPhone: "+1-555-999-8888"
+      toPhone: "+1-555-999-8888",
+      idempotencyKey: "manual-call-1"
     });
 
     expect(response.status).toBe(200);
@@ -380,6 +413,35 @@ describe("agent initiate_call action", () => {
     expect(mocks.queueOutboundCall).toHaveBeenCalledWith(
       expect.objectContaining({
         toPhone: "+1-555-999-8888"
+      })
+    );
+  });
+
+  it("requires idempotencyKey before queuing an approved call", async () => {
+    const { response, body } = await postAction({
+      type: "initiate_call",
+      ticketId: TICKET_ID,
+      reason: "Proactive phone resolution",
+      candidateId: "primary"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "initiate_call",
+      status: "failed",
+      detail: "idempotencyKey is required for this AI action.",
+      data: {
+        errorCode: "idempotency_required"
+      }
+    });
+    expect(mocks.queueOutboundCall).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_idempotency_required",
+        entityId: TICKET_ID,
+        data: expect.objectContaining({
+          actionType: "initiate_call"
+        })
       })
     );
   });
@@ -515,7 +577,8 @@ describe("agent initiate_call action", () => {
       type: "initiate_call",
       ticketId: TICKET_ID,
       reason: "Callback based on consent",
-      candidateId: "primary"
+      candidateId: "primary",
+      idempotencyKey: "consent-call-1"
     });
 
     expect(response.status).toBe(200);

@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Token expired" }, { status: 400 });
   }
 
-  const passwordHash = hashPassword(parsed.data.password);
+  const passwordHash = await hashPassword(parsed.data.password);
   const client = await db.connect();
   let revokedSessionCount = 0;
   try {

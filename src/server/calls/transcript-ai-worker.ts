@@ -30,7 +30,10 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
         callSessionId: job.call_session_id,
         transcriptR2Key: job.transcript_r2_key,
         transcriptText,
-        metadata: job.metadata ?? null
+        metadata: {
+          ...(job.metadata ?? {}),
+          tenantId: job.tenant_id
+        }
       });
 
       await markTranscriptAiJobCompleted({
@@ -54,6 +57,7 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
         errorMessage: detail
       });
       await recordAuditLog({
+        tenantId: job.tenant_id,
         action: "call_transcript_ai_job_failed",
         entityType: "call_transcript_ai_jobs",
         entityId: job.id,

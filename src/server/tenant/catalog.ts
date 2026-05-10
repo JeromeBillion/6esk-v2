@@ -34,9 +34,9 @@ export function calculateMonthlyBaseFee(selection: TenantPlanSelection): number 
     total += BYO_MODE_FEE_CENT;
   }
 
-  for (const module of selection.enabledModules) {
-    if (module === "email" || module === "vanillaWebchat") continue;
-    total += MODULE_PRICES[module as keyof typeof MODULE_PRICES] || 0;
+  for (const enabledModule of selection.enabledModules) {
+    if (enabledModule === "email" || enabledModule === "vanillaWebchat") continue;
+    total += MODULE_PRICES[enabledModule as keyof typeof MODULE_PRICES] || 0;
   }
 
   return total;

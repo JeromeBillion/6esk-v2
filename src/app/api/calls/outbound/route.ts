@@ -47,7 +47,11 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("voice"))) {
+  const tenantId = user.tenant_id;
+  if (!tenantId) {
+    return Response.json({ error: "Tenant missing" }, { status: 403 });
+  }
+  if (!(await checkModuleEntitlement("voice", tenantId))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",
@@ -71,7 +75,7 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
-  const ticket = await getTicketById(data.ticketId);
+  const ticket = await getTicketById(data.ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -80,7 +84,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const options = await getTicketCallOptions(data.ticketId);
+  const options = await getTicketCallOptions(data.ticketId, tenantId);
   if (!options) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -144,6 +148,7 @@ export async function POST(request: Request) {
   try {
     const queued = await queueOutboundCall({
       ticketId: data.ticketId,
+      tenantId,
       toPhone: resolved.phone,
       fromPhone: data.fromPhone ?? null,
       reason: data.reason,
@@ -158,6 +163,7 @@ export async function POST(request: Request) {
     void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
 
     await recordAuditLog({
+      tenantId,
       actorUserId: user.id,
       action: "call_queued",
       entityType: "call_session",
@@ -169,6 +175,7 @@ export async function POST(request: Request) {
       }
     });
     await recordModuleUsageEvent({
+      tenantId,
       moduleKey: "voice",
       usageKind: "call_queued",
       actorType: "human",

@@ -25,6 +25,7 @@ import {
   DialogTitle
 } from "@/app/workspace/components/ui/dialog";
 import { cn } from "@/app/workspace/components/ui/utils";
+import BorderGlow from "./BorderGlow";
 import BlurRevealText from "./BlurRevealText";
 import CardStackShowcase from "./CardStackShowcase";
 import adminDarkSnapshot from "@/app/assets/landing-snapshots/admin-dark.png";
@@ -146,14 +147,13 @@ const FOOTER_SECTIONS = [
       { label: "Product updates" }
     ]
   }
-  }
 ] as const;
 
 const PRICING_MODULES = [
-  { id: "core", name: "Core OS", price: 499, description: "Email included. Foundation for every tenant.", mandatory: true },
-  { id: "whatsapp", name: "WhatsApp", price: 499, description: "Full Meta Business API integration." },
-  { id: "voice", name: "Voice", price: 699, description: "Call center logic and recording." },
-  { id: "ai", name: "AI Orchestration", price: 1499, description: "Dexter AI, Auto-Resolution & Transcript analysis." },
+  { id: "core", name: "Core OS", price: 499, description: "Email included. Foundation for every tenant.", mandatory: true, Icon: Workflow },
+  { id: "whatsapp", name: "WhatsApp", price: 499, description: "Full Meta Business API integration.", Icon: MessageCircleMore },
+  { id: "voice", name: "Voice", price: 699, description: "Call center logic and recording.", Icon: PhoneCall },
+  { id: "ai", name: "AI Orchestration", price: 1499, description: "Dexter AI, Auto-Resolution & Transcript analysis.", Icon: Bot }
 ];
 
 export default function LandingPageClient({ signInHref, demoWorkspaceHref }: LandingPageClientProps) {
@@ -172,14 +172,14 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
 
   const calculateTotal = useMemo(() => {
     return selectedModules.reduce((acc, moduleId) => {
-      const module = PRICING_MODULES.find((m) => m.id === moduleId);
-      return acc + (module?.price ?? 0);
+      const pricingModule = PRICING_MODULES.find((candidate) => candidate.id === moduleId);
+      return acc + (pricingModule?.price ?? 0);
     }, 0);
   }, [selectedModules]);
 
   const toggleModule = (moduleId: string) => {
-    const module = PRICING_MODULES.find((m) => m.id === moduleId);
-    if (!module || module.mandatory) return;
+    const pricingModule = PRICING_MODULES.find((candidate) => candidate.id === moduleId);
+    if (!pricingModule || pricingModule.mandatory) return;
 
     setSelectedModules((current) =>
       current.includes(moduleId)
@@ -824,30 +824,57 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
 
           <div className={styles.calculatorWrap}>
             <div className={styles.moduleGrid}>
-              {PRICING_MODULES.map((module, index) => (
-                <div
-                  key={module.id}
-                  data-reveal
-                  className={cn(
-                    styles.moduleCard,
-                    selectedModules.includes(module.id) && styles.moduleCardSelected,
-                    module.mandatory && styles.moduleCardMandatory
-                  )}
-                  style={{ transitionDelay: `${index * 100}ms` }}
-                  onClick={() => toggleModule(module.id)}
-                >
-                  <div className={styles.moduleCardHeader}>
-                    <div className={styles.moduleCardCheckbox}>
-                      <Check className={styles.moduleCardCheckIcon} />
-                    </div>
-                    <span className={styles.modulePrice}>
-                      {module.mandatory ? "Base" : `+R${module.price}`}
-                    </span>
-                  </div>
-                  <h3 className={styles.moduleName}>{module.name}</h3>
-                  <p className={styles.moduleDescription}>{module.description}</p>
-                </div>
-              ))}
+              {PRICING_MODULES.map((pricingModule) => {
+                const selected = selectedModules.includes(pricingModule.id);
+                const ModuleIcon = pricingModule.Icon;
+
+                return (
+                  <BorderGlow
+                    key={pricingModule.id}
+                    className={cn(styles.moduleGlowCard, selected && styles.moduleGlowCardSelected)}
+                    edgeSensitivity={30}
+                    glowColor="40 80 80"
+                    backgroundColor="#0b0d11"
+                    borderRadius={28}
+                    glowRadius={40}
+                    glowIntensity={selected ? 1 : 0.82}
+                    coneSpread={25}
+                    animated={false}
+                    colors={["#c084fc", "#f472b6", "#38bdf8"]}
+                    fillOpacity={selected ? 0.22 : 0.14}
+                  >
+                    <button
+                      type="button"
+                      className={cn(
+                        styles.moduleCard,
+                        selected && styles.moduleCardSelected,
+                        pricingModule.mandatory && styles.moduleCardMandatory
+                      )}
+                      onClick={() => toggleModule(pricingModule.id)}
+                      aria-pressed={selected}
+                      aria-disabled={pricingModule.mandatory || undefined}
+                    >
+                      <span className={styles.moduleCardHeader}>
+                        <span className={styles.moduleIconFrame}>
+                          <ModuleIcon size={18} />
+                        </span>
+                        <span className={styles.modulePrice}>
+                          {pricingModule.mandatory ? "Base" : `+R${pricingModule.price}`}
+                        </span>
+                      </span>
+                      <span className={styles.moduleCardBody}>
+                        <span className={styles.moduleSelectionRow}>
+                          <span className={styles.moduleCardCheckbox}>
+                            <Check className={styles.moduleCardCheckIcon} />
+                          </span>
+                          <span className={styles.moduleName}>{pricingModule.name}</span>
+                        </span>
+                        <span className={styles.moduleDescription}>{pricingModule.description}</span>
+                      </span>
+                    </button>
+                  </BorderGlow>
+                );
+              })}
             </div>
 
             <div data-reveal className={styles.calculatorTotal}>

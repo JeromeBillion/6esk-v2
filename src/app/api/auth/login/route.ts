@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
-  if (!verifyPassword(password, user.password_hash)) {
+  if (!(await verifyPassword(password, user.password_hash))) {
     return Response.json({ error: "Invalid credentials" }, { status: 401 });
   }
 

@@ -144,7 +144,8 @@ async function lookupProfileFromCache({
       },
       durationMs: elapsedMs()
     };
-  } catch {
+  } catch (error) {
+    console.error("[PredictionProfile] Cache lookup failed:", error instanceof Error ? error.message : error);
     return null;
   }
 }

@@ -5,6 +5,7 @@ type NumericLike = number | string | null;
 
 export type CallTranscriptJobRow = {
   id: string;
+  tenant_id: string;
   call_session_id: string;
   provider: string;
   provider_job_id: string | null;
@@ -40,6 +41,7 @@ type TranscriptJobErrorRow = {
 
 type TranscriptJobLockRow = {
   id: string;
+  tenant_id: string;
   call_session_id: string;
   provider: string;
   recording_r2_key: string;
@@ -48,6 +50,7 @@ type TranscriptJobLockRow = {
 };
 
 type EnqueueTranscriptJobArgs = {
+  tenantId: string;
   callSessionId: string;
   recordingR2Key: string;
   metadata?: Record<string, unknown> | null;
@@ -78,6 +81,7 @@ function getProcessingRecoverySeconds() {
 }
 
 export async function enqueueCallTranscriptJob({
+  tenantId,
   callSessionId,
   recordingR2Key,
   metadata = null
@@ -89,16 +93,18 @@ export async function enqueueCallTranscriptJob({
     provider: string;
   }>(
     `INSERT INTO call_transcript_jobs (
+       tenant_id,
        call_session_id,
        provider,
        recording_r2_key,
        status,
        next_attempt_at,
        metadata
-     ) VALUES ($1, $2, $3, 'queued', now(), $4::jsonb)
+     ) VALUES ($1, $2, $3, $4, 'queued', now(), $5::jsonb)
      ON CONFLICT (call_session_id)
      DO UPDATE
-       SET provider = EXCLUDED.provider,
+       SET tenant_id = EXCLUDED.tenant_id,
+           provider = EXCLUDED.provider,
            recording_r2_key = EXCLUDED.recording_r2_key,
            status = CASE
              WHEN call_transcript_jobs.status = 'completed' THEN call_transcript_jobs.status
@@ -115,7 +121,7 @@ export async function enqueueCallTranscriptJob({
            metadata = COALESCE(call_transcript_jobs.metadata, '{}'::jsonb) || EXCLUDED.metadata,
            updated_at = now()
      RETURNING id, status, provider`,
-    [callSessionId, provider, recordingR2Key, JSON.stringify(metadata ?? {})]
+    [tenantId, callSessionId, provider, recordingR2Key, JSON.stringify(metadata ?? {})]
   );
 
   return {
@@ -128,10 +134,12 @@ export async function enqueueCallTranscriptJob({
 
 export async function markTranscriptJobCompleted({
   callSessionId,
-  transcriptR2Key
+  transcriptR2Key,
+  tenantId
 }: {
   callSessionId: string;
   transcriptR2Key?: string | null;
+  tenantId?: string | null;
 }) {
   await db.query(
     `UPDATE call_transcript_jobs
@@ -139,8 +147,9 @@ export async function markTranscriptJobCompleted({
          transcript_r2_key = COALESCE($2, transcript_r2_key),
          completed_at = now(),
          updated_at = now()
-     WHERE call_session_id = $1`,
-    [callSessionId, transcriptR2Key ?? null]
+     WHERE call_session_id = $1
+       AND ($3::uuid IS NULL OR tenant_id = $3::uuid)`,
+    [callSessionId, transcriptR2Key ?? null, tenantId ?? null]
   );
 }
 
@@ -168,7 +177,7 @@ async function lockPendingTranscriptJobs(limit: number, processingRecoverySecond
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, call_session_id, provider, recording_r2_key, metadata, attempt_count`,
+       RETURNING id, tenant_id, call_session_id, provider, recording_r2_key, metadata, attempt_count`,
       [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");

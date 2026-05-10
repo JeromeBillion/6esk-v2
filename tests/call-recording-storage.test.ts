@@ -39,6 +39,7 @@ vi.mock("@/server/agents/outbox", () => ({
 import { attachCallRecording } from "@/server/calls/service";
 
 const ORIGINAL_FETCH = global.fetch;
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 describe("attachCallRecording", () => {
   beforeEach(() => {
@@ -77,6 +78,7 @@ describe("attachCallRecording", () => {
         rows: [
           {
             id: "call-session-1",
+            tenant_id: TENANT_ID,
             ticket_id: "ticket-1",
             mailbox_id: "mailbox-1",
             message_id: "message-1",
@@ -124,6 +126,11 @@ describe("attachCallRecording", () => {
         contentType: "audio/mpeg"
       })
     );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO attachments (tenant_id"),
+      expect.arrayContaining([TENANT_ID, "message-1", "Call Recording.mp3"])
+    );
 
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       3,
@@ -150,6 +157,7 @@ describe("attachCallRecording", () => {
     expect(mocks.dbQuery).toHaveBeenLastCalledWith(
       expect.stringContaining("INSERT INTO call_transcript_jobs"),
       [
+        TENANT_ID,
         "call-session-1",
         "managed_http",
         "messages/message-1/recording.mp3",
@@ -164,6 +172,7 @@ describe("attachCallRecording", () => {
         rows: [
           {
             id: "call-session-1",
+            tenant_id: TENANT_ID,
             ticket_id: "ticket-1",
             mailbox_id: "mailbox-1",
             message_id: "message-1",

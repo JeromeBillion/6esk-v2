@@ -25,13 +25,16 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/whatsapp/outbox/route";
 
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
+
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -85,6 +88,7 @@ describe("/api/admin/whatsapp/outbox", () => {
 
     expect(response.status).toBe(200);
     expect(body.queue).toMatchObject({ queued: 1, failed: 1 });
+    expect(mocks.getWhatsAppOutboxMetrics).toHaveBeenCalledWith(TENANT_ID);
   });
 
   it("POST runs WhatsApp outbox and records audit for admins", async () => {
@@ -97,9 +101,10 @@ describe("/api/admin/whatsapp/outbox", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "ok", delivered: 2, skipped: 0 });
-    expect(mocks.deliverPendingWhatsAppEvents).toHaveBeenCalledWith({ limit: 25 });
+    expect(mocks.deliverPendingWhatsAppEvents).toHaveBeenCalledWith({ limit: 25, tenantId: TENANT_ID });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         action: "whatsapp_outbox_triggered"
       })
     );

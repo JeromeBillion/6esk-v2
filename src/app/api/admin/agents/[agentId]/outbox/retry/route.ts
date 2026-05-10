@@ -3,6 +3,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedAgentEvents } from "@/server/agents/outbox";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(
   request: Request,
@@ -14,7 +15,8 @@ export async function POST(
   }
 
   const { agentId } = await params;
-  const integration = await getAgentIntegrationById(agentId);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -39,11 +41,13 @@ export async function POST(
   try {
     const result = await retryFailedAgentEvents({
       integrationId: agentId,
+      tenantId,
       limit,
       eventIds
     });
 
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_retry_triggered",
       entityType: "agent_integration",
@@ -59,6 +63,7 @@ export async function POST(
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry failed agent outbox events";
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_retry_failed",
       entityType: "agent_integration",

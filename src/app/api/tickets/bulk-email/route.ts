@@ -10,6 +10,7 @@ import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const bulkEmailSchema = z.object({
   ticketIds: z.array(z.string().uuid()).min(1).max(100),
@@ -40,7 +41,7 @@ function normalizeRecipientEmail(value: string | null | undefined) {
   return normalized || null;
 }
 
-async function resolveRecipientEmail(row: TicketSelectionRow) {
+async function resolveRecipientEmail(row: TicketSelectionRow, tenantId: string) {
   const fallbackTicketEmail =
     row.requester_email.startsWith("whatsapp:") || row.requester_email.startsWith("voice:")
       ? null
@@ -50,13 +51,13 @@ async function resolveRecipientEmail(row: TicketSelectionRow) {
     return fallbackTicketEmail;
   }
 
-  const customer = await getCustomerById(row.customer_id);
+  const customer = await getCustomerById(row.customer_id, tenantId);
   const primaryEmail = normalizeRecipientEmail(customer?.primary_email);
   if (primaryEmail) {
     return primaryEmail;
   }
 
-  const identities = await listCustomerIdentities(row.customer_id);
+  const identities = await listCustomerIdentities(row.customer_id, tenantId);
   const identityEmail = identities.find((identity) => identity.identity_type === "email")?.identity_value;
   return normalizeRecipientEmail(identityEmail) ?? fallbackTicketEmail;
 }
@@ -69,7 +70,8 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("email"))) {
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  if (!(await checkModuleEntitlement("email", tenantId))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",
@@ -97,8 +99,9 @@ export async function POST(request: Request) {
     `SELECT id, customer_id, requester_email, subject, assigned_user_id
      FROM tickets
      WHERE id = ANY($1::uuid[])
+       AND tenant_id = $2
        AND merged_into_ticket_id IS NULL`,
-    [uniqueTicketIds]
+    [uniqueTicketIds, tenantId]
   );
   const rows = ticketsResult.rows;
 
@@ -131,7 +134,7 @@ export async function POST(request: Request) {
   }> = [];
 
   for (const row of rows) {
-    const recipientEmail = await resolveRecipientEmail(row);
+    const recipientEmail = await resolveRecipientEmail(row, tenantId);
     if (!recipientEmail) {
       results.push({
         sourceTicketId: row.id,
@@ -161,6 +164,7 @@ export async function POST(request: Request) {
 
     try {
       const created = await createOutboundEmailTicket({
+        tenantId,
         actorUserId: user.id,
         toEmail: recipientEmail,
         subject: parsed.data.subject,
@@ -192,6 +196,7 @@ export async function POST(request: Request) {
       });
 
       await recordTicketEvent({
+        tenantId,
         ticketId: row.id,
         eventType: "bulk_email_ticket_created",
         actorUserId: user.id,
@@ -203,6 +208,7 @@ export async function POST(request: Request) {
       });
 
       await recordAuditLog({
+        tenantId,
         actorUserId: user.id,
         action: "ticket_bulk_email_created",
         entityType: "ticket",
@@ -216,6 +222,7 @@ export async function POST(request: Request) {
       });
 
       await recordAuditLog({
+        tenantId,
         actorUserId: user.id,
         action: "ticket_bulk_email_created",
         entityType: "ticket",
@@ -228,6 +235,7 @@ export async function POST(request: Request) {
         }
       });
       await recordModuleUsageEvent({
+        tenantId,
         moduleKey: "email",
         usageKind: "bulk_email_created",
         actorType: "human",
@@ -258,7 +266,7 @@ export async function POST(request: Request) {
   const failed = results.filter((result) => result.status === "failed");
 
   if (created.length > 0) {
-    void deliverPendingAgentEvents().catch(() => {});
+    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
   }
 
   return Response.json({
