@@ -4,6 +4,7 @@ import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedAgentEvents } from "@/server/agents/outbox";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function POST(
   request: Request,
@@ -62,7 +63,7 @@ export async function POST(
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry failed agent outbox events";
-    await recordAuditLog({
+    runInBackground(recordAuditLog({
       tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_retry_failed",
@@ -72,7 +73,12 @@ export async function POST(
         limit,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record agent outbox retry failure audit event", {
+      route: "/api/admin/agents/[agentId]/outbox/retry",
+      tenantId,
+      agentId,
+      limit
+    });
     return Response.json(
       { error: "Failed to retry failed agent outbox events", detail },
       { status: 500 }

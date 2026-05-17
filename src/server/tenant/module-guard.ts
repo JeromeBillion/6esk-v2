@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { isWorkspaceModuleEnabled, type WorkspaceModuleKey } from "@/server/workspace-modules";
 import { getTenantContext } from "@/server/tenant/context";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { logger } from "@/server/logger";
 
 /**
@@ -12,17 +11,23 @@ export async function checkModuleEntitlement(
   moduleKey: WorkspaceModuleKey,
   tenantId?: string | null
 ): Promise<boolean> {
-  let effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
-  if (!tenantId) {
+  let effectiveTenantId = tenantId?.trim() || null;
+  if (!effectiveTenantId) {
     try {
       const ctx = await getTenantContext();
       if (ctx?.tenantId) {
         effectiveTenantId = ctx.tenantId;
       }
     } catch (error) {
-      // If we're not in a request context (e.g., background worker), fallback to default
-      logger.warn("Tenant context unavailable, using default", { error, moduleKey });
+      logger.warn("Tenant context unavailable during entitlement check", {
+        error,
+        moduleKey
+      });
     }
+  }
+  if (!effectiveTenantId) {
+    logger.warn("Module entitlement denied because tenant context is missing", { moduleKey });
+    return false;
   }
   return isWorkspaceModuleEnabled(moduleKey, "primary", effectiveTenantId);
 }

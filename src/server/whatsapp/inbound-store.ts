@@ -18,6 +18,8 @@ import {
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
+import { logger } from "@/server/logger";
+import { runInBackground } from "@/server/async";
 
 export type NormalizedWhatsAppAttachment = {
   mediaId?: string | null;
@@ -621,7 +623,15 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
           resolved.attachmentId,
           tenantId
         ])
-        .catch(() => {});
+        .catch((cleanupError) => {
+          logger.warn("Failed to delete WhatsApp attachment row after R2 upload failure", {
+            error: cleanupError,
+            fn: "storeInboundWhatsApp",
+            tenantId,
+            messageId,
+            attachmentId: resolved.attachmentId
+          });
+        });
     }
   }
 
@@ -703,10 +713,23 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
             }
           ]
         )
-        .catch(() => {});
+        .catch((eventError) => {
+          logger.warn("Failed to record partial WhatsApp storage event", {
+            error: eventError,
+            fn: "storeInboundWhatsApp",
+            tenantId,
+            ticketId,
+            messageId
+          });
+        });
     }
 
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      fn: "storeInboundWhatsApp",
+      tenantId,
+      ticketId,
+      messageId
+    });
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

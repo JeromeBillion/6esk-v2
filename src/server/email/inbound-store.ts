@@ -21,6 +21,8 @@ import {
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
+import { logger } from "@/server/logger";
+import { runInBackground } from "@/server/async";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -455,7 +457,15 @@ export async function storeInboundEmail(data: InboundEmail) {
           resolved.attachmentId,
           tenantId
         ])
-        .catch(() => {});
+        .catch((cleanupError) => {
+          logger.warn("Failed to delete attachment row after R2 upload failure", {
+            error: cleanupError,
+            fn: "storeInboundEmail",
+            tenantId,
+            messageId,
+            attachmentId: resolved.attachmentId
+          });
+        });
     }
   }
 
@@ -536,10 +546,23 @@ export async function storeInboundEmail(data: InboundEmail) {
             }
           ]
         )
-        .catch(() => {});
+        .catch((eventError) => {
+          logger.warn("Failed to record partial email storage event", {
+            error: eventError,
+            fn: "storeInboundEmail",
+            tenantId,
+            ticketId,
+            messageId
+          });
+        });
     }
 
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      fn: "storeInboundEmail",
+      tenantId,
+      ticketId,
+      messageId
+    });
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

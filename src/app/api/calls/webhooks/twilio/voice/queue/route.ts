@@ -16,6 +16,11 @@ import {
   validateTwilioWebhook
 } from "@/server/calls/twilio";
 import { recordAuditLog } from "@/server/audit";
+import {
+  integrationError,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 function readString(value: FormDataEntryValue | string | null | undefined) {
   if (typeof value !== "string") return null;
@@ -31,6 +36,11 @@ function buildHangupTwiML() {
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const formData = await request.formData();
   const params = normalizeTwilioParams(
     new URLSearchParams(
@@ -47,7 +57,7 @@ export async function POST(request: Request) {
   });
 
   if (!isValid) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -55,8 +65,12 @@ export async function POST(request: Request) {
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected Twilio queue webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   const requestParams = new URL(request.url).searchParams;
@@ -69,7 +83,11 @@ export async function POST(request: Request) {
   const parentToPhone = readString(formData.get("To"));
 
   if (!callSessionId || !operatorUserId) {
-    return Response.json({ error: "callSessionId and operatorUserId are required" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "missing_queue_fields",
+      message: "callSessionId and operatorUserId are required"
+    });
   }
 
   if (operatorUserId) {

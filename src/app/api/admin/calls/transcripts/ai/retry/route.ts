@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { runInBackground } from "@/server/async";
 import { retryFailedTranscriptAiJobs } from "@/server/calls/transcript-ai-jobs";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry transcript AI jobs";
-    await recordAuditLog({
+    runInBackground(recordAuditLog({
       tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_transcript_ai_retry_failed",
@@ -42,7 +43,11 @@ export async function POST(request: Request) {
         limit,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record transcript AI retry failure audit event", {
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      actorUserId: user?.id ?? null,
+      limit
+    });
     return Response.json(
       { error: "Failed to retry transcript AI jobs", detail },
       { status: 500 }

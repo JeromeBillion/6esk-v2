@@ -5,8 +5,16 @@ import {
   getActiveAgentIntegration,
   getAgentIntegrationById
 } from "@/server/agents/integrations";
+import {
+  appendAgentRunEvent,
+  createAgentRunForOutbox,
+  markAgentRunCompleted,
+  markAgentRunFailed,
+  markAgentRunRunning
+} from "@/server/agents/run-ledger";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
+import { logger } from "@/server/logger";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 import { recordModuleUsageEvent } from "@/server/module-metering";
@@ -38,6 +46,7 @@ export type FailedAgentOutboxEvent = {
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+const MAX_AGENT_OUTBOX_ATTEMPTS = 5;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getProcessingRecoverySeconds() {
@@ -101,7 +110,7 @@ function tenantScopedPayload(payload: Record<string, unknown>, tenantId: string)
 export async function enqueueAgentEvent({ eventType, payload, integrationId, tenantId }: EnqueueArgs) {
   const effectiveTenantId = resolveEventTenantId(tenantId, payload);
   if (!effectiveTenantId) {
-    console.warn(`[AgentOutbox] Skipping tenantless agent event ${eventType}`);
+    logger.warn("Skipping tenantless agent outbox event", { eventType });
     return null;
   }
 
@@ -113,14 +122,44 @@ export async function enqueueAgentEvent({ eventType, payload, integrationId, ten
     return null;
   }
 
-  const result = await db.query(
-    `INSERT INTO agent_outbox (integration_id, tenant_id, event_type, payload)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [integration.id, effectiveTenantId, eventType, tenantScopedPayload(payload, effectiveTenantId)]
-  );
-
-  return result.rows[0]?.id ?? null;
+  const scopedPayload = tenantScopedPayload(payload, effectiveTenantId);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO agent_outbox (integration_id, tenant_id, event_type, payload)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [integration.id, effectiveTenantId, eventType, scopedPayload]
+    );
+    const outboxId = result.rows[0]?.id ?? null;
+    if (outboxId) {
+      await createAgentRunForOutbox({
+        client,
+        tenantId: effectiveTenantId,
+        integrationId: integration.id,
+        outboxEventId: outboxId,
+        eventType,
+        payload: scopedPayload
+      });
+    }
+    await client.query("COMMIT");
+    return outboxId;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      logger.warn("Failed to roll back agent outbox enqueue transaction", {
+        error: rollbackError,
+        tenantId: effectiveTenantId,
+        integrationId: integration.id,
+        eventType
+      });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function lockPendingEvents(
@@ -128,7 +167,15 @@ async function lockPendingEvents(
   tenantId: string,
   limit: number,
   processingRecoverySeconds: number
-): Promise<Array<{ id: string; tenant_id: string; payload: Record<string, unknown>; attempt_count: number }>> {
+): Promise<Array<{
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  attempt_count: number;
+  run_id: string | null;
+}>> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -151,7 +198,7 @@ async function lockPendingEvents(
          LIMIT $3
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, payload, attempt_count`,
+       RETURNING id, tenant_id, integration_id, event_type, payload, attempt_count, run_id`,
       [integrationId, tenantId, limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
@@ -175,7 +222,7 @@ async function markDelivered(id: string) {
 
 async function markFailed(id: string, attemptCount: number, errorMessage: string) {
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
-  const status = attemptCount >= 5 ? "failed" : "pending";
+  const status = attemptCount >= MAX_AGENT_OUTBOX_ATTEMPTS ? "failed" : "pending";
   await db.query(
     `UPDATE agent_outbox
      SET status = $1,
@@ -222,6 +269,39 @@ async function postToAgent(integration: AgentIntegration, payload: Record<string
   }
 }
 
+async function recordAcceptedDeliveryBookkeepingFailure({
+  tenantId,
+  runId,
+  eventId,
+  errorMessage
+}: {
+  tenantId: string;
+  runId: string;
+  eventId: string;
+  errorMessage: string;
+}) {
+  try {
+    await appendAgentRunEvent({
+      tenantId,
+      runId,
+      eventType: "agent.run.delivery_bookkeeping_failed",
+      status: "running",
+      summary: "Agent accepted event but local delivery bookkeeping failed",
+      eventData: {
+        outboxEventId: eventId,
+        errorMessage: errorMessage.slice(0, 500)
+      }
+    });
+  } catch (ledgerError) {
+    logger.warn("Failed to append agent delivery bookkeeping failure event", {
+      error: ledgerError,
+      tenantId,
+      runId,
+      eventId
+    });
+  }
+}
+
 export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
   const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
   const integration = integrationId
@@ -248,10 +328,69 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
 
   let delivered = 0;
   for (const event of pending) {
+    let runId = event.run_id;
     try {
+      if (!runId) {
+        const run = await createAgentRunForOutbox({
+          tenantId: event.tenant_id,
+          integrationId: event.integration_id,
+          outboxEventId: event.id,
+          eventType: event.event_type,
+          payload: event.payload
+        });
+        runId = run.id;
+      }
+      await markAgentRunRunning({
+        tenantId: event.tenant_id,
+        runId,
+        attemptCount: event.attempt_count + 1
+      });
       await postToAgent(integration, event.payload);
-      await markDelivered(event.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Delivery failed";
+      const attempts = event.attempt_count + 1;
+      await markFailed(event.id, attempts, message);
+      if (runId) {
+        await markAgentRunFailed({
+          tenantId: event.tenant_id,
+          runId,
+          errorMessage: message,
+          terminal: attempts >= MAX_AGENT_OUTBOX_ATTEMPTS,
+          attemptCount: attempts
+        });
+      }
+      continue;
+    }
 
+    delivered += 1;
+
+    try {
+      await markDelivered(event.id);
+      await markAgentRunCompleted({
+        tenantId: event.tenant_id,
+        runId
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Delivery bookkeeping failed";
+      logger.error("Agent accepted event but local delivery bookkeeping failed", {
+        tenantId: event.tenant_id,
+        integrationId: event.integration_id,
+        eventId: event.id,
+        runId,
+        errorMessage: message
+      });
+      if (runId) {
+        await recordAcceptedDeliveryBookkeepingFailure({
+          tenantId: event.tenant_id,
+          runId,
+          eventId: event.id,
+          errorMessage: message
+        });
+      }
+      continue;
+    }
+
+    try {
       // Record usage for FinOps as an orchestration action.
       await recordModuleUsageEvent({
         tenantId: event.tenant_id,
@@ -262,12 +401,35 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         costCent: 0, // No external COGS for webhook delivery itself
         metadata: { eventId: event.id, integrationId: integration.id }
       });
-
-      delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";
-      const attempts = event.attempt_count + 1;
-      await markFailed(event.id, attempts, message);
+      logger.warn("Usage metering failed for delivered agent event", {
+        tenantId: event.tenant_id,
+        integrationId: integration.id,
+        eventId: event.id,
+        runId,
+        errorMessage: message
+      });
+      if (runId) {
+        try {
+          await appendAgentRunEvent({
+            tenantId: event.tenant_id,
+            runId,
+            eventType: "agent.run.usage_metering_failed",
+            status: "completed",
+            summary: "Usage metering failed after agent delivery completed",
+            eventData: { outboxEventId: event.id, errorMessage: message.slice(0, 500) }
+          });
+        } catch (ledgerError) {
+          logger.warn("Failed to append agent usage metering failure event", {
+            error: ledgerError,
+            tenantId: event.tenant_id,
+            integrationId: integration.id,
+            eventId: event.id,
+            runId
+          });
+        }
+      }
     }
   }
 

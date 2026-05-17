@@ -92,6 +92,22 @@ describe("call outbox hardening", () => {
     );
   });
 
+  it("applies tenant-scoped locking when tenantId is provided", async () => {
+    process.env.CALLS_PROVIDER = "mock";
+    const lock = mockLockedEvents([]);
+
+    await deliverPendingCallEvents({
+      limit: 1,
+      tenantId: "33333333-3333-3333-3333-333333333333"
+    });
+
+    expect(lock.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("AND e.tenant_id = $3"),
+      [1, 300, "33333333-3333-3333-3333-333333333333"]
+    );
+  });
+
   it("requeues failed delivery attempts before terminal threshold", async () => {
     process.env.CALLS_PROVIDER = "twilio";
     mockLockedEvents([

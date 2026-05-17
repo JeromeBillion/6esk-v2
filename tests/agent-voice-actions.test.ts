@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
     getLatestVoiceConsentState: vi.fn(),
     evaluateVoiceCallPolicy: vi.fn(),
     queueOutboundCall: vi.fn(),
+    deliverPendingCallEvents: vi.fn(),
     isWorkspaceModuleEnabled: vi.fn(),
     recordModuleUsageEvent: vi.fn(),
     MergeError,
@@ -107,6 +108,10 @@ vi.mock("@/server/calls/consent", () => ({
 
 vi.mock("@/server/calls/policy", () => ({
   evaluateVoiceCallPolicy: mocks.evaluateVoiceCallPolicy
+}));
+
+vi.mock("@/server/calls/outbox", () => ({
+  deliverPendingCallEvents: mocks.deliverPendingCallEvents
 }));
 
 vi.mock("@/server/workspace-modules", () => ({
@@ -193,6 +198,7 @@ describe("agent initiate_call action", () => {
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+    mocks.deliverPendingCallEvents.mockResolvedValue({ delivered: 0, skipped: 0 });
     mocks.dbQuery.mockResolvedValue({ rowCount: 1, rows: [] });
   });
 

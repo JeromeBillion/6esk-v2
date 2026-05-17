@@ -5,9 +5,19 @@ import { decryptToken, encryptToken } from "@/server/oauth/crypto";
 import { refreshGoogleToken } from "@/server/oauth/providers/google";
 import { refreshMicrosoftToken } from "@/server/oauth/providers/microsoft";
 import { inboundEmailSchema } from "@/server/email/schema";
+import { logger } from "@/server/logger";
 import { z } from "zod";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
+type OAuthSyncConnection = {
+  id: string;
+  tenant_id: string;
+  provider: "google" | "microsoft" | "zoho" | string;
+  email_address: string;
+  provider_account_id?: string | null;
+  token_expires_at?: string | Date | null;
+  sync_cursor?: string | null;
+};
 
 export async function runSyncEngine() {
   const result = await db.query(
@@ -19,12 +29,18 @@ export async function runSyncEngine() {
   );
 
   const connections = result.rows;
+  logger.info("OAuth sync engine batch started", { connectionCount: connections.length });
 
   for (const conn of connections) {
     try {
       await syncConnection(conn);
     } catch (err) {
-      console.error(`[SyncEngine] Failed to sync connection ${conn.id}:`, err);
+      logger.error("OAuth sync engine connection failed", {
+        error: err,
+        connectionId: conn.id,
+        tenantId: conn.tenant_id,
+        provider: conn.provider
+      });
       await db.query(
         `UPDATE oauth_connections SET last_sync_error = $1, updated_at = now() WHERE id = $2`,
         [String(err), conn.id]
@@ -33,7 +49,12 @@ export async function runSyncEngine() {
   }
 }
 
-export async function syncConnection(conn: any) {
+export async function syncConnection(conn: OAuthSyncConnection) {
+  const log = logger.child({
+    connectionId: conn.id,
+    tenantId: conn.tenant_id,
+    provider: conn.provider
+  });
   const tokensEnc = await getConnectionTokens(conn.id);
   if (!tokensEnc) throw new Error("Missing tokens");
 
@@ -44,6 +65,7 @@ export async function syncConnection(conn: any) {
   const isExpired = conn.token_expires_at && new Date(conn.token_expires_at).getTime() < Date.now() + 5 * 60000;
 
   if (isExpired && refreshToken) {
+    log.info("OAuth connection token refresh started");
     if (conn.provider === "google") {
       const refreshed = await refreshGoogleToken(refreshToken);
       accessToken = refreshed.accessToken;
@@ -88,9 +110,10 @@ export async function syncConnection(conn: any) {
         new Date(Date.now() + refreshed.expiresIn * 1000)
       );
     }
+    log.info("OAuth connection token refresh completed");
   }
 
-  let newCursor = conn.sync_cursor;
+  let newCursor = conn.sync_cursor ?? null;
 
   if (conn.provider === "google") {
     newCursor = await syncGoogleMail(conn, accessToken, newCursor);
@@ -106,9 +129,15 @@ export async function syncConnection(conn: any) {
      WHERE id = $2`,
     [newCursor, conn.id]
   );
+  log.info("OAuth connection sync completed", { syncCursorUpdated: newCursor !== conn.sync_cursor });
 }
 
-async function syncGoogleMail(conn: any, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncGoogleMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+  const log = logger.child({
+    connectionId: conn.id,
+    tenantId: conn.tenant_id,
+    provider: "google"
+  });
   // Query Gmail API for messages newer than historyId or just unread inbox
   // For Phase 1 we poll UNREAD INBOX and mark as read, or rely on history API.
   // Using a simple query if no cursor
@@ -166,7 +195,10 @@ async function syncGoogleMail(conn: any, accessToken: string, cursor: string | n
           body: JSON.stringify({ removeLabelIds: ["UNREAD"] })
         });
       } catch (err) {
-        console.error(`Failed to store Google message ${msg.id}:`, err);
+        log.error("Failed to store Google inbound message", {
+          error: err,
+          providerMessageId: msg.id
+        });
       }
     }
   }
@@ -183,7 +215,12 @@ async function syncGoogleMail(conn: any, accessToken: string, cursor: string | n
   return cursor;
 }
 
-async function syncMicrosoftMail(conn: any, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncMicrosoftMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+  const log = logger.child({
+    connectionId: conn.id,
+    tenantId: conn.tenant_id,
+    provider: "microsoft"
+  });
   let url = `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead eq false&$top=10`;
 
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -214,7 +251,10 @@ async function syncMicrosoftMail(conn: any, accessToken: string, cursor: string 
         body: JSON.stringify({ isRead: true })
       });
     } catch (err) {
-      console.error(`Failed to store Microsoft message ${msg.id}:`, err);
+      log.error("Failed to store Microsoft inbound message", {
+        error: err,
+        providerMessageId: msg.id
+      });
     }
   }
 
@@ -222,7 +262,12 @@ async function syncMicrosoftMail(conn: any, accessToken: string, cursor: string 
   return Date.now().toString();
 }
 
-async function syncZohoMail(conn: any, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncZohoMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+  const log = logger.child({
+    connectionId: conn.id,
+    tenantId: conn.tenant_id,
+    provider: "zoho"
+  });
   const accountId = conn.provider_account_id;
   if (!accountId) throw new Error("Missing Zoho accountId");
 
@@ -264,7 +309,10 @@ async function syncZohoMail(conn: any, accessToken: string, cursor: string | nul
           body: JSON.stringify({ mode: "markAsRead", messageId: [msg.messageId] })
         });
       } catch (err) {
-        console.error(`Failed to store Zoho message ${msg.messageId}:`, err);
+        log.error("Failed to store Zoho inbound message", {
+          error: err,
+          providerMessageId: msg.messageId
+        });
       }
     }
   }

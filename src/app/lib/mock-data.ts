@@ -1831,8 +1831,20 @@ function buildInitialState(): DemoState {
   ];
 
   const mailboxes: ApiMailbox[] = [
-    { id: DEFAULT_MAILBOX_ID, address: DEFAULT_MAILBOX_ADDRESS, type: "shared" },
-    { id: "mailbox-escalations", address: "escalations@6esk.com", type: "shared" }
+    {
+      id: DEFAULT_MAILBOX_ID,
+      address: DEFAULT_MAILBOX_ADDRESS,
+      type: "shared",
+      provider: "resend",
+      delivery_mode: "managed"
+    },
+    {
+      id: "mailbox-escalations",
+      address: "escalations@6esk.com",
+      type: "shared",
+      provider: "resend",
+      delivery_mode: "managed"
+    }
   ];
 
   const supportMacros: SupportMacro[] = [

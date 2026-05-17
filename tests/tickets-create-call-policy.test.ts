@@ -149,6 +149,37 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
+  it("rejects unsupported integration API versions before side effects", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-api-version": "1999-01-01"
+        },
+        body: JSON.stringify({
+          contactMode: "email",
+          from: "customer@example.com",
+          subject: "Unsupported version",
+          description: "Should fail before processing."
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      ok: false,
+      code: "unsupported_api_version",
+      error: "x-6esk-api-version value is not supported.",
+      meta: {
+        apiVersion: "1999-01-01"
+      }
+    });
+    expect(mocks.getSessionUser).not.toHaveBeenCalled();
+    expect(mocks.createTicket).not.toHaveBeenCalled();
+  });
+
   it("returns blocked when call-mode policy denies the request", async () => {
     mocks.evaluateVoiceCallPolicy.mockResolvedValue({
       allowed: false,

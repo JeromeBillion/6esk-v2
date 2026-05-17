@@ -24,6 +24,7 @@ import { evaluateVoiceCallPolicy } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
+import { runInBackground } from "@/server/async";
 
 const actionSchema = z.object({
   type: z.enum([
@@ -1102,7 +1103,12 @@ export async function POST(request: Request) {
               selectedCandidateId: resolved.selectedCandidateId
             }
           });
-          void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
+          runInBackground(deliverPendingCallEvents({ limit: 5 }), "Call outbox delivery failed", {
+            route: "/api/agent/v1/actions",
+            tenantId,
+            actionType: action.type,
+            callSessionId: queued.callSessionId
+          });
           await recordAuditLog({
             tenantId,
             action: "ai_call_queued",
@@ -1580,7 +1586,11 @@ export async function POST(request: Request) {
             }
           }
         });
-        void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+        runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+          route: "/api/agent/v1/actions",
+          tenantId,
+          actionType: action.type
+        });
 
         results.push({ type: action.type, status: "ok" });
         break;

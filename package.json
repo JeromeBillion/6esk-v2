@@ -9,6 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "audit:security": "npm audit --audit-level=high",
+    "audit:full": "npm audit",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed-admin.js",
     "retry:inbound": "node scripts/retry-inbound.js",
@@ -20,6 +22,7 @@
     "calls:outbox": "node scripts/call-outbox.js",
     "calls:transcripts": "node scripts/call-transcript-outbox.js",
     "calls:transcripts:ai": "node scripts/call-transcript-ai-outbox.js",
+    "ai:knowledge:ingest": "node scripts/knowledge-ingestion.js",
     "calls:replay-drill": "node scripts/call-webhook-replay-drill.js",
     "calls:load-drill": "node scripts/call-outbox-load-drill.js",
     "calls:crm-e2e": "node scripts/calls-crm-e2e.js"

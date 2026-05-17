@@ -14,6 +14,7 @@ import { listDraftsForTicket } from "@/server/agents/drafts";
 import { listAuditLogsForTicket } from "@/server/audit";
 import { listLinkedTickets } from "@/server/merges";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -174,7 +175,12 @@ export async function PATCH(
       excerpt: `Status changed from ${ticket.status} to ${parsed.data.status}`
     });
     await enqueueAgentEvent({ eventType: "ticket.status.changed", payload: statusEvent, tenantId });
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      route: "/api/tickets/[ticketId]",
+      tenantId,
+      ticketId,
+      eventType: "ticket.status.changed"
+    });
   }
 
   if (parsed.data.priority && parsed.data.priority !== ticket.priority) {

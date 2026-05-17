@@ -7,13 +7,19 @@ export type MailboxSummary = {
   id: string;
   address: string;
   type: "platform" | "personal";
+  provider: string;
+  delivery_mode: "managed" | "connected";
 };
 
 export async function listMailboxesForUser(user: SessionUser) {
   const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (user.role_name === LEAD_ADMIN_ROLE) {
     const result = await db.query<MailboxSummary>(
-      `SELECT id, address, type
+      `SELECT id, address, type, provider::text,
+              CASE
+                WHEN provider = 'resend' OR oauth_connection_id IS NULL THEN 'managed'
+                ELSE 'connected'
+              END AS delivery_mode
        FROM mailboxes
        WHERE tenant_id = $1
        ORDER BY type, address`,
@@ -23,7 +29,11 @@ export async function listMailboxesForUser(user: SessionUser) {
   }
 
   const result = await db.query<MailboxSummary>(
-    `SELECT m.id, m.address, m.type
+    `SELECT m.id, m.address, m.type, m.provider::text,
+            CASE
+              WHEN m.provider = 'resend' OR m.oauth_connection_id IS NULL THEN 'managed'
+              ELSE 'connected'
+            END AS delivery_mode
      FROM mailboxes m
      JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
      WHERE mm.user_id = $1
@@ -38,7 +48,11 @@ export async function listMailboxesForUser(user: SessionUser) {
 export async function listInboxMailboxesForUser(user: SessionUser) {
   const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query<MailboxSummary>(
-    `SELECT m.id, m.address, m.type
+    `SELECT m.id, m.address, m.type, m.provider::text,
+            CASE
+              WHEN m.provider = 'resend' OR m.oauth_connection_id IS NULL THEN 'managed'
+              ELSE 'connected'
+            END AS delivery_mode
      FROM mailboxes m
      JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
      WHERE mm.user_id = $1
@@ -54,7 +68,11 @@ export async function listInboxMailboxesForUser(user: SessionUser) {
 export async function getPlatformMailbox(tenantId?: string | null) {
   const effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
   const result = await db.query<MailboxSummary>(
-    `SELECT id, address, type
+    `SELECT id, address, type, provider::text,
+            CASE
+              WHEN provider = 'resend' OR oauth_connection_id IS NULL THEN 'managed'
+              ELSE 'connected'
+            END AS delivery_mode
      FROM mailboxes
      WHERE type = 'platform'
        AND tenant_id = $1

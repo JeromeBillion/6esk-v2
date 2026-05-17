@@ -1,14 +1,17 @@
 import { NextRequest } from "next/server";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { requestLogger } from "@/server/logger";
 import { encryptToken } from "@/server/oauth/crypto";
 import { createOAuthConnection } from "@/server/oauth/connections";
 import { exchangeGoogleCode, fetchGoogleUserProfile } from "@/server/oauth/providers/google";
 import { exchangeMicrosoftCode, fetchMicrosoftUserProfile } from "@/server/oauth/providers/microsoft";
 
 export async function GET(request: NextRequest) {
+  const log = requestLogger(request, { route: "GET /api/oauth/callback" });
   const session = await getSessionUser();
   if (!session) {
+    log.warn("OAuth callback rejected without session");
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -18,10 +21,15 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get("error");
 
   if (error) {
+    log.warn("OAuth provider returned an error", { providerError: error });
     return new Response(`OAuth Error: ${error}`, { status: 400 });
   }
 
   if (!code || !stateRaw) {
+    log.warn("OAuth callback missing code or state", {
+      hasCode: Boolean(code),
+      hasState: Boolean(stateRaw)
+    });
     return new Response("Missing code or state", { status: 400 });
   }
 
@@ -29,17 +37,30 @@ export async function GET(request: NextRequest) {
   let state: { nonce: string; provider: string; type: string; tenantId: string; userId: string };
   try {
     state = JSON.parse(Buffer.from(stateRaw, "base64url").toString("utf8"));
-  } catch (e) {
+  } catch {
+    log.warn("OAuth callback state parameter was invalid");
     return new Response("Invalid state parameter", { status: 400 });
   }
 
   const expectedNonce = request.cookies.get("oauth_nonce")?.value;
   if (!expectedNonce || state.nonce !== expectedNonce) {
+    log.warn("OAuth callback CSRF verification failed", {
+      provider: state.provider,
+      tenantId: state.tenantId,
+      userId: state.userId
+    });
     return new Response("CSRF verification failed", { status: 403 });
   }
 
   // Double check session matches the one that started the flow
   if (session.id !== state.userId || session.tenant_id !== state.tenantId) {
+    log.warn("OAuth callback session mismatch", {
+      provider: state.provider,
+      sessionUserId: session.id,
+      sessionTenantId: session.tenant_id,
+      stateUserId: state.userId,
+      stateTenantId: state.tenantId
+    });
     return new Response("Session mismatch", { status: 403 });
   }
 
@@ -51,6 +72,7 @@ export async function GET(request: NextRequest) {
   let scopes: string[];
 
   try {
+    const providerLog = log.child({ provider: state.provider, tenantId: state.tenantId });
     if (state.provider === "google") {
       const tokens = await exchangeGoogleCode(code);
       accessToken = tokens.accessToken;
@@ -99,10 +121,15 @@ export async function GET(request: NextRequest) {
         "ZohoMail.accounts.READ"
       ];
     } else {
+      providerLog.warn("OAuth callback received unknown provider");
       return new Response("Unknown provider", { status: 400 });
     }
   } catch (err) {
-    console.error("[OAuth Callback] Token exchange failed:", err);
+    log.error("OAuth callback token exchange failed", {
+      error: err,
+      provider: state.provider,
+      tenantId: state.tenantId
+    });
     return new Response("Failed to exchange authorization code", { status: 500 });
   }
 
@@ -190,7 +217,12 @@ export async function GET(request: NextRequest) {
         await subscribeToMicrosoftPush(accessToken);
       }
     } catch (pushErr) {
-      console.warn(`[OAuth] Failed to setup push notifications for ${emailAddress}. Falling back to 60s cron.`, pushErr);
+      log.warn("OAuth push subscription setup failed; cron fallback remains active", {
+        error: pushErr,
+        provider: state.provider,
+        tenantId: state.tenantId,
+        connectionId
+      });
     }
 
     // Redirect to success page or settings
@@ -202,7 +234,11 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (err) {
-    console.error("[OAuth Callback] Transaction failed:", err);
+    log.error("OAuth callback failed to create mailbox connection", {
+      error: err,
+      provider: state.provider,
+      tenantId: state.tenantId
+    });
     return new Response("Internal error creating mailbox connection", { status: 500 });
   }
 }

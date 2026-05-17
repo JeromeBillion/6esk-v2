@@ -17,6 +17,7 @@ import {
 import { redactPhoneNumber } from "@/server/calls/redaction";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { runInBackground } from "@/server/async";
 
 const outboundCallSchema = z.object({
   ticketId: z.string().uuid(),
@@ -160,7 +161,12 @@ export async function POST(request: Request) {
         selectedCandidateId: resolved.selectedCandidateId
       }
     });
-    void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
+    runInBackground(deliverPendingCallEvents({ limit: 5 }), "Call outbox delivery failed", {
+      route: "/api/calls/outbound",
+      tenantId,
+      ticketId: data.ticketId,
+      callSessionId: queued.callSessionId
+    });
 
     await recordAuditLog({
       tenantId,

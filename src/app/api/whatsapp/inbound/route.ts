@@ -7,6 +7,12 @@ import {
 } from "@/server/whatsapp/inbound-store";
 import { verifyWhatsAppSignature } from "@/server/whatsapp/signature";
 import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { logger } from "@/server/logger";
 
 type WhatsAppStatusUpdate = {
   messageId: string;
@@ -33,6 +39,11 @@ async function getVerifyTokens() {
 }
 
 export async function GET(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
@@ -45,7 +56,11 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ error: "Forbidden" }, { status: 403 });
+  return integrationError(request, {
+    status: 403,
+    code: "forbidden",
+    message: "Forbidden"
+  });
 }
 
 function extractNormalizedMessages(payload: Record<string, unknown>) {
@@ -300,7 +315,11 @@ async function applyStatusUpdates(
   if (lookupResult.rows.length < externalIds.length) {
     try {
       fallbackTenantId = (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
-    } catch {
+    } catch (error) {
+      logger.warn("WhatsApp status fallback tenant resolution failed", {
+        error,
+        route: "/api/whatsapp/inbound"
+      });
       fallbackTenantId = null;
     }
   }
@@ -358,7 +377,13 @@ async function resolveWebhookTenantId(
       if (account?.tenant_id) {
         tenants.add(account.tenant_id);
       }
-    } catch {
+    } catch (error) {
+      logger.warn("WhatsApp tenant resolution failed for inbound message", {
+        error,
+        route: "/api/whatsapp/inbound",
+        from: message.from,
+        messageId: message.messageId
+      });
       return null;
     }
   }
@@ -386,12 +411,21 @@ async function resolveWebhookTenantId(
 
   try {
     return (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
-  } catch {
+  } catch (error) {
+    logger.warn("WhatsApp default tenant resolution failed", {
+      error,
+      route: "/api/whatsapp/inbound"
+    });
     return null;
   }
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   let payload: unknown;
   const rawBody = await request.text();
   const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
@@ -405,13 +439,21 @@ export async function POST(request: Request) {
   });
 
   if (!signatureValid) {
-    return Response.json({ error: "Invalid signature" }, { status: 401 });
+    return integrationError(request, {
+      status: 401,
+      code: "invalid_signature",
+      message: "Invalid signature"
+    });
   }
 
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch (error) {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_json",
+      message: "Invalid JSON body"
+    });
   }
 
   const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
@@ -429,7 +471,9 @@ export async function POST(request: Request) {
       [eventTenantId, "inbound", payload, "received"]
     );
   } else {
-    console.warn("[WhatsApp Inbound] Skipped raw event persistence without tenant resolution.");
+    logger.warn("Skipped WhatsApp raw event persistence without tenant resolution", {
+      route: "/api/whatsapp/inbound"
+    });
   }
 
   let processed = 0;
@@ -438,8 +482,12 @@ export async function POST(request: Request) {
       await storeInboundWhatsApp(message);
       processed += 1;
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "Unknown";
-      console.error(`[WhatsApp Inbound] Failed to store message from ${message.from}: ${errMsg}`);
+      logger.error("Failed to store inbound WhatsApp message", {
+        error,
+        route: "/api/whatsapp/inbound",
+        from: message.from,
+        messageId: message.messageId
+      });
       // The raw payload is already persisted in whatsapp_events for retry
       continue;
     }
@@ -449,5 +497,5 @@ export async function POST(request: Request) {
     await applyStatusUpdates(statuses);
   }
 
-  return Response.json({ status: "received", processed, statusUpdates: statuses.length });
+  return integrationSuccess(request, { status: "received", processed, statusUpdates: statuses.length });
 }

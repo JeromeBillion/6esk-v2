@@ -3,6 +3,7 @@ import { logger } from "@/server/logger";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { appendMergedFromMetadata } from "@/server/tickets";
+import { runInBackground } from "@/server/async";
 import type { PoolClient } from "pg";
 
 type MergeErrorCode =
@@ -110,7 +111,11 @@ async function publishAgentMergeEvent({
 }) {
   try {
     await enqueueAgentEvent({ eventType, payload, tenantId });
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      fn: "publishMergeAgentEvent",
+      tenantId,
+      eventType
+    });
   } catch (error) {
     // Never fail merge execution because of event delivery issues.
     logger.error("Failed to publish agent merge event", { error, eventType, tenantId });

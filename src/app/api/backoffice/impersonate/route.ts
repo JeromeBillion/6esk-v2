@@ -7,8 +7,19 @@ import { cookies } from "next/headers";
 import crypto from "crypto";
 
 const impersonateSchema = z.object({
-  tenantId: z.string().uuid()
+  tenantId: z.string().uuid(),
+  reason: z.string().trim().min(8).max(500),
+  ticketRef: z.string().trim().min(3).max(128),
+  durationMinutes: z.number().int().min(5).max(240).optional()
 });
+
+const DEFAULT_IMPERSONATION_MINUTES = 30;
+
+function readDefaultImpersonationMinutes() {
+  const configured = Number(process.env.IMPERSONATION_DEFAULT_MINUTES ?? DEFAULT_IMPERSONATION_MINUTES);
+  if (!Number.isFinite(configured)) return DEFAULT_IMPERSONATION_MINUTES;
+  return Math.min(240, Math.max(5, Math.trunc(configured)));
+}
 
 function hashToken(token: string) {
   const secret = process.env.SESSION_SECRET ?? "";
@@ -34,6 +45,9 @@ export async function POST(request: Request) {
   }
 
   const targetTenantId = parsed.data.tenantId;
+  const reason = parsed.data.reason;
+  const ticketRef = parsed.data.ticketRef;
+  const durationMinutes = parsed.data.durationMinutes ?? readDefaultImpersonationMinutes();
 
   // Validate tenant exists
   const tenantResult = await db.query("SELECT id FROM tenants WHERE id = $1 LIMIT 1", [targetTenantId]);
@@ -53,8 +67,14 @@ export async function POST(request: Request) {
   const tokenHash = hashToken(token);
 
   await db.query(
-    `UPDATE auth_sessions SET impersonated_tenant_id = $1 WHERE token_hash = $2`,
-    [targetTenantId, tokenHash]
+    `UPDATE auth_sessions
+     SET impersonated_tenant_id = $1,
+         impersonation_reason = $2,
+         impersonation_ticket_ref = $3,
+         impersonation_started_at = now(),
+         impersonation_expires_at = now() + make_interval(mins => $4::int)
+     WHERE token_hash = $5`,
+    [targetTenantId, reason, ticketRef, durationMinutes, tokenHash]
   );
 
   // Critical: Audit log the break-glass action
@@ -64,10 +84,19 @@ export async function POST(request: Request) {
     action: "support_impersonation_started",
     entityType: "tenant",
     entityId: targetTenantId,
-    data: { reason: "Internal support request" } // A real implementation might require a JIRA ticket ID
+    data: {
+      reason,
+      ticketRef,
+      durationMinutes,
+      expiresAtMinutesFromNow: durationMinutes
+    }
   });
 
-  return Response.json({ status: "impersonating", tenantId: targetTenantId });
+  return Response.json({
+    status: "impersonating",
+    tenantId: targetTenantId,
+    durationMinutes
+  });
 }
 
 export async function DELETE(request: Request) {
@@ -89,7 +118,13 @@ export async function DELETE(request: Request) {
   const previousTenantId = user.tenant_id;
 
   await db.query(
-    `UPDATE auth_sessions SET impersonated_tenant_id = NULL WHERE token_hash = $1`,
+    `UPDATE auth_sessions
+     SET impersonated_tenant_id = NULL,
+         impersonation_reason = NULL,
+         impersonation_ticket_ref = NULL,
+         impersonation_started_at = NULL,
+         impersonation_expires_at = NULL
+     WHERE token_hash = $1`,
     [tokenHash]
   );
 

@@ -1,6 +1,7 @@
 import { getObjectBuffer } from "@/server/storage/r2";
 import { recordAuditLog } from "@/server/audit";
 import { getTranscriptAiProvider, submitTranscriptAiJob } from "@/server/calls/transcript-ai-provider";
+import { logger } from "@/server/logger";
 import {
   getProcessingRecoverySeconds,
   lockPendingTranscriptAiJobs,
@@ -56,17 +57,26 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });
-      await recordAuditLog({
-        tenantId: job.tenant_id,
-        action: "call_transcript_ai_job_failed",
-        entityType: "call_transcript_ai_jobs",
-        entityId: job.id,
-        data: {
-          provider,
-          callSessionId: job.call_session_id,
-          detail
-        }
-      }).catch(() => {});
+      try {
+        await recordAuditLog({
+          tenantId: job.tenant_id,
+          action: "call_transcript_ai_job_failed",
+          entityType: "call_transcript_ai_jobs",
+          entityId: job.id,
+          data: {
+            provider,
+            callSessionId: job.call_session_id,
+            detail
+          }
+        });
+      } catch (auditError) {
+        logger.warn("Failed to record transcript AI job failure audit event", {
+          error: auditError,
+          tenantId: job.tenant_id,
+          jobId: job.id,
+          callSessionId: job.call_session_id
+        });
+      }
     }
   }
 

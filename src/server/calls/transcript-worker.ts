@@ -1,6 +1,7 @@
 import { recordAuditLog } from "@/server/audit";
 import { attachCallTranscript } from "@/server/calls/service";
 import { getTranscriptProvider, submitTranscriptJob } from "@/server/calls/stt-provider";
+import { logger } from "@/server/logger";
 import {
   getProcessingRecoverySeconds,
   lockPendingTranscriptJobs,
@@ -85,17 +86,26 @@ export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: numb
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });
-      await recordAuditLog({
-        tenantId: job.tenant_id,
-        action: "call_transcript_job_failed",
-        entityType: "call_transcript_jobs",
-        entityId: job.id,
-        data: {
-          provider,
-          callSessionId: job.call_session_id,
-          detail
-        }
-      }).catch(() => {});
+      try {
+        await recordAuditLog({
+          tenantId: job.tenant_id,
+          action: "call_transcript_job_failed",
+          entityType: "call_transcript_jobs",
+          entityId: job.id,
+          data: {
+            provider,
+            callSessionId: job.call_session_id,
+            detail
+          }
+        });
+      } catch (auditError) {
+        logger.warn("Failed to record transcript job failure audit event", {
+          error: auditError,
+          tenantId: job.tenant_id,
+          jobId: job.id,
+          callSessionId: job.call_session_id
+        });
+      }
     }
   }
 

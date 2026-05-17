@@ -1,303 +1,267 @@
 import { createHmac } from "crypto";
 import {
-  createRuntimes,
-  InMemoryDatabaseAdapter,
-  type IAgentRuntime,
-  type Route,
-  type RouteRequest,
-  type RouteResponse
-} from "@elizaos/core";
-import project from "@/dexter/index";
+  getDexterRuntimeMode,
+  getDexterRuntimeStatus,
+  isDexterRuntimeEnabled,
+  markDexterRuntimeDisabled,
+  resetDexterRuntimeStatusForTests,
+  setDexterRuntimeStatus,
+  type DexterRuntimeStatus
+} from "@/server/dexter-runtime-state";
+import { logger } from "@/server/logger";
 
-export type DexterRuntimeState = "disabled" | "starting" | "active" | "degraded" | "failed";
-export type DexterRuntimeMode = "native";
+type NativeDexterRuntime = typeof import("@/server/dexter-runtime-native");
 
-export type DexterRuntimeStatus = {
-  state: DexterRuntimeState;
-  enabled: boolean;
-  mode: DexterRuntimeMode;
-  configuredAgentCount: number;
-  activeAgentCount: number;
-  internalDispatcherReady: boolean;
-  startedAt: string | null;
-  updatedAt: string;
-  failureReason: string | null;
-};
+let nativeRuntime: NativeDexterRuntime | null = null;
+let nativeRuntimePromise: Promise<NativeDexterRuntime> | null = null;
 
-export const dexterRuntimes: Map<string, IAgentRuntime> = new Map();
-
-let startPromise: Promise<DexterRuntimeStatus> | null = null;
-let runtimeStartedAt: string | null = null;
-let runtimeStatus: DexterRuntimeStatus = buildStatus("disabled", {
-  enabled: isRuntimeEnabled(),
-  activeAgentCount: 0,
-  internalDispatcherReady: false,
-  startedAt: null,
-  failureReason: "DEXTER_RUNTIME_ENABLED is not enabled"
-});
-
-function isRuntimeEnabled() {
-  const raw = process.env.DEXTER_RUNTIME_ENABLED?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
-function buildStatus(
-  state: DexterRuntimeState,
-  patch: Partial<Omit<DexterRuntimeStatus, "state" | "updatedAt">> = {}
-): DexterRuntimeStatus {
-  return {
-    state,
-    enabled: isRuntimeEnabled(),
-    mode: "native",
-    configuredAgentCount: project.agents.length,
-    activeAgentCount: dexterRuntimes.size,
-    internalDispatcherReady: hasInternalDispatcher(),
-    startedAt: runtimeStartedAt,
-    failureReason: null,
-    ...patch,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function setStatus(
-  state: DexterRuntimeState,
-  patch: Partial<Omit<DexterRuntimeStatus, "state" | "updatedAt">> = {}
-) {
-  runtimeStatus = buildStatus(state, patch);
-  runtimeStartedAt = runtimeStatus.startedAt;
-  return runtimeStatus;
-}
-
-function findInternalDispatcher(runtime: IAgentRuntime): Route | null {
-  return (
-    runtime.routes?.find((route) => route.type === "POST" && route.path === "/hooks/6esk/events") ??
-    null
-  );
-}
-
-function hasInternalDispatcher() {
-  for (const runtime of dexterRuntimes.values()) {
-    if (findInternalDispatcher(runtime)) {
-      return true;
-    }
+async function loadNativeRuntime() {
+  if (nativeRuntime) return nativeRuntime;
+  if (!nativeRuntimePromise) {
+    nativeRuntimePromise = import("@/server/dexter-runtime-native").then((module) => {
+      nativeRuntime = module;
+      return module;
+    });
   }
-  return false;
+  return nativeRuntimePromise;
 }
 
-function getRuntimeLogLevel() {
-  const value = process.env.DEXTER_RUNTIME_LOG_LEVEL?.trim().toLowerCase();
-  return value === "trace" ||
-    value === "debug" ||
-    value === "info" ||
-    value === "warn" ||
-    value === "error" ||
-    value === "fatal"
-    ? value
-    : "warn";
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-export function getDexterRuntimeStatus() {
-  return {
-    ...runtimeStatus,
-    enabled: isRuntimeEnabled(),
-    configuredAgentCount: project.agents.length,
-    activeAgentCount: dexterRuntimes.size,
-    internalDispatcherReady: hasInternalDispatcher()
-  } satisfies DexterRuntimeStatus;
-}
+export { getDexterRuntimeStatus };
+export type { DexterRuntimeStatus };
 
 export async function startDexterRuntime() {
-  if (!isRuntimeEnabled()) {
-    dexterRuntimes.clear();
-    startPromise = null;
-    return setStatus("disabled", {
-      enabled: false,
-      activeAgentCount: 0,
-      internalDispatcherReady: false,
-      startedAt: null,
-      failureReason: "DEXTER_RUNTIME_ENABLED is not enabled"
-    });
+  if (!isDexterRuntimeEnabled()) {
+    if (nativeRuntime) {
+      await nativeRuntime.stopNativeDexterRuntime();
+    }
+    nativeRuntimePromise = null;
+    nativeRuntime = null;
+    return markDexterRuntimeDisabled();
   }
 
-  if (runtimeStatus.state === "active" || runtimeStatus.state === "degraded") {
-    return getDexterRuntimeStatus();
+  if (getDexterRuntimeMode() === "http_bridge") {
+    if (nativeRuntime) {
+      await nativeRuntime.stopNativeDexterRuntime();
+    }
+    nativeRuntimePromise = null;
+    nativeRuntime = null;
+    return startDexterHttpBridge();
   }
-  if (startPromise) {
-    return startPromise;
-  }
-
-  startPromise = startDexterRuntimeOnce().finally(() => {
-    startPromise = null;
-  });
-  return startPromise;
-}
-
-async function startDexterRuntimeOnce() {
-  const startedAt = new Date().toISOString();
-  setStatus("starting", {
-    enabled: true,
-    activeAgentCount: 0,
-    internalDispatcherReady: false,
-    startedAt,
-    failureReason: null
-  });
 
   try {
-    const adapter = new InMemoryDatabaseAdapter();
-    const characters = project.agents.map((agent) => agent.character);
-    const runtimes = await createRuntimes(characters, {
-      adapter,
-      provision: false,
-      logLevel: getRuntimeLogLevel(),
-      checkShouldRespond: false
-    });
-
-    dexterRuntimes.clear();
-    for (const runtime of runtimes) {
-      dexterRuntimes.set(runtime.agentId, runtime);
-    }
-
-    const dispatcherReady = hasInternalDispatcher();
-    return setStatus(dispatcherReady ? "active" : "degraded", {
-      enabled: true,
-      activeAgentCount: dexterRuntimes.size,
-      internalDispatcherReady: dispatcherReady,
-      startedAt,
-      failureReason: dispatcherReady
-        ? null
-        : "Runtime started but no POST /hooks/6esk/events dispatcher route is registered"
-    });
+    const runtime = await loadNativeRuntime();
+    return runtime.startNativeDexterRuntime();
   } catch (error) {
-    dexterRuntimes.clear();
-    console.error("[Dexter] Failed to start runtime:", error);
-    return setStatus("failed", {
-      enabled: true,
-      activeAgentCount: 0,
-      internalDispatcherReady: false,
-      startedAt,
-      failureReason: errorMessage(error)
-    });
+    nativeRuntime = null;
+    nativeRuntimePromise = null;
+    return markDexterRuntimeFailedWithoutNative(error);
   }
-}
-
-function signInternalPayload(secret: string, timestamp: string, body: string) {
-  const signature = createHmac("sha256", secret)
-    .update(`${timestamp}.${body}`)
-    .digest("hex");
-  return `sha256=${signature}`;
-}
-
-function createRouteResponse() {
-  let statusCode = 200;
-  let responseBody: unknown = null;
-  return {
-    get ok() {
-      return statusCode >= 200 && statusCode < 300;
-    },
-    get statusCode() {
-      return statusCode;
-    },
-    get body() {
-      return responseBody;
-    },
-    status(code: number) {
-      statusCode = code;
-      return this;
-    },
-    json(body: unknown) {
-      responseBody = body;
-      return this;
-    },
-    send(body: unknown) {
-      responseBody = body;
-      return this;
-    },
-    end() {
-      return this;
-    }
-  } satisfies RouteResponse & { ok: boolean; statusCode: number; body: unknown };
 }
 
 export async function processInternalDexterMessage(payload: Record<string, unknown>) {
   const status = getDexterRuntimeStatus();
   if (status.state !== "active") {
-    console.warn(
-      `[Dexter] Runtime cannot process ${String(payload.event_type ?? "unknown")} while ${status.state}: ${
-        status.failureReason ?? "not ready"
-      }`
-    );
-    return false;
-  }
-
-  const secret = process.env.SIXESK_SHARED_SECRET?.trim();
-  if (!secret) {
-    setStatus("degraded", {
-      failureReason: "SIXESK_SHARED_SECRET is required for internal Dexter dispatch",
-      startedAt: status.startedAt
+    logger.warn("Dexter runtime cannot process message while inactive", {
+      eventType: String(payload.event_type ?? "unknown"),
+      state: status.state,
+      failureReason: status.failureReason
     });
     return false;
   }
 
-  const body = JSON.stringify(payload);
-  const timestamp = new Date().toISOString();
-  const headers = {
-    "x-6esk-signature": signInternalPayload(secret, timestamp, body),
-    "x-6esk-timestamp": timestamp
-  };
-
-  const request = {
-    headers,
-    body: payload,
-    rawBody: body,
-    method: "POST",
-    path: "/hooks/6esk/events",
-    url: "internal://dexter/hooks/6esk/events"
-  } as RouteRequest & { rawBody: string };
-
-  for (const runtime of dexterRuntimes.values()) {
-    const route = findInternalDispatcher(runtime);
-    if (!route?.handler) {
-      continue;
-    }
-    const response = createRouteResponse();
-    await route.handler(request, response, runtime);
-    if (!response.ok) {
-      setStatus("degraded", {
-        failureReason: `Internal Dexter dispatcher returned HTTP ${response.statusCode}`,
-        startedAt: status.startedAt
-      });
-    }
-    return response.ok;
+  if (status.mode === "http_bridge") {
+    return postToDexterHttpBridge(payload);
   }
 
-  setStatus("degraded", {
-    failureReason: "No POST /hooks/6esk/events dispatcher route is registered",
-    startedAt: status.startedAt
-  });
-  return false;
+  const runtime = await loadNativeRuntime();
+  return runtime.processNativeInternalDexterMessage(payload);
 }
 
 export async function resetDexterRuntimeForTests() {
   if (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
     throw new Error("resetDexterRuntimeForTests is test-only");
   }
-  for (const runtime of dexterRuntimes.values()) {
-    if (typeof runtime.stop === "function") {
-      await runtime.stop();
-    }
+  if (nativeRuntime) {
+    await nativeRuntime.resetNativeDexterRuntimeForTests();
   }
-  dexterRuntimes.clear();
-  startPromise = null;
-  runtimeStartedAt = null;
-  runtimeStatus = buildStatus("disabled", {
-    enabled: isRuntimeEnabled(),
+  nativeRuntime = null;
+  nativeRuntimePromise = null;
+  resetDexterRuntimeStatusForTests();
+}
+
+function markDexterRuntimeFailedWithoutNative(error: unknown) {
+  const failureReason = error instanceof Error ? error.message : String(error);
+  return setDexterRuntimeStatus("failed", {
+    enabled: isDexterRuntimeEnabled(),
     activeAgentCount: 0,
     internalDispatcherReady: false,
-    startedAt: null,
-    failureReason: "DEXTER_RUNTIME_ENABLED is not enabled"
+    failureReason
   });
+}
+
+function readString(value: string | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function getDexterBridgeConfig() {
+  return {
+    url: readString(process.env.DEXTER_RUNTIME_HTTP_URL),
+    secret:
+      readString(process.env.DEXTER_RUNTIME_HTTP_SECRET) ??
+      readString(process.env.SIXESK_SHARED_SECRET),
+    timeoutMs: Math.max(
+      1000,
+      Number.parseInt(process.env.DEXTER_RUNTIME_HTTP_TIMEOUT_MS ?? "7000", 10) || 7000
+    )
+  };
+}
+
+function signBridgePayload(secret: string, timestamp: string, body: string) {
+  const signature = createHmac("sha256", secret)
+    .update(`${timestamp}.${body}`)
+    .digest("hex");
+  return `sha256=${signature}`;
+}
+
+function createBridgeHeaders(secret: string, body: string) {
+  const timestamp = new Date().toISOString();
+  return {
+    "content-type": "application/json",
+    "x-6esk-timestamp": timestamp,
+    "x-6esk-signature": signBridgePayload(secret, timestamp, body)
+  };
+}
+
+function createAbortSignal(timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    clear() {
+      clearTimeout(timeout);
+    }
+  };
+}
+
+async function startDexterHttpBridge() {
+  const config = getDexterBridgeConfig();
+  if (!config.url) {
+    return setDexterRuntimeStatus("failed", {
+      enabled: true,
+      activeAgentCount: 0,
+      internalDispatcherReady: false,
+      failureReason: "DEXTER_RUNTIME_HTTP_URL is required when DEXTER_RUNTIME_MODE=http_bridge"
+    });
+  }
+  if (!config.secret) {
+    return setDexterRuntimeStatus("failed", {
+      enabled: true,
+      activeAgentCount: 0,
+      internalDispatcherReady: false,
+      failureReason:
+        "DEXTER_RUNTIME_HTTP_SECRET or SIXESK_SHARED_SECRET is required when DEXTER_RUNTIME_MODE=http_bridge"
+    });
+  }
+
+  const startedAt = new Date().toISOString();
+  const body = JSON.stringify({
+    command: "runtime.status"
+  });
+  const { signal, clear } = createAbortSignal(config.timeoutMs);
+  try {
+    const response = await fetch(new URL("/runtime/status", config.url).toString(), {
+      method: "POST",
+      headers: createBridgeHeaders(config.secret, body),
+      body,
+      signal
+    });
+    if (!response.ok) {
+      return setDexterRuntimeStatus("degraded", {
+        enabled: true,
+        activeAgentCount: 0,
+        internalDispatcherReady: false,
+        startedAt,
+        failureReason: `Dexter runtime bridge status check failed (${response.status})`
+      });
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      activeAgentCount?: number;
+      internalDispatcherReady?: boolean;
+    };
+    return setDexterRuntimeStatus("active", {
+      enabled: true,
+      activeAgentCount:
+        typeof payload.activeAgentCount === "number" ? payload.activeAgentCount : 1,
+      internalDispatcherReady:
+        typeof payload.internalDispatcherReady === "boolean"
+          ? payload.internalDispatcherReady
+          : true,
+      startedAt,
+      failureReason: null
+    });
+  } catch (error) {
+    const failureReason = error instanceof Error ? error.message : String(error);
+    return setDexterRuntimeStatus("failed", {
+      enabled: true,
+      activeAgentCount: 0,
+      internalDispatcherReady: false,
+      startedAt,
+      failureReason: `Dexter runtime bridge unavailable: ${failureReason}`
+    });
+  } finally {
+    clear();
+  }
+}
+
+async function postToDexterHttpBridge(payload: Record<string, unknown>) {
+  const status = getDexterRuntimeStatus();
+  const config = getDexterBridgeConfig();
+  if (!config.url || !config.secret) {
+    setDexterRuntimeStatus("degraded", {
+      enabled: true,
+      activeAgentCount: 0,
+      internalDispatcherReady: false,
+      startedAt: status.startedAt,
+      failureReason:
+        "Dexter runtime bridge configuration missing: DEXTER_RUNTIME_HTTP_URL and DEXTER_RUNTIME_HTTP_SECRET"
+    });
+    return false;
+  }
+
+  const body = JSON.stringify(payload);
+  const { signal, clear } = createAbortSignal(config.timeoutMs);
+  try {
+    const response = await fetch(new URL("/hooks/6esk/events", config.url).toString(), {
+      method: "POST",
+      headers: createBridgeHeaders(config.secret, body),
+      body,
+      signal
+    });
+    if (!response.ok) {
+      setDexterRuntimeStatus("degraded", {
+        enabled: true,
+        activeAgentCount: status.activeAgentCount,
+        internalDispatcherReady: false,
+        startedAt: status.startedAt,
+        failureReason: `Dexter runtime bridge rejected event (${response.status})`
+      });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    const failureReason = error instanceof Error ? error.message : String(error);
+    setDexterRuntimeStatus("degraded", {
+      enabled: true,
+      activeAgentCount: status.activeAgentCount,
+      internalDispatcherReady: false,
+      startedAt: status.startedAt,
+      failureReason: `Dexter runtime bridge event delivery failed: ${failureReason}`
+    });
+    return false;
+  } finally {
+    clear();
+  }
 }

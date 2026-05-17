@@ -2,6 +2,12 @@ import { z } from "zod";
 import { CALL_STATUSES, createOrUpdateInboundCall } from "@/server/calls/service";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 const inboundCallSchema = z.object({
   provider: z.string().optional().nullable(),
@@ -32,6 +38,11 @@ function parseTimestamp(value: string | number | null | undefined) {
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const rawBody = await request.text();
   const authorization = authorizeCallWebhook({
     rawBody,
@@ -43,7 +54,7 @@ export async function POST(request: Request) {
   });
 
   if (!authorization.authorized) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -51,20 +62,33 @@ export async function POST(request: Request) {
         mode: authorization.mode,
         reason: authorization.reason
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected inbound call webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   let payload: unknown;
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_json",
+      message: "Invalid JSON body"
+    });
   }
 
   const parsed = inboundCallSchema.safeParse(payload);
   if (!parsed.success) {
-    return Response.json({ error: "Invalid payload" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_payload",
+      message: "Invalid payload",
+      details: parsed.error.flatten()
+    });
   }
 
   const data = parsed.data;
@@ -83,9 +107,14 @@ export async function POST(request: Request) {
       tenantId: data.tenantId ?? null,
       metadata: (data.metadata as Record<string, unknown> | null) ?? null
     });
-    return Response.json({ acknowledged: true, ...result });
+    return integrationSuccess(request, { acknowledged: true, ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to process inbound call";
-    return Response.json({ error: "Failed to process inbound call", detail }, { status: 500 });
+    return integrationError(request, {
+      status: 500,
+      code: "inbound_call_processing_failed",
+      message: "Failed to process inbound call",
+      detail
+    });
   }
 }

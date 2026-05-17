@@ -12,6 +12,11 @@ import {
   buildVoiceResponse
 } from "@/server/calls/twilio-queue";
 import { recordAuditLog } from "@/server/audit";
+import {
+  integrationError,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 function readString(value: FormDataEntryValue | null | undefined) {
   if (typeof value !== "string") return null;
@@ -20,6 +25,11 @@ function readString(value: FormDataEntryValue | null | undefined) {
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const formData = await request.formData();
   const params = normalizeTwilioParams(
     new URLSearchParams(
@@ -36,7 +46,7 @@ export async function POST(request: Request) {
   });
 
   if (!isValid) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -44,8 +54,12 @@ export async function POST(request: Request) {
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected Twilio voice webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   const providerCallId = readString(formData.get("CallSid"));
@@ -54,7 +68,11 @@ export async function POST(request: Request) {
   const attempt = Number(new URL(request.url).searchParams.get("attempt") ?? "0");
 
   if (!providerCallId || !fromPhone) {
-    return Response.json({ error: "CallSid and From are required" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_fields",
+      message: "CallSid and From are required"
+    });
   }
 
   const inbound = await createOrUpdateInboundCall({

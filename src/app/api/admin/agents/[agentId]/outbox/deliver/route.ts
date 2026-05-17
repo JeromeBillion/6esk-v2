@@ -4,6 +4,7 @@ import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function POST(
   request: Request,
@@ -51,7 +52,7 @@ export async function POST(
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to deliver agent outbox";
-    await recordAuditLog({
+    runInBackground(recordAuditLog({
       tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_delivery_failed",
@@ -61,7 +62,12 @@ export async function POST(
         requestedLimit: limit ?? null,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record agent outbox delivery failure audit event", {
+      route: "/api/admin/agents/[agentId]/outbox/deliver",
+      tenantId,
+      agentId,
+      limit: limit ?? null
+    });
     return Response.json({ error: "Failed to deliver agent outbox", detail }, { status: 500 });
   }
 }

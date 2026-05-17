@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { runInBackground } from "@/server/async";
 import { getTranscriptJobMetrics } from "@/server/calls/transcript-jobs";
 import { deliverPendingTranscriptJobs } from "@/server/calls/transcript-worker";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run transcript outbox";
-    await recordAuditLog({
+    runInBackground(recordAuditLog({
       tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_transcript_outbox_trigger_failed",
@@ -52,7 +53,11 @@ export async function POST(request: Request) {
         limit,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record transcript outbox trigger failure audit event", {
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      actorUserId: user?.id ?? null,
+      limit
+    });
     return Response.json({ error: "Failed to run transcript outbox", detail }, { status: 500 });
   }
 }

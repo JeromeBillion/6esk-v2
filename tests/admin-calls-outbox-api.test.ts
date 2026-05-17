@@ -126,7 +126,10 @@ describe("/api/admin/calls/outbox", () => {
       skipped: 0,
       provider: "mock"
     });
-    expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({ limit: 25 });
+    expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({
+      limit: 25,
+      tenantId: null
+    });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "call_outbox_triggered"

@@ -11,6 +11,7 @@ import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 const bulkEmailSchema = z.object({
   ticketIds: z.array(z.string().uuid()).min(1).max(100),
@@ -266,7 +267,11 @@ export async function POST(request: Request) {
   const failed = results.filter((result) => result.status === "failed");
 
   if (created.length > 0) {
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      route: "/api/tickets/bulk-email",
+      tenantId,
+      createdCount: created.length
+    });
   }
 
   return Response.json({

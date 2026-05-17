@@ -4,6 +4,7 @@ const path = require("path");
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  serverExternalPackages: ["@elizaos/core"],
   outputFileTracingRoot: path.join(__dirname)
 };
 

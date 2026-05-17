@@ -1,3 +1,5 @@
+import { logger } from "@/server/logger";
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // M-2: Fail-fast env validation — crash on boot if required vars are missing
@@ -5,7 +7,10 @@ export async function register() {
       const { getEnv } = await import("@/server/env");
       getEnv();
     } catch (error) {
-      console.error("[Startup] Environment validation failed:", error instanceof Error ? error.message : error);
+      logger.error("Environment validation failed during startup", {
+        error,
+        fn: "instrumentation.register"
+      });
       throw error;
     }
 

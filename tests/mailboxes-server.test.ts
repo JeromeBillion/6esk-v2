@@ -16,7 +16,15 @@ describe("listInboxMailboxesForUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dbQuery.mockResolvedValue({
-      rows: [{ id: "mailbox-1", address: "jerome.choma@6ex.co.za", type: "personal" }]
+      rows: [
+        {
+          id: "mailbox-1",
+          address: "jerome.choma@6ex.co.za",
+          type: "personal",
+          provider: "resend",
+          delivery_mode: "managed"
+        }
+      ]
     });
   });
 
@@ -31,7 +39,15 @@ describe("listInboxMailboxesForUser", () => {
 
     const result = await listInboxMailboxesForUser(user);
 
-    expect(result).toEqual([{ id: "mailbox-1", address: "jerome.choma@6ex.co.za", type: "personal" }]);
+    expect(result).toEqual([
+      {
+        id: "mailbox-1",
+        address: "jerome.choma@6ex.co.za",
+        type: "personal",
+        provider: "resend",
+        delivery_mode: "managed"
+      }
+    ]);
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("JOIN mailbox_memberships mm ON mm.mailbox_id = m.id");
     expect(sql).toContain("m.type = 'personal'");

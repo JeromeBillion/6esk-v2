@@ -68,7 +68,8 @@ describe("POST /api/admin/calls/retry", () => {
     expect(body).toMatchObject({ status: "ok", retried: 3 });
     expect(mocks.retryFailedCallOutboxEvents).toHaveBeenCalledWith({
       limit: 10,
-      eventIds: []
+      eventIds: [],
+      tenantId: null
     });
   });
 

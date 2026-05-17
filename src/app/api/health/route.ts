@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { getDexterRuntimeStatus } from "@/server/dexter-runtime";
+import { logger } from "@/server/logger";
 
 export async function GET() {
   try {
@@ -26,7 +27,12 @@ export async function GET() {
         }
       }
     });
-  } catch {
+  } catch (error) {
+    logger.error("Health check failed", {
+      error,
+      route: "GET /api/health",
+      check: "database"
+    });
     return Response.json({ status: "degraded", service: "6esk" }, { status: 503 });
   }
 }

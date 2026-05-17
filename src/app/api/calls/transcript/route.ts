@@ -3,6 +3,12 @@ import { attachCallTranscript } from "@/server/calls/service";
 import { normalizeDeepgramTranscriptPayload } from "@/server/calls/stt-deepgram";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 const callTranscriptSchema = z.object({
   callSessionId: z.string().uuid().optional().nullable(),
@@ -30,6 +36,11 @@ function parseTimestamp(value: string | number | null | undefined) {
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const rawBody = await request.text();
   const requestUrl = new URL(request.url);
   const providedSecret = request.headers.get("x-6esk-secret") ?? request.headers.get("x-call-secret");
@@ -69,7 +80,7 @@ export async function POST(request: Request) {
           });
 
   if (!authorization.authorized) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -77,36 +88,51 @@ export async function POST(request: Request) {
         mode: authorization.mode,
         reason: authorization.reason
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected call transcript webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   let payload: unknown;
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_json",
+      message: "Invalid JSON body"
+    });
   }
 
   payload = normalizeDeepgramTranscriptPayload(payload) ?? payload;
 
   const parsed = callTranscriptSchema.safeParse(payload);
   if (!parsed.success) {
-    return Response.json({ error: "Invalid payload" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_payload",
+      message: "Invalid payload",
+      details: parsed.error.flatten()
+    });
   }
 
   const data = parsed.data;
   if (!data.callSessionId && !data.providerCallId) {
-    return Response.json(
-      { error: "callSessionId or providerCallId is required" },
-      { status: 400 }
-    );
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_identifier",
+      message: "callSessionId or providerCallId is required"
+    });
   }
   if (!data.transcriptText && !data.transcriptUrl) {
-    return Response.json(
-      { error: "transcriptText or transcriptUrl is required" },
-      { status: 400 }
-    );
+    return integrationError(request, {
+      status: 400,
+      code: "missing_transcript_source",
+      message: "transcriptText or transcriptUrl is required"
+    });
   }
 
   const occurredAt = parseTimestamp(data.timestamp);
@@ -121,11 +147,19 @@ export async function POST(request: Request) {
   });
 
   if (result.status === "not_found") {
-    return Response.json({ error: "Call session not found" }, { status: 404 });
+    return integrationError(request, {
+      status: 404,
+      code: "call_session_not_found",
+      message: "Call session not found"
+    });
   }
   if (result.status === "failed") {
-    return Response.json({ error: result.detail }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "transcript_attach_failed",
+      message: result.detail
+    });
   }
 
-  return Response.json(result);
+  return integrationSuccess(request, result);
 }

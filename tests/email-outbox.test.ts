@@ -102,4 +102,20 @@ describe("email outbox", () => {
       ["provider-msg-1", "msg-1"]
     );
   });
+
+  it("applies tenant-scoped locking when tenantId is provided", async () => {
+    const { deliverPendingEmailOutboxEvents } = await import("@/server/email/outbox");
+
+    await deliverPendingEmailOutboxEvents({
+      limit: 2,
+      tenantId: "22222222-2222-2222-2222-222222222222"
+    });
+    const client = await mocks.connect.mock.results.at(-1)?.value;
+
+    expect(client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("AND e.tenant_id = $3"),
+      [2, 300, "22222222-2222-2222-2222-222222222222"]
+    );
+  });
 });

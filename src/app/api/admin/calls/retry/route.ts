@@ -3,6 +3,7 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { retryFailedCallOutboxEvents } from "@/server/calls/outbox";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 25) || 25, 1), 100);
+  const tenantId = user?.tenant_id ?? null;
   let eventIds: string[] = [];
   try {
     const payload = (await request.json()) as { eventIds?: unknown };
@@ -32,9 +34,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await retryFailedCallOutboxEvents({ limit, eventIds });
+    const result = await retryFailedCallOutboxEvents({ limit, eventIds, tenantId });
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_triggered",
       entityType: "call_outbox_events",
@@ -49,8 +51,8 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed call outbox events";
-    await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+    runInBackground(recordAuditLog({
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_failed",
       entityType: "call_outbox_events",
@@ -58,7 +60,11 @@ export async function POST(request: Request) {
         limit,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record call outbox retry failure audit event", {
+      route: "/api/admin/calls/retry",
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
+      limit
+    });
     return Response.json({ error: "Failed to retry failed call outbox events", detail }, { status: 500 });
   }
 }

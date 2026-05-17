@@ -6,6 +6,7 @@ import { sendTicketReply } from "@/server/email/replies";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 type OutboundEmailAttachment = {
   filename: string;
@@ -170,7 +171,11 @@ export async function createOutboundEmailTicket({
   }
 
   if (deliverAgentEvents) {
-    void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      fn: "createOutboundEmailTicket",
+      tenantId,
+      ticketId
+    });
   }
 
   return {

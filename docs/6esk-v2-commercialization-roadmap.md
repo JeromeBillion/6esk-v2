@@ -384,7 +384,17 @@ The current Venus-derived capability must become an optional `6esk` module, not 
 - autonomous actions need explicit tenant policy, bounded tool permissions, idempotency keys, and audit trails
 - BYO AI keys are tenant secrets and must never be visible to other tenants or broad internal roles
 - provider responses, embeddings, transcripts, summaries, and QA flags must not cross tenant boundaries in caches, traces, prompts, eval datasets, or analytics
-- human review is mandatory for high-impact or irreversible workflows until the product has proven controls and customer-approved policy
+- human approval is a rollout-mode behavior, not a universal brake: `hybrid_review` routes configured actions to approval, while `full_auto` executes preauthorized actions without human approval and fails closed or escalates safely when policy, confidence, entitlement, or risk gates do not pass
+
+### AI Autonomy Modes
+These names are the target contract for Dexter and the admin UI. Existing aliases such as `auto` or `limited_auto` should be migrated deliberately instead of left ambiguous.
+
+| Mode | Meaning | Human approval behavior |
+|---|---|---|
+| `dry_run` | Dexter evaluates context, policy, and likely actions without writing drafts or touching customer records. | No approval request because no side effect is allowed. |
+| `draft_only` | Dexter may create internal drafts, summaries, classifications, and safe recommendations. | No approval request unless a tenant explicitly asks to review draft publication separately. |
+| `hybrid_review` | Dexter prepares action proposals for customer contact, mutation, merge, billing-affecting, export, or other configured actions. | Approval is mandatory before those side effects. |
+| `full_auto` | Dexter executes tenant-approved actions autonomously inside configured policy, scopes, spend caps, confidence thresholds, rate limits, idempotency, and kill switches. | No human approval. If an action is not preauthorized or confidence is insufficient, Dexter must deny, defer, or hand off to a human workflow without performing the side effect. |
 
 ### AI Production Readiness Sequence
 This work must proceed in small, reversible slices. The AI module cannot be treated as "done" just because the Venus-derived code exists in the repo.
@@ -412,7 +422,7 @@ Completed production-readiness slices:
 - focused action tests now cover non-call idempotency claim, replay suppression, and conflict behavior before draft side effects
 - high-risk agent actions now fail closed without an `idempotencyKey` before executable side effects such as customer contact, approved voice calls, ticket mutation, human-review writeback, merge proposals, direct ticket merges/links, and customer merges
 - focused action tests now cover required idempotency for auto-send replies, approved voice calls, ticket priority mutation, and direct ticket merge execution
-- agent action execution now supports explicit `dry_run`, `draft_only`, `limited_auto`, and `auto` rollout modes from agent policy/capabilities, blocking before ticket mutation, customer contact, provider calls, or direct merge execution when the mode does not allow the action
+- agent action execution now supports the current legacy `dry_run`, `draft_only`, `limited_auto`, and `auto` rollout modes from agent policy/capabilities, blocking before ticket mutation, customer contact, provider calls, or direct merge execution when the mode does not allow the action; the target admin/runtime contract is `dry_run`, `draft_only`, `hybrid_review`, and `full_auto`
 - focused action tests now cover dry-run no-side-effect behavior, draft-only mutation blocking, limited-auto customer-contact blocking, and explicit limited-auto allowlisting
 - lead admins can read and update tenant-scoped Dexter rollout controls from `GET/PATCH /api/admin/agents/[agentId]/rollout`, with canonical `actionRolloutMode`, `allowedAutoActions`, and `maxActionsPerMinute` persistence plus audit logging
 - focused admin rollout tests now cover tenant-scoped lookup, secret-free read responses, invalid rollout rejection, stale alias stripping, canonical policy/capability writes, and audit emission
@@ -439,25 +449,192 @@ Completed production-readiness slices:
 - the mailbox sync cron fails closed in production when `CRON_SECRET` is absent, and Microsoft webhook validation no longer accepts a static fallback client state
 - customer-contact module gates now pass explicit tenant scope for email, WhatsApp, voice, ticket creation, replies, draft sends, and AI action execution instead of relying on default tenant context
 - AI call review writebacks now have a tenant-scoped migration and tenant-bound idempotency checks so duplicated AI call summaries cannot cross tenant boundaries
+- tenant Knowledge Base foundation now has tenant-scoped schema for folders, documents, versions, chunks, embedding metadata, ingestion jobs, and retrieval events; admin APIs can list the tenant KB, create folders, upload allowed SOP files to tenant-scoped object keys, enqueue ingestion jobs, and record audit logs
+- focused Knowledge Base tests cover admin-only access, tenant-scoped service queries, parent-folder ownership checks, foreign-folder upload rejection before object storage, upload transaction registration, unsupported file rejection, and audit emission; the full Vitest suite and production build pass after this slice
+- Knowledge Base ingestion now has a durable worker path for text and Markdown: queued jobs lock with stale-running recovery, extracted text is normalized and stored as a tenant-scoped artifact, chunks are generated with hashes/source locators, document versions move to `indexed`, ingestion metrics are exposed through admin API, and secret/admin triggers can run the worker
+- PDF/DOC/DOCX uploads remain accepted at the registration layer but ingestion marks them `poison` with an explicit extractor-not-enabled error until vetted parser dependencies and malware scanning are added; this prevents binary documents from being treated as searchable knowledge before safe extraction exists
+- Knowledge Base document lifecycle now requires explicit tenant-admin publication before indexed chunks can become runtime-eligible: admins can publish the latest indexed version, older indexed/published versions are archived, documents can be archived out of future retrieval, and lifecycle actions are tenant-scoped and audited
+- Knowledge Base retrieval now has a tenant-scoped published-chunk search contract: only published document versions in `ai_visible` folders are searched, results return source citations with document/version/chunk IDs, scores, source locators, and snippets, every query writes a `knowledge_retrieval_events` ledger entry, and admins can test retrieval through `POST /api/admin/ai/knowledge/search`
+- Knowledge Base prompt-injection guardrails now classify every text/Markdown chunk as tenant-uploaded untrusted content, flag obvious instruction override, secret exfiltration, approval bypass, cross-tenant access, tool coercion, and citation suppression patterns in chunk metadata, return citation-level safety diagnostics, write safety summaries to retrieval events, and allow runtime-style retrieval to exclude high-risk chunks
+- Dexter runtime adapter isolation now separates status reads from native ElizaOS startup/dispatch: health/admin routes read a lightweight runtime-state module, native runtime startup and internal dispatch live behind a facade, `@elizaos/core` is treated as a Next server external package, and the production build no longer emits ElizaOS `import.meta` or dynamic-dependency bundling warnings
+- Dexter durable run ledger foundation now has tenant-paired `agent_runs`, `agent_run_events`, `agent_run_steps`, and `agent_tool_calls` schema, outbox events create queued runs transactionally, delivery writes running/completed/retry/failed timeline events, event sequences lock the run row before numbering, and successful agent delivery is no longer requeued solely because later usage/bookkeeping writes fail
+- Dexter control-plane command envelope foundation now validates and persists a versioned `agent.run.create` command for every outbox-created run: envelopes include tenant ID, run ID, actor, idempotency key, source channel, trigger event, resource references, requested scopes, canonical rollout mode, provider mode, lane key, and protocol version, and invalid envelopes fail before ledger publication
+
+### OpenClaw Review Findings For Dexter CRM Orchestration
+Local review source: `C:\Users\choma\Desktop\Claw\openclaw-main`, reviewed as a pattern source only. We are not making OpenClaw a dependency and we are not copying its personal-assistant trust model into `6esk`.
+
+Most valuable OpenClaw patterns reviewed:
+- typed gateway protocol and method scopes from `docs/gateway/protocol.md`, `src/gateway/protocol/schema/*`, `src/gateway/method-scopes.ts`, and `src/gateway/operator-scopes.ts`
+- agent run lifecycle, `agent.wait`, run events, and terminal snapshots from `docs/concepts/agent-loop.md`, `src/gateway/server-methods/agent.ts`, `src/gateway/server-methods/agent-wait-dedupe.ts`, and `src/infra/agent-events.ts`
+- per-session and global lane queueing, dedupe, queue snapshots, stale-lane recovery, and bounded task timeouts from `docs/concepts/queue.md`, `src/process/command-queue.ts`, `src/plugin-sdk/keyed-async-queue.ts`, and `src/auto-reply/reply/queue/*`
+- background task ledger, audit, maintenance, lost-task detection, and delivery state from `docs/automation/tasks.md` and `src/tasks/*`
+- layered tool policy, owner-only tool filtering, provider/group/session policy merging, and trusted server-derived context checks from `src/agents/pi-tools.policy.ts`, `src/agents/pi-embedded-runner/effective-tool-policy.ts`, and `src/agents/tool-policy-pipeline.ts`
+- approval and sandbox blast-radius controls from `docs/tools/exec-approvals.md` and `docs/gateway/sandboxing.md`
+- AI threat modeling, security incident process, and release/CI evidence patterns from `docs/security/THREAT-MODEL-ATLAS.md`, `docs/security/incident-response.md`, `SECURITY.md`, and `docs/ci.md`
+
+OpenClaw patterns we must not copy directly:
+- OpenClaw explicitly assumes one trusted operator boundary per gateway; `6esk` must assume hostile-internet, multi-tenant SaaS conditions.
+- OpenClaw `sessionKey` is routing context, not authorization. Dexter must never use ticket/thread/session keys as tenant authorization.
+- OpenClaw in-process queues are useful for shape, but Dexter production queues and run state must be durable in Postgres and/or Redis-backed workers.
+- OpenClaw's broad trusted-operator and host-exec defaults are not acceptable for customer CRM actions. Dexter tools must be deny-by-default and tenant-scoped.
+- OpenClaw plugin trust assumptions do not transfer. Any Dexter plugin/tool/runtime adapter must be treated as privileged code and reviewed as part of the 6esk trusted computing base.
+
+Target Dexter production model:
+
+```text
+tenant/channel/customer event
+  -> typed Dexter command envelope
+  -> durable agent_runs / agent_run_events / agent_tool_calls
+  -> tenant lane queue
+  -> policy, autonomy, and approval gate
+  -> runtime adapter (ElizaOS or replacement)
+  -> bounded tool execution
+  -> audit, usage, billing, and operator diagnostics
+```
+
+State ownership:
+- Postgres is the source of truth for runs, steps, tool calls, approvals, terminal outcomes, usage, and billing references.
+- Redis or an equivalent queue may coordinate worker concurrency, but it must not be the only source of truth for business-critical agent state.
+- ElizaOS memory/runtime state is not authoritative for CRM, billing, permissions, usage, or audit history.
+
+Feedback ownership:
+- every run emits tenant-scoped lifecycle events, tool events, approval events, usage events, and terminal summaries
+- every denied action records the policy reason without leaking prompts or cross-tenant data
+- admin/support diagnostics must show queue depth, active runs, stuck runs, provider failures, model spend, action denials, and retry/replay status by tenant/module
+
+Blast-radius rule:
+- if Dexter, ElizaOS, the model provider, or a tool adapter disappears, CRM ticket handling must degrade to human workflow and preserve queued work for retry/replay
+- failed AI must not block human replies, inbound ingestion, customer-contact workflows, billing history, or audit review
+
+#### Dexter CRM Work Items Cherry-Picked From OpenClaw
+
+| ID | Priority | Work item | Required outcome |
+|---|---:|---|---|
+| E-OC-1 | P0 | Dexter control-plane command envelope | Define versioned Zod/TypeScript schemas for `agent.run.create`, `agent.run.cancel`, `agent.wait`, `agent.tool.requested`, `agent.tool.completed`, `agent.approval.requested`, and `agent.run.completed`. Every command must include `tenantId`, `actorId` or machine actor, `runId`, `idempotencyKey`, source channel, resource references, requested scopes, rollout mode, and provider mode. Untyped runtime payloads are not accepted at the boundary. |
+| E-OC-2 | P0 | Durable run ledger | Add durable `agent_runs`, `agent_run_events`, `agent_run_steps`, and `agent_tool_calls` or equivalent tables. Status model must include `created`, `queued`, `running`, `waiting_approval`, `completed`, `failed`, `timed_out`, `cancelled`, and `lost`. Events need monotonic per-run sequence numbers, safe summaries, timestamps, tenant IDs, and resource IDs. |
+| E-OC-3 | P0 | Tenant lane queue | Serialize AI work per tenant/resource lane, e.g. `tenant:<id>:ticket:<id>` or `tenant:<id>:channel:<kind>:thread:<id>`, while allowing unrelated tenant/resource lanes to run concurrently. Queue records must support wait time, depth, dedupe, stale running detection, timeout, retry, and dead-letter behavior. |
+| E-OC-4 | P0 | Tool scope and policy pipeline | Build a first-class Dexter tool policy pipeline: tenant ownership -> module entitlement -> actor role -> resource permission -> tenant AI mode -> rollout mode -> action allowlist -> rate limit -> idempotency -> tool-specific schema -> autonomy/approval decision. LLM output must never bypass this pipeline. |
+| E-OC-5 | P0 | Hybrid approval and full-auto autonomy contract | Model approval as a `hybrid_review` workflow only. Direct customer contact, ticket close, ticket/customer merge execution, voice call initiation, bulk sends, data export, billing-affecting actions, and destructive operations require approval in `hybrid_review`, but must execute without human approval in `full_auto` only when preauthorized by tenant policy, scoped tool permissions, confidence gates, spend caps, idempotency, and kill switches. Approval records must show requester, approver, tenant, resource, proposed diff, expiry, and final outcome. Full-auto denials must be audited as policy decisions, not converted into hidden approvals. |
+| E-OC-6 | P0 | ElizaOS runtime adapter isolation | Resolve D-4 by moving `@elizaos/core` behind a runtime adapter/worker boundary so Next request/health/admin routes do not import ElizaOS at module top level. The adapter can be replaced by another runtime without rewriting CRM policy, billing, audit, or queue state. |
+| E-OC-7 | P1 | Model/provider gateway and fallback | Add a provider resolver that handles no-AI, managed AI, and BYO AI modes with explicit model selection, fallback candidates, cooldowns, provider timeouts, cost capture, and clear denial reasons for missing/invalid tenant provider configuration. |
+| E-OC-8 | P1 | CRM sandbox boundary for tools | Treat AI tools as operating inside a CRM sandbox even when no OS sandbox exists. Tools receive only scoped ticket/customer/message/call data, produce drafts or typed action proposals by default, and cannot access raw provider secrets, unrelated tenant data, exports, or broad admin APIs. |
+| E-OC-9 | P1 | Admin run diagnostics and operator controls | Add admin/support surfaces for run timeline, active/stuck runs, queue depth, tool calls, denied actions, approvals, retries, replay, cancellation, runtime health, provider health, and tenant/module usage. These views must be prompt-safe and tenant-scoped. |
+| E-OC-10 | P1 | AI security audit and threat model | Create a `6esk` AI/Dexter threat model using OpenClaw's ATLAS-style structure, but rewritten for multi-tenant CRM. Cover direct/indirect prompt injection, tool argument injection, forged runtime events, provider compromise, BYO key leakage, cross-tenant memory bleed, unsafe autonomous action, and billing abuse. |
+| E-OC-11 | P1 | Context and memory boundaries | Define session/context visibility rules for email, WhatsApp, voice, webchat, and internal notes. Memory must be tenant/resource scoped, retention-aware, cite source records, and never use global or cross-tenant runtime memory as prompt input. |
+| E-OC-12 | P1 | Release and replay evidence | Add golden tests, replay drills, load drills, and CI gates for Dexter flows: duplicate events, tenant mismatch, provider timeout, tool denial, approval expiry, worker crash, runtime restart, stuck run recovery, and billing reconciliation. |
+
+#### Tenant Knowledge Base And SOP RAG Plan
+Research sources checked for this plan:
+- OpenAI Retrieval / File Search docs: https://platform.openai.com/docs/guides/retrieval
+- Google Drive API file download/export docs: https://developers.google.com/workspace/drive/api/guides/manage-downloads
+- Atlassian Confluence Cloud REST API page docs: https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
+- NotebookLM Enterprise source upload docs: https://docs.cloud.google.com/gemini/enterprise/notebooklm-enterprise/docs/api-notebooks-sources
+- OWASP Top 10 for LLM Applications: https://owasp.org/www-project-top-10-for-large-language-model-applications/
+
+Decision: start with a tenant-owned Knowledge Base in Admin, not external connectors. Google Drive, Confluence/Atlassian, and NotebookLM Enterprise import paths are useful later, but the first production-safe version should let tenant admins create folders and upload SOP/business-knowledge files directly. That keeps state, permissions, ingestion, retrieval, billing, and audit under `6esk` control before we add external sync complexity.
+
+Target admin surface:
+- route: `Admin -> AI Settings -> Knowledge Base`
+- folder tree for SOPs, policies, FAQs, product manuals, escalation guides, compliance notes, and internal playbooks
+- upload support for `.pdf`, `.docx`, `.md`, `.txt`, and controlled HTML/CSV only after extraction safety is proven
+- document version history, publish/archive state, processing status, extraction errors, last indexed time, uploader, file size, page/section count, and per-folder AI visibility
+- drag/drop upload, create folder, move file, rename, archive, replace version, restore version, and delete/export controls
+- tenant admin test console: ask a question, see retrieved snippets, source citations, confidence, denied sources, and why Dexter would answer or escalate
+- quota and billing visibility for stored files, extracted text, embedding count, retrieval calls, reindex jobs, and model usage
+
+Target flow:
+
+```text
+tenant admin upload
+  -> object storage under tenant/module/document/version key
+  -> malware scan, MIME sniff, size/page limits, checksum
+  -> durable ingestion job
+  -> text extraction worker
+  -> chunking, metadata, versioning, and redaction checks
+  -> embeddings and keyword index
+  -> published knowledge source
+  -> Dexter retrieval with tenant/resource/policy filters
+  -> cited answer, draft, proposal, or autonomous action
+  -> usage, audit, billing, and retrieval event ledger
+```
+
+State ownership:
+- Postgres is authoritative for `knowledge_folders`, `knowledge_documents`, `knowledge_document_versions`, `knowledge_chunks`, `knowledge_embeddings` metadata, `knowledge_ingestion_jobs`, `knowledge_retrieval_events`, and future `knowledge_connectors`.
+- Object storage holds original files and extracted text artifacts under tenant-scoped keys; object storage keys are never treated as authorization.
+- The vector index is a rebuildable read model. It must carry tenant ID, document version ID, chunk ID, folder ID, published state, source hash, and retention metadata.
+- Only `published` document versions are available to Dexter runtime retrieval. Draft, failed, archived, deleted, or processing versions are excluded.
+
+Feedback ownership:
+- ingestion jobs expose queued/running/indexed/failed state, retry count, worker error class, extraction warnings, and last successful index time
+- retrieval events record tenant, run ID, document version IDs, chunk IDs, scores, filters, prompt-safe query summary, answer/action correlation, and token/cost usage
+- admin diagnostics show stale indexes, failed extraction, missing embeddings, low-confidence retrieval, source conflicts, and quota exhaustion
+
+Blast-radius rule:
+- if extraction, embedding, vector search, or a connector fails, Dexter must degrade to normal ticket context and human workflow instead of inventing SOPs
+- deleting or archiving a document version removes it from future retrieval but preserves required audit/billing history
+- if the vector index is corrupted or unavailable, it must be rebuildable from Postgres/object storage without losing tenant files or audit trails
+
+RAG security rules:
+- tenant documents are data, not instructions. Uploaded SOPs can inform answers and actions but cannot grant permissions, override platform policy, alter autonomy mode, disable audit, expose secrets, or authorize cross-tenant access.
+- source hierarchy is fixed: platform safety rules -> tenant AI policy -> published tenant KB snippets -> ticket/customer/call context -> inbound customer text.
+- every retrieval query is tenant-scoped and optionally folder/module/resource scoped before vector or keyword search runs.
+- retrieval uses hybrid search where practical: keyword + vector search, metadata filters, score thresholds, optional reranking, and citation requirements.
+- Dexter must cite source documents for SOP-based answers and record source IDs for autonomous actions.
+- low-confidence, missing-source, conflicting-source, or stale-source retrieval must trigger safe denial, draft-only response, or human handoff according to autonomy mode.
+- prompt injection, poisoned documents, malicious file metadata, and tool-argument injection are expected attacks; ingestion and runtime prompts must isolate untrusted text from executable instructions.
+- documents containing secrets, credentials, payment data, or excessive personal data should be rejected, redacted, or marked restricted before indexing.
+
+#### Tenant Knowledge Base / RAG Work Items
+
+| ID | Priority | Work item | Required outcome |
+|---|---:|---|---|
+| E-RAG-1 | P0 | Admin Knowledge Base UX | Add an AI settings surface where tenant admins can create folders, upload files, inspect processing state, publish/archive versions, and test retrieval with citations. The UX must make failed indexing and quota limits visible without leaking prompts or other tenants' data. |
+| E-RAG-2 | P0 | Tenant-scoped data model | Add tenant-scoped folder, document, version, chunk, ingestion-job, embedding-metadata, and retrieval-event tables with indexes for tenant/folder/status/version lookups. Enforce DB constraints so documents and chunks cannot exist without tenant ownership. |
+| E-RAG-3 | P0 | Secure upload and storage pipeline | Store originals under tenant-scoped object keys, enforce auth/role/module checks, MIME sniffing, extension allowlist, size/page limits, checksum dedupe, malware scanning hook, encryption-at-rest assumptions, and audit logs for upload/replace/delete/export. |
+| E-RAG-4 | P0 | Async extraction and chunking worker | Move PDF/DOCX/Markdown/text extraction out of request handlers into durable jobs with retry, timeout, poison state, extraction warnings, normalized text artifacts, source-page/heading metadata, and deterministic chunk IDs. |
+| E-RAG-5 | P0 | Embedding and vector read model | Generate embeddings only from sanitized chunks, store provider/model/version metadata, support rebuilds, and prevent cross-tenant vector queries with tenant filters at the repository/query layer. |
+| E-RAG-6 | P0 | Retrieval contract with citations | Build a typed retrieval service that accepts tenant, run/resource context, allowed folders, query purpose, score threshold, and max chunks; returns safe snippets with citation metadata and never raw broad document dumps. |
+| E-RAG-7 | P0 | Dexter runtime integration | Inject retrieved SOP snippets into Dexter as bounded context, not policy. `hybrid_review` proposes cited actions for approval; `full_auto` may act without approval only when published sources, tenant policy, confidence, idempotency, and tool scopes all pass. |
+| E-RAG-8 | P0 | Prompt-injection and data-poisoning defenses | Add ingestion and runtime guardrails that treat document content, filenames, metadata, and customer text as untrusted. Test malicious SOPs that try to override system policy, leak secrets, widen permissions, or force tool calls. |
+| E-RAG-9 | P1 | Admin retrieval debug and support diagnostics | Show admins/support which documents were used, which were excluded by policy/status/folder filter, low-confidence decisions, stale index warnings, and failed ingestion reasons. Keep raw prompts and sensitive chunks out of broad support views. |
+| E-RAG-10 | P1 | Usage, billing, quotas, and retention | Meter storage, extracted text, embedding jobs, retrieval calls, reranking, model usage, and reindexing. Add tenant quotas, unusual-spend warnings, retention/export/delete handling, and invoice drill-down linkage to the Admin usage page. |
+| E-RAG-11 | P1 | Evaluation and replay suite | Add golden questions per tenant fixture, citation accuracy checks, no-answer tests, stale-source tests, cross-tenant negative tests, prompt-injection tests, worker crash/retry tests, and vector-index rebuild drills. |
+| E-RAG-12 | P2 | External source connectors after foundation | Add Google Drive, Confluence/Atlassian, and NotebookLM Enterprise import/sync only after E-RAG-1 through E-RAG-11 are stable. Connectors must preserve tenant OAuth scopes, source ACLs, versioning, deletion sync, audit events, and explicit admin source selection. Consumer NotebookLM should not be treated as a reliable enterprise source connector. |
+
+Acceptance gates for this tenant Knowledge Base track:
+- a tenant admin can upload SOP files, publish them, test retrieval, and see citations before Dexter uses them in production workflows
+- a malicious document cannot override platform policy, widen tool scopes, alter autonomy mode, disable audit, expose secrets, or cross tenant boundaries
+- `full_auto` actions backed by SOP retrieval are auditable without requiring human approval, and failed gates degrade safely
+- retrieval results are explainable by document, version, folder, chunk, score, and run/action correlation
+- deleting, archiving, reindexing, or rebuilding documents does not orphan files, chunks, embeddings, audit events, or billing records
+
+Acceptance gates for this OpenClaw-derived Dexter track:
+- no Next route imports the native ElizaOS runtime at module top level
+- all AI runs and tool calls are recoverable from durable state after process restart
+- every tool side effect has a tenant, actor, resource, scope decision, idempotency key, and audit record
+- admin users can explain why Dexter acted, did not act, waited, failed, retried, or required approval
+- a malicious tenant/customer message cannot widen Dexter's CRM permissions, provider access, or context visibility
+- disabling AI for a tenant stops new AI work without corrupting historical runs, usage, audit trails, drafts, transcripts, or human workflows
 
 Remaining launch gates:
 1. Bounded AI tool execution:
    - every tool/action must pass tenant, entitlement, role/policy, rate-limit, and idempotency checks before side effects
-   - autonomous actions must support dry-run, draft-only, human-review, and auto-send modes
+   - autonomous actions must support `dry_run`, `draft_only`, `hybrid_review`, and `full_auto` modes
    - LLM output must never directly authorize customer contact, billing, identity, compliance, or destructive operations
-   - remaining work: broaden cross-tenant regression tests across the remaining action classes and services
+   - remaining work: close E-OC-1 through E-OC-5 and soak-test the E-OC-6 bridge boundary in staging before external AI automation, then broaden cross-tenant regression tests across the remaining action classes and services
 2. Observability and operations:
    - queue depth, provider latency, provider errors, model/token usage, spend, denied actions, retries, and hard failures must be visible by tenant/module
    - alerts must exist for AI provider failure spikes, BYO key failures, abnormal tenant spend, action denials, and runtime health degradation
    - support diagnostics must show why AI did or did not act without exposing prompts or cross-tenant data
-   - remaining work: promote runtime/outbox/provider signals into tenant-aware dashboards, alerts, and operational runbooks
+   - remaining work: close E-OC-7 through E-OC-9, then promote runtime/outbox/provider signals into tenant-aware dashboards, alerts, and operational runbooks
 3. Rollout and rollback:
-   - per-tenant AI mode toggles must support `none`, managed, BYO, dry-run, draft-only, and limited auto-action rollout
+   - per-tenant AI mode toggles must support `none`, managed AI, BYO AI, `dry_run`, `draft_only`, `hybrid_review`, and `full_auto`
    - rollback must stop new AI work safely while preserving historical transcripts, summaries, usage, and audit trails
    - failed or disabled AI must degrade to human workflow, not block ticket handling
+   - remaining work: close E-OC-10 through E-OC-12 so rollout decisions have threat-model, memory-boundary, replay, and release evidence
 
 Outstanding tally after the May 2026 consolidation pass:
-- AI module launch blockers: 3 remaining P0 gates: bounded tool execution, observability/operations, and rollout/rollback. Bounded execution is substantially closed for the current action route, customer-service paths, WhatsApp outbox operator paths, message/attachment/resend/draft paths, inbound email/WhatsApp store paths, voice call write paths, OAuth mail provider sends/sync, and call-review writebacks, but still needs broader cross-tenant regression coverage for remaining admin, worker, analytics, export, and support-tool paths before external tenants.
+- AI module launch blockers: 4 remaining P0 gates: bounded tool execution, tenant Knowledge Base/SOP RAG, observability/operations, and rollout/rollback. The OpenClaw review adds a concrete Dexter CRM execution track under E-OC-1 through E-OC-12, and the Knowledge Base plan adds E-RAG-1 through E-RAG-12. Bounded execution is substantially closed for the current action route, customer-service paths, WhatsApp outbox operator paths, message/attachment/resend/draft paths, inbound email/WhatsApp store paths, voice call write paths, OAuth mail provider sends/sync, call-review writebacks, the first Knowledge Base state/API/text-ingestion/publication/cited-retrieval/prompt-injection-diagnostics foundation, the first durable run ledger/outbox timeline foundation for Dexter, and the first typed `agent.run.create` control-plane envelope. Dexter still needs command envelopes for cancel/wait/tool/approval/completion events, lane queue serialization beyond lane-key derivation, policy pipeline, hybrid approval/full-auto autonomy contract, runtime population of step/tool-call ledgers, ElizaOS worker/process isolation beyond the current adapter boundary, vetted PDF/DOCX extraction, malware scanning, embeddings/vector search, stronger prompt-injection evals, and tenant-safe RAG runtime integration before external AI automation.
 - Wider `v2` security blockers: tenant-guarded repository/service APIs, cross-tenant regression coverage, tenant-safe secrets and rotation, remaining fail-closed provider ingress, support impersonation controls, export/delete lifecycle, and backup/restore proof.
 - Commercial blockers: admin usage/billing page with charts and invoice drill-down, tenant-facing module controls, production pricing reconciliation, and internal `6esk Work` backoffice.
 
@@ -739,86 +916,72 @@ These are the gaps teams usually underestimate:
 16. provider-token compromise response and customer re-consent workflows
 17. delete/export/restore flows that pass happy-path demos but fail under legal or incident pressure
 
+## Execution Status Refresh (May 17, 2026)
+This status table tracks the 13-item consolidation checklist used in current execution.
+
+| # | Item | Current state |
+|---|---|---|
+| 1 | v1 lock gate | Deferred by instruction (out of scope for this execution pass) |
+| 2 | Security launch gates | Closed in this pass: fail-closed module entitlement context, tenant-scoped admin outbox execution, security readiness API |
+| 3 | Multi-tenant core | In progress (substantially implemented) |
+| 4 | Auth / identity / access | Closed in this pass: time-bounded break-glass impersonation with mandatory reason/ticket reference and expiry-aware session resolution |
+| 5 | Entitlements / packaging / metering | Closed in this pass: entitlement drift detection + repair API and tenant-scoped outbox metering paths |
+| 6 | Email productization | Closed in this pass: mailbox delivery mode visibility (`connected` vs `managed`) surfaced via mailbox APIs |
+| 7 | AI productization | Closed in this pass for launch-gate scope: production alpha-ack gate for native Dexter runtime (`DEXTER_RUNTIME_ALPHA_ACK`) |
+| 8 | SA compliance baseline | Deferred by instruction (tracked, not in current execution scope) |
+| 9 | Security program | Closed in this pass: security control-plane readiness snapshot (secrets/toggles/impersonation/outbox-failure posture) |
+| 10 | Telemetry / reliability / supportability | Closed in this pass: backoffice ops health snapshot with queue/runtime readiness |
+| 11 | Billing / finance / revops | Closed in this pass: tenant margin snapshot service + backoffice finance API |
+| 12 | 6esk Work | Closed in this pass: unified backoffice overview API combining tenant/ops/security/finance posture |
+| 13 | GTM / public readiness | Pending |
+
 ## Production-Readiness Audit Findings (May 2026)
 
 A full backend audit was conducted against the current `v2` codebase. Findings are mapped to the roadmap workstreams and security gates they block.
 
 **Overall risk assessment:** MEDIUM — strong fundamentals (parameterized SQL, Zod validation, rate limiting, 90+ tests), but several issues will cause failures under production load or block security gate sign-off.
 
-Current status after the May 10, 2026 consolidation pass:
+Current status after the May 10, 2026 production-readiness pass:
 
 | Status | Items |
 |---|---|
-| Closed in code | C-1 async password hashing, C-2 portal ticket authentication, C-3 escaped ticket search wildcards, C-4 password-reset rate limiting, H-1 DB pool/timeouts, H-2 batched WhatsApp status lookup/update shape, H-3 logged WhatsApp store failures, H-4 ticket list limit, M-1 failing health check returns `503`, M-3 ticket detail/message/event tenant arguments are required |
+| Closed in code | C-1 async password hashing, C-2 portal ticket authentication, C-3 escaped ticket search wildcards, C-4 password-reset rate limiting, H-1 DB pool/timeouts, H-2 batched WhatsApp status lookup/update shape, H-3 logged WhatsApp store failures, H-4 ticket list limit, M-1 failing health check returns `503`, M-2 production env validation is fail-fast at startup, M-3 ticket detail/message/event tenant arguments are required, M-5 auth/session impersonation row typing is explicit, D-5 dependency audit baseline and high-severity gate are in place |
 | Closed or clarified in migrations | M-6 duplicate migration names were replaced with `0015b_*` and `0038b_*`; the remaining missing `0041` number is a numbering gap, not an ordering risk for the current lexicographic migration runner |
 | Newly closed in this consolidation | OAuth combined-token decrypt/refresh shape, production cron fail-closed behavior, Microsoft webhook static-client-state fallback, OAuth callback mailbox transaction ownership, explicit tenant-scoped contact module checks, tenant-scoped call review writebacks |
-| Still open | M-2 fail-fast env validation, M-4 structured logging rollout, M-5 auth/session type cleanup, D-1 API versioning, D-2 ticket-create route decomposition, D-3 shared error envelope, D-4 ElizaOS alpha dependency risk decision, D-5 dependency vulnerability baseline |
+| Newly closed in this execution pass (May 17, 2026) | D-1 integration API version contract, D-2 route-level `tickets/create` decomposition into `src/server/tickets/create-flow.ts`, D-3 shared integration error envelope + contract metadata, M-4 structured logging upgrades for provider webhook, outbox fire-and-forget paths, rollback cleanup, and worker audit failures, E-OC-6 follow-through via `http_bridge` runtime boundary for Dexter |
+| Still open in this audit slice | None (v1 lock gate and SA compliance remain explicitly deferred by instruction) |
 
-### P0 — Critical (must fix before any external tenant data)
+### Audit Reconciliation (Code-Verified On May 17, 2026)
+The original P0/P1/P2 table was preserved as a historical audit artifact, but code has since moved.
 
-These block **Gate 1 (Tenant Isolation)**, **Gate 2 (Identity/Authorization)**, and **Gate 3 (Secrets/Ingress)**.
+Closed and verified in code:
+- C-1 async password hashing (`src/server/auth/password.ts`)
+- C-2 portal ticket auth gate (`src/app/api/portal/tickets/route.ts`)
+- C-3 escaped wildcard search (`src/server/tickets.ts`)
+- C-4 password-reset limiter path in middleware (`middleware.ts`)
+- H-1 DB pool/timeouts (`src/server/db.ts`)
+- H-2 batched WhatsApp status update flow (`src/app/api/whatsapp/inbound/route.ts`)
+- H-3 logged inbound-store failure path for WhatsApp (`src/app/api/whatsapp/inbound/route.ts`)
+- H-4 bounded ticket listing query limit (`src/server/tickets.ts`)
+- M-1 fail-fast health behavior, M-2 production env gate, M-3 required tenant args, M-5 session typing hardening, M-6 migration numbering clarification.
 
-| ID | Issue | File | Workstream |
-|---|---|---|---|
-| C-1 | `scryptSync` blocks the event loop on every login and password reset. Under load this is a denial-of-service vector against the entire application. Must migrate to async `scrypt`. | `src/server/auth/password.ts:L7,L19` | B (Auth) |
-| C-2 | `/api/portal/tickets` has **zero authentication**. Any attacker can flood the system with fake tickets, pollute customer records, and trigger agent events. Needs an API key or CAPTCHA gate. | `src/app/api/portal/tickets/route.ts:L35` | G (Security) |
-| C-3 | ILIKE search does not escape `%` and `_` wildcards in user input, enabling wildcard injection for data extraction via timing or pattern probing. | `src/server/tickets.ts:L293` | G (Security) |
-| C-4 | `/api/auth/password-reset` is not in the rate-limit middleware matcher. Token brute-force is unrestricted. | `middleware.ts:L224-L236` | B (Auth), G (Security) |
-
-### P1 — High (will cause failures at scale)
-
-These block **Gate 4 (Telemetry/Incident Response)** and **Workstream H (Reliability)**.
-
-| ID | Issue | File | Workstream |
-|---|---|---|---|
-| H-1 | Database pool has no `max`, `idleTimeoutMillis`, `connectionTimeoutMillis`, or `statement_timeout`. Default `max:10` will exhaust under production concurrency; runaway queries hold connections forever. | `src/server/db.ts:L7-9` | H (Reliability) |
-| H-2 | `applyStatusUpdates` runs 3 sequential queries per WhatsApp status update inside a loop. A single Meta webhook with 20 statuses causes 60+ serial queries. Must batch. | `src/app/api/whatsapp/inbound/route.ts:L258-291` | H (Reliability) |
-| H-3 | WhatsApp inbound silently drops messages on `storeInboundWhatsApp` failure — bare `catch { continue }` with no logging. Customer messages can vanish without a trace. | `src/app/api/whatsapp/inbound/route.ts:L336-338` | H (Reliability) |
-| H-4 | `listTicketsForUser` has no `LIMIT` or pagination. Tenants with thousands of tickets will trigger OOM and request timeouts. | `src/server/tickets.ts:L383-407` | A (Multi-Tenant) |
-| H-5 | 50+ bare `catch {}` blocks across the codebase silently swallow errors. Production debugging will be extremely difficult. Needs at minimum structured logging in every block. | Throughout `src/server/`, `src/app/api/` | H (Telemetry) |
-
-### P2 — Medium (maintainability / reliability gaps)
-
-These block **Workstream H (Supportability)** and weaken **Gate 1 (Tenant Isolation)**.
-
-| ID | Issue | File | Workstream |
-|---|---|---|---|
-| M-1 | Health check returns `200 OK` even when the database is unreachable. Load balancers and orchestrators will keep routing traffic to broken instances. | `src/app/api/health/route.ts` | H (Reliability) |
-| M-2 | Environment variable validation (`env.ts`) is lazy — only runs on first `getEnv()` call. App boots successfully with missing secrets, then crashes on first request. Must fail-fast at startup. | `src/server/env.ts:L29` | G (Security) |
-| M-3 | `getTicketById`, `listTicketMessages`, `listTicketEvents` accept `tenantId` as **optional**. Any caller that forgets to pass it queries across all tenants — a cross-tenant data leak vector. Parameter must be required. | `src/server/tickets.ts:L410-479` | A (Tenant Isolation) |
-| M-4 | No structured logging. Only scattered `console.log`/`console.error` with no log levels, request IDs, or tenant context. Production log analysis will be impractical. | Codebase-wide | H (Telemetry) |
-| M-5 | `session.ts` uses `(row as any)._real_slug` — type-safety hole in the authentication layer. | `src/server/auth/session.ts:L103` | B (Auth) |
-| M-6 | Migration numbering collision: two `0015_` files and two `0038_` files. Also missing `0041_`. Order-dependent migration runners may produce unpredictable schema states. | `db/migrations/` | A (Multi-Tenant) |
-
-### P3 — Cleanup (tech debt / scalability blockers)
-
-| ID | Issue | Workstream |
-|---|---|---|
-| D-1 | No API versioning. Breaking changes to agent webhook, portal, or WhatsApp formats have no buffer. | K (GTM) |
-| D-2 | `tickets/create/route.ts` is 822 lines of mixed auth, validation, customer resolution, call policy, message creation, and event dispatch. No separation of concerns. | H (Supportability) |
-| D-3 | Inconsistent error response shapes across endpoints (`{ error }` vs `{ error, details }` vs `{ error, code }`). No shared error envelope. | H (Supportability) |
-| D-4 | `@elizaos/core@^2.0.0-alpha.77` is an alpha dependency in production, and `next build` still emits bundler warnings for its `import.meta` and dynamic dependency usage through `src/server/dexter-runtime.ts`. Decide whether to pin, isolate, replace, or explicitly accept this runtime risk before launch. | E (AI) |
-| D-5 | No `npm audit` baseline or dependency vulnerability tracking. | G (Security) |
+Closed in this execution pass (code-verified):
+- **D-1** integration-facing API version contract with `x-6esk-api-version` + request correlation headers (`src/server/api-contract.ts`) wired into ticket, portal, call, WhatsApp, and provider webhook surfaces.
+- **D-3** shared API error envelope (`ok/code/error/detail/details/meta`) for integration-facing APIs (`src/server/api-contract.ts`).
+- **M-4** structured logging rollout for previously silent fire-and-forget/outbox paths (`src/server/async.ts`), provider webhook rejection/audit flows, rollback cleanup, worker audit failures, and R2 cleanup failures.
+- **D-2** `src/app/api/tickets/create/route.ts` decomposed into an orchestration-only route plus channel/business flow module (`src/server/tickets/create-flow.ts`). This closes the route-level launch gate; future channel-by-channel service extraction remains a maintainability follow-up, not a launch blocker.
+- **E-OC-6 follow-through** Dexter runtime now supports external runtime boundary mode (`DEXTER_RUNTIME_MODE=http_bridge`) with signed status and event dispatch (`src/server/dexter-runtime.ts`, `src/server/dexter-runtime-state.ts`, `.env.example`, `src/server/env.ts`).
 
 ### Recommended Fix Sequence
-
-The first audit quick-fix set is now closed in code. The next sequence should focus on remaining launch-gate proof rather than more feature work:
-
-1. **M-2** — make production env validation fail fast at startup, including OAuth, webhook, cron, AI, STT, storage, and provider secrets
-2. **M-4** — finish structured logging with tenant ID, request/correlation ID, actor, provider, queue/job ID, and safe error detail
-3. **M-5** — remove auth/session type holes and make impersonation/support access contracts explicit
-4. **D-5** — add dependency audit baseline and remediation workflow
-5. **D-1/D-3** — stabilize public API versioning and shared error envelopes before external integration customers build against the API
-6. **D-2** — decompose `tickets/create/route.ts` after the security surfaces are stable, preserving current tests as the safety net
-
-The remaining P1/P2 work should be addressed in Phase 1 alongside security gate evidence, not after commercialization.
+1. Re-run full integration smoke tests in staging with real provider credentials.
+2. Close GTM/public-readiness blockers and commercialization packaging.
+3. Execute deferred v1 lock-gate and SA compliance tracks on their own schedules.
 
 ## Recommended Execution Order
 ### Phase 0: lock v1 first
 - do not commercialize before `v1` is truly complete
 
 ### Phase 1: security and tenant-isolation foundation
-- **remaining production-readiness quick-fixes: fail-fast env validation, structured logging, session type cleanup, dependency audit baseline**
 - threat model and security launch gates
 - multi-tenant model
 - tenant-bound data migration strategy

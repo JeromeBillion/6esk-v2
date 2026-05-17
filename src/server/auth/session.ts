@@ -14,6 +14,19 @@ export type SessionUser = {
   is_impersonating: boolean;
 };
 
+type SessionUserRow = {
+  id: string;
+  email: string;
+  display_name: string;
+  role_id: string | null;
+  role_name: string | null;
+  real_tenant_id: string;
+  home_tenant_slug: string;
+  impersonated_tenant_id: string | null;
+  impersonated_tenant_slug: string | null;
+  impersonation_expires_at: Date | string | null;
+};
+
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sixesk_session";
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 14);
 
@@ -60,7 +73,19 @@ export async function clearSession() {
   });
 }
 
-export async function getSessionUser() {
+function isInternalSupportRole(roleName: string | null) {
+  return roleName === "internal_admin" || roleName === "internal_support";
+}
+
+function isImpersonationActive(expiresAt: Date | string | null) {
+  if (!expiresAt) return false;
+  const parsed =
+    expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() > Date.now();
+}
+
+export async function getSessionUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) {
@@ -68,12 +93,13 @@ export async function getSessionUser() {
   }
 
   const tokenHash = hashToken(token);
-  const result = await db.query<SessionUser & { _impersonated_tenant_id: string | null; _impersonated_slug: string | null; _real_slug: string }>(
+  const result = await db.query<SessionUserRow>(
     `SELECT u.id, u.email, u.display_name, u.role_id, r.name AS role_name,
             u.tenant_id AS real_tenant_id,
-            COALESCE(t.slug, 'default') AS _real_slug,
-            s.impersonated_tenant_id AS _impersonated_tenant_id,
-            it.slug AS _impersonated_slug
+            COALESCE(t.slug, 'default') AS home_tenant_slug,
+            s.impersonated_tenant_id AS impersonated_tenant_id,
+            it.slug AS impersonated_tenant_slug,
+            s.impersonation_expires_at AS impersonation_expires_at
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN roles r ON r.id = u.role_id
@@ -89,8 +115,15 @@ export async function getSessionUser() {
   const row = result.rows[0];
   if (!row) return null;
 
-  const isInternal = row.role_name === "internal_admin" || row.role_name === "internal_support";
-  const isImpersonating = isInternal && row._impersonated_tenant_id !== null;
+  const impersonatedTenantId =
+    isInternalSupportRole(row.role_name) && isImpersonationActive(row.impersonation_expires_at)
+      ? row.impersonated_tenant_id
+      : null;
+  const isImpersonating = impersonatedTenantId !== null;
+  const effectiveTenantId = impersonatedTenantId ?? row.real_tenant_id;
+  const effectiveTenantSlug = impersonatedTenantId
+    ? row.impersonated_tenant_slug ?? "default"
+    : row.home_tenant_slug;
 
   return {
     id: row.id,
@@ -99,8 +132,8 @@ export async function getSessionUser() {
     role_id: row.role_id,
     role_name: row.role_name,
     real_tenant_id: row.real_tenant_id,
-    tenant_id: isImpersonating ? row._impersonated_tenant_id! : row.real_tenant_id,
-    tenant_slug: isImpersonating ? row._impersonated_slug! : row._real_slug,
+    tenant_id: effectiveTenantId,
+    tenant_slug: effectiveTenantSlug,
     is_impersonating: isImpersonating
   };
 }

@@ -12,8 +12,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 50) || 50, 1), 200);
+  const tenantId = user?.tenant_id ?? null;
 
-  const events = await listFailedCallOutboxEvents(limit);
+  const events = await listFailedCallOutboxEvents(limit, tenantId);
   return Response.json({
     events: events.map((event) => redactCallData(event))
   });

@@ -1,6 +1,12 @@
 import { recordAuditLog } from "@/server/audit";
 import { mapTwilioCallStatus, normalizeTwilioParams, validateTwilioWebhook } from "@/server/calls/twilio";
 import { updateCallSessionStatus } from "@/server/calls/service";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
@@ -22,6 +28,11 @@ function parseDurationSeconds(value: string | null | undefined) {
 }
 
 export async function GET(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const url = new URL(request.url);
   const params = normalizeTwilioParams(url.searchParams);
   const isValid = validateTwilioWebhook({
@@ -32,7 +43,7 @@ export async function GET(request: Request) {
   });
 
   if (!isValid) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -40,18 +51,26 @@ export async function GET(request: Request) {
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected Twilio status webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   const providerCallId = params.CallSid?.trim() || null;
   if (!providerCallId) {
-    return Response.json({ error: "CallSid is required" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_sid",
+      message: "CallSid is required"
+    });
   }
 
   const status = mapTwilioCallStatus(params.CallStatus);
   if (!status) {
-    return Response.json({ status: "ignored" });
+    return integrationSuccess(request, { status: "ignored" });
   }
 
   const result = await updateCallSessionStatus({
@@ -70,8 +89,12 @@ export async function GET(request: Request) {
   });
 
   if (result.status === "not_found") {
-    return Response.json({ error: "Call session not found" }, { status: 404 });
+    return integrationError(request, {
+      status: 404,
+      code: "call_session_not_found",
+      message: "Call session not found"
+    });
   }
 
-  return Response.json(result);
+  return integrationSuccess(request, result);
 }

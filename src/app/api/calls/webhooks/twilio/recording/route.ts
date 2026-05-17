@@ -1,6 +1,12 @@
 import { recordAuditLog } from "@/server/audit";
 import { attachCallRecording } from "@/server/calls/service";
 import { normalizeTwilioParams, validateTwilioWebhook } from "@/server/calls/twilio";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
@@ -22,6 +28,11 @@ function parseDurationSeconds(value: string | null | undefined) {
 }
 
 export async function GET(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const url = new URL(request.url);
   const params = normalizeTwilioParams(url.searchParams);
   const isValid = validateTwilioWebhook({
@@ -32,7 +43,7 @@ export async function GET(request: Request) {
   });
 
   if (!isValid) {
-    void recordAuditLog({
+    runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -40,17 +51,25 @@ export async function GET(request: Request) {
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
-    }).catch(() => {});
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }), "Failed to record rejected Twilio recording webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   const providerCallId = params.CallSid?.trim() || null;
   const recordingUrl = params.RecordingUrl?.trim() || null;
   if (!providerCallId) {
-    return Response.json({ error: "CallSid is required" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_sid",
+      message: "CallSid is required"
+    });
   }
   if (!recordingUrl) {
-    return Response.json({ status: "ignored", reason: "missing_recording_url" });
+    return integrationSuccess(request, { status: "ignored", reason: "missing_recording_url" });
   }
 
   const result = await attachCallRecording({
@@ -67,11 +86,19 @@ export async function GET(request: Request) {
   });
 
   if (result.status === "not_found") {
-    return Response.json({ error: "Call session not found" }, { status: 404 });
+    return integrationError(request, {
+      status: 404,
+      code: "call_session_not_found",
+      message: "Call session not found"
+    });
   }
   if (result.status === "failed") {
-    return Response.json({ error: result.detail }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "recording_attach_failed",
+      message: result.detail
+    });
   }
 
-  return Response.json(result);
+  return integrationSuccess(request, result);
 }

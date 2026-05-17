@@ -40,6 +40,7 @@ type OutboxAttachmentRow = {
 
 type DeliverArgs = {
   limit?: number;
+  tenantId?: string | null;
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
@@ -61,10 +62,19 @@ function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
-async function lockPendingEvents(limit: number, processingRecoverySeconds: number) {
+async function lockPendingEvents(
+  limit: number,
+  processingRecoverySeconds: number,
+  tenantId?: string | null
+) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    const values: Array<number | string> = [limit, processingRecoverySeconds];
+    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
+    if (tenantId) {
+      values.push(tenantId);
+    }
     const result = await client.query<EmailOutboxEventRow>(
       `UPDATE email_outbox_events
        SET status = 'processing',
@@ -77,6 +87,7 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
            FROM email_outbox_events e
            JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
            WHERE e.direction = 'outbound'
+             ${tenantClause}
              AND (wm.modules->>'email')::boolean = true
              AND (
                (e.status = 'queued' AND e.next_attempt_at <= now())
@@ -92,7 +103,7 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, payload, attempt_count`,
-      [limit, processingRecoverySeconds]
+      values
     );
     await client.query("COMMIT");
     return result.rows;
@@ -328,8 +339,8 @@ export async function enqueueEmailOutboxEvent(payload: Record<string, unknown>, 
   return result.rows[0]?.id ?? null;
 }
 
-export async function deliverPendingEmailOutboxEvents({ limit = 5 }: DeliverArgs = {}) {
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds());
+export async function deliverPendingEmailOutboxEvents({ limit = 5, tenantId = null }: DeliverArgs = {}) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
@@ -376,7 +387,9 @@ export async function deliverPendingEmailOutboxEvents({ limit = 5 }: DeliverArgs
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function getEmailOutboxMetrics() {
+export async function getEmailOutboxMetrics(tenantId?: string | null) {
+  const values = tenantId ? [tenantId] : [];
+  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
   const summaryResult = await db.query<EmailOutboxSummaryRow>(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
@@ -392,7 +405,9 @@ export async function getEmailOutboxMetrics() {
        MAX(updated_at) FILTER (WHERE status = 'sent') AS last_sent_at,
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM email_outbox_events
-     WHERE direction = 'outbound'`
+     WHERE direction = 'outbound'
+       ${tenantClause}`,
+    values
   );
 
   const summary = summaryResult.rows[0] ?? {

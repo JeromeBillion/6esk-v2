@@ -22,6 +22,8 @@ import {
 } from "@/server/tickets";
 import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
+import { logger } from "@/server/logger";
 
 type CallCandidateSource =
   | "customer_primary"
@@ -609,7 +611,11 @@ export async function queueOutboundCall({
       }
     }
   });
-  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+  runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+    fn: "queueOutboundCall",
+    tenantId,
+    callSessionId
+  });
 
   return {
     status: "queued",
@@ -1049,7 +1055,16 @@ export async function updateCallSessionStatus({
           }
         }
       });
-      void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
+      runInBackground(
+        deliverPendingAgentEvents({ tenantId: session.tenant_id }),
+        "Agent outbox delivery failed",
+        {
+          fn: "updateCallSessionStatus",
+          tenantId: session.tenant_id,
+          callSessionId: session.id,
+          eventType: "call.status.changed"
+        }
+      );
     }
 
     if (isTerminalCallStatus(statusValue)) {
@@ -1089,7 +1104,16 @@ export async function updateCallSessionStatus({
           }
         }
       });
-      void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
+      runInBackground(
+        deliverPendingAgentEvents({ tenantId: session.tenant_id }),
+        "Agent outbox delivery failed",
+        {
+          fn: "updateCallSessionStatus",
+          tenantId: session.tenant_id,
+          callSessionId: session.id,
+          eventType: "call.completed"
+        }
+      );
     }
   }
 
@@ -1186,7 +1210,12 @@ export async function attachCallRecording({
         canonicalRecordingUrl = `/api/attachments/${attachmentId}?disposition=inline`;
       }
     } catch (error) {
-      console.error("[Calls] Recording upload failed for session", session.id, error instanceof Error ? error.message : error);
+      logger.error("Call recording upload failed", {
+        error,
+        tenantId: session.tenant_id,
+        callSessionId: session.id,
+        messageId: session.message_id
+      });
       uploadedKey = null;
       attachmentId = null;
       canonicalRecordingUrl = url;
@@ -1258,7 +1287,16 @@ export async function attachCallRecording({
       }
     }
   });
-  void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
+  runInBackground(
+    deliverPendingAgentEvents({ tenantId: session.tenant_id }),
+    "Agent outbox delivery failed",
+    {
+      fn: "attachCallRecording",
+      tenantId: session.tenant_id,
+      callSessionId: session.id,
+      eventType: "call.recording.attached"
+    }
+  );
 
   if (uploadedKey && !session.transcript_r2_key) {
     await enqueueCallTranscriptJob({
@@ -1321,7 +1359,12 @@ export async function attachCallTranscript({
         transcript = readString(text);
       }
     } catch (error) {
-      console.error("[Calls] Transcript fetch failed from", transcriptUrlValue, error instanceof Error ? error.message : error);
+      logger.error("Call transcript fetch failed", {
+        error,
+        tenantId: session.tenant_id,
+        callSessionId: session.id,
+        transcriptUrl: transcriptUrlValue
+      });
       transcript = null;
     }
   }
@@ -1380,7 +1423,12 @@ export async function attachCallTranscript({
         );
       }
     } catch (error) {
-      console.error("[Calls] Transcript upload failed for session", session.id, error instanceof Error ? error.message : error);
+      logger.error("Call transcript upload failed", {
+        error,
+        tenantId: session.tenant_id,
+        callSessionId: session.id,
+        messageId: session.message_id
+      });
       uploadedKey = null;
       attachmentId = null;
     }
@@ -1448,7 +1496,16 @@ export async function attachCallTranscript({
       }
     }
   });
-  void deliverPendingAgentEvents({ tenantId: session.tenant_id }).catch(() => {});
+  runInBackground(
+    deliverPendingAgentEvents({ tenantId: session.tenant_id }),
+    "Agent outbox delivery failed",
+    {
+      fn: "attachCallTranscript",
+      tenantId: session.tenant_id,
+      callSessionId: session.id,
+      eventType: "call.transcript.attached"
+    }
+  );
 
   if (uploadedKey) {
     await enqueueCallTranscriptAiJob({
@@ -1764,7 +1821,11 @@ export async function createOrUpdateInboundCall({
     });
     await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
   }
-  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+  runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+    fn: "createOrUpdateInboundCall",
+    tenantId,
+    callSessionId
+  });
 
   return {
     status: "created" as const,

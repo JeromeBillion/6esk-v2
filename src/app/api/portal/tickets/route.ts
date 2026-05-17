@@ -14,6 +14,12 @@ import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import {
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { runInBackground } from "@/server/async";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -33,40 +39,70 @@ function getSupportAddress() {
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   // Portal callers must provide a shared secret. Without this the endpoint
   // is completely unauthenticated and attackable.
   const portalSecret = process.env.PORTAL_SHARED_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
   const provided = request.headers.get("x-portal-secret") ?? request.headers.get("x-6esk-secret");
   if (!portalSecret || provided !== portalSecret) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
   }
 
   let payload: unknown;
   try {
     payload = await request.json();
   } catch (error) {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_json",
+      message: "Invalid JSON body"
+    });
   }
 
   const parsed = portalSchema.safeParse(payload);
   if (!parsed.success) {
-    return Response.json({ error: "Invalid payload" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_payload",
+      message: "Invalid payload",
+      details: parsed.error.flatten()
+    });
   }
 
   const data = parsed.data;
   const tenantId = DEFAULT_TENANT_ID;
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
-    return Response.json({ error: "Support address not configured" }, { status: 500 });
+    return integrationError(request, {
+      status: 500,
+      code: "support_address_not_configured",
+      message: "Support address not configured"
+    });
   }
 
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
   if (mailbox.tenant_id !== tenantId) {
-    return Response.json({ error: "Support mailbox belongs to another tenant" }, { status: 500 });
+    return integrationError(request, {
+      status: 500,
+      code: "support_mailbox_tenant_mismatch",
+      message: "Support mailbox belongs to another tenant"
+    });
   }
   const fromEmail = normalizeAddressList(data.from)[0];
   if (!fromEmail) {
-    return Response.json({ error: "Invalid sender address" }, { status: 400 });
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_sender_address",
+      message: "Invalid sender address"
+    });
   }
 
   const inferredTags = inferTagsFromText({ subject: data.subject, text: data.description });
@@ -167,7 +203,11 @@ export async function POST(request: Request) {
 
   await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
   await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
-  void deliverPendingAgentEvents({ tenantId }).catch(() => {});
+  runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+    route: "/api/portal/tickets",
+    tenantId,
+    ticketId
+  });
 
-  return Response.json({ status: "created", ticketId, messageId });
+  return integrationSuccess(request, { status: "created", ticketId, messageId });
 }

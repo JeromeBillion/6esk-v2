@@ -4,6 +4,7 @@ import { recordAuditLog } from "@/server/audit";
 import { deliverPendingWhatsAppEvents } from "@/server/whatsapp/outbox";
 import { getWhatsAppOutboxMetrics } from "@/server/whatsapp/outbox-metrics";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -44,13 +45,17 @@ export async function POST(request: Request) {
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run WhatsApp outbox";
-    await recordAuditLog({
+    runInBackground(recordAuditLog({
       tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_trigger_failed",
       entityType: "whatsapp_events",
       data: { limit, detail }
-    }).catch(() => {});
+    }), "Failed to record WhatsApp outbox failure audit event", {
+      route: "/api/admin/whatsapp/outbox",
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
+      limit
+    });
     return Response.json({ error: "Failed to run WhatsApp outbox", detail }, { status: 500 });
   }
 }

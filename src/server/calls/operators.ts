@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { VIEWER_ROLE } from "@/server/auth/roles";
+import { logger } from "@/server/logger";
 
 export const VOICE_OPERATOR_STATUSES = ["online", "away", "offline"] as const;
 
@@ -388,7 +389,14 @@ export async function reserveNextVoiceDeskOperatorForCall({
       ringingCallSessionId: callSessionId
     };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      logger.warn("Failed to roll back voice operator reservation transaction", {
+        error: rollbackError,
+        callSessionId
+      });
+    }
     throw error;
   } finally {
     client.release();

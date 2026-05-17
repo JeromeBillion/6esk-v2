@@ -30,6 +30,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Working v2 modular pricing assumptions and usage-fee model
 - `docs/deploy-migrations.md`
   - Migration deployment checklist
+- `docs/dependency-audit-baseline.md`
+  - Current npm audit baseline, release gate command, and remediation workflow
 - `docs/6esk-v2-commercialization-roadmap.md`
   - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including security launch gates, AI readiness, usage/billing, South Africa readiness, and BizOps
 - `docs/6esk-v3-mobile-roadmap.md`
