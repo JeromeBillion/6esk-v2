@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -17,6 +18,7 @@ export async function PATCH(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -50,12 +52,14 @@ export async function PATCH(
   }
 
   values.push(tagId);
+  values.push(scope.tenantKey);
 
   try {
     const result = await db.query(
       `UPDATE tags
        SET ${fields.join(", ")}
        WHERE id = $${index}
+         AND tenant_key = $${index + 1}
        RETURNING id, name, description`,
       values
     );
@@ -64,6 +68,8 @@ export async function PATCH(
     }
     const updated = result.rows[0];
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "tag_updated",
       entityType: "tag",
@@ -84,13 +90,19 @@ export async function DELETE(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const { tagId } = await params;
-  const result = await db.query("DELETE FROM tags WHERE id = $1 RETURNING id", [tagId]);
+  const result = await db.query("DELETE FROM tags WHERE id = $1 AND tenant_key = $2 RETURNING id", [
+    tagId,
+    scope.tenantKey
+  ]);
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "tag_deleted",
     entityType: "tag",

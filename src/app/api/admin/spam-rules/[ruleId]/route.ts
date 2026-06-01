@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const updateSchema = z.object({
   isActive: z.boolean().optional(),
@@ -17,6 +18,7 @@ export async function PATCH(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -49,12 +51,15 @@ export async function PATCH(
   }
 
   const { ruleId } = await params;
-  values.push(ruleId);
+  const ruleIdParamIndex = index;
+  values.push(ruleId, scope.tenantKey, scope.workspaceKey);
 
   const result = await db.query(
     `UPDATE spam_rules
      SET ${fields.join(", ")}
-     WHERE id = $${index}
+     WHERE id = $${ruleIdParamIndex}
+       AND tenant_key = $${ruleIdParamIndex + 1}
+       AND workspace_key = $${ruleIdParamIndex + 2}
      RETURNING id, rule_type, scope, pattern, is_active, created_at`,
     values
   );
@@ -64,6 +69,8 @@ export async function PATCH(
   }
 
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "spam_rule_updated",
     entityType: "spam_rule",
@@ -82,13 +89,23 @@ export async function DELETE(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const { ruleId } = await params;
-  const result = await db.query("DELETE FROM spam_rules WHERE id = $1 RETURNING id", [ruleId]);
+  const result = await db.query(
+    `DELETE FROM spam_rules
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3
+     RETURNING id`,
+    [ruleId, scope.tenantKey, scope.workspaceKey]
+  );
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "spam_rule_deleted",
     entityType: "spam_rule",

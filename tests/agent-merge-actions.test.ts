@@ -43,6 +43,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/server/agents/auth", () => ({
+  agentIngressErrorResponse: () => null,
+  agentScopeFromIntegration: (integration: { tenant_key?: string | null; workspace_key?: string | null }) => ({
+    tenantKey: integration.tenant_key ?? "primary",
+    workspaceKey: integration.workspace_key ?? "primary"
+  }),
   getAgentFromRequest: mocks.getAgentFromRequest
 }));
 vi.mock("@/server/agents/drafts", () => ({
@@ -142,6 +147,11 @@ describe("agent merge actions route", () => {
       return null;
     });
     mocks.createMergeReviewTask.mockResolvedValue({ id: "review-1" });
+    mocks.createDraft.mockResolvedValue({
+      id: "draft-1",
+      tenant_key: "primary",
+      workspace_key: "primary"
+    });
     mocks.buildAgentEvent.mockReturnValue({
       id: "evt-1",
       eventType: "merge.review.required",
@@ -390,7 +400,9 @@ describe("agent merge actions route", () => {
       sourceTicketId: TICKET_A,
       targetTicketId: TICKET_B,
       actorUserId: null,
-      reason: "Same issue duplicated by customer follow-up"
+      reason: "Same issue duplicated by customer follow-up",
+      tenantKey: "primary",
+      workspaceKey: "primary"
     });
   });
 
@@ -449,7 +461,9 @@ describe("agent merge actions route", () => {
       targetTicketId: TICKET_B,
       actorUserId: null,
       reason: "Same issue continued on WhatsApp",
-      metadata: { proposalType: "linked_case" }
+      metadata: { proposalType: "linked_case" },
+      tenantKey: "primary",
+      workspaceKey: "primary"
     });
   });
 
@@ -487,11 +501,16 @@ describe("agent merge actions route", () => {
       expect.objectContaining({
         integrationId: "agent-1",
         ticketId: TICKET_A,
+        tenantKey: "primary",
+        workspaceKey: "primary",
         subject: "Update",
         bodyText: "Follow-up response"
       })
     );
-    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"]);
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"], {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "ai_reply_escalated_out_of_hours",
@@ -552,8 +571,32 @@ describe("agent merge actions route", () => {
     expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
   });
 
+  it("rejects request_human_review writebacks for call sessions outside the ticket scope", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { response, body } = await postAction({
+      type: "request_human_review",
+      ticketId: TICKET_A,
+      idempotencyKey: "summary-cross-tenant",
+      metadata: {
+        callSessionId: "55555555-5555-4555-8555-555555555555",
+        summary: "Should not attach to this ticket."
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "request_human_review",
+      status: "failed",
+      detail: "Call session not found for this ticket and tenant scope."
+    });
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+  });
+
   it("deduplicates repeated request_human_review writebacks by callSessionId + idempotencyKey", async () => {
     mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "66666666-6666-4666-8666-666666666666" }] });
     mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
     mocks.dbQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
 
@@ -589,7 +632,10 @@ describe("agent merge actions route", () => {
   });
 
   it("records first-time request_human_review writeback and returns deterministic metadata", async () => {
-    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "writeback-1" }] });
+    mocks.dbQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "77777777-7777-4777-8777-777777777777" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "writeback-1" }] });
 
     const { response, body } = await postAction({
       type: "request_human_review",

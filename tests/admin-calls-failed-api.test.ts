@@ -67,6 +67,9 @@ describe("GET /api/admin/calls/failed", () => {
         fromPhone: "+1555******21"
       }
     });
-    expect(mocks.listFailedCallOutboxEvents).toHaveBeenCalledWith(25);
+    expect(mocks.listFailedCallOutboxEvents).toHaveBeenCalledWith(25, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
   });
 });

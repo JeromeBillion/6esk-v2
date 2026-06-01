@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
+import { resolveTenantScope } from "@/server/tenant-context";
 
 export type VoiceConsentDecision = "granted" | "revoked";
 export type VoiceConsentState = VoiceConsentDecision | "unknown";
@@ -232,12 +233,17 @@ export function extractVoiceConsentFromMetadata(
 }
 
 export async function resolveExistingCustomerIdForVoiceConsent({
+  tenantKey,
+  workspaceKey,
   email,
   phone
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   email?: string | null;
   phone?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedEmail = normalizeVoiceConsentEmail(email);
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   if (!normalizedEmail && !normalizedPhone) {
@@ -247,15 +253,20 @@ export async function resolveExistingCustomerIdForVoiceConsent({
   const byIdentity = await db.query<{ id: string }>(
     `SELECT c.id
      FROM customer_identities ci
-     JOIN customers c ON c.id = ci.customer_id
-     WHERE c.merged_into_customer_id IS NULL
+     JOIN customers c
+       ON c.id = ci.customer_id
+      AND c.tenant_key = ci.tenant_key
+      AND c.workspace_key = ci.workspace_key
+     WHERE ci.tenant_key = $3
+       AND ci.workspace_key = $4
+       AND c.merged_into_customer_id IS NULL
        AND (
          ($1::text IS NOT NULL AND ci.identity_type = 'email' AND ci.identity_value = $1::text)
          OR ($2::text IS NOT NULL AND ci.identity_type = 'phone' AND ci.identity_value = $2::text)
        )
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
      LIMIT 1`,
-    [normalizedEmail, normalizedPhone]
+    [normalizedEmail, normalizedPhone, scope.tenantKey, scope.workspaceKey]
   );
   if (byIdentity.rows[0]?.id) {
     return byIdentity.rows[0].id;
@@ -264,19 +275,23 @@ export async function resolveExistingCustomerIdForVoiceConsent({
   const byPrimary = await db.query<{ id: string }>(
     `SELECT c.id
      FROM customers c
-     WHERE c.merged_into_customer_id IS NULL
+     WHERE c.tenant_key = $3
+       AND c.workspace_key = $4
+       AND c.merged_into_customer_id IS NULL
        AND (
          ($1::text IS NOT NULL AND lower(c.primary_email) = $1::text)
          OR ($2::text IS NOT NULL AND c.primary_phone = $2::text)
        )
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
      LIMIT 1`,
-    [normalizedEmail, normalizedPhone]
+    [normalizedEmail, normalizedPhone, scope.tenantKey, scope.workspaceKey]
   );
   return byPrimary.rows[0]?.id ?? null;
 }
 
 export async function recordVoiceConsentEvent({
+  tenantKey,
+  workspaceKey,
   decision,
   customerId,
   phone,
@@ -287,6 +302,8 @@ export async function recordVoiceConsentEvent({
   occurredAt,
   metadata
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   decision: VoiceConsentDecision;
   customerId?: string | null;
   phone?: string | null;
@@ -297,6 +314,7 @@ export async function recordVoiceConsentEvent({
   occurredAt?: Date | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   const normalizedEmail = normalizeVoiceConsentEmail(email);
   const normalizedCallbackPhone = normalizeVoiceConsentPhone(callbackPhone) ?? normalizedPhone;
@@ -314,6 +332,8 @@ export async function recordVoiceConsentEvent({
 
   await db.query(
     `INSERT INTO voice_consent_events (
+      tenant_key,
+      workspace_key,
       customer_id,
       identity_type,
       identity_value,
@@ -324,9 +344,11 @@ export async function recordVoiceConsentEvent({
       event_at,
       metadata
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
     )`,
     [
+      scope.tenantKey,
+      scope.workspaceKey,
       customerId ?? null,
       identityType,
       identityValue,
@@ -341,6 +363,8 @@ export async function recordVoiceConsentEvent({
 }
 
 export async function syncVoiceConsentFromMetadata({
+  tenantKey,
+  workspaceKey,
   metadata,
   customerId,
   fallbackPhone,
@@ -349,6 +373,8 @@ export async function syncVoiceConsentFromMetadata({
   consentTermsVersion,
   context
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   metadata: Record<string, unknown> | null | undefined;
   customerId?: string | null;
   fallbackPhone?: string | null;
@@ -369,6 +395,8 @@ export async function syncVoiceConsentFromMetadata({
   }
 
   await recordVoiceConsentEvent({
+    tenantKey,
+    workspaceKey,
     decision: snapshot.state,
     customerId: customerId ?? null,
     phone,
@@ -387,18 +415,23 @@ export async function syncVoiceConsentFromMetadata({
 }
 
 export async function getLatestVoiceConsentState({
+  tenantKey,
+  workspaceKey,
   customerId,
   phone,
   email
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   customerId?: string | null;
   phone?: string | null;
   email?: string | null;
 }): Promise<VoiceConsentStateSnapshot> {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   const normalizedEmail = normalizeVoiceConsentEmail(email);
 
-  const values: Array<string> = [];
+  const values: Array<string> = [scope.tenantKey, scope.workspaceKey];
   const conditions: string[] = [];
 
   if (customerId) {
@@ -451,7 +484,9 @@ export async function getLatestVoiceConsentState({
        source,
        event_at
      FROM voice_consent_events
-     WHERE ${conditions.join(" OR ")}
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+       AND (${conditions.join(" OR ")})
      ORDER BY event_at DESC, created_at DESC
      LIMIT 1`,
     values

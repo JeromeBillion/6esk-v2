@@ -66,10 +66,13 @@ describe("POST /api/admin/calls/retry", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "ok", retried: 3 });
-    expect(mocks.retryFailedCallOutboxEvents).toHaveBeenCalledWith({
-      limit: 10,
-      eventIds: []
-    });
+    expect(mocks.retryFailedCallOutboxEvents).toHaveBeenCalledWith(
+      {
+        limit: 10,
+        eventIds: []
+      },
+      { tenantKey: "primary", workspaceKey: "primary" }
+    );
   });
 
   it("returns 500 and records failure audit when retry execution throws", async () => {

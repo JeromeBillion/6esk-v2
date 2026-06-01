@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const slaSchema = z.object({
   firstResponseMinutes: z.number().int().positive(),
@@ -14,13 +15,16 @@ export async function GET() {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const result = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
      FROM sla_configs
-     WHERE is_active = true
+     WHERE tenant_key = $1
+       AND is_active = true
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [scope.tenantKey]
   );
 
   const row = result.rows[0];
@@ -42,6 +46,7 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -57,18 +62,29 @@ export async function POST(request: Request) {
 
   const { firstResponseMinutes, resolutionMinutes } = parsed.data;
 
-  await db.query("UPDATE sla_configs SET is_active = false WHERE is_active = true");
+  await db.query(
+    "UPDATE sla_configs SET is_active = false WHERE tenant_key = $1 AND is_active = true",
+    [scope.tenantKey]
+  );
 
   const result = await db.query(
-    `INSERT INTO sla_configs (first_response_target_minutes, resolution_target_minutes, is_active)
-     VALUES ($1, $2, true)
+    `INSERT INTO sla_configs (
+       tenant_key,
+       workspace_key,
+       first_response_target_minutes,
+       resolution_target_minutes,
+       is_active
+     )
+     VALUES ($1, $2, $3, $4, true)
      RETURNING first_response_target_minutes, resolution_target_minutes`,
-    [firstResponseMinutes, resolutionMinutes]
+    [scope.tenantKey, scope.workspaceKey, firstResponseMinutes, resolutionMinutes]
   );
 
   const row = result.rows[0];
 
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "sla_updated",
     entityType: "sla_config",

@@ -61,6 +61,10 @@ describe("workspace usage admin API", () => {
         windowDays: 30
       }
     });
-    expect(mocks.getWorkspaceModuleUsageSummary).toHaveBeenCalledWith({ windowDays: 45 });
+    expect(mocks.getWorkspaceModuleUsageSummary).toHaveBeenCalledWith({
+      tenantKey: "primary",
+      workspaceKey: "primary",
+      windowDays: 45
+    });
   });
 });

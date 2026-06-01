@@ -13,6 +13,10 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
+import {
+  isTenantPublicIngressError,
+  tenantScopeFromPublicIngressRequest
+} from "@/server/tenant-public-ingress";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -32,6 +36,16 @@ function getSupportAddress() {
 }
 
 export async function POST(request: Request) {
+  let scope;
+  try {
+    scope = await tenantScopeFromPublicIngressRequest(request);
+  } catch (error) {
+    if (isTenantPublicIngressError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
+
   let payload: unknown;
   try {
     payload = await request.json();
@@ -50,7 +64,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Support address not configured" }, { status: 500 });
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, scope);
   const fromEmail = normalizeAddressList(data.from)[0];
   if (!fromEmail) {
     return Response.json({ error: "Invalid sender address" }, { status: 400 });
@@ -64,10 +78,14 @@ export async function POST(request: Request) {
     ...(data.metadata ?? {})
   };
   const customerResolution = await resolveOrCreateCustomerForInbound({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     inboundEmail: fromEmail
   });
 
   const ticketId = await createTicket({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     mailboxId: mailbox.id,
     customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
@@ -76,13 +94,20 @@ export async function POST(request: Request) {
     metadata
   });
 
-  await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "ticket_created",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   if (inferredTags.length) {
-    await addTagsToTicket(ticketId, inferredTags);
+    await addTagsToTicket(ticketId, inferredTags, scope);
     await recordTicketEvent({
       ticketId,
       eventType: "tags_assigned",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { tags: inferredTags }
     });
   }
@@ -93,14 +118,16 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, received_at, is_read
     ) VALUES (
-      $1, $2, $3, 'inbound', $4, $5, $6,
-      $7, $8, $9, $10, false
+      $1, $2, $3, $4, $5, 'inbound', $6, $7, $8,
+      $9, $10, $11, $12, false
     )`,
     [
       messageId,
+      scope.tenantKey,
+      scope.workspaceKey,
       mailbox.id,
       ticketId,
       messageId,
@@ -113,7 +140,7 @@ export async function POST(request: Request) {
     ]
   );
 
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   const textKey = await putObject({
     key: `${keyPrefix}/body.txt`,
     body: data.description,
@@ -123,11 +150,17 @@ export async function POST(request: Request) {
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, size_bytes = $2
-     WHERE id = $3`,
-    [textKey, Buffer.byteLength(data.description), messageId]
+     WHERE id = $3
+       AND tenant_key = $4`,
+    [textKey, Buffer.byteLength(data.description), messageId, scope.tenantKey]
   );
 
-  await recordTicketEvent({ ticketId, eventType: "message_received" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "message_received",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   const threadId = messageId;
   const messageEvent = buildAgentEvent({
@@ -146,8 +179,18 @@ export async function POST(request: Request) {
     threadId
   });
 
-  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+  await enqueueAgentEvent({
+    eventType: "ticket.message.created",
+    payload: messageEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
+  await enqueueAgentEvent({
+    eventType: "ticket.created",
+    payload: ticketEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
   void deliverPendingAgentEvents().catch(() => {});
 
   return Response.json({ status: "created", ticketId, messageId });

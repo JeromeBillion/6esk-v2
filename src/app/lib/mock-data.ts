@@ -1909,13 +1909,14 @@ function buildInitialState(): DemoState {
   const agents: AgentIntegration[] = [
     {
       id: "agent-1",
+      tenant_key: "primary",
       name: "6esk AI Copilot",
       provider: "elizaos",
       base_url: "https://agents.internal/6esk-copilot",
       auth_type: "hmac",
       shared_secret: "agent_secret_demo",
       status: "active",
-      policy_mode: "draft_only",
+      policy_mode: "hybrid_review",
       scopes: { tickets: true, analytics: true, admin: false },
       capabilities: { max_events_per_run: 50, allow_merge_actions: true, allow_voice_actions: true },
       policy: { escalation_required_for: ["urgent", "gdpr"] },
@@ -1924,13 +1925,14 @@ function buildInitialState(): DemoState {
     },
     {
       id: "agent-2",
+      tenant_key: "primary",
       name: "Ops Recovery Worker",
       provider: "openai",
       base_url: "https://agents.internal/ops-recovery",
       auth_type: "shared_secret",
       shared_secret: "ops_recovery_secret_demo",
       status: "paused",
-      policy_mode: "auto_send",
+      policy_mode: "full_auto",
       scopes: { dead_letters: true, inbound: true },
       capabilities: { max_events_per_run: 25, allow_merge_actions: false, allow_voice_actions: false },
       policy: { throttle_window_minutes: 15 },
@@ -3578,20 +3580,22 @@ function handlePost(url: URL, init?: RequestInit) {
       authType?: string;
       sharedSecret: string;
       status?: "active" | "paused";
-      policyMode?: "draft_only" | "auto_send";
+      policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
+      tenantKey?: string;
       scopes?: Record<string, unknown>;
       capabilities?: Record<string, unknown>;
       policy?: Record<string, unknown>;
     }>(init);
     const agent: AgentIntegration = {
       id: `agent-${state.agents.length + 1}`,
+      tenant_key: body.tenantKey ?? "primary",
       name: body.name,
       provider: body.provider ?? "openai",
       base_url: body.baseUrl,
       auth_type: body.authType ?? "hmac",
       shared_secret: body.sharedSecret,
       status: body.status ?? "active",
-      policy_mode: body.policyMode ?? "draft_only",
+      policy_mode: body.policyMode ?? "hybrid_review",
       scopes: body.scopes ?? {},
       capabilities: body.capabilities ?? {},
       policy: body.policy ?? {},
@@ -4174,7 +4178,8 @@ function handlePatch(url: URL, init?: RequestInit) {
       authType?: string;
       sharedSecret?: string;
       status?: "active" | "paused";
-      policyMode?: "draft_only" | "auto_send";
+      policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
+      tenantKey?: string;
       scopes?: Record<string, unknown>;
       capabilities?: Record<string, unknown>;
       policy?: Record<string, unknown>;
@@ -4188,6 +4193,7 @@ function handlePatch(url: URL, init?: RequestInit) {
     if (body.sharedSecret) agent.shared_secret = body.sharedSecret;
     if (body.status) agent.status = body.status;
     if (body.policyMode) agent.policy_mode = body.policyMode;
+    if (body.tenantKey) agent.tenant_key = body.tenantKey;
     if (body.scopes) agent.scopes = body.scopes;
     if (body.capabilities) agent.capabilities = body.capabilities;
     if (body.policy) agent.policy = body.policy;

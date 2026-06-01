@@ -181,13 +181,29 @@ describe("PATCH /api/tickets/bulk", () => {
     const [updateSql, updateValues] = mocks.dbQuery.mock.calls[1] ?? [];
     expect(updateSql).toContain("status = $1");
     expect(updateSql).toContain("priority = $2");
-    expect(updateValues).toEqual(["pending", "high", [TICKET_1, TICKET_2]]);
+    expect(updateValues).toEqual(["pending", "high", [TICKET_1, TICKET_2], "primary"]);
 
     expect(mocks.recordTicketEvent).toHaveBeenCalled();
-    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_1, ["vip", "urgent"]);
-    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_2, ["vip", "urgent"]);
-    expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(TICKET_1, ["general"]);
-    expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(TICKET_2, ["general"]);
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(
+      TICKET_1,
+      ["vip", "urgent"],
+      expect.objectContaining({ tenantKey: "primary", workspaceKey: "primary" })
+    );
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(
+      TICKET_2,
+      ["vip", "urgent"],
+      expect.objectContaining({ tenantKey: "primary", workspaceKey: "primary" })
+    );
+    expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(
+      TICKET_1,
+      ["general"],
+      expect.objectContaining({ tenantKey: "primary", workspaceKey: "primary" })
+    );
+    expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(
+      TICKET_2,
+      ["general"],
+      expect.objectContaining({ tenantKey: "primary", workspaceKey: "primary" })
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledTimes(2);
   });
 });

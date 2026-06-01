@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { getAgentOutboxMetrics } from "@/server/agents/outbox-metrics";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   request: Request,
@@ -14,7 +15,8 @@ export async function GET(
   const { agentId } = await params;
   const url = new URL(request.url);
   const requestedLimit = Number(url.searchParams.get("limit")) || undefined;
-  const metrics = await getAgentOutboxMetrics(agentId, requestedLimit);
+  const scope = tenantScopeFromUser(user);
+  const metrics = await getAgentOutboxMetrics(agentId, requestedLimit, scope);
   if (!metrics) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

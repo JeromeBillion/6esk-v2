@@ -6,6 +6,7 @@ import {
   getInboundAlertConfig,
   saveInboundAlertConfig
 } from "@/server/email/inbound-alert-config";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const settingsSchema = z.object({
   webhookUrl: z.union([z.string().url(), z.literal("")]),
@@ -20,7 +21,8 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const config = await getInboundAlertConfig();
+  const scope = tenantScopeFromUser(user);
+  const config = await getInboundAlertConfig(scope);
   return Response.json({ config });
 }
 
@@ -29,6 +31,7 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let body: unknown;
   try {
@@ -42,8 +45,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const config = await saveInboundAlertConfig(parsed.data);
+  const config = await saveInboundAlertConfig(parsed.data, scope);
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "inbound_alert_config_updated",
     entityType: "inbound_alert_config",

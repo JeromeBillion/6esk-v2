@@ -43,7 +43,8 @@ describe("listAuditLogsForTicket", () => {
 
     expect(result).toHaveLength(1);
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(sql).toContain("(a.data->>'ticketId') = $1::text");
-    expect(values).toEqual([ticketId, 50]);
+    expect(sql).toContain("a.tenant_key = $1");
+    expect(sql).toContain("(a.data->>'ticketId') = $2::text");
+    expect(values).toEqual(["primary", ticketId, 50]);
   });
 });

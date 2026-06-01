@@ -66,6 +66,9 @@ describe("GET /api/admin/whatsapp/failed", () => {
         to: "+27821234567"
       }
     });
-    expect(mocks.listFailedWhatsAppOutboxEvents).toHaveBeenCalledWith(25);
+    expect(mocks.listFailedWhatsAppOutboxEvents).toHaveBeenCalledWith(25, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
   });
 });

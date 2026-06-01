@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { resolveMockAttachment } from "@/app/lib/mock-attachments";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   request: Request,
@@ -24,12 +25,15 @@ export async function GET(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const scope = tenantScopeFromUser(user);
   const result = await db.query(
     `SELECT a.id, a.filename, a.content_type, a.r2_key, m.mailbox_id, m.ticket_id
      FROM attachments a
      JOIN messages m ON m.id = a.message_id
-     WHERE a.id = $1`,
-    [attachmentId]
+       AND m.tenant_key = a.tenant_key
+     WHERE a.id = $1
+       AND a.tenant_key = $2`,
+    [attachmentId, scope.tenantKey]
   );
 
   const attachment = result.rows[0];
@@ -40,12 +44,12 @@ export async function GET(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (attachment.ticket_id) {
-      const assignedUserId = await getTicketAssignment(attachment.ticket_id);
+      const assignedUserId = await getTicketAssignment(attachment.ticket_id, scope);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, attachment.mailbox_id);
+      const allowed = await hasMailboxAccess(user.id, attachment.mailbox_id, scope);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }

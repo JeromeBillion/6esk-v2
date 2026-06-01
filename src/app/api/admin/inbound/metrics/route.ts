@@ -1,6 +1,11 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { getInboundMetrics } from "@/server/email/inbound-metrics";
+import {
+  isTenantIngressScopeError,
+  tenantScopeFromMachineRequestAsync,
+  tenantScopeFromUser
+} from "@/server/tenant-context";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -10,9 +15,18 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  let scope;
+  try {
+    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
+  } catch (error) {
+    if (isTenantIngressScopeError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
 
   const url = new URL(request.url);
   const requestedHours = Number(url.searchParams.get("hours") ?? 24) || 24;
-  const metrics = await getInboundMetrics(requestedHours);
+  const metrics = await getInboundMetrics(requestedHours, scope);
   return Response.json(metrics);
 }

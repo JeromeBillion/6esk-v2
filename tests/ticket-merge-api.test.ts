@@ -101,6 +101,8 @@ describe("POST /api/tickets/merge", () => {
       sourceTicketId: SOURCE_TICKET_ID,
       targetTicketId: TARGET_TICKET_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      tenantKey: "primary",
+      workspaceKey: "primary",
       reason: null
     });
   });
@@ -162,6 +164,8 @@ describe("POST /api/tickets/merge", () => {
       sourceTicketId: SOURCE_TICKET_ID,
       targetTicketId: TARGET_TICKET_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      tenantKey: "primary",
+      workspaceKey: "primary",
       reason: "Duplicate escalation thread"
     });
   });

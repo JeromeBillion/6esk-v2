@@ -122,17 +122,18 @@ describe("POST /api/email/send", () => {
     expect(insertSql).toContain("metadata");
     expect(insertSql).toContain("in_reply_to");
     expect(insertSql).toContain("reference_ids");
-    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(insertValues[3]).toBe("<root@example.com>");
-    expect(insertValues[4]).toBe("<parent@example.com>");
-    expect(insertValues[5]).toEqual(["<root@example.com>", "<parent@example.com>"]);
+    expect(insertValues[4]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(insertValues[5]).toBe("<root@example.com>");
+    expect(insertValues[6]).toBe("<parent@example.com>");
+    expect(insertValues[7]).toEqual(["<root@example.com>", "<parent@example.com>"]);
     expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         messageRecordId: insertValues[0],
         from: "jerome.choma@6ex.co.za",
         to: ["customer@example.com"],
         subject: "Re: Need help"
-      })
+      }),
+      { tenantKey: "primary", workspaceKey: "primary" }
     );
   });
 
@@ -155,15 +156,16 @@ describe("POST /api/email/send", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
 
     const [, insertValues] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(insertValues[2]).toMatch(/^<.+@6ex\.co\.za>$/);
-    expect(insertValues[3]).toBe(insertValues[2]);
-    expect(insertValues[4]).toBeNull();
-    expect(insertValues[5]).toBeNull();
+    expect(insertValues[4]).toMatch(/^<.+@6ex\.co\.za>$/);
+    expect(insertValues[5]).toBe(insertValues[4]);
+    expect(insertValues[6]).toBeNull();
+    expect(insertValues[7]).toBeNull();
     expect(mocks.enqueueEmailOutboxEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         messageRecordId: insertValues[0],
         subject: "Fresh thread"
-      })
+      }),
+      { tenantKey: "primary", workspaceKey: "primary" }
     );
   });
 
@@ -199,7 +201,8 @@ describe("POST /api/email/send", () => {
       expect.objectContaining({
         messageRecordId: "11111111-1111-1111-1111-111111111111",
         subject: "Draft send"
-      })
+      }),
+      { tenantKey: "primary", workspaceKey: "primary" }
     );
   });
 });

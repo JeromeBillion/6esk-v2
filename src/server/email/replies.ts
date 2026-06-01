@@ -5,8 +5,11 @@ import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { getCustomerById } from "@/server/customers";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
+import { resolveTenantScope } from "@/server/tenant-context";
 
 type SendReplyArgs = {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   ticketId: string;
   text?: string | null;
   html?: string | null;
@@ -51,6 +54,8 @@ type ResendResponse = {
 };
 
 export async function sendTicketReply({
+  tenantKey,
+  workspaceKey,
   ticketId,
   text,
   html,
@@ -62,12 +67,13 @@ export async function sendTicketReply({
   aiMeta,
   recipient
 }: SendReplyArgs) {
-  const ticket = await getTicketById(ticketId);
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
+  const ticket = await getTicketById(ticketId, scope);
   if (!ticket) {
     throw new Error("Ticket not found");
   }
 
-  const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id) : null;
+  const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id, scope) : null;
   const requestedEmailRecipient = normalizeEmailRecipient(recipient);
   const requestedPhoneRecipient = normalizePhoneRecipient(recipient);
 
@@ -125,6 +131,8 @@ export async function sendTicketReply({
     };
 
     const result = await queueWhatsAppSend({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       ticketId,
       to: resolvedPhone,
       text: cleanBody,
@@ -204,14 +212,16 @@ export async function sendTicketReply({
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
     ) VALUES (
-      $1, $2, $3, 'outbound', $4, $5, $6,
-      $7, $8, $9, $10, true, $11, $12, $13
+      $1, $2, $3, $4, $5, 'outbound', $6, $7, $8,
+      $9, $10, $11, $12, true, $13, $14, $15
     )`,
     [
       messageId,
+      scope.tenantKey,
+      scope.workspaceKey,
       ticket.mailbox_id,
       ticketId,
       resendData.messageId ?? resendData.id ?? null,
@@ -227,7 +237,7 @@ export async function sendTicketReply({
     ]
   );
 
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -253,25 +263,31 @@ export async function sendTicketReply({
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
-     WHERE id = $4`,
-    [textKey, htmlKey, sizeBytes || null, messageId]
+     WHERE id = $4
+       AND tenant_key = $5`,
+    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey]
   );
 
   await recordTicketEvent({
     ticketId,
     eventType: origin === "ai" ? "ai_reply_sent" : "reply_sent",
     actorUserId: actorUserId ?? null,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     data: origin === "ai" ? { ai: true } : null
   });
 
   if (ticket.status === "new" || ticket.status === "pending") {
-    await db.query("UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1", [
-      ticketId
-    ]);
+    await db.query(
+      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2",
+      [ticketId, scope.tenantKey]
+    );
     await recordTicketEvent({
       ticketId,
       eventType: "status_updated",
       actorUserId: actorUserId ?? null,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { from: ticket.status, to: "open" }
     });
   }

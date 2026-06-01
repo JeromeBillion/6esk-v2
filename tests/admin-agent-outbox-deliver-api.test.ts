@@ -31,7 +31,9 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_key: "tenant-a",
+    workspace_key: "workspace-a"
   };
 }
 
@@ -73,6 +75,9 @@ describe("POST /api/admin/agents/[agentId]/outbox/deliver", () => {
     expect(mocks.deliverPendingAgentEvents).toHaveBeenCalledWith({
       integrationId: "agent-1",
       limit: 10
+    }, {
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({

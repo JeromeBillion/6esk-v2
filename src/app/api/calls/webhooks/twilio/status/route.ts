@@ -1,6 +1,14 @@
 import { recordAuditLog } from "@/server/audit";
-import { mapTwilioCallStatus, normalizeTwilioParams, validateTwilioWebhook } from "@/server/calls/twilio";
-import { updateCallSessionStatus } from "@/server/calls/service";
+import {
+  mapTwilioCallStatus,
+  normalizeTwilioParams,
+  validateTwilioWebhookForTenant
+} from "@/server/calls/twilio";
+import { resolveCallSessionProviderScope, updateCallSessionStatus } from "@/server/calls/service";
+import {
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
 
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
@@ -24,14 +32,66 @@ function parseDurationSeconds(value: string | null | undefined) {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const params = normalizeTwilioParams(url.searchParams);
-  const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/status",
-    requestUrl: request.url,
-    signature: request.headers.get("x-twilio-signature"),
-    params
-  });
+  const providerCallId = params.CallSid?.trim() || null;
+  if (!providerCallId) {
+    return Response.json({ error: "CallSid is required" }, { status: 400 });
+  }
 
-  if (!isValid) {
+  const scope = await resolveCallSessionProviderScope({
+    provider: "twilio",
+    providerCallId
+  });
+  if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
+    void recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/status",
+        mode: "twilio_signature",
+        reason: "unresolved_call_provider_route",
+        callSid: providerCallId
+      }
+    }).catch(() => {});
+    return Response.json(
+      { error: "Call session not found", code: "unresolved_call_provider_route" },
+      { status: 404 }
+    );
+  }
+
+  let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
+  try {
+    verification = await validateTwilioWebhookForTenant({
+      scope,
+      providerAccountId: params.AccountSid ?? null,
+      pathname: "/api/calls/webhooks/twilio/status",
+      requestUrl: request.url,
+      signature: request.headers.get("x-twilio-signature"),
+      params
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return Response.json(
+        {
+          error: error.message,
+          code: "provider_webhook_secret_configuration_missing"
+        },
+        { status: 503 }
+      );
+    }
+    throw error;
+  }
+
+  if (verification.missingSecret) {
+    return Response.json(
+      {
+        error: "Provider webhook secret is not configured for this tenant.",
+        code: "provider_webhook_secret_missing"
+      },
+      { status: 503 }
+    );
+  }
+
+  if (!verification.valid) {
     void recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
@@ -42,11 +102,6 @@ export async function GET(request: Request) {
       }
     }).catch(() => {});
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const providerCallId = params.CallSid?.trim() || null;
-  if (!providerCallId) {
-    return Response.json({ error: "CallSid is required" }, { status: 400 });
   }
 
   const status = mapTwilioCallStatus(params.CallStatus);

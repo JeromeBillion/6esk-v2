@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { getWorkspaceModuleUsageSummary } from "@/server/module-metering";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function clampWindowDays(value: string | null) {
   const parsed = Number(value ?? "30");
@@ -18,7 +19,12 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const days = clampWindowDays(url.searchParams.get("days"));
-  const summary = await getWorkspaceModuleUsageSummary({ windowDays: days });
+  const scope = tenantScopeFromUser(user);
+  const summary = await getWorkspaceModuleUsageSummary({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
+    windowDays: days
+  });
 
   return Response.json({ summary });
 }

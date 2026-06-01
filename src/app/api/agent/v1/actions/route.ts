@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { getAgentFromRequest } from "@/server/agents/auth";
+import {
+  agentIngressErrorResponse,
+  agentScopeFromIntegration,
+  getAgentFromRequest
+} from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
+import { isFullAutoPolicyMode } from "@/server/agents/policy-modes";
+import { validateAgentOutput } from "@/server/agents/output-validator";
+import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
@@ -22,6 +29,12 @@ import { evaluateVoiceCallPolicy } from "@/server/calls/policy";
 import { redactPhoneNumber } from "@/server/calls/redaction";
 import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
+import {
+  extractRunIdFromMetadata,
+  markAgentRunCompleted,
+  recordAgentRunStep,
+  recordAgentToolCall
+} from "@/server/agents/run-ledger";
 
 const actionSchema = z.object({
   type: z.enum([
@@ -190,8 +203,109 @@ function extractCallSessionId(metadata: Record<string, unknown> | null | undefin
   return null;
 }
 
+function buildAgentActionSafetyContent(action: z.infer<typeof actionSchema>) {
+  return {
+    type: action.type,
+    subject: action.subject ?? null,
+    text: action.text ?? null,
+    html: action.html ?? null,
+    reason: action.reason ?? null,
+    tags: action.tags ?? null,
+    priority: action.priority ?? null,
+    template: action.template ?? null,
+    metadata: action.metadata ?? null
+  };
+}
+
+function buildAgentOutputContent(action: z.infer<typeof actionSchema>) {
+  if (action.type === "draft_reply" || action.type === "send_reply") {
+    return {
+      subject: action.subject ?? null,
+      text: action.text ?? null,
+      html: action.html ?? null,
+      template: action.template ?? null
+    };
+  }
+
+  if (action.type === "request_human_review") {
+    return {
+      reason: action.reason ?? null,
+      metadata: action.metadata ?? null
+    };
+  }
+
+  return null;
+}
+
+async function recordAgentActionLedger(input: {
+  action: z.infer<typeof actionSchema>;
+  integrationId: string;
+  scope: { tenantKey: string; workspaceKey: string };
+  result:
+    | {
+        type: string;
+        status: string;
+        detail?: string;
+        data?: Record<string, unknown>;
+      }
+    | undefined;
+}) {
+  const metadata = (input.action.metadata as Record<string, unknown> | null) ?? null;
+  const runId = extractRunIdFromMetadata(metadata);
+  if (!runId || !input.result) {
+    return;
+  }
+
+  const stepId = await recordAgentRunStep({
+    runId,
+    scope: input.scope,
+    stepType: input.action.type,
+    status: input.result.status,
+    input: {
+      ticketId: input.action.ticketId,
+      actionType: input.action.type,
+      integrationId: input.integrationId
+    },
+    output: input.result.data ?? {},
+    error: input.result.detail ?? null
+  });
+  await recordAgentToolCall({
+    runId,
+    scope: input.scope,
+    stepId,
+    toolName: input.action.type,
+    status: input.result.status,
+    request: {
+      ticketId: input.action.ticketId,
+      actionType: input.action.type
+    },
+    response: input.result.data ?? {},
+    error: input.result.detail ?? null
+  });
+
+  if (metadata?.completeRun === true || metadata?.complete_run === true) {
+    await markAgentRunCompleted({
+      runId,
+      scope: input.scope,
+      status: input.result.status === "failed" ? "failed" : "completed",
+      error: input.result.status === "failed" ? input.result.detail ?? null : null,
+      data: {
+        actionType: input.action.type,
+        result: input.result
+      }
+    });
+  }
+}
+
 export async function POST(request: Request) {
-  const integration = await getAgentFromRequest(request);
+  let integration;
+  try {
+    integration = await getAgentFromRequest(request);
+  } catch (error) {
+    const response = agentIngressErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   if (!integration) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -199,7 +313,8 @@ export async function POST(request: Request) {
   if (integration.status !== "active") {
     return Response.json({ error: "Integration paused" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("aiAutomation"))) {
+  const scope = agentScopeFromIntegration(integration);
+  if (!(await isWorkspaceModuleEnabled("aiAutomation", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "AI automation module is not enabled for this workspace.",
@@ -242,7 +357,7 @@ export async function POST(request: Request) {
   const mergeMinConfidence = getAgentMergeMinConfidence();
 
   for (const action of actions) {
-    const ticket = await getTicketById(action.ticketId);
+    const ticket = await getTicketById(action.ticketId, scope);
     if (!ticket) {
       results.push({ type: action.type, status: "not_found" });
       continue;
@@ -252,6 +367,86 @@ export async function POST(request: Request) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const actionRunId = extractRunIdFromMetadata(action.metadata as Record<string, unknown> | null);
+    const toolPolicy = await evaluateAgentToolPolicy({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
+      integrationId: integration.id,
+      runId: actionRunId,
+      policyMode: integration.policy_mode,
+      actionType: action.type,
+      resource: {
+        ticketId: action.ticketId,
+        sourceTicketId: action.sourceTicketId ?? null,
+        targetTicketId: action.targetTicketId ?? null,
+        sourceCustomerId: action.sourceCustomerId ?? null,
+        targetCustomerId: action.targetCustomerId ?? null
+      },
+      content: buildAgentActionSafetyContent(action),
+      metadata: {
+        route: "/api/agent/v1/actions",
+        policyMode: integration.policy_mode
+      }
+    });
+    if (!toolPolicy.allowed) {
+      const result = {
+        type: action.type,
+        status: "blocked",
+        detail: toolPolicy.detail ?? "AI safety policy blocked this action.",
+        data: {
+          errorCode: "ai_safety_policy_blocked",
+          decision: toolPolicy.decision,
+          toolClass: toolPolicy.toolClass,
+          reasonCodes: toolPolicy.reasonCodes
+        }
+      };
+      results.push(result);
+      await recordAgentActionLedger({
+        action,
+        integrationId: integration.id,
+        scope,
+        result
+      });
+      continue;
+    }
+
+    const outputContent = buildAgentOutputContent(action);
+    if (outputContent) {
+      const outputValidation = await validateAgentOutput({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
+        integrationId: integration.id,
+        runId: actionRunId,
+        actionType: action.type,
+        sourceId: action.ticketId,
+        content: outputContent,
+        metadata: {
+          route: "/api/agent/v1/actions"
+        }
+      });
+      if (!outputValidation.allowed) {
+        const result = {
+          type: action.type,
+          status: "blocked",
+          detail: outputValidation.detail ?? "AI output validator blocked this action.",
+          data: {
+            errorCode: "ai_output_validation_blocked",
+            decision: outputValidation.decision,
+            reasonCodes: outputValidation.reasonCodes
+          }
+        };
+        results.push(result);
+        await recordAgentActionLedger({
+          action,
+          integrationId: integration.id,
+          scope,
+          result
+        });
+        continue;
+      }
+    }
+
+    const resultStartIndex = results.length;
     switch (action.type) {
       case "draft_reply": {
         if (!action.text && !action.html && !action.template) {
@@ -261,27 +456,43 @@ export async function POST(request: Request) {
         const draftMetadata = action.template
           ? { ...(action.metadata ?? {}), template: action.template }
           : (action.metadata ?? null);
-        await createDraft({
+        const draft = await createDraft({
           integrationId: integration.id,
           ticketId: action.ticketId,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           subject: action.subject ?? null,
           bodyText: action.text ?? null,
           bodyHtml: action.html ?? null,
           confidence: action.confidence ?? null,
           metadata: draftMetadata
         });
+        if (!draft) {
+          results.push({
+            type: action.type,
+            status: "failed",
+            detail: "Draft target not found for this tenant workspace"
+          });
+          break;
+        }
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "ai_draft_created",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { agentId: integration.id, confidence: action.confidence ?? null }
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_draft_created",
           entityType: "ticket",
           entityId: action.ticketId,
           data: { agentId: integration.id }
         });
         await recordModuleUsageEvent({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           moduleKey: "aiAutomation",
           usageKind: "draft_reply",
           actorType: "ai",
@@ -297,15 +508,15 @@ export async function POST(request: Request) {
         break;
       }
       case "send_reply": {
-        if (integration.policy_mode !== "auto_send") {
-          results.push({ type: action.type, status: "blocked", detail: "Auto-send disabled" });
+        if (!isFullAutoPolicyMode(integration.policy_mode)) {
+          results.push({ type: action.type, status: "blocked", detail: "Full-auto disabled" });
           break;
         }
         const replyModule = inferAgentReplyModule({
           requesterEmail: ticket.requester_email,
           hasTemplate: Boolean(action.template)
         });
-        if (!(await isWorkspaceModuleEnabled(replyModule))) {
+        if (!(await isWorkspaceModuleEnabled(replyModule, scope.workspaceKey, scope.tenantKey))) {
           results.push({
             type: action.type,
             status: "blocked",
@@ -320,18 +531,30 @@ export async function POST(request: Request) {
             const draftMetadata = action.template
               ? { ...(action.metadata ?? {}), template: action.template }
               : (action.metadata ?? null);
-            await createDraft({
+            const draft = await createDraft({
               integrationId: integration.id,
               ticketId: action.ticketId,
+              tenantKey: scope.tenantKey,
+              workspaceKey: scope.workspaceKey,
               subject: action.subject ?? null,
               bodyText: action.text ?? null,
               bodyHtml: action.html ?? null,
               confidence: action.confidence ?? null,
               metadata: draftMetadata
             });
+            if (!draft) {
+              results.push({
+                type: action.type,
+                status: "failed",
+                detail: "Draft target not found for this tenant workspace"
+              });
+              break;
+            }
             await recordTicketEvent({
               ticketId: action.ticketId,
               eventType: "ai_draft_created",
+              tenantKey: scope.tenantKey,
+              workspaceKey: scope.workspaceKey,
               data: {
                 agentId: integration.id,
                 confidence: action.confidence ?? null,
@@ -339,14 +562,18 @@ export async function POST(request: Request) {
               }
             });
             if (escalation.tag) {
-              await addTagsToTicket(action.ticketId, [escalation.tag]);
+              await addTagsToTicket(action.ticketId, [escalation.tag], scope);
               await recordTicketEvent({
                 ticketId: action.ticketId,
                 eventType: "tags_assigned",
+                tenantKey: scope.tenantKey,
+                workspaceKey: scope.workspaceKey,
                 data: { tags: [escalation.tag], source: "out_of_hours_escalation" }
               });
             }
             await recordAuditLog({
+              tenantKey: scope.tenantKey,
+              workspaceKey: scope.workspaceKey,
               action: "ai_reply_escalated_out_of_hours",
               entityType: "ticket",
               entityId: action.ticketId,
@@ -370,6 +597,8 @@ export async function POST(request: Request) {
         }
         try {
           await sendTicketReply({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             ticketId: action.ticketId,
             subject: action.subject ?? null,
             text: action.text ?? null,
@@ -383,12 +612,16 @@ export async function POST(request: Request) {
             }
           });
           await recordAuditLog({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             action: "ai_reply_sent",
             entityType: "ticket",
             entityId: action.ticketId,
             data: { agentId: integration.id }
           });
           await recordModuleUsageEvent({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             moduleKey: replyModule,
             usageKind: "reply_sent",
             actorType: "ai",
@@ -400,6 +633,8 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             moduleKey: "aiAutomation",
             usageKind: "send_reply",
             actorType: "ai",
@@ -428,7 +663,7 @@ export async function POST(request: Request) {
           });
           break;
         }
-        if (!(await isWorkspaceModuleEnabled("voice"))) {
+        if (!(await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey))) {
           results.push({
             type: action.type,
             status: "blocked",
@@ -446,7 +681,7 @@ export async function POST(request: Request) {
           break;
         }
 
-        const callOptions = await getTicketCallOptions(action.ticketId);
+        const callOptions = await getTicketCallOptions(action.ticketId, scope);
         if (!callOptions) {
           results.push({
             type: action.type,
@@ -486,11 +721,15 @@ export async function POST(request: Request) {
 
         const aiDefaultMaxCallsPerHour = Number(process.env.CALLS_AI_MAX_CALLS_PER_HOUR ?? "0");
         const consentState = await getLatestVoiceConsentState({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           customerId: ticket.customer_id ?? null,
           phone: resolved.phone,
           email: requesterEmailForConsent(ticket.requester_email)
         });
         const policyCheck = await evaluateVoiceCallPolicy({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           actor: "ai",
           policy: integration.policy ?? null,
           ticketMetadata: (ticket.metadata as Record<string, unknown> | null) ?? null,
@@ -513,6 +752,8 @@ export async function POST(request: Request) {
 
         try {
           const queued = await queueOutboundCall({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             ticketId: action.ticketId,
             toPhone: resolved.phone,
             fromPhone: action.fromPhone ?? null,
@@ -525,8 +766,10 @@ export async function POST(request: Request) {
               selectedCandidateId: resolved.selectedCandidateId
               }
             });
-          void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
+          void deliverPendingCallEvents({ limit: 5 }, scope).catch(() => {});
           await recordAuditLog({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             action: "ai_call_queued",
             entityType: "call_session",
             entityId: queued.callSessionId,
@@ -538,6 +781,8 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             moduleKey: "voice",
             usageKind: "call_queued",
             actorType: "ai",
@@ -552,6 +797,8 @@ export async function POST(request: Request) {
             }
           });
           await recordModuleUsageEvent({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             moduleKey: "aiAutomation",
             usageKind: "initiate_call",
             actorType: "ai",
@@ -592,13 +839,17 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: "No tags provided" });
           break;
         }
-        await addTagsToTicket(action.ticketId, tags);
+        await addTagsToTicket(action.ticketId, tags, scope);
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "tags_assigned",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { tags }
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_tags_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -612,16 +863,21 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: "Missing priority" });
           break;
         }
-        await db.query("UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2", [
+        await db.query("UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3", [
           action.priority,
-          action.ticketId
+          action.ticketId,
+          scope.tenantKey
         ]);
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "priority_updated",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { to: action.priority }
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_priority_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -632,15 +888,19 @@ export async function POST(request: Request) {
       }
       case "assign_to": {
         await db.query(
-          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2",
-          [action.assignedUserId ?? null, action.ticketId]
+          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3",
+          [action.assignedUserId ?? null, action.ticketId, scope.tenantKey]
         );
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "assignment_updated",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { to: action.assignedUserId ?? null }
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_assignment_set",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -665,23 +925,53 @@ export async function POST(request: Request) {
 
         if (callSessionId && idempotencyKey) {
           const claimed = await db.query<{ id: string }>(
-            `INSERT INTO call_review_writebacks (
-               ticket_id, call_session_id, idempotency_key, payload
-             ) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (call_session_id, idempotency_key) DO NOTHING
-             RETURNING id`,
-            [action.ticketId, callSessionId, idempotencyKey, reviewMetadata ?? {}]
+            `SELECT id
+             FROM call_sessions
+             WHERE id = $1
+               AND ticket_id = $2
+               AND tenant_key = $3
+               AND workspace_key = $4
+             LIMIT 1`,
+            [callSessionId, action.ticketId, scope.tenantKey, scope.workspaceKey]
           );
           if (!claimed.rows[0]?.id) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              detail: "Call session not found for this ticket and tenant scope."
+            });
+            break;
+          }
+
+          const writeback = await db.query<{ id: string }>(
+            `INSERT INTO call_review_writebacks (
+               tenant_key, workspace_key, ticket_id, call_session_id, idempotency_key, payload
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (call_session_id, idempotency_key) DO NOTHING
+             RETURNING id`,
+            [
+              scope.tenantKey,
+              scope.workspaceKey,
+              action.ticketId,
+              callSessionId,
+              idempotencyKey,
+              reviewMetadata ?? {}
+            ]
+          );
+          if (!writeback.rows[0]?.id) {
             await db.query(
               `UPDATE call_review_writebacks
                SET last_seen_at = now(),
                    updated_at = now()
                WHERE call_session_id = $1
-                 AND idempotency_key = $2`,
-              [callSessionId, idempotencyKey]
+                 AND idempotency_key = $2
+                 AND tenant_key = $3
+                 AND workspace_key = $4`,
+              [callSessionId, idempotencyKey, scope.tenantKey, scope.workspaceKey]
             );
             await recordAuditLog({
+              tenantKey: scope.tenantKey,
+              workspaceKey: scope.workspaceKey,
               action: "ai_review_writeback_deduplicated",
               entityType: "call_session",
               entityId: callSessionId,
@@ -708,9 +998,13 @@ export async function POST(request: Request) {
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "ai_review_requested",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: reviewMetadata
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_review_requested",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -796,7 +1090,7 @@ export async function POST(request: Request) {
             break;
           }
 
-          const targetTicket = await getTicketById(targetTicketId);
+          const targetTicket = await getTicketById(targetTicketId, scope);
           if (!targetTicket) {
             results.push({
               type: action.type,
@@ -816,6 +1110,8 @@ export async function POST(request: Request) {
 
         try {
           const reviewTask = await createMergeReviewTask({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             proposalType: reviewProposalType,
             ticketId: action.ticketId,
             sourceTicketId,
@@ -842,6 +1138,8 @@ export async function POST(request: Request) {
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "ai_merge_proposed",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: {
             reviewTaskId,
             proposalType: reviewProposalType,
@@ -855,6 +1153,8 @@ export async function POST(request: Request) {
           }
         });
         await recordAuditLog({
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           action: "ai_merge_proposed",
           entityType: "ticket",
           entityId: action.ticketId,
@@ -883,6 +1183,8 @@ export async function POST(request: Request) {
         });
         await enqueueAgentEvent({
           eventType: "merge.review.required",
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           payload: {
             ...reviewEvent,
             review: {
@@ -897,7 +1199,7 @@ export async function POST(request: Request) {
             }
           }
         });
-        void deliverPendingAgentEvents().catch(() => {});
+        void deliverPendingAgentEvents({}, scope).catch(() => {});
 
         results.push({ type: action.type, status: "ok" });
         break;
@@ -919,7 +1221,7 @@ export async function POST(request: Request) {
           break;
         }
 
-        const targetTicket = await getTicketById(targetTicketId);
+        const targetTicket = await getTicketById(targetTicketId, scope);
         if (!targetTicket) {
           results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
           break;
@@ -937,9 +1239,13 @@ export async function POST(request: Request) {
             sourceTicketId,
             targetTicketId,
             actorUserId: null,
-            reason: action.reason ?? null
+            reason: action.reason ?? null,
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey
           });
           await recordAuditLog({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             action: "ai_ticket_merged",
             entityType: "ticket",
             entityId: sourceTicketId,
@@ -974,7 +1280,7 @@ export async function POST(request: Request) {
           break;
         }
 
-        const targetTicket = await getTicketById(targetTicketId);
+        const targetTicket = await getTicketById(targetTicketId, scope);
         if (!targetTicket) {
           results.push({ type: action.type, status: "not_found", detail: "Target ticket not found" });
           break;
@@ -993,9 +1299,13 @@ export async function POST(request: Request) {
             targetTicketId,
             actorUserId: null,
             reason: action.reason ?? null,
-            metadata: action.metadata ?? null
+            metadata: action.metadata ?? null,
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey
           });
           await recordAuditLog({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             action: "ai_ticket_linked_case",
             entityType: "ticket",
             entityId: sourceTicketId,
@@ -1034,9 +1344,13 @@ export async function POST(request: Request) {
             sourceCustomerId,
             targetCustomerId,
             actorUserId: null,
-            reason: action.reason ?? null
+            reason: action.reason ?? null,
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey
           });
           await recordAuditLog({
+            tenantKey: scope.tenantKey,
+            workspaceKey: scope.workspaceKey,
             action: "ai_customer_merged",
             entityType: "ticket",
             entityId: action.ticketId,
@@ -1058,6 +1372,12 @@ export async function POST(request: Request) {
         results.push({ type: action.type, status: "ignored" });
         break;
     }
+    await recordAgentActionLedger({
+      action,
+      integrationId: integration.id,
+      scope,
+      result: results.length > resultStartIndex ? results[results.length - 1] : undefined
+    });
   }
 
   return Response.json({ status: "ok", results });

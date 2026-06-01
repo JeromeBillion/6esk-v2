@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const templateSchema = z.object({
   provider: z.string().min(1).default("meta"),
@@ -18,11 +19,15 @@ export async function GET() {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const result = await db.query(
     `SELECT id, provider, name, language, category, status, components, created_at, updated_at
      FROM whatsapp_templates
-     ORDER BY name, language`
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+     ORDER BY name, language`,
+    [scope.tenantKey, scope.workspaceKey]
   );
 
   return Response.json({ templates: result.rows });
@@ -33,6 +38,7 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -50,9 +56,9 @@ export async function POST(request: Request) {
   const status = data.status ?? "active";
 
   const result = await db.query(
-    `INSERT INTO whatsapp_templates (provider, name, language, category, status, components)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (provider, name, language)
+    `INSERT INTO whatsapp_templates (tenant_key, workspace_key, provider, name, language, category, status, components)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (tenant_key, workspace_key, provider, name, language)
      DO UPDATE SET
        category = EXCLUDED.category,
        status = EXCLUDED.status,
@@ -60,6 +66,8 @@ export async function POST(request: Request) {
        updated_at = now()
      RETURNING id, provider, name, language, category, status, components`,
     [
+      scope.tenantKey,
+      scope.workspaceKey,
       data.provider,
       data.name,
       data.language,
@@ -71,6 +79,8 @@ export async function POST(request: Request) {
 
   const saved = result.rows[0];
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_saved",
     entityType: "whatsapp_template",

@@ -21,6 +21,14 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Ticketized execution backlog with dependencies, estimates, and sprint cut
 - `docs/call-ops-runbook.md`
   - Call operations runbook (replay drill, outbox load/retry drill, rollback)
+- `docs/tenant-ingress-signing-runbook.md`
+  - Machine ingress signing-secret rotation, distribution, drill, and rollback runbook
+- `docs/tenant-migration-backfill-runbook.md`
+  - Dry-run tenant/workspace backfill evidence, root-table handling, rollback, and post-migration audit runbook
+- `docs/provider-routing-rehearsal-runbook.md`
+  - Read-only provider route ownership and tenant-scoped webhook secret rehearsal evidence runbook
+- `docs/tenant-query-scope-sweep-runbook.md`
+  - Static API/server/worker SQL tenant-scope sweep evidence and triage runbook
 - `docs/call-crm-staging-e2e.md`
   - Staging E2E harness for CRM call orchestration checklist validation
 - `docs/privacy-retention-policy.md`

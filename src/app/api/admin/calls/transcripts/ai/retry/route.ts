@@ -2,6 +2,11 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedTranscriptAiJobs } from "@/server/calls/transcript-ai-jobs";
+import {
+  isTenantIngressScopeError,
+  tenantScopeFromMachineRequestAsync,
+  tenantScopeFromUser
+} from "@/server/tenant-context";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -12,6 +17,15 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  let scope;
+  try {
+    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
+  } catch (error) {
+    if (isTenantIngressScopeError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
 
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 25) || 25, 1), 100);
@@ -21,8 +35,10 @@ export async function POST(request: Request) {
     const result = await retryFailedTranscriptAiJobs({
       limit,
       jobIds: Array.isArray(body.jobIds) ? body.jobIds : undefined
-    });
+    }, scope);
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_transcript_ai_retry_triggered",
       entityType: "call_transcript_ai_jobs",
@@ -32,6 +48,8 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry transcript AI jobs";
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_transcript_ai_retry_failed",
       entityType: "call_transcript_ai_jobs",

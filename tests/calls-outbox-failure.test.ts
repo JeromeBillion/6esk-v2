@@ -61,7 +61,9 @@ describe("call outbox hardening", () => {
 
     expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "mock" });
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("SET status = 'sent'"), [
-      "evt-1"
+      "evt-1",
+      "primary",
+      "primary"
     ]);
     expect(mocks.updateCallSessionStatus).toHaveBeenCalledWith(
       expect.objectContaining({

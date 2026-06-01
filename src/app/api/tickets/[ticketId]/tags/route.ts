@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getTicketById, recordTicketEvent, addTagsToTicket, removeTagsFromTicket } from "@/server/tickets";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const schema = z
   .object({
@@ -24,9 +25,10 @@ export async function PATCH(
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const ticket = await getTicketById(ticketId, scope);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -54,20 +56,24 @@ export async function PATCH(
     .filter(Boolean);
 
   if (addTags.length) {
-    await addTagsToTicket(ticketId, addTags);
+    await addTagsToTicket(ticketId, addTags, scope);
   }
   if (removeTags.length) {
-    await removeTagsFromTicket(ticketId, removeTags);
+    await removeTagsFromTicket(ticketId, removeTags, scope);
   }
 
   await recordTicketEvent({
     ticketId,
     eventType: "tags_updated",
     actorUserId: user.id,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     data: { add: addTags, remove: removeTags }
   });
 
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user.id,
     action: "ticket_tags_updated",
     entityType: "ticket",

@@ -9,6 +9,7 @@ import {
   updateCustomerProfile
 } from "@/server/customers";
 import { db } from "@/server/db";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const patchSchema = z
   .object({
@@ -46,7 +47,8 @@ export async function PATCH(
   }
 
   const { customerId } = await params;
-  const existingCustomer = await getCustomerById(customerId);
+  const scope = tenantScopeFromUser(user);
+  const existingCustomer = await getCustomerById(customerId, scope);
   if (!existingCustomer) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -78,10 +80,11 @@ export async function PATCH(
        FROM tickets
        WHERE id = $1
          AND customer_id = $2
+         AND tenant_key = $4
          AND merged_into_ticket_id IS NULL
          AND assigned_user_id = $3
        LIMIT 1`,
-      [requestedTicketId, customerId, user.id]
+      [requestedTicketId, customerId, user.id, scope.tenantKey]
     );
     if ((accessResult.rowCount ?? 0) === 0) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
@@ -92,9 +95,10 @@ export async function PATCH(
        FROM tickets
        WHERE id = $1
          AND customer_id = $2
+         AND tenant_key = $3
          AND merged_into_ticket_id IS NULL
        LIMIT 1`,
-      [requestedTicketId, customerId]
+      [requestedTicketId, customerId, scope.tenantKey]
     );
     if ((ticketResult.rowCount ?? 0) === 0) {
       return Response.json(
@@ -125,7 +129,7 @@ export async function PATCH(
   }
 
   try {
-    const updatedCustomer = await updateCustomerProfile(customerId, updateInput);
+    const updatedCustomer = await updateCustomerProfile(customerId, updateInput, scope);
     if (!updatedCustomer) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
@@ -173,7 +177,7 @@ export async function PATCH(
       });
     }
 
-    const identities = await listCustomerIdentities(updatedCustomer.id);
+    const identities = await listCustomerIdentities(updatedCustomer.id, scope);
     return Response.json({
       customer: {
         ...updatedCustomer,

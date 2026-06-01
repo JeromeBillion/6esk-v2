@@ -28,6 +28,8 @@ describe("email outbox", () => {
           rows: [
             {
               id: "evt-1",
+              tenant_key: "primary",
+              workspace_key: "primary",
               payload: {
                 messageRecordId: "msg-1",
                 from: "jerome.choma@6ex.co.za",
@@ -96,7 +98,7 @@ describe("email outbox", () => {
     });
     expect(mocks.query).toHaveBeenCalledWith(
       expect.stringContaining("SET external_message_id = $1"),
-      ["provider-msg-1", "msg-1"]
+      ["provider-msg-1", "msg-1", "primary"]
     );
   });
 });

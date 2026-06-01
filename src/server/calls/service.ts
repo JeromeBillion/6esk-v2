@@ -21,12 +21,40 @@ import {
   reopenTicketIfNeeded
 } from "@/server/tickets";
 import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
+import {
+  resolveTenantScope,
+  shouldRequireTenantIngressScope,
+  type TenantScope,
+  type TenantScopeInput
+} from "@/server/tenant-context";
 
 type CallCandidateSource =
   | "customer_primary"
   | "customer_identity"
   | "ticket_metadata"
   | "ticket_requester";
+
+type InboundCallProviderRoutingCode =
+  | "ambiguous_call_provider_route"
+  | "unresolved_call_provider_route";
+
+export class InboundCallProviderRoutingError extends Error {
+  code: InboundCallProviderRoutingCode;
+  status: number;
+
+  constructor(message: string, code: InboundCallProviderRoutingCode, status: number) {
+    super(message);
+    this.name = "InboundCallProviderRoutingError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function isInboundCallProviderRoutingError(
+  error: unknown
+): error is InboundCallProviderRoutingError {
+  return error instanceof InboundCallProviderRoutingError;
+}
 
 export type TicketCallCandidate = {
   candidateId: string;
@@ -47,6 +75,8 @@ export type TicketCallOptions = {
 
 type TicketCallContext = {
   id: string;
+  tenant_key: string;
+  workspace_key: string;
   mailbox_id: string | null;
   customer_id: string | null;
   requester_email: string;
@@ -74,6 +104,8 @@ export type ResolveCallPhoneResult =
     };
 
 export type QueueOutboundCallArgs = {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   ticketId: string;
   toPhone: string;
   reason: string;
@@ -106,6 +138,23 @@ function readString(value: unknown) {
   return trimmed || null;
 }
 
+function hasExplicitScope(scopeInput?: TenantScopeInput) {
+  return Boolean(scopeInput?.tenantKey?.trim() || scopeInput?.workspaceKey?.trim());
+}
+
+function distinctScopes(rows: TenantScope[]) {
+  const seen = new Set<string>();
+  const scopes: TenantScope[] = [];
+  for (const row of rows) {
+    const scope = resolveTenantScope(row);
+    const key = `${scope.tenantKey}:${scope.workspaceKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    scopes.push(scope);
+  }
+  return scopes;
+}
+
 export function normalizeCallPhone(value: string | null | undefined) {
   if (!value) return null;
   const normalized = normalizeLinkPhone(value);
@@ -115,6 +164,87 @@ export function normalizeCallPhone(value: string | null | undefined) {
     return null;
   }
   return normalized;
+}
+
+function readProviderAccountSid(metadata?: Record<string, unknown> | null) {
+  if (!metadata) return null;
+  return (
+    readString(metadata.accountSid) ??
+    readString(metadata.AccountSid) ??
+    readString(metadata.account_sid) ??
+    readString(metadata.providerAccountSid) ??
+    readString(metadata.provider_account_sid)
+  );
+}
+
+export async function resolveInboundCallProviderScope({
+  provider,
+  toPhone,
+  metadata,
+  scopeInput
+}: {
+  provider?: string | null;
+  toPhone?: string | null;
+  metadata?: Record<string, unknown> | null;
+  scopeInput?: TenantScopeInput;
+}) {
+  if (hasExplicitScope(scopeInput)) {
+    return resolveTenantScope(scopeInput);
+  }
+
+  const providerValue = (readString(provider) ?? "pending").toLowerCase();
+  const normalizedTo = normalizeCallPhone(toPhone);
+  const accountSid = readProviderAccountSid(metadata);
+  if (!normalizedTo && !accountSid) {
+    return null;
+  }
+
+  let result: { rows: Array<{ tenant_key: string; workspace_key: string }> };
+  try {
+    result = await db.query<{
+      tenant_key: string;
+      workspace_key: string;
+    }>(
+      `SELECT tenant_key, workspace_key
+       FROM call_provider_numbers
+       WHERE provider = $1
+         AND status = 'active'
+         AND (
+           ($2::text IS NOT NULL AND regexp_replace(phone_number, '\\s+', '', 'g') = $2::text)
+           OR ($3::text IS NOT NULL AND account_sid = $3::text)
+         )
+       ORDER BY
+         CASE
+           WHEN $2::text IS NOT NULL AND regexp_replace(phone_number, '\\s+', '', 'g') = $2::text
+             THEN 0
+           ELSE 1
+         END,
+         updated_at DESC,
+         created_at DESC`,
+      [providerValue, normalizedTo, accountSid]
+    );
+  } catch (error) {
+    if (shouldRequireTenantIngressScope()) {
+      throw error;
+    }
+    return null;
+  }
+
+  const scopes = distinctScopes(
+    result.rows.map((row) => ({
+      tenantKey: row.tenant_key,
+      workspaceKey: row.workspace_key
+    }))
+  );
+  if (scopes.length > 1) {
+    throw new InboundCallProviderRoutingError(
+      "Ambiguous call provider route for destination phone/account.",
+      "ambiguous_call_provider_route",
+      409
+    );
+  }
+
+  return scopes[0] ?? null;
 }
 
 function extractRequesterPhone(value: string | null | undefined) {
@@ -163,26 +293,34 @@ function extractMetadataPhones(metadata: Record<string, unknown> | null) {
   return values;
 }
 
-export async function getTicketCallContext(ticketId: string) {
+export async function getTicketCallContext(ticketId: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const result = await db.query<TicketCallContext>(
     `SELECT
        t.id,
+       t.tenant_key,
+       t.workspace_key,
        t.mailbox_id,
        t.customer_id,
        t.requester_email,
        t.metadata,
        c.primary_phone
      FROM tickets t
-     LEFT JOIN customers c ON c.id = t.customer_id
+     LEFT JOIN customers c ON c.id = t.customer_id AND c.tenant_key = t.tenant_key
      WHERE t.id = $1
+       AND t.tenant_key = $2
      LIMIT 1`,
-    [ticketId]
+    [ticketId, tenantKey]
   );
   return result.rows[0] ?? null;
 }
 
-export async function getTicketCallOptions(ticketId: string): Promise<TicketCallOptions | null> {
-  const ticket = await getTicketCallContext(ticketId);
+export async function getTicketCallOptions(
+  ticketId: string,
+  scopeInput?: TenantScopeInput
+): Promise<TicketCallOptions | null> {
+  const scope = resolveTenantScope(scopeInput);
+  const ticket = await getTicketCallContext(ticketId, scope);
   if (!ticket) {
     return null;
   }
@@ -235,9 +373,10 @@ export async function getTicketCallOptions(ticketId: string): Promise<TicketCall
       `SELECT id, identity_value, is_primary
        FROM customer_identities
        WHERE customer_id = $1
+         AND tenant_key = $2
          AND identity_type = 'phone'
        ORDER BY is_primary DESC, updated_at ASC`,
-      [ticket.customer_id]
+      [ticket.customer_id, scope.tenantKey]
     );
     for (const identity of identities.rows) {
       pushCandidate({
@@ -284,6 +423,8 @@ export async function getTicketCallOptions(ticketId: string): Promise<TicketCall
     null;
   const requesterEmail = extractRequesterEmail(ticket.requester_email);
   const consent = await getLatestVoiceConsentState({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     customerId: ticket.customer_id,
     phone: defaultCandidatePhone,
     email: requesterEmail
@@ -359,6 +500,8 @@ export function resolveCallPhoneForRequest({
 }
 
 export async function queueOutboundCall({
+  tenantKey,
+  workspaceKey,
   ticketId,
   toPhone,
   reason,
@@ -369,7 +512,8 @@ export async function queueOutboundCall({
   actorIntegrationId,
   metadata
 }: QueueOutboundCallArgs): Promise<QueueOutboundCallResult> {
-  const ticket = await getTicketCallContext(ticketId);
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
+  const ticket = await getTicketCallContext(ticketId, scope);
   if (!ticket) {
     throw new Error("Ticket not found.");
   }
@@ -396,11 +540,12 @@ export async function queueOutboundCall({
       `SELECT id, message_id, to_phone
        FROM call_sessions
        WHERE ticket_id = $1
+         AND tenant_key = $3
          AND direction = 'outbound'
          AND idempotency_key = $2
        ORDER BY created_at DESC
        LIMIT 1`,
-      [ticketId, normalizedIdempotencyKey]
+      [ticketId, normalizedIdempotencyKey, scope.tenantKey]
     );
     const row = existing.rows[0];
     if (row?.message_id) {
@@ -441,14 +586,16 @@ export async function queueOutboundCall({
 
     await client.query(
       `INSERT INTO messages (
-        id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+        id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
         from_email, to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
       ) VALUES (
-        $1, $2, $3, 'outbound', 'voice', $4, $5,
-        $6, $7, $8, $9, $10, true, $11, $12, $13
+        $1, $2, $3, $4, $5, 'outbound', 'voice', $6, $7,
+        $8, $9, $10, $11, $12, true, $13, $14, $15
       )`,
       [
         messageId,
+        scope.tenantKey,
+        scope.workspaceKey,
         ticket.mailbox_id,
         ticketId,
         `voice:${callSessionId}`,
@@ -466,16 +613,18 @@ export async function queueOutboundCall({
 
     await client.query(
       `INSERT INTO call_sessions (
-        id, provider, ticket_id, mailbox_id, message_id, direction, status,
+        id, tenant_key, workspace_key, provider, ticket_id, mailbox_id, message_id, direction, status,
         from_phone, to_phone, queued_at, idempotency_key, created_by,
         created_by_user_id, created_by_integration_id, metadata
       ) VALUES (
-        $1, $2, $3, $4, $5, 'outbound', 'queued',
-        $6, $7, $8, $9, $10,
-        $11, $12, $13
+        $1, $2, $3, $4, $5, $6, $7, 'outbound', 'queued',
+        $8, $9, $10, $11, $12,
+        $13, $14, $15
       )`,
       [
         callSessionId,
+        scope.tenantKey,
+        scope.workspaceKey,
         "pending",
         ticketId,
         ticket.mailbox_id,
@@ -496,6 +645,8 @@ export async function queueOutboundCall({
 
     queuedEventMeta = await appendCallEvent({
       queryExecutor: client,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       callSessionId,
       eventType: "queued",
       occurredAt: queuedAt,
@@ -508,9 +659,11 @@ export async function queueOutboundCall({
     });
 
     await client.query(
-      `INSERT INTO call_outbox_events (direction, payload, status)
-       VALUES ('outbound', $1, 'queued')`,
+      `INSERT INTO call_outbox_events (tenant_key, workspace_key, direction, payload, status)
+       VALUES ($1, $2, 'outbound', $3, 'queued')`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         {
           callSessionId,
           ticketId,
@@ -534,14 +687,15 @@ export async function queueOutboundCall({
         message_id: string | null;
         to_phone: string;
       }>(
-        `SELECT id, message_id, to_phone
+      `SELECT id, message_id, to_phone
          FROM call_sessions
          WHERE ticket_id = $1
+           AND tenant_key = $3
            AND direction = 'outbound'
            AND idempotency_key = $2
          ORDER BY created_at DESC
          LIMIT 1`,
-        [ticketId, normalizedIdempotencyKey]
+        [ticketId, normalizedIdempotencyKey, scope.tenantKey]
       );
       const row = existing.rows[0];
       if (row?.message_id) {
@@ -563,6 +717,8 @@ export async function queueOutboundCall({
     ticketId,
     eventType: origin === "ai" ? "ai_call_queued" : "call_queued",
     actorUserId: actorUserId ?? null,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     data: {
       callSessionId,
       toPhone: normalizedTo
@@ -579,6 +735,8 @@ export async function queueOutboundCall({
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.queued",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     payload: {
       ...callEvent,
       call: {
@@ -619,6 +777,8 @@ export type CallStatus = (typeof CALL_STATUSES)[number];
 
 type CallSessionRow = {
   id: string;
+  tenant_key: string;
+  workspace_key: string;
   ticket_id: string;
   mailbox_id: string | null;
   message_id: string | null;
@@ -737,15 +897,17 @@ function buildCallEventIdempotencyKey(callSessionId: string, sequence: number) {
 
 async function reserveCallEventSequence(
   queryExecutor: CallEventQueryExecutor,
-  callSessionId: string
+  callSessionId: string,
+  tenantKey: string
 ) {
   const result = await queryExecutor.query<{ event_sequence: number | string | null }>(
     `UPDATE call_sessions
      SET event_sequence = event_sequence + 1,
          updated_at = now()
      WHERE id = $1
+       AND tenant_key = $2
      RETURNING event_sequence`,
-    [callSessionId]
+    [callSessionId, tenantKey]
   );
   const sequence = Number(result.rows[0]?.event_sequence ?? 0);
   if (!Number.isFinite(sequence) || sequence < 1) {
@@ -756,23 +918,29 @@ async function reserveCallEventSequence(
 
 async function appendCallEvent({
   queryExecutor,
+  tenantKey,
+  workspaceKey,
   callSessionId,
   eventType,
   occurredAt,
   payload
 }: {
   queryExecutor: CallEventQueryExecutor;
+  tenantKey: string;
+  workspaceKey: string;
   callSessionId: string;
   eventType: string;
   occurredAt: Date;
   payload?: Record<string, unknown> | null;
 }) {
-  const sequence = await reserveCallEventSequence(queryExecutor, callSessionId);
+  const sequence = await reserveCallEventSequence(queryExecutor, callSessionId, tenantKey);
   const eventIdempotencyKey = buildCallEventIdempotencyKey(callSessionId, sequence);
   await queryExecutor.query(
-    `INSERT INTO call_events (call_session_id, event_type, occurred_at, payload)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO call_events (tenant_key, workspace_key, call_session_id, event_type, occurred_at, payload)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
+      tenantKey,
+      workspaceKey,
       callSessionId,
       eventType,
       occurredAt,
@@ -788,7 +956,8 @@ async function appendCallEvent({
 
 async function getCallSessionByProvider(provider: string, providerCallId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
+    `SELECT id, tenant_key, workspace_key,
+            ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
             recording_url, recording_r2_key, transcript_r2_key, metadata
      FROM call_sessions
      WHERE provider = $1
@@ -802,7 +971,8 @@ async function getCallSessionByProvider(provider: string, providerCallId: string
 
 async function getCallSessionById(callSessionId: string) {
   const result = await db.query<CallSessionRow>(
-    `SELECT id, ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
+    `SELECT id, tenant_key, workspace_key,
+            ticket_id, mailbox_id, message_id, provider, provider_call_id, status, event_sequence, to_phone, from_phone,
             recording_url, recording_r2_key, transcript_r2_key, metadata
      FROM call_sessions
      WHERE id = $1
@@ -810,6 +980,28 @@ async function getCallSessionById(callSessionId: string) {
     [callSessionId]
   );
   return result.rows[0] ?? null;
+}
+
+export async function resolveCallSessionProviderScope({
+  callSessionId,
+  provider,
+  providerCallId
+}: {
+  callSessionId?: string | null;
+  provider?: string | null;
+  providerCallId?: string | null;
+}) {
+  const providerValue = readString(provider) ?? "pending";
+  const providerCallIdValue = readString(providerCallId);
+  const session =
+    (callSessionId ? await getCallSessionById(callSessionId) : null) ??
+    (providerCallIdValue ? await getCallSessionByProvider(providerValue, providerCallIdValue) : null);
+  return session
+    ? resolveTenantScope({
+        tenantKey: session.tenant_key,
+        workspaceKey: session.workspace_key
+      })
+    : null;
 }
 
 export async function updateCallSessionStatus({
@@ -837,6 +1029,10 @@ export async function updateCallSessionStatus({
   if (!session) {
     return { status: "not_found" };
   }
+  const sessionScope = resolveTenantScope({
+    tenantKey: session.tenant_key,
+    workspaceKey: session.workspace_key
+  });
 
   const previousStatus = session.status;
   if (!canTransitionCallStatus(previousStatus, statusValue)) {
@@ -880,7 +1076,8 @@ export async function updateCallSessionStatus({
          END,
          recording_url = COALESCE($8, recording_url),
          updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1
+       AND tenant_key = $9`,
     [
       session.id,
       statusValue,
@@ -889,12 +1086,15 @@ export async function updateCallSessionStatus({
       startedAt,
       endedAt,
       nextDuration,
-      recordingUrlValue
+      recordingUrlValue,
+      sessionScope.tenantKey
     ]
   );
 
   const statusEventMeta = await appendCallEvent({
     queryExecutor: db,
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     callSessionId: session.id,
     eventType: statusValue,
     occurredAt: at,
@@ -910,6 +1110,8 @@ export async function updateCallSessionStatus({
       await recordTicketEvent({
         ticketId: session.ticket_id,
         eventType: "call_started",
+        tenantKey: sessionScope.tenantKey,
+        workspaceKey: sessionScope.workspaceKey,
         data: {
           callSessionId: session.id,
           provider: providerValue,
@@ -926,6 +1128,8 @@ export async function updateCallSessionStatus({
       });
       await enqueueAgentEvent({
         eventType: "ticket.call.started",
+        tenantKey: sessionScope.tenantKey,
+        workspaceKey: sessionScope.workspaceKey,
         payload: {
           ...startedEvent,
           call: {
@@ -946,6 +1150,8 @@ export async function updateCallSessionStatus({
       await recordTicketEvent({
         ticketId: session.ticket_id,
         eventType: statusValue === "failed" ? "call_failed" : "call_ended",
+        tenantKey: sessionScope.tenantKey,
+        workspaceKey: sessionScope.workspaceKey,
         data: {
           callSessionId: session.id,
           status: statusValue,
@@ -962,6 +1168,8 @@ export async function updateCallSessionStatus({
       });
       await enqueueAgentEvent({
         eventType: statusValue === "failed" ? "ticket.call.failed" : "ticket.call.ended",
+        tenantKey: sessionScope.tenantKey,
+        workspaceKey: sessionScope.workspaceKey,
         payload: {
           ...terminalEvent,
           call: {
@@ -1017,6 +1225,10 @@ export async function attachCallRecording({
   if (!session) {
     return { status: "not_found" as const };
   }
+  const sessionScope = resolveTenantScope({
+    tenantKey: session.tenant_key,
+    workspaceKey: session.workspace_key
+  });
   const url = readString(recordingUrl);
   if (!url) {
     return { status: "failed" as const, detail: "Recording URL is required." };
@@ -1054,15 +1266,24 @@ export async function attachCallRecording({
               ? "m4a"
               : "mp3";
         uploadedKey = await putObject({
-          key: `messages/${session.message_id}/recording.${ext}`,
+          key: `tenants/${sessionScope.tenantKey}/workspaces/${sessionScope.workspaceKey}/messages/${session.message_id}/recording.${ext}`,
           body: buffer,
           contentType
         });
         attachmentId = randomUUID();
         await db.query(
-          `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [attachmentId, session.message_id, `Call Recording.${ext}`, contentType, buffer.length, uploadedKey]
+          `INSERT INTO attachments (id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            attachmentId,
+            sessionScope.tenantKey,
+            sessionScope.workspaceKey,
+            session.message_id,
+            `Call Recording.${ext}`,
+            contentType,
+            buffer.length,
+            uploadedKey
+          ]
         );
         canonicalRecordingUrl = `/api/attachments/${attachmentId}?disposition=inline`;
       }
@@ -1084,12 +1305,15 @@ export async function attachCallRecording({
          recording_r2_key = COALESCE($3, recording_r2_key),
          duration_seconds = COALESCE($4, duration_seconds),
          updated_at = now()
-     WHERE id = $1`,
-    [session.id, canonicalRecordingUrl, uploadedKey, parsedDuration]
+     WHERE id = $1
+       AND tenant_key = $5`,
+    [session.id, canonicalRecordingUrl, uploadedKey, parsedDuration, sessionScope.tenantKey]
   );
 
   const recordingEventMeta = await appendCallEvent({
     queryExecutor: db,
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     callSessionId: session.id,
     eventType: "recording_ready",
     occurredAt: at,
@@ -1105,6 +1329,8 @@ export async function attachCallRecording({
   await recordTicketEvent({
     ticketId: session.ticket_id,
     eventType: "call_recording_ready",
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     data: {
       callSessionId: session.id,
       recordingUrl: canonicalRecordingUrl,
@@ -1122,6 +1348,8 @@ export async function attachCallRecording({
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.recording.ready",
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     payload: {
       ...recordingEvent,
       call: {
@@ -1139,6 +1367,8 @@ export async function attachCallRecording({
 
   if (uploadedKey && !session.transcript_r2_key) {
     await enqueueCallTranscriptJob({
+      tenantKey: sessionScope.tenantKey,
+      workspaceKey: sessionScope.workspaceKey,
       callSessionId: session.id,
       recordingR2Key: uploadedKey,
       metadata: {
@@ -1186,6 +1416,10 @@ export async function attachCallTranscript({
   if (!session) {
     return { status: "not_found" as const };
   }
+  const sessionScope = resolveTenantScope({
+    tenantKey: session.tenant_key,
+    workspaceKey: session.workspace_key
+  });
 
   let transcript = readString(transcriptText);
   const transcriptUrlValue = readString(transcriptUrl);
@@ -1213,7 +1447,7 @@ export async function attachCallTranscript({
     try {
       const buffer = Buffer.from(transcript, "utf8");
       uploadedKey = await putObject({
-        key: `messages/${session.message_id}/transcript.txt`,
+        key: `tenants/${sessionScope.tenantKey}/workspaces/${sessionScope.workspaceKey}/messages/${session.message_id}/transcript.txt`,
         body: buffer,
         contentType: "text/plain; charset=utf-8"
       });
@@ -1222,9 +1456,10 @@ export async function attachCallTranscript({
         `SELECT id
          FROM attachments
          WHERE message_id = $1
+           AND tenant_key = $2
            AND filename = 'Call Transcript.txt'
          LIMIT 1`,
-        [session.message_id]
+        [session.message_id, sessionScope.tenantKey]
       );
       attachmentId = existingAttachment.rows[0]?.id ?? randomUUID();
 
@@ -1234,15 +1469,18 @@ export async function attachCallTranscript({
            SET content_type = $2,
                size_bytes = $3,
                r2_key = $4
-           WHERE id = $1`,
-          [attachmentId, "text/plain; charset=utf-8", buffer.length, uploadedKey]
+           WHERE id = $1
+             AND tenant_key = $5`,
+          [attachmentId, "text/plain; charset=utf-8", buffer.length, uploadedKey, sessionScope.tenantKey]
         );
       } else {
         await db.query(
-          `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO attachments (id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             attachmentId,
+            sessionScope.tenantKey,
+            sessionScope.workspaceKey,
             session.message_id,
             "Call Transcript.txt",
             "text/plain; charset=utf-8",
@@ -1261,17 +1499,21 @@ export async function attachCallTranscript({
     `UPDATE call_sessions
      SET transcript_r2_key = COALESCE($2, transcript_r2_key),
          updated_at = now()
-     WHERE id = $1`,
-    [session.id, uploadedKey]
+     WHERE id = $1
+       AND tenant_key = $3`,
+    [session.id, uploadedKey, sessionScope.tenantKey]
   );
 
   await markTranscriptJobCompleted({
     callSessionId: session.id,
+    scope: sessionScope,
     transcriptR2Key: uploadedKey
   });
 
   const transcriptEventMeta = await appendCallEvent({
     queryExecutor: db,
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     callSessionId: session.id,
     eventType: "transcript_ready",
     occurredAt: at,
@@ -1286,6 +1528,8 @@ export async function attachCallTranscript({
   await recordTicketEvent({
     ticketId: session.ticket_id,
     eventType: "call_transcript_ready",
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     data: {
       callSessionId: session.id,
       transcriptR2Key: uploadedKey,
@@ -1303,6 +1547,8 @@ export async function attachCallTranscript({
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.transcript.ready",
+    tenantKey: sessionScope.tenantKey,
+    workspaceKey: sessionScope.workspaceKey,
     payload: {
       ...transcriptEvent,
       call: {
@@ -1319,6 +1565,8 @@ export async function attachCallTranscript({
 
   if (uploadedKey) {
     await enqueueCallTranscriptAiJob({
+      tenantKey: sessionScope.tenantKey,
+      workspaceKey: sessionScope.workspaceKey,
       callSessionId: session.id,
       transcriptR2Key: uploadedKey,
       metadata: {
@@ -1340,34 +1588,39 @@ export async function attachCallTranscript({
   };
 }
 
-async function findActiveTicketForInboundPhone(phone: string) {
+async function findActiveTicketForInboundPhone(phone: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const requesterKey = `voice:${phone}`;
   const result = await db.query<{ id: string; mailbox_id: string | null }>(
     `SELECT t.id, t.mailbox_id
      FROM tickets t
-     WHERE t.merged_into_ticket_id IS NULL
+     WHERE t.tenant_key = $1
+       AND t.merged_into_ticket_id IS NULL
        AND (
-         t.requester_email = $1
+         t.requester_email = $2
          OR EXISTS (
            SELECT 1
            FROM messages m
            WHERE m.ticket_id = t.id
+             AND m.tenant_key = t.tenant_key
              AND m.channel IN ('voice', 'whatsapp')
              AND (
-               m.from_email = $1
-               OR lower(m.from_email) = lower($2)
-               OR COALESCE(m.wa_contact, '') = $2
+               m.from_email = $2
+               OR lower(m.from_email) = lower($3)
+               OR COALESCE(m.wa_contact, '') = $3
              )
          )
        )
      ORDER BY t.updated_at DESC
      LIMIT 1`,
-    [requesterKey, phone]
+    [tenantKey, requesterKey, phone]
   );
   return result.rows[0] ?? null;
 }
 
 export async function createOrUpdateInboundCall({
+  tenantKey,
+  workspaceKey,
   provider,
   providerCallId,
   fromPhone,
@@ -1378,6 +1631,8 @@ export async function createOrUpdateInboundCall({
   ticketId,
   metadata
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   provider?: string | null;
   providerCallId?: string | null;
   fromPhone: string;
@@ -1388,12 +1643,14 @@ export async function createOrUpdateInboundCall({
   ticketId?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const requestedScope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedFrom = normalizeCallPhone(fromPhone);
   if (!normalizedFrom) {
     throw new Error("Invalid caller phone number.");
   }
 
-  const normalizedTo = normalizeCallPhone(toPhone) ?? normalizeCallPhone(getSupportAddress()) ?? "unknown";
+  const normalizedProviderTo = normalizeCallPhone(toPhone);
+  const normalizedTo = normalizedProviderTo ?? normalizeCallPhone(getSupportAddress()) ?? "unknown";
   const providerValue = readString(provider) ?? "pending";
   const providerCallIdValue = readString(providerCallId);
   const statusValue = parseStatus(status ?? undefined) ?? "ringing";
@@ -1420,9 +1677,30 @@ export async function createOrUpdateInboundCall({
     }
   }
 
+  const routedScope = await resolveInboundCallProviderScope({
+    provider: providerValue,
+    toPhone: normalizedProviderTo,
+    metadata,
+    scopeInput: hasExplicitScope({ tenantKey, workspaceKey }) ? requestedScope : undefined
+  });
+  if (!routedScope && shouldRequireTenantIngressScope()) {
+    throw new InboundCallProviderRoutingError(
+      "No tenant route matched inbound call destination phone or provider account.",
+      "unresolved_call_provider_route",
+      404
+    );
+  }
+  const inboundScope = routedScope ?? requestedScope;
+
   const supportAddress = getSupportAddress();
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, inboundScope);
+  const scope = resolveTenantScope({
+    tenantKey: mailbox.tenant_key ?? inboundScope.tenantKey,
+    workspaceKey: mailbox.workspace_key ?? inboundScope.workspaceKey
+  });
   const inboundCustomer = await resolveOrCreateCustomerForInbound({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     inboundPhone: normalizedFrom
   });
 
@@ -1433,18 +1711,19 @@ export async function createOrUpdateInboundCall({
       const customerTicket = await db.query<{ id: string; mailbox_id: string | null }>(
         `SELECT id, mailbox_id
          FROM tickets
-         WHERE customer_id = $1
+         WHERE tenant_key = $1
+           AND customer_id = $2
            AND merged_into_ticket_id IS NULL
          ORDER BY updated_at DESC
          LIMIT 1`,
-        [inboundCustomer.customerId]
+        [scope.tenantKey, inboundCustomer.customerId]
       );
       resolvedTicketId = customerTicket.rows[0]?.id ?? null;
       resolvedMailboxId = customerTicket.rows[0]?.mailbox_id ?? null;
     }
   }
   if (!resolvedTicketId) {
-    const byPhone = await findActiveTicketForInboundPhone(normalizedFrom);
+    const byPhone = await findActiveTicketForInboundPhone(normalizedFrom, scope);
     resolvedTicketId = byPhone?.id ?? null;
     resolvedMailboxId = byPhone?.mailbox_id ?? null;
   }
@@ -1454,6 +1733,8 @@ export async function createOrUpdateInboundCall({
     const subject = `Inbound call from ${normalizedFrom}`;
     const inferredTags = inferTagsFromText({ subject, text: null });
     resolvedTicketId = await createTicket({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       mailboxId: mailbox.id,
       customerId: inboundCustomer?.customerId ?? null,
       requesterEmail: `voice:${normalizedFrom}`,
@@ -1468,12 +1749,19 @@ export async function createOrUpdateInboundCall({
     });
     resolvedMailboxId = mailbox.id;
     createdTicket = true;
-    await recordTicketEvent({ ticketId: resolvedTicketId, eventType: "ticket_created" });
+    await recordTicketEvent({
+      ticketId: resolvedTicketId,
+      eventType: "ticket_created",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
+    });
     if (inferredTags.length) {
-      await addTagsToTicket(resolvedTicketId, inferredTags);
+      await addTagsToTicket(resolvedTicketId, inferredTags, scope);
       await recordTicketEvent({
         ticketId: resolvedTicketId,
         eventType: "tags_assigned",
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         data: { tags: inferredTags }
       });
     }
@@ -1483,14 +1771,15 @@ export async function createOrUpdateInboundCall({
         `SELECT mailbox_id
          FROM tickets
          WHERE id = $1
+           AND tenant_key = $2
          LIMIT 1`,
-        [resolvedTicketId]
+        [resolvedTicketId, scope.tenantKey]
       );
       resolvedMailboxId = existingTicket.rows[0]?.mailbox_id ?? null;
     }
-    await reopenTicketIfNeeded(resolvedTicketId);
+    await reopenTicketIfNeeded(resolvedTicketId, scope);
     if (inboundCustomer?.customerId) {
-      await attachCustomerToTicket(resolvedTicketId, inboundCustomer.customerId);
+      await attachCustomerToTicket(resolvedTicketId, inboundCustomer.customerId, scope);
     }
   }
   const mailboxIdForTicket = resolvedMailboxId ?? mailbox.id;
@@ -1502,14 +1791,16 @@ export async function createOrUpdateInboundCall({
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
       from_email, to_emails, subject, preview_text, received_at, is_read, metadata
     ) VALUES (
-      $1, $2, $3, 'inbound', 'voice', $4, $5,
-      $6, $7, $8, $9, $10, false, $11
+      $1, $2, $3, $4, $5, 'inbound', 'voice', $6, $7,
+      $8, $9, $10, $11, $12, false, $13
     )`,
     [
       messageId,
+      scope.tenantKey,
+      scope.workspaceKey,
       mailboxIdForTicket,
       resolvedTicketId,
       providerCallIdValue ?? `voice:${callSessionId}`,
@@ -1529,14 +1820,16 @@ export async function createOrUpdateInboundCall({
 
   await db.query(
     `INSERT INTO call_sessions (
-      id, provider, provider_call_id, ticket_id, mailbox_id, message_id, direction, status,
+      id, tenant_key, workspace_key, provider, provider_call_id, ticket_id, mailbox_id, message_id, direction, status,
       from_phone, to_phone, queued_at, started_at, duration_seconds, created_by, metadata
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, 'inbound', $7,
-      $8, $9, $10, $11, $12, 'system', $13
+      $1, $2, $3, $4, $5, $6, $7, $8, 'inbound', $9,
+      $10, $11, $12, $13, $14, 'system', $15
     )`,
     [
       callSessionId,
+      scope.tenantKey,
+      scope.workspaceKey,
       providerValue,
       providerCallIdValue,
       resolvedTicketId,
@@ -1554,6 +1847,8 @@ export async function createOrUpdateInboundCall({
 
   const inboundEventMeta = await appendCallEvent({
     queryExecutor: db,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     callSessionId,
     eventType: statusValue,
     occurredAt: at,
@@ -1563,6 +1858,8 @@ export async function createOrUpdateInboundCall({
   await recordTicketEvent({
     ticketId: resolvedTicketId,
     eventType: "call_received",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     data: {
       callSessionId,
       fromPhone: normalizedFrom,
@@ -1580,6 +1877,8 @@ export async function createOrUpdateInboundCall({
   });
   await enqueueAgentEvent({
     eventType: "ticket.call.received",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     payload: {
       ...inboundEvent,
       call: {
@@ -1603,7 +1902,12 @@ export async function createOrUpdateInboundCall({
       excerpt: preview,
       threadId: callSessionId
     });
-    await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+    await enqueueAgentEvent({
+      eventType: "ticket.created",
+      payload: ticketEvent,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
+    });
   }
   void deliverPendingAgentEvents().catch(() => {});
 

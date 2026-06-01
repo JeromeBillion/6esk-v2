@@ -60,7 +60,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
     });
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM customers"),
-      ["prediction-market-mvp", "user-123"]
+      ["primary", "prediction-market-mvp", "user-123"]
     );
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE customers"),

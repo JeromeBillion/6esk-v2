@@ -1,10 +1,13 @@
 import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type NumericLike = number | string | null | undefined;
 
 type EmailOutboxEventRow = {
   id: string;
+  tenant_key: string;
+  workspace_key: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -59,7 +62,12 @@ function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
-async function lockPendingEvents(limit: number, processingRecoverySeconds: number) {
+async function lockPendingEvents(
+  limit: number,
+  processingRecoverySeconds: number,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -72,6 +80,7 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
          SELECT id
          FROM email_outbox_events
          WHERE direction = 'outbound'
+           ${scope ? "AND tenant_key = $3" : ""}
            AND (
              (status = 'queued' AND next_attempt_at <= now())
              OR (
@@ -83,8 +92,8 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
-      [limit, processingRecoverySeconds]
+       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
+      scope ? [limit, processingRecoverySeconds, scope.tenantKey] : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -96,13 +105,14 @@ async function lockPendingEvents(limit: number, processingRecoverySeconds: numbe
   }
 }
 
-async function loadOutboxMessage(messageId: string) {
+async function loadOutboxMessage(messageId: string, tenantKey: string) {
   const messageResult = await db.query<OutboxMessageRow>(
     `SELECT id, r2_key_text, r2_key_html, message_id, in_reply_to, reference_ids
      FROM messages
      WHERE id = $1
+       AND tenant_key = $2
      LIMIT 1`,
-    [messageId]
+    [messageId, tenantKey]
   );
   const message = messageResult.rows[0];
   if (!message) {
@@ -113,8 +123,9 @@ async function loadOutboxMessage(messageId: string) {
     `SELECT filename, content_type, r2_key
      FROM attachments
      WHERE message_id = $1
+       AND tenant_key = $2
      ORDER BY created_at ASC`,
-    [messageId]
+    [messageId, tenantKey]
   );
 
   const text = message.r2_key_text ? (await getObjectBuffer(message.r2_key_text)).buffer.toString("utf-8") : null;
@@ -139,14 +150,14 @@ async function loadOutboxMessage(messageId: string) {
   };
 }
 
-async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>) {
+async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>, tenantKey: string) {
   const messageRecordId =
     typeof payload.messageRecordId === "string" ? payload.messageRecordId : null;
   if (!messageRecordId) {
     throw new Error("Email outbox payload missing messageRecordId");
   }
 
-  const { message, text, html, attachments } = await loadOutboxMessage(messageRecordId);
+  const { message, text, html, attachments } = await loadOutboxMessage(messageRecordId, tenantKey);
   const from = typeof payload.from === "string" ? payload.from : "";
   const to = Array.isArray(payload.to) ? payload.to.filter((value): value is string => typeof value === "string") : [];
   const cc = Array.isArray(payload.cc) ? payload.cc.filter((value): value is string => typeof value === "string") : [];
@@ -202,13 +213,19 @@ async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>
   };
 }
 
-async function markDelivered(eventId: string, messageRecordId: string | null, providerMessageId: string | null) {
+async function markDelivered(
+  eventId: string,
+  messageRecordId: string | null,
+  providerMessageId: string | null,
+  tenantKey: string
+) {
   await db.query(
     `UPDATE email_outbox_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_key = $2`,
+    [eventId, tenantKey]
   );
 
   if (!messageRecordId) {
@@ -225,12 +242,19 @@ async function markDelivered(eventId: string, messageRecordId: string | null, pr
            'sent_via_outbox_at', now()::text,
            'last_send_error', NULL
          )
-     WHERE id = $2`,
-    [providerMessageId, messageRecordId]
+     WHERE id = $2
+       AND tenant_key = $3`,
+    [providerMessageId, messageRecordId, tenantKey]
   );
 }
 
-async function markFailed(eventId: string, attemptCount: number, errorMessage: string, messageRecordId: string | null) {
+async function markFailed(
+  eventId: string,
+  attemptCount: number,
+  errorMessage: string,
+  messageRecordId: string | null,
+  tenantKey: string
+) {
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
 
@@ -241,8 +265,9 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_key = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, tenantKey]
   );
 
   if (messageRecordId) {
@@ -252,24 +277,32 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          'mail_state', $1,
          'last_send_error', $2
        )
-       WHERE id = $3`,
-      [status === "failed" ? "failed" : "queued", errorMessage.slice(0, 500), messageRecordId]
+       WHERE id = $3
+         AND tenant_key = $4`,
+      [status === "failed" ? "failed" : "queued", errorMessage.slice(0, 500), messageRecordId, tenantKey]
     );
   }
 }
 
-export async function enqueueEmailOutboxEvent(payload: Record<string, unknown>) {
+export async function enqueueEmailOutboxEvent(
+  payload: Record<string, unknown>,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
   const result = await db.query<{ id: string }>(
-    `INSERT INTO email_outbox_events (direction, payload, status)
-     VALUES ('outbound', $1::jsonb, 'queued')
+    `INSERT INTO email_outbox_events (tenant_key, workspace_key, direction, payload, status)
+     VALUES ($1, $2, 'outbound', $3::jsonb, 'queued')
      RETURNING id`,
-    [payload]
+    [scope.tenantKey, scope.workspaceKey, payload]
   );
   return result.rows[0]?.id ?? null;
 }
 
-export async function deliverPendingEmailOutboxEvents({ limit = 5 }: DeliverArgs = {}) {
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds());
+export async function deliverPendingEmailOutboxEvents(
+  { limit = 5 }: DeliverArgs = {},
+  scopeInput?: TenantScopeInput
+) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
@@ -287,24 +320,26 @@ export async function deliverPendingEmailOutboxEvents({ limit = 5 }: DeliverArgs
              'mail_state', 'processing',
              'last_send_error', NULL
            )
-           WHERE id = $1`,
-          [messageRecordId]
+           WHERE id = $1
+             AND tenant_key = $2`,
+          [messageRecordId, event.tenant_key]
         );
       }
 
-      const { providerMessageId } = await sendQueuedEmail(event.id, payload);
-      await markDelivered(event.id, messageRecordId, providerMessageId);
+      const { providerMessageId } = await sendQueuedEmail(event.id, payload, event.tenant_key);
+      await markDelivered(event.id, messageRecordId, providerMessageId, event.tenant_key);
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Email outbox delivery failed";
-      await markFailed(event.id, event.attempt_count + 1, message, messageRecordId);
+      await markFailed(event.id, event.attempt_count + 1, message, messageRecordId, event.tenant_key);
     }
   }
 
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function getEmailOutboxMetrics() {
+export async function getEmailOutboxMetrics(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const summaryResult = await db.query<EmailOutboxSummaryRow>(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
@@ -320,7 +355,9 @@ export async function getEmailOutboxMetrics() {
        MAX(updated_at) FILTER (WHERE status = 'sent') AS last_sent_at,
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM email_outbox_events
-     WHERE direction = 'outbound'`
+     WHERE direction = 'outbound'
+       ${scope ? "AND tenant_key = $1" : ""}`,
+    scope ? [scope.tenantKey] : []
   );
 
   const summary = summaryResult.rows[0] ?? {

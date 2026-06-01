@@ -38,6 +38,11 @@ import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import {
+  isTenantIngressScopeError,
+  tenantScopeFromMachineRequestAsync,
+  tenantScopeFromUser
+} from "@/server/tenant-context";
 
 const createTicketSchema = z.object({
   contactMode: z.enum(["email", "whatsapp", "call"]).optional(),
@@ -239,6 +244,15 @@ export async function POST(request: Request) {
   if (!sessionUser && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  let scope;
+  try {
+    scope = sessionUser ? tenantScopeFromUser(sessionUser) : await tenantScopeFromMachineRequestAsync(request);
+  } catch (error) {
+    if (isTenantIngressScopeError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
 
   let payload: unknown;
   try {
@@ -261,7 +275,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Support address not configured" }, { status: 500 });
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, scope);
   const inferredTags = data.tags?.length
     ? data.tags
     : inferTagsFromText({ subject: data.subject, text: data.description ?? null });
@@ -276,13 +290,13 @@ export async function POST(request: Request) {
         ? "whatsapp"
         : "email";
 
-  if (contactMode === "call" && !(await isWorkspaceModuleEnabled("voice"))) {
+  if (contactMode === "call" && !(await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey))) {
     return moduleDisabledResponse("voice");
   }
-  if (contactMode === "whatsapp" && !(await isWorkspaceModuleEnabled("whatsapp"))) {
+  if (contactMode === "whatsapp" && !(await isWorkspaceModuleEnabled("whatsapp", scope.workspaceKey, scope.tenantKey))) {
     return moduleDisabledResponse("whatsapp");
   }
-  if (contactMode === "email" && !(await isWorkspaceModuleEnabled("email"))) {
+  if (contactMode === "email" && !(await isWorkspaceModuleEnabled("email", scope.workspaceKey, scope.tenantKey))) {
     return moduleDisabledResponse("email");
   }
 
@@ -302,9 +316,13 @@ export async function POST(request: Request) {
       } as Record<string, unknown>;
 
       const customerResolution = await resolveOrCreateCustomerForInbound({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         inboundPhone: toPhone
       });
       await syncVoiceConsentFromMetadata({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         metadata: callTicketMetadata,
         customerId: customerResolution?.customerId ?? null,
         fallbackPhone: toPhone,
@@ -317,12 +335,16 @@ export async function POST(request: Request) {
         }
       });
       const consentState = await getLatestVoiceConsentState({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         customerId: customerResolution?.customerId ?? null,
         phone: toPhone
       });
 
       const maxCallsPerHour = Number(process.env.RATE_LIMIT_CALLS_OUTBOUND ?? "0");
       const policyCheck = await evaluateVoiceCallPolicy({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         actor: "human",
         policy: getHumanVoicePolicyFromEnv(),
         ticketMetadata: callTicketMetadata,
@@ -343,6 +365,8 @@ export async function POST(request: Request) {
       }
 
       const ticketId = await createTicket({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         mailboxId: mailbox.id,
         customerId: customerResolution?.customerId ?? null,
         requesterEmail: `voice:${toPhone}`,
@@ -354,20 +378,26 @@ export async function POST(request: Request) {
       await recordTicketEvent({
         ticketId,
         eventType: "ticket_created",
-        actorUserId: sessionUser.id
+        actorUserId: sessionUser.id,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
       });
 
       if (inferredTags.length) {
-        await addTagsToTicket(ticketId, inferredTags);
+        await addTagsToTicket(ticketId, inferredTags, scope);
         await recordTicketEvent({
           ticketId,
           eventType: "tags_assigned",
           actorUserId: sessionUser.id,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { tags: inferredTags }
         });
       }
 
       const queuedCall = await queueOutboundCall({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         ticketId,
         toPhone,
         reason: descriptionText || data.subject,
@@ -384,10 +414,17 @@ export async function POST(request: Request) {
         excerpt: previewText || data.subject,
         threadId: queuedCall.callSessionId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      await enqueueAgentEvent({
+        eventType: "ticket.created",
+        payload: ticketEvent,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
+      });
       void deliverPendingAgentEvents().catch(() => {});
 
       await recordModuleUsageEvent({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         moduleKey: "voice",
         usageKind: "ticket_created_outbound",
         actorType: "human",
@@ -422,6 +459,8 @@ export async function POST(request: Request) {
       }
 
       const customerResolution = await resolveOrCreateCustomerForInbound({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         inboundPhone: toPhone
       });
       const whatsappTicketMetadata = {
@@ -431,6 +470,8 @@ export async function POST(request: Request) {
         ...(data.metadata ?? {})
       } as Record<string, unknown>;
       await syncVoiceConsentFromMetadata({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         metadata: whatsappTicketMetadata,
         customerId: customerResolution?.customerId ?? null,
         fallbackPhone: toPhone,
@@ -444,6 +485,8 @@ export async function POST(request: Request) {
       });
 
       const ticketId = await createTicket({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         mailboxId: mailbox.id,
         customerId: customerResolution?.customerId ?? null,
         requesterEmail: `whatsapp:${toPhone}`,
@@ -455,20 +498,26 @@ export async function POST(request: Request) {
       await recordTicketEvent({
         ticketId,
         eventType: "ticket_created",
-        actorUserId: sessionUser.id
+        actorUserId: sessionUser.id,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
       });
 
       if (inferredTags.length) {
-        await addTagsToTicket(ticketId, inferredTags);
+        await addTagsToTicket(ticketId, inferredTags, scope);
         await recordTicketEvent({
           ticketId,
           eventType: "tags_assigned",
           actorUserId: sessionUser.id,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           data: { tags: inferredTags }
         });
       }
 
       const queuedMessage = await queueWhatsAppSend({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         ticketId,
         to: toPhone,
         text: descriptionText || undefined,
@@ -485,7 +534,12 @@ export async function POST(request: Request) {
         excerpt: previewText || data.subject,
         threadId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+      await enqueueAgentEvent({
+        eventType: "ticket.created",
+        payload: ticketEvent,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
+      });
 
       if (queuedMessage.messageId) {
         const messageEvent = buildAgentEvent({
@@ -496,11 +550,18 @@ export async function POST(request: Request) {
           excerpt: previewText || data.subject,
           threadId
         });
-        await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+        await enqueueAgentEvent({
+          eventType: "ticket.message.created",
+          payload: messageEvent,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey
+        });
       }
 
       void deliverPendingAgentEvents().catch(() => {});
       await recordModuleUsageEvent({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         moduleKey: "whatsapp",
         usageKind: "ticket_created_outbound",
         actorType: "human",
@@ -532,6 +593,8 @@ export async function POST(request: Request) {
       ...(data.metadata ?? {})
     } as Record<string, unknown>;
     const created = await createOutboundEmailTicket({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: sessionUser.id,
       toEmail,
       subject: data.subject,
@@ -547,6 +610,8 @@ export async function POST(request: Request) {
     const ticketId = created.ticketId;
     const messageId = created.messageId;
     await recordModuleUsageEvent({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       moduleKey: "email",
       usageKind: "ticket_created_outbound",
       actorType: "human",
@@ -580,6 +645,8 @@ export async function POST(request: Request) {
   });
   const resolvedProfile = readProfileFromMetadata(enrichedMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     profile: resolvedProfile,
     inboundEmail: fromEmail
   });
@@ -587,6 +654,8 @@ export async function POST(request: Request) {
     enrichedMetadata = applyIdentityConflictMetadata(enrichedMetadata, customerResolution.conflict);
   }
   await syncVoiceConsentFromMetadata({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     metadata: enrichedMetadata,
     customerId: customerResolution?.customerId ?? null,
     fallbackEmail: fromEmail,
@@ -600,6 +669,8 @@ export async function POST(request: Request) {
   });
 
   const ticketId = await createTicket({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     mailboxId: mailbox.id,
     customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
@@ -608,19 +679,28 @@ export async function POST(request: Request) {
     metadata: enrichedMetadata
   });
 
-  await recordTicketEvent({ ticketId, eventType: "ticket_created" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "ticket_created",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   if (inferredTags.length) {
-    await addTagsToTicket(ticketId, inferredTags);
+    await addTagsToTicket(ticketId, inferredTags, scope);
     await recordTicketEvent({
       ticketId,
       eventType: "tags_assigned",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { tags: inferredTags }
     });
   }
 
   if (resolvedProfile && !customerResolution?.conflict) {
     await upsertExternalUserLink({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       externalSystem: "prediction-market-mvp",
       profile: resolvedProfile,
       matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
@@ -631,6 +711,8 @@ export async function POST(request: Request) {
     await recordTicketEvent({
       ticketId,
       eventType: "profile_enriched",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: {
         source: "prediction-market-mvp",
         matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
@@ -641,6 +723,8 @@ export async function POST(request: Request) {
     await recordTicketEvent({
       ticketId,
       eventType: "customer_identity_conflict",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: {
         source: "prediction-market-mvp",
         matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
@@ -654,14 +738,16 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, received_at, is_read
     ) VALUES (
-      $1, $2, $3, 'inbound', $4, $5, $6,
-      $7, $8, $9, $10, false
+      $1, $2, $3, $4, $5, 'inbound', $6, $7, $8,
+      $9, $10, $11, $12, false
     )`,
     [
       messageId,
+      scope.tenantKey,
+      scope.workspaceKey,
       mailbox.id,
       ticketId,
       messageId,
@@ -674,7 +760,7 @@ export async function POST(request: Request) {
     ]
   );
 
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -709,10 +795,14 @@ export async function POST(request: Request) {
       });
 
       await db.query(
-        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO attachments (
+           id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           attachmentId,
+          scope.tenantKey,
+          scope.workspaceKey,
           messageId,
           attachment.filename,
           attachment.contentType ?? null,
@@ -726,8 +816,9 @@ export async function POST(request: Request) {
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
-     WHERE id = $4`,
-    [textKey, htmlKey, sizeBytes || null, messageId]
+     WHERE id = $4
+       AND tenant_key = $5`,
+    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey]
   );
 
   if (customerResolution?.customerId) {
@@ -740,6 +831,8 @@ export async function POST(request: Request) {
     });
     await enqueueAgentEvent({
       eventType: "customer.identity.resolved",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       payload: {
         ...identityEvent,
         customer: {
@@ -756,7 +849,12 @@ export async function POST(request: Request) {
       });
   }
 
-  await recordTicketEvent({ ticketId, eventType: "message_received" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "message_received",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   const threadId = messageId;
   const messageEvent = buildAgentEvent({
@@ -775,11 +873,23 @@ export async function POST(request: Request) {
     threadId
   });
 
-  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+  await enqueueAgentEvent({
+    eventType: "ticket.message.created",
+    payload: messageEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
+  await enqueueAgentEvent({
+    eventType: "ticket.created",
+    payload: ticketEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
   void deliverPendingAgentEvents().catch(() => {});
 
   await recordModuleUsageEvent({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     moduleKey: "email",
     usageKind: "ticket_created_inbound",
     actorType: "system",

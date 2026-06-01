@@ -98,6 +98,9 @@ describe("mail draft routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.deleteMailDraft).toHaveBeenCalledWith("draft-1", "mailbox-1");
+    expect(mocks.deleteMailDraft).toHaveBeenCalledWith("draft-1", "mailbox-1", {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
   });
 });

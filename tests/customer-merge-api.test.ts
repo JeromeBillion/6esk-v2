@@ -85,6 +85,8 @@ describe("POST /api/customers/merge", () => {
       sourceCustomerId: SOURCE_CUSTOMER_ID,
       targetCustomerId: TARGET_CUSTOMER_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      tenantKey: "primary",
+      workspaceKey: "primary",
       reason: null
     });
   });

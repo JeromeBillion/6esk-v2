@@ -101,6 +101,8 @@ describe("POST /api/tickets/link", () => {
       sourceTicketId: SOURCE_TICKET_ID,
       targetTicketId: TARGET_TICKET_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      tenantKey: "primary",
+      workspaceKey: "primary",
       reason: "Same issue moved to WhatsApp"
     });
   });

@@ -12,6 +12,8 @@ const {
   CRM_CALLS_TO_PHONE,
   CRM_CALLS_CANDIDATE_ID,
   CRM_CALLS_FROM_PHONE,
+  CRM_CALLS_TENANT_KEY = "primary",
+  CRM_CALLS_WORKSPACE_KEY = "primary",
   CRM_CALLS_VENUS_EVENTS_URL,
   CRM_CALLS_VENUS_EVENTS_TOKEN,
   DATABASE_URL
@@ -200,7 +202,14 @@ function readEventSequence(item) {
   return null;
 }
 
-async function verifyLocalAgentOutboxSequence(callSessionId) {
+function crmCallsScope() {
+  return {
+    tenantKey: String(CRM_CALLS_TENANT_KEY || "primary").trim() || "primary",
+    workspaceKey: String(CRM_CALLS_WORKSPACE_KEY || "primary").trim() || "primary"
+  };
+}
+
+async function verifyLocalAgentOutboxSequence(callSessionId, scope = crmCallsScope()) {
   if (!DATABASE_URL) {
     return {
       skipped: true,
@@ -214,10 +223,12 @@ async function verifyLocalAgentOutboxSequence(callSessionId) {
     const result = await client.query(
       `SELECT event_type, payload, created_at
        FROM agent_outbox
-       WHERE event_type LIKE 'ticket.call.%'
-         AND payload->'call'->>'id' = $1
+       WHERE tenant_key = $1
+         AND workspace_key = $2
+         AND event_type LIKE 'ticket.call.%'
+         AND payload->'call'->>'id' = $3
        ORDER BY created_at ASC`,
-      [callSessionId]
+      [scope.tenantKey, scope.workspaceKey, callSessionId]
     );
     if (!result.rows.length) {
       return {
@@ -510,7 +521,17 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message || error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message || error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  crmCallsScope,
+  readEventCallSessionId,
+  readEventSequence,
+  readEventType,
+  verifyLocalAgentOutboxSequence
+};

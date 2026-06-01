@@ -31,11 +31,13 @@ export function getR2Client() {
 export async function putObject({
   key,
   body,
-  contentType
+  contentType,
+  metadata
 }: {
   key: string;
   body: Buffer | string;
   contentType?: string;
+  metadata?: Record<string, string>;
 }) {
   const bucket = process.env.R2_BUCKET;
   if (!bucket) {
@@ -48,7 +50,8 @@ export async function putObject({
       Bucket: bucket,
       Key: key,
       Body: body,
-      ContentType: contentType
+      ContentType: contentType,
+      Metadata: metadata
     })
   );
 

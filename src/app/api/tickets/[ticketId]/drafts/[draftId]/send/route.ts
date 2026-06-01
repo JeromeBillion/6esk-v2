@@ -6,6 +6,7 @@ import { sendTicketReply } from "@/server/email/replies";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
 import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function inferDraftReplyModule(input: {
   requesterEmail: string | null | undefined;
@@ -31,7 +32,8 @@ export async function POST(
   }
 
   const { ticketId, draftId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const scope = tenantScopeFromUser(user);
+  const ticket = await getTicketById(ticketId, scope);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -41,7 +43,12 @@ export async function POST(
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const draft = await getDraftById({ ticketId, draftId });
+  const draft = await getDraftById({
+    ticketId,
+    draftId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
   if (!draft) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -67,7 +74,7 @@ export async function POST(
     requesterEmail: ticket.requester_email,
     hasTemplate: Boolean(template)
   });
-  if (!(await isWorkspaceModuleEnabled(replyModule))) {
+  if (!(await isWorkspaceModuleEnabled(replyModule, scope.workspaceKey, scope.tenantKey))) {
     const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
     return Response.json(
       {
@@ -81,6 +88,8 @@ export async function POST(
 
   try {
     const result = await sendTicketReply({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       ticketId,
       text: draft.body_text,
       html: draft.body_html,
@@ -98,7 +107,9 @@ export async function POST(
     const updated = await updateDraftStatus({
       draftId,
       ticketId,
-      status: "used"
+      status: "used",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
     });
 
     if (!updated) {
@@ -109,16 +120,22 @@ export async function POST(
       ticketId,
       eventType: "ai_draft_used",
       actorUserId: user.id,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { draftId }
     });
     await recordAuditLog({
       actorUserId: user.id,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       action: "ai_draft_used",
       entityType: "agent_draft",
       entityId: draftId,
       data: { ticketId }
     });
     await recordModuleUsageEvent({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       moduleKey: replyModule,
       usageKind: "reply_sent",
       actorType: "human",
@@ -131,6 +148,8 @@ export async function POST(
       }
     });
     await recordModuleUsageEvent({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       moduleKey: "aiAutomation",
       usageKind: "approved_draft_send",
       actorType: "ai",

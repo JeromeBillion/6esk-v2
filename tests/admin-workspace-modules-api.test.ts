@@ -87,7 +87,7 @@ describe("workspace modules admin API", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "updated", config: CONFIG });
-    expect(mocks.saveWorkspaceModules).toHaveBeenCalledWith(CONFIG.modules);
+    expect(mocks.saveWorkspaceModules).toHaveBeenCalledWith(CONFIG.modules, "primary", "primary");
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "workspace_modules_updated",

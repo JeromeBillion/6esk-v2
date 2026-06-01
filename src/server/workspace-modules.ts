@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { DEFAULT_TENANT_KEY } from "@/server/tenant-context";
 
 export const DEFAULT_WORKSPACE_KEY = "primary";
 
@@ -14,6 +15,7 @@ export type WorkspaceModuleFlags = {
 export type WorkspaceModuleKey = keyof WorkspaceModuleFlags;
 
 export type WorkspaceModulesConfig = {
+  tenantKey: string;
   workspaceKey: string;
   updatedAt: string | null;
   modules: WorkspaceModuleFlags;
@@ -28,8 +30,12 @@ export const DEFAULT_WORKSPACE_MODULES: WorkspaceModuleFlags = {
   vanillaWebchat: true
 };
 
-function defaultWorkspaceConfig(workspaceKey: string): WorkspaceModulesConfig {
+function defaultWorkspaceConfig(
+  workspaceKey: string,
+  tenantKey = DEFAULT_TENANT_KEY
+): WorkspaceModulesConfig {
   return {
+    tenantKey,
     workspaceKey,
     updatedAt: null,
     modules: { ...DEFAULT_WORKSPACE_MODULES }
@@ -55,15 +61,17 @@ export function normalizeWorkspaceModules(input?: Partial<WorkspaceModuleFlags> 
 }
 
 export async function getWorkspaceModules(
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantKey = DEFAULT_TENANT_KEY
 ): Promise<WorkspaceModulesConfig> {
   if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantKey);
   }
 
   let result:
     | {
         rows?: Array<{
+          tenant_key: string;
           workspace_key: string;
           modules: Partial<WorkspaceModuleFlags> | null;
           updated_at: Date | string | null;
@@ -73,23 +81,25 @@ export async function getWorkspaceModules(
 
   try {
     result = await db.query<{
+      tenant_key: string;
       workspace_key: string;
       modules: Partial<WorkspaceModuleFlags> | null;
       updated_at: Date | string | null;
     }>(
-      `SELECT workspace_key, modules, updated_at
+      `SELECT tenant_key, workspace_key, modules, updated_at
        FROM workspace_modules
-       WHERE workspace_key = $1
+       WHERE tenant_key = $1
+         AND workspace_key = $2
        LIMIT 1`,
-      [workspaceKey]
+      [tenantKey, workspaceKey]
     );
   } catch {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantKey);
   }
 
   const row = result?.rows?.[0];
   if (!row) {
-    return defaultWorkspaceConfig(workspaceKey);
+    return defaultWorkspaceConfig(workspaceKey, tenantKey);
   }
 
   const updatedAt =
@@ -100,6 +110,7 @@ export async function getWorkspaceModules(
         : null;
 
   return {
+    tenantKey: row.tenant_key,
     workspaceKey: row.workspace_key,
     updatedAt,
     modules: normalizeWorkspaceModules(row.modules)
@@ -108,23 +119,26 @@ export async function getWorkspaceModules(
 
 export async function saveWorkspaceModules(
   modules: Partial<WorkspaceModuleFlags>,
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantKey = DEFAULT_TENANT_KEY
 ): Promise<WorkspaceModulesConfig> {
   const normalized = normalizeWorkspaceModules(modules);
   const result = await db.query<{
+    tenant_key: string;
     workspace_key: string;
     modules: WorkspaceModuleFlags;
     updated_at: Date;
   }>(
-    `INSERT INTO workspace_modules (workspace_key, modules, updated_at)
-     VALUES ($1, $2::jsonb, now())
-     ON CONFLICT (workspace_key)
+    `INSERT INTO workspace_modules (tenant_key, workspace_key, modules, updated_at)
+     VALUES ($1, $2, $3::jsonb, now())
+     ON CONFLICT (tenant_key, workspace_key)
      DO UPDATE SET modules = EXCLUDED.modules, updated_at = now()
-     RETURNING workspace_key, modules, updated_at`,
-    [workspaceKey, JSON.stringify(normalized)]
+     RETURNING tenant_key, workspace_key, modules, updated_at`,
+    [tenantKey, workspaceKey, JSON.stringify(normalized)]
   );
 
   return {
+    tenantKey: result.rows[0].tenant_key,
     workspaceKey: result.rows[0].workspace_key,
     updatedAt: result.rows[0].updated_at.toISOString(),
     modules: normalizeWorkspaceModules(result.rows[0].modules)
@@ -133,8 +147,9 @@ export async function saveWorkspaceModules(
 
 export async function isWorkspaceModuleEnabled(
   moduleKey: WorkspaceModuleKey,
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  tenantKey = DEFAULT_TENANT_KEY
 ) {
-  const config = await getWorkspaceModules(workspaceKey);
+  const config = await getWorkspaceModules(workspaceKey, tenantKey);
   return config.modules[moduleKey] === true;
 }

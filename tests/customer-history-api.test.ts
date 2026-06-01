@@ -150,7 +150,7 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
     expect(mocks.listCustomerHistory).toHaveBeenCalledWith(CUSTOMER_ID, {
       limit: 100,
       cursor: "2026-02-14T08:00:00.000Z"
-    });
+    }, { tenantKey: "primary", workspaceKey: "primary" });
   });
 
   it("clamps limit floor to 1 for customer history pagination", async () => {
@@ -162,7 +162,7 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
     expect(mocks.listCustomerHistory).toHaveBeenCalledWith(CUSTOMER_ID, {
       limit: 1,
       cursor: null
-    });
+    }, { tenantKey: "primary", workspaceKey: "primary" });
   });
 
   it("returns history even when customer record cannot be loaded", async () => {
@@ -215,11 +215,20 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
       history: []
     });
     expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith({
+      tenantKey: "primary",
+      workspaceKey: "primary",
       inboundEmail: "unregistered@example.com",
       inboundPhone: null
     });
-    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID);
-    expect(mocks.listCustomerHistory).toHaveBeenCalledWith(CUSTOMER_ID, { limit: 30, cursor: null });
+    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
+    expect(mocks.listCustomerHistory).toHaveBeenCalledWith(
+      CUSTOMER_ID,
+      { limit: 30, cursor: null },
+      { tenantKey: "primary", workspaceKey: "primary" }
+    );
   });
 
   it("uses WhatsApp requester number for auto-resolution when ticket requester is whatsapp", async () => {
@@ -241,10 +250,15 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
       customer: expect.objectContaining({ id: CUSTOMER_ID })
     });
     expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith({
+      tenantKey: "primary",
+      workspaceKey: "primary",
       inboundEmail: null,
       inboundPhone: "+27731234567"
     });
-    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID);
+    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
   });
 
   it("uses voice requester number for auto-resolution when ticket requester is voice", async () => {
@@ -266,10 +280,15 @@ describe("GET /api/tickets/[ticketId]/customer-history", () => {
       customer: expect.objectContaining({ id: CUSTOMER_ID })
     });
     expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith({
+      tenantKey: "primary",
+      workspaceKey: "primary",
       inboundEmail: null,
       inboundPhone: "+27730000001"
     });
-    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID);
+    expect(mocks.attachCustomerToTicket).toHaveBeenCalledWith(TICKET_ID, CUSTOMER_ID, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
+    });
   });
 
   it("returns empty customer/history when customer cannot be resolved", async () => {

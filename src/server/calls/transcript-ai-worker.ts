@@ -7,10 +7,14 @@ import {
   markTranscriptAiJobCompleted,
   markTranscriptAiJobFailed
 } from "@/server/calls/transcript-ai-jobs";
+import type { TenantScopeInput } from "@/server/tenant-context";
 
-export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: number } = {}) {
+export async function deliverPendingTranscriptAiJobs(
+  { limit = 5 }: { limit?: number } = {},
+  scopeInput?: TenantScopeInput
+) {
   const provider = getTranscriptAiProvider();
-  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds());
+  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -35,6 +39,10 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
 
       await markTranscriptAiJobCompleted({
         jobId: job.id,
+        scope: {
+          tenantKey: job.tenant_key,
+          workspaceKey: job.workspace_key
+        },
         attemptCount: job.attempt_count + 1,
         providerJobId: result.providerJobId,
         qaStatus: result.qaStatus,
@@ -50,10 +58,16 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
       const detail = error instanceof Error ? error.message : "Transcript AI dispatch failed";
       await markTranscriptAiJobFailed({
         jobId: job.id,
+        scope: {
+          tenantKey: job.tenant_key,
+          workspaceKey: job.workspace_key
+        },
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });
       await recordAuditLog({
+        tenantKey: job.tenant_key,
+        workspaceKey: job.workspace_key,
         action: "call_transcript_ai_job_failed",
         entityType: "call_transcript_ai_jobs",
         entityId: job.id,

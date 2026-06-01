@@ -8,6 +8,7 @@ import {
   listCustomerHistory,
   resolveOrCreateCustomerForInbound
 } from "@/server/customers";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   request: Request,
@@ -19,7 +20,8 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const ticket = await getTicketById(ticketId);
+  const scope = tenantScopeFromUser(user);
+  const ticket = await getTicketById(ticketId, scope);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -41,12 +43,14 @@ export async function GET(
         ? ticket.requester_email.replace(/^voice:/, "")
         : null;
     const customerResolution = await resolveOrCreateCustomerForInbound({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       inboundEmail: requesterEmail,
       inboundPhone: requesterPhone
     });
     customerId = customerResolution?.customerId ?? null;
     if (customerId) {
-      await attachCustomerToTicket(ticketId, customerId);
+      await attachCustomerToTicket(ticketId, customerId, scope);
     }
   }
 
@@ -61,14 +65,14 @@ export async function GET(
   const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 30, 1), 100);
 
   const [customer, historyPage] = await Promise.all([
-    getCustomerById(customerId),
+    getCustomerById(customerId, scope),
     listCustomerHistory(customerId, {
       limit,
       cursor: cursorParam
-    })
+    }, scope)
   ]);
 
-  const identities = customer ? await listCustomerIdentities(customer.id) : [];
+  const identities = customer ? await listCustomerIdentities(customer.id, scope) : [];
 
   return Response.json({
     customer: customer

@@ -39,13 +39,14 @@ vi.mock("@/server/agents/outbox", () => ({
 import { attachCallRecording } from "@/server/calls/service";
 
 const ORIGINAL_FETCH = global.fetch;
+const RECORDING_R2_KEY = "tenants/primary/workspaces/primary/messages/message-1/recording.mp3";
 
 describe("attachCallRecording", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CALLS_TWILIO_ACCOUNT_SID = "AC123";
     process.env.CALLS_TWILIO_AUTH_TOKEN = "auth-token";
-    mocks.putObject.mockResolvedValue("messages/message-1/recording.mp3");
+    mocks.putObject.mockResolvedValue(RECORDING_R2_KEY);
     mocks.recordTicketEvent.mockResolvedValue(undefined);
     mocks.buildAgentEvent.mockReturnValue({
       eventType: "ticket.call.recording.ready",
@@ -115,12 +116,12 @@ describe("attachCallRecording", () => {
       recordingUrl: expect.stringMatching(
         /^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/
       ),
-      recordingR2Key: "messages/message-1/recording.mp3"
+      recordingR2Key: RECORDING_R2_KEY
     });
 
     expect(mocks.putObject).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: "messages/message-1/recording.mp3",
+        key: RECORDING_R2_KEY,
         contentType: "audio/mpeg"
       })
     );
@@ -131,8 +132,9 @@ describe("attachCallRecording", () => {
       [
         "call-session-1",
         expect.stringMatching(/^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/),
-        "messages/message-1/recording.mp3",
-        42
+        RECORDING_R2_KEY,
+        42,
+        "primary"
       ]
     );
 
@@ -142,7 +144,7 @@ describe("attachCallRecording", () => {
         eventType: "call_recording_ready",
         data: expect.objectContaining({
           recordingUrl: expect.stringMatching(/^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/),
-          recordingR2Key: "messages/message-1/recording.mp3"
+          recordingR2Key: RECORDING_R2_KEY
         })
       })
     );
@@ -150,9 +152,11 @@ describe("attachCallRecording", () => {
     expect(mocks.dbQuery).toHaveBeenLastCalledWith(
       expect.stringContaining("INSERT INTO call_transcript_jobs"),
       [
+        "primary",
+        "primary",
         "call-session-1",
         "managed_http",
-        "messages/message-1/recording.mp3",
+        RECORDING_R2_KEY,
         expect.any(String)
       ]
     );

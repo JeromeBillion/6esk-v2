@@ -7,6 +7,7 @@ import {
   saveWorkspaceModules,
   type WorkspaceModuleFlags
 } from "@/server/workspace-modules";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const modulesSchema = z.object({
   email: z.boolean(),
@@ -22,8 +23,9 @@ export async function GET() {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
-  const config = await getWorkspaceModules();
+  const config = await getWorkspaceModules(scope.workspaceKey, scope.tenantKey);
   return Response.json({ config });
 }
 
@@ -32,6 +34,7 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let body: unknown;
   try {
@@ -45,7 +48,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const config = await saveWorkspaceModules(parsed.data as WorkspaceModuleFlags);
+  const config = await saveWorkspaceModules(
+    parsed.data as WorkspaceModuleFlags,
+    scope.workspaceKey,
+    scope.tenantKey
+  );
   await recordAuditLog({
     actorUserId: user?.id ?? null,
     action: "workspace_modules_updated",

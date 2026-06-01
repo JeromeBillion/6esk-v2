@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { getInboundAlertConfig } from "@/server/email/inbound-alert-config";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type NumericLike = number | string | null | undefined;
 
@@ -447,9 +448,10 @@ export function buildInboundHourlySeries(
   return points;
 }
 
-export async function getInboundMetrics(hours = 24) {
+export async function getInboundMetrics(hours = 24, scopeInput?: TenantScopeInput) {
+  const scope = resolveTenantScope(scopeInput);
   const windowHours = clampHours(hours);
-  const alertConfig = await getInboundAlertConfig();
+  const alertConfig = await getInboundAlertConfig(scope);
   const alertWindowMinutes = toPositiveInteger(alertConfig.windowMinutes, 30);
 
   const [
@@ -498,8 +500,9 @@ export async function getInboundMetrics(hours = 24) {
            2
          )::float8 AS p95_failed_attempt_count,
          MIN(created_at) FILTER (WHERE status = 'failed') AS oldest_failed_at
-       FROM inbound_events`,
-      [windowHours]
+       FROM inbound_events
+       WHERE tenant_key = $2`,
+      [windowHours, scope.tenantKey]
     ),
     db.query<InboundSeriesRow>(
       `SELECT
@@ -509,17 +512,19 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
          COALESCE(SUM(attempt_count), 0)::int AS attempts
        FROM inbound_events
-       WHERE updated_at >= now() - ($1::int * interval '1 hour')
+       WHERE tenant_key = $2
+         AND updated_at >= now() - ($1::int * interval '1 hour')
        GROUP BY 1
        ORDER BY 1 ASC`,
-      [windowHours]
+      [windowHours, scope.tenantKey]
     ),
     db.query<InboundAlertWindowRow>(
       `SELECT COUNT(*)::int AS failures
        FROM inbound_events
        WHERE status = 'failed'
+         AND tenant_key = $2
          AND updated_at >= now() - ($1::text || ' minutes')::interval`,
-      [alertWindowMinutes.toString()]
+      [alertWindowMinutes.toString(), scope.tenantKey]
     ),
     db.query<InboundAlertHistoryRow>(
       `SELECT
@@ -539,16 +544,19 @@ export async function getInboundMetrics(hours = 24) {
            COUNT(*)::int AS bucket_failures
          FROM inbound_events
          WHERE status = 'failed'
+           AND tenant_key = $2
            AND updated_at >= now() - interval '7 days'
          GROUP BY 1
        ) buckets`,
-      [alertWindowMinutes]
+      [alertWindowMinutes, scope.tenantKey]
     ),
     db.query<InboundLastAlertRow>(
       `SELECT last_sent_at
        FROM inbound_alerts
-       WHERE alert_type = 'inbound_failures'
-       LIMIT 1`
+       WHERE tenant_key = $1
+         AND alert_type = 'inbound_failures'
+       LIMIT 1`,
+      [scope.tenantKey]
     ),
     db.query<InboundFailureReasonRow>(
       `SELECT
@@ -556,11 +564,12 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*)::int AS count
        FROM inbound_events
        WHERE status = 'failed'
+         AND tenant_key = $2
          AND updated_at >= now() - ($1::int * interval '1 hour')
        GROUP BY 1
        ORDER BY 2 DESC
        LIMIT 25`,
-      [windowHours]
+      [windowHours, scope.tenantKey]
     )
   ]);
 

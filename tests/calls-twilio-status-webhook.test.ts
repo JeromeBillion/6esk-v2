@@ -2,18 +2,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   updateCallSessionStatus: vi.fn(),
+  resolveCallSessionProviderScope: vi.fn(),
   recordAuditLog: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  markProviderWebhookSecretUsed: vi.fn(),
   twilioFactory: vi.fn(),
   twilioValidate: vi.fn()
 }));
 
 vi.mock("@/server/calls/service", () => ({
-  updateCallSessionStatus: mocks.updateCallSessionStatus
+  updateCallSessionStatus: mocks.updateCallSessionStatus,
+  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
 }));
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
+
+vi.mock("@/server/provider-webhook-secrets", () => {
+  class ProviderWebhookSecretConfigurationError extends Error {}
+  return {
+    ProviderWebhookSecretConfigurationError,
+    listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+    markProviderWebhookSecretUsed: mocks.markProviderWebhookSecretUsed,
+    shouldRequireTenantProviderWebhookSecrets: () =>
+      process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
+      process.env.NODE_ENV === "production"
+  };
+});
 
 vi.mock("twilio", () => {
   const callable = ((...args: unknown[]) => mocks.twilioFactory(...args)) as ((
@@ -34,8 +50,15 @@ describe("GET /api/calls/webhooks/twilio/status", () => {
       ...ORIGINAL_ENV,
       APP_URL: "https://app.6esk.test",
       CALLS_TWILIO_ACCOUNT_SID: "AC123",
-      CALLS_TWILIO_AUTH_TOKEN: "auth-token"
+      CALLS_TWILIO_AUTH_TOKEN: "auth-token",
+      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
     };
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.markProviderWebhookSecretUsed.mockResolvedValue(undefined);
     mocks.updateCallSessionStatus.mockResolvedValue({
       status: "updated",
       callSessionId: "call-session-1",
@@ -87,5 +110,63 @@ describe("GET /api/calls/webhooks/twilio/status", () => {
         status: "ringing"
       })
     );
+  });
+
+  it("uses the tenant-scoped Twilio auth token in strict mode", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
+      { id: "secret-1", secret: "tenant-auth-token", source: "db" }
+    ]);
+    mocks.twilioValidate.mockImplementation((token) => token === "tenant-auth-token");
+
+    const response = await GET(
+      new Request(
+        "https://app.6esk.test/api/calls/webhooks/twilio/status?CallSid=CA123&AccountSid=AC123&CallStatus=ringing",
+        {
+          headers: {
+            "x-twilio-signature": "sig"
+          }
+        }
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantKey: "tenant-a", workspaceKey: "workspace-a" },
+      provider: "twilio",
+      secretType: "auth_token",
+      providerAccountId: "AC123"
+    });
+    expect(mocks.twilioValidate).toHaveBeenCalledWith(
+      "tenant-auth-token",
+      "sig",
+      "https://app.6esk.test/api/calls/webhooks/twilio/status",
+      expect.objectContaining({ AccountSid: "AC123", CallSid: "CA123" })
+    );
+    expect(mocks.markProviderWebhookSecretUsed).toHaveBeenCalledWith("secret-1", {
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+  });
+
+  it("fails closed in strict mode when the tenant has no Twilio auth token", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+
+    const response = await GET(
+      new Request(
+        "https://app.6esk.test/api/calls/webhooks/twilio/status?CallSid=CA123&AccountSid=AC123&CallStatus=ringing",
+        {
+          headers: {
+            "x-twilio-signature": "sig"
+          }
+        }
+      )
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(payload).toMatchObject({ code: "provider_webhook_secret_missing" });
+    expect(mocks.updateCallSessionStatus).not.toHaveBeenCalled();
   });
 });

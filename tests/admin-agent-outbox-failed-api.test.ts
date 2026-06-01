@@ -26,7 +26,9 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_key: "tenant-a",
+    workspace_key: "workspace-a"
   };
 }
 
@@ -73,6 +75,9 @@ describe("GET /api/admin/agents/[agentId]/outbox/failed", () => {
       event_type: "customer.identity.resolved",
       last_error: "gateway timeout"
     });
-    expect(mocks.listFailedAgentEvents).toHaveBeenCalledWith("agent-1", 25);
+    expect(mocks.listFailedAgentEvents).toHaveBeenCalledWith("agent-1", 25, {
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
   });
 });

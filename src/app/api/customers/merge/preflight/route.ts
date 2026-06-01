@@ -2,6 +2,7 @@ import { z } from "zod";
 import { canManageTickets } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { MergeError, preflightCustomerMerge } from "@/server/merges";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const preflightSchema = z.object({
   sourceCustomerId: z.string().uuid(),
@@ -39,11 +40,14 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const scope = tenantScopeFromUser(user);
 
   try {
     const preflight = await preflightCustomerMerge({
       sourceCustomerId: parsed.data.sourceCustomerId,
-      targetCustomerId: parsed.data.targetCustomerId
+      targetCustomerId: parsed.data.targetCustomerId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
     });
     return Response.json({ preflight });
   } catch (error) {

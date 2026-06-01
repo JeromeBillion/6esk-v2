@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 import {
   buildWhatsAppStatusSeries,
   parseWhatsAppStatusSource,
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
+  const scope = tenantScopeFromUser(user);
   const whatsappSource: WhatsAppStatusSource = parseWhatsAppStatusSource(
     url.searchParams.get("whatsappSource")
   );
@@ -61,20 +63,22 @@ export async function GET(request: Request) {
   const createdResult = await db.query<VolumeRow>(
     `SELECT date_trunc('day', created_at) AS day, COUNT(*)::int AS count
      FROM tickets
-     WHERE created_at >= $1 AND created_at < $2
+     WHERE tenant_key = $3
+       AND created_at >= $1 AND created_at < $2
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, scope.tenantKey]
   );
 
   const solvedResult = await db.query<VolumeRow>(
     `SELECT date_trunc('day', solved_at) AS day, COUNT(*)::int AS count
      FROM tickets
-     WHERE solved_at IS NOT NULL
+     WHERE tenant_key = $3
+       AND solved_at IS NOT NULL
        AND solved_at >= $1 AND solved_at < $2
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, scope.tenantKey]
   );
 
   const emailResult = await db.query<EmailVolumeRow>(
@@ -83,11 +87,12 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
        COUNT(*) FILTER (WHERE direction = 'outbound')::int AS outbound
      FROM messages
-     WHERE channel = 'email'
+     WHERE tenant_key = $3
+       AND channel = 'email'
        AND created_at >= $1 AND created_at < $2
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, scope.tenantKey]
   );
 
   const whatsappStatusResult = await db.query<WhatsAppStatusAggregateRow>(
@@ -98,11 +103,12 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'read')::int AS read,
        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
      FROM whatsapp_status_events
-     WHERE occurred_at >= $1 AND occurred_at < $2
+     WHERE tenant_key = $4
+       AND occurred_at >= $1 AND occurred_at < $2
        AND ($3 = 'all' OR COALESCE(payload->>'source', 'unknown') = $3)
      GROUP BY day
      ORDER BY day`,
-    [start, end, whatsappSource]
+    [start, end, whatsappSource, scope.tenantKey]
   );
 
   const voiceResult = await db.query<VoiceVolumeRow>(
@@ -117,10 +123,11 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled,
        AVG(duration_seconds)::numeric AS avg_duration_seconds
      FROM call_sessions
-     WHERE queued_at >= $1 AND queued_at < $2
+     WHERE tenant_key = $3
+       AND queued_at >= $1 AND queued_at < $2
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, scope.tenantKey]
   );
 
   const voiceQaResult = await db.query<VoiceQaVolumeRow>(
@@ -139,10 +146,11 @@ export async function GET(request: Request) {
        )::int AS flagged,
        COALESCE(SUM(jsonb_array_length(qa_flags)) FILTER (WHERE status = 'completed'), 0)::int AS total_flags
      FROM call_transcript_ai_jobs
-     WHERE completed_at >= $1 AND completed_at < $2
+     WHERE tenant_key = $3
+       AND completed_at >= $1 AND completed_at < $2
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, scope.tenantKey]
   );
 
   const formatRows = (rows: VolumeRow[]) =>

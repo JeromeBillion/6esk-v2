@@ -5,6 +5,7 @@ import { syncVoiceConsentFromMetadata } from "@/server/calls/consent";
 import { sendTicketReply } from "@/server/email/replies";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
+import { resolveTenantScope } from "@/server/tenant-context";
 
 type OutboundEmailAttachment = {
   filename: string;
@@ -14,6 +15,8 @@ type OutboundEmailAttachment = {
 };
 
 export type CreateOutboundEmailTicketArgs = {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   actorUserId: string;
   toEmail: string;
   subject: string;
@@ -46,6 +49,8 @@ function toPlainText(text?: string | null, html?: string | null) {
 }
 
 export async function createOutboundEmailTicket({
+  tenantKey,
+  workspaceKey,
   actorUserId,
   toEmail,
   subject,
@@ -59,6 +64,7 @@ export async function createOutboundEmailTicket({
   contextRoute = "/api/tickets/create",
   deliverAgentEvents = true
 }: CreateOutboundEmailTicketArgs) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
     throw new Error("Support address not configured");
@@ -69,16 +75,24 @@ export async function createOutboundEmailTicket({
     throw new Error("Description is required");
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress);
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, scope);
   const inferredTags = (tags?.length ? tags : inferTagsFromText({ subject, text: plainText || null }))
     .map((tag) => tag.trim().toLowerCase())
     .filter(Boolean);
   const normalizedTags = Array.from(new Set(inferredTags));
   const resolvedCategory = category?.toLowerCase().trim() ?? normalizedTags[0]?.toLowerCase() ?? null;
   const resolvedCustomerId =
-    customerId ?? (await resolveOrCreateCustomerForInbound({ inboundEmail: toEmail }))?.customerId ?? null;
+    customerId ??
+    (await resolveOrCreateCustomerForInbound({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
+      inboundEmail: toEmail
+    }))?.customerId ??
+    null;
 
   await syncVoiceConsentFromMetadata({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     metadata: metadata ?? null,
     customerId: resolvedCustomerId,
     fallbackEmail: toEmail,
@@ -95,6 +109,8 @@ export async function createOutboundEmailTicket({
   });
 
   const ticketId = await createTicket({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     mailboxId: mailbox.id,
     customerId: resolvedCustomerId,
     requesterEmail: toEmail,
@@ -106,20 +122,26 @@ export async function createOutboundEmailTicket({
   await recordTicketEvent({
     ticketId,
     eventType: "ticket_created",
-    actorUserId
+    actorUserId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
   });
 
   if (normalizedTags.length > 0) {
-    await addTagsToTicket(ticketId, normalizedTags);
+    await addTagsToTicket(ticketId, normalizedTags, scope);
     await recordTicketEvent({
       ticketId,
       eventType: "tags_assigned",
       actorUserId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { tags: normalizedTags }
     });
   }
 
   const sendResult = await sendTicketReply({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     ticketId,
     subject,
     text: plainText || null,
@@ -140,7 +162,12 @@ export async function createOutboundEmailTicket({
     excerpt: previewText || subject,
     threadId
   });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent });
+  await enqueueAgentEvent({
+    eventType: "ticket.created",
+    payload: ticketEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   if (messageId) {
     const messageEvent = buildAgentEvent({
@@ -152,7 +179,12 @@ export async function createOutboundEmailTicket({
       excerpt: previewText || subject,
       threadId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent });
+    await enqueueAgentEvent({
+      eventType: "ticket.message.created",
+      payload: messageEvent,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
+    });
   }
 
   if (deliverAgentEvents) {

@@ -17,6 +17,7 @@ import {
 import { redactPhoneNumber } from "@/server/calls/redaction";
 import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const outboundCallSchema = z.object({
   ticketId: z.string().uuid(),
@@ -47,7 +48,8 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await isWorkspaceModuleEnabled("voice"))) {
+  const scope = tenantScopeFromUser(user);
+  if (!(await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",
@@ -71,7 +73,7 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
-  const ticket = await getTicketById(data.ticketId);
+  const ticket = await getTicketById(data.ticketId, scope);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -80,7 +82,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const options = await getTicketCallOptions(data.ticketId);
+  const options = await getTicketCallOptions(data.ticketId, scope);
   if (!options) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -117,11 +119,15 @@ export async function POST(request: Request) {
 
   const maxCallsPerHour = Number(process.env.RATE_LIMIT_CALLS_OUTBOUND ?? "0");
   const consentState = await getLatestVoiceConsentState({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     customerId: ticket.customer_id ?? null,
     phone: resolved.phone,
     email: requesterEmailForConsent(ticket.requester_email)
   });
   const policyCheck = await evaluateVoiceCallPolicy({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actor: "human",
     policy: getHumanVoicePolicyFromEnv(),
     ticketMetadata: (ticket.metadata as Record<string, unknown> | null) ?? null,
@@ -143,6 +149,8 @@ export async function POST(request: Request) {
 
   try {
     const queued = await queueOutboundCall({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       ticketId: data.ticketId,
       toPhone: resolved.phone,
       fromPhone: data.fromPhone ?? null,
@@ -158,6 +166,8 @@ export async function POST(request: Request) {
     void deliverPendingCallEvents({ limit: 5 }).catch(() => {});
 
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user.id,
       action: "call_queued",
       entityType: "call_session",
@@ -169,6 +179,8 @@ export async function POST(request: Request) {
       }
     });
     await recordModuleUsageEvent({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       moduleKey: "voice",
       usageKind: "call_queued",
       actorType: "human",

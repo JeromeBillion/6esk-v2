@@ -97,7 +97,10 @@ describe("/api/admin/whatsapp/outbox", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "ok", delivered: 2, skipped: 0 });
-    expect(mocks.deliverPendingWhatsAppEvents).toHaveBeenCalledWith({ limit: 25 });
+    expect(mocks.deliverPendingWhatsAppEvents).toHaveBeenCalledWith(
+      { limit: 25 },
+      { tenantKey: "primary", workspaceKey: "primary" }
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "whatsapp_outbox_triggered"

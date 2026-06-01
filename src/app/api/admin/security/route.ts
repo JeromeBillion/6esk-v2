@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function parseAllowlist(value?: string | null) {
   if (!value) return [];
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const adminAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
   const agentAllowlist = parseAllowlist(process.env.AGENT_IP_ALLOWLIST);
@@ -36,7 +38,10 @@ export async function GET(request: Request) {
   }>(
     `SELECT COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE shared_secret LIKE 'enc:v1:%')::int AS encrypted
-     FROM agent_integrations`
+     FROM agent_integrations
+     WHERE tenant_key = $1
+       AND workspace_key = $2`,
+    [scope.tenantKey, scope.workspaceKey]
   );
   const agentStats = agentStatsRes.rows[0] ?? { total: 0, encrypted: 0 };
   const agentUnencrypted = Math.max(0, agentStats.total - agentStats.encrypted);
@@ -50,7 +55,10 @@ export async function GET(request: Request) {
         COUNT(*) FILTER (WHERE access_token IS NOT NULL AND access_token <> '')::int AS total_tokens,
         COUNT(*) FILTER (WHERE access_token LIKE 'enc:v1:%')::int AS encrypted_tokens,
         COUNT(*) FILTER (WHERE access_token IS NULL OR access_token = '')::int AS missing_tokens
-     FROM whatsapp_accounts`
+     FROM whatsapp_accounts
+     WHERE tenant_key = $1
+       AND workspace_key = $2`,
+    [scope.tenantKey, scope.workspaceKey]
   );
   const whatsappStats = whatsappStatsRes.rows[0] ?? {
     total_tokens: 0,

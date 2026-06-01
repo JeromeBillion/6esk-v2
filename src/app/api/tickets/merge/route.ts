@@ -4,6 +4,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { getTicketById } from "@/server/tickets";
 import { MergeError, mergeTickets } from "@/server/merges";
 import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const mergeSchema = z.object({
   sourceTicketId: z.string().uuid(),
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId, reason } = parsed.data;
+  const scope = tenantScopeFromUser(user);
   if (sourceTicketId === targetTicketId) {
     return Response.json(
       {
@@ -49,8 +51,8 @@ export async function POST(request: Request) {
   }
 
   const [source, target] = await Promise.all([
-    getTicketById(sourceTicketId),
-    getTicketById(targetTicketId)
+    getTicketById(sourceTicketId, scope),
+    getTicketById(targetTicketId, scope)
   ]);
 
   if (!source || !target) {
@@ -69,7 +71,9 @@ export async function POST(request: Request) {
       sourceTicketId,
       targetTicketId,
       actorUserId: user.id,
-      reason: reason ?? null
+      reason: reason ?? null,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
     });
     return Response.json({ status: "merged", result });
   } catch (error) {

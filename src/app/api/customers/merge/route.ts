@@ -3,6 +3,7 @@ import { canManageTickets } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { MergeError, mergeCustomers } from "@/server/merges";
 import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const mergeSchema = z.object({
   sourceCustomerId: z.string().uuid(),
@@ -45,13 +46,16 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const scope = tenantScopeFromUser(user);
 
   try {
     const result = await mergeCustomers({
       sourceCustomerId: parsed.data.sourceCustomerId,
       targetCustomerId: parsed.data.targetCustomerId,
       actorUserId: user.id,
-      reason: parsed.data.reason ?? null
+      reason: parsed.data.reason ?? null,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
     });
     return Response.json({ status: "merged", result });
   } catch (error) {

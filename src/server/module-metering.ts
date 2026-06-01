@@ -3,11 +3,13 @@ import {
   DEFAULT_WORKSPACE_KEY,
   type WorkspaceModuleKey
 } from "@/server/workspace-modules";
+import { DEFAULT_TENANT_KEY } from "@/server/tenant-context";
 
 export type ModuleUsageActorType = "human" | "ai" | "system";
 export type ModuleUsageProviderMode = "managed" | "byo" | "none";
 
 export type RecordModuleUsageArgs = {
+  tenantKey?: string;
   workspaceKey?: string;
   moduleKey: WorkspaceModuleKey;
   usageKind: string;
@@ -57,6 +59,7 @@ function clampWindowDays(value: number | undefined) {
 }
 
 export async function recordModuleUsageEvent({
+  tenantKey = DEFAULT_TENANT_KEY,
   workspaceKey = DEFAULT_WORKSPACE_KEY,
   moduleKey,
   usageKind,
@@ -73,6 +76,7 @@ export async function recordModuleUsageEvent({
   try {
     await db.query(
       `INSERT INTO workspace_module_usage_events (
+         tenant_key,
          workspace_key,
          module_key,
          usage_kind,
@@ -81,8 +85,9 @@ export async function recordModuleUsageEvent({
          actor_type,
          provider_mode,
          metadata
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
       [
+        tenantKey,
         workspaceKey,
         moduleKey,
         usageKind,
@@ -99,9 +104,11 @@ export async function recordModuleUsageEvent({
 }
 
 export async function getWorkspaceModuleUsageSummary(input?: {
+  tenantKey?: string;
   workspaceKey?: string;
   windowDays?: number;
 }): Promise<WorkspaceModuleUsageSummary> {
+  const tenantKey = input?.tenantKey ?? DEFAULT_TENANT_KEY;
   const workspaceKey = input?.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const windowDays = clampWindowDays(input?.windowDays);
 
@@ -121,11 +128,12 @@ export async function getWorkspaceModuleUsageSummary(input?: {
        COUNT(*)::bigint AS event_count,
        MAX(created_at)::text AS last_seen_at
      FROM workspace_module_usage_events
-     WHERE workspace_key = $1
-       AND created_at >= now() - ($2::text || ' days')::interval
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+       AND created_at >= now() - ($3::text || ' days')::interval
      GROUP BY module_key, usage_kind, actor_type
      ORDER BY module_key, usage_kind, actor_type`,
-    [workspaceKey, String(windowDays)]
+    [tenantKey, workspaceKey, String(windowDays)]
   );
 
   const modulesMap = new Map<

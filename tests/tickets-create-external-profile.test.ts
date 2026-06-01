@@ -179,6 +179,27 @@ describe("POST /api/tickets/create external identity enrichment", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
+  it("fails closed for trusted inbound creates without tenant scope in strict mode", async () => {
+    process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
+
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "shared-secret"
+        }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: "Tenant scope is required for machine ingress.",
+      code: "tenant_scope_required"
+    });
+    expect(mocks.createTicket).not.toHaveBeenCalled();
+  });
+
   it("writes external-user link metadata and emits customer identity resolution for trusted inbound creates", async () => {
     const response = await POST(
       new Request("http://localhost/api/tickets/create", {
@@ -222,6 +243,8 @@ describe("POST /api/tickets/create external identity enrichment", () => {
     });
     expect(mocks.lookupPredictionProfile).not.toHaveBeenCalled();
     expect(mocks.upsertExternalUserLink).toHaveBeenCalledWith({
+      tenantKey: "primary",
+      workspaceKey: "primary",
       externalSystem: "prediction-market-mvp",
       profile: expect.objectContaining({
         id: "user-123",

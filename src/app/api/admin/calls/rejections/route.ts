@@ -2,6 +2,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 type RejectionCountRow = {
   reason: string | null;
@@ -25,6 +26,7 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const url = new URL(request.url);
   const hours = Math.min(Math.max(Number(url.searchParams.get("hours") ?? 24) || 24, 1), 168);
@@ -36,21 +38,25 @@ export async function GET(request: Request) {
        COALESCE(data->>'mode', 'unknown') AS mode,
        COUNT(*)::int AS count
      FROM audit_logs
-     WHERE action = 'call_webhook_rejected'
-       AND created_at >= now() - (($1::text || ' hours')::interval)
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+       AND action = 'call_webhook_rejected'
+       AND created_at >= now() - (($3::text || ' hours')::interval)
      GROUP BY 1, 2
      ORDER BY count DESC`,
-    [hours]
+    [scope.tenantKey, scope.workspaceKey, hours]
   );
 
   const recentResult = await db.query<RecentRejectionRow>(
     `SELECT id, created_at, data
      FROM audit_logs
-     WHERE action = 'call_webhook_rejected'
-       AND created_at >= now() - (($1::text || ' hours')::interval)
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+       AND action = 'call_webhook_rejected'
+       AND created_at >= now() - (($3::text || ' hours')::interval)
      ORDER BY created_at DESC
-     LIMIT $2`,
-    [hours, limit]
+     LIMIT $4`,
+    [scope.tenantKey, scope.workspaceKey, hours, limit]
   );
 
   return Response.json({

@@ -126,7 +126,7 @@ describe("PATCH /api/messages/[messageId]", () => {
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("is_read = $1");
     expect(sql).toContain("WHERE (thread_id = $2 OR id = $3)");
-    expect(values).toEqual([true, THREAD_ID, MESSAGE_ID, "mailbox-1"]);
+    expect(values).toEqual([true, THREAD_ID, MESSAGE_ID, "mailbox-1", "primary"]);
   });
 
   it("updates a single message when thread_id is missing", async () => {
@@ -145,6 +145,6 @@ describe("PATCH /api/messages/[messageId]", () => {
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("is_read = $2");
     expect(sql).toContain("is_pinned = $1");
-    expect(values).toEqual([true, false, MESSAGE_ID]);
+    expect(values).toEqual([true, false, MESSAGE_ID, "primary"]);
   });
 });

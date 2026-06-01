@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { CALL_STATUSES, createOrUpdateInboundCall } from "@/server/calls/service";
+import {
+  CALL_STATUSES,
+  createOrUpdateInboundCall,
+  isInboundCallProviderRoutingError
+} from "@/server/calls/service";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
 
@@ -83,6 +87,19 @@ export async function POST(request: Request) {
     });
     return Response.json({ acknowledged: true, ...result });
   } catch (error) {
+    if (isInboundCallProviderRoutingError(error)) {
+      return Response.json(
+        {
+          error:
+            error.code === "unresolved_call_provider_route"
+              ? "Unresolved call provider route"
+              : "Ambiguous call provider route",
+          code: error.code,
+          detail: error.message
+        },
+        { status: error.status }
+      );
+    }
     const detail = error instanceof Error ? error.message : "Failed to process inbound call";
     return Response.json({ error: "Failed to process inbound call", detail }, { status: 500 });
   }

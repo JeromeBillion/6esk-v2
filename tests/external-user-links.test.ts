@@ -76,6 +76,7 @@ describe("external user link helpers", () => {
     expect(result).toEqual(row);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.any(String), [
+      "primary",
       "prediction-market-mvp",
       "user@example.com",
       "+27710000001"

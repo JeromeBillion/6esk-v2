@@ -49,6 +49,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/server/agents/auth", () => ({
+  agentIngressErrorResponse: () => null,
+  agentScopeFromIntegration: (integration: { tenant_key?: string | null; workspace_key?: string | null }) => ({
+    tenantKey: integration.tenant_key ?? "primary",
+    workspaceKey: integration.workspace_key ?? "primary"
+  }),
   getAgentFromRequest: mocks.getAgentFromRequest
 }));
 vi.mock("@/server/agents/drafts", () => ({

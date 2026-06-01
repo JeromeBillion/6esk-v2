@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 type LookupSummaryRow = {
   total: number;
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const url = new URL(request.url);
   const windowDays = parseWindowDays(url.searchParams.get("days"));
@@ -76,6 +78,7 @@ export async function GET(request: Request) {
         END AS duration_ms
       FROM tickets t
       WHERE t.metadata ? 'profile_lookup'
+        AND t.tenant_key = $2
     )`;
 
   const [summaryResult, seriesResult] = await Promise.all([
@@ -111,7 +114,7 @@ export async function GET(request: Request) {
          )::float8 AS p95_duration_ms
        FROM scoped
        WHERE lookup_at >= now() - make_interval(days => $1::int)`,
-      [windowDays]
+      [windowDays, scope.tenantKey]
     ),
     db.query<LookupSeriesRow>(
       `${scopedCte}
@@ -137,7 +140,7 @@ export async function GET(request: Request) {
        WHERE lookup_at >= now() - make_interval(days => $1::int)
        GROUP BY 1
        ORDER BY 1 ASC`,
-      [windowDays]
+      [windowDays, scope.tenantKey]
     )
   ]);
 

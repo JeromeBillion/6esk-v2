@@ -1,6 +1,13 @@
 import twilio from "twilio";
 import { normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import type { CallStatus } from "@/server/calls/service";
+import {
+  listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed,
+  shouldRequireTenantProviderWebhookSecrets,
+  type ActiveProviderWebhookSecret
+} from "@/server/provider-webhook-secrets";
+import type { TenantScope } from "@/server/tenant-context";
 
 export type TwilioDialTarget =
   | {
@@ -178,20 +185,79 @@ export function validateTwilioWebhook({
   pathname,
   requestUrl,
   signature,
-  params
+  params,
+  authToken
 }: {
   pathname: string;
   requestUrl: string;
   signature: string | null | undefined;
   params: Record<string, string>;
+  authToken?: string | null;
 }) {
-  const { authToken } = getTwilioCredentials();
+  const token = readString(authToken) ?? getTwilioCredentials().authToken;
   const providedSignature = readString(signature);
   if (!providedSignature) {
     return false;
   }
   const validationUrl = buildTwilioPublicUrl(pathname, requestUrl);
-  return twilio.validateRequest(authToken, providedSignature, validationUrl, params);
+  return twilio.validateRequest(token, providedSignature, validationUrl, params);
+}
+
+export async function validateTwilioWebhookForTenant({
+  scope,
+  providerAccountId,
+  pathname,
+  requestUrl,
+  signature,
+  params
+}: {
+  scope?: TenantScope | null;
+  providerAccountId?: string | null;
+  pathname: string;
+  requestUrl: string;
+  signature: string | null | undefined;
+  params: Record<string, string>;
+}): Promise<{ valid: boolean; missingSecret: boolean; matchedSecretId: string | null }> {
+  const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
+  const secrets: ActiveProviderWebhookSecret[] = scope
+    ? await listActiveProviderWebhookSecrets({
+        scope,
+        provider: "twilio",
+        secretType: "auth_token",
+        providerAccountId
+      })
+    : [];
+  const globalAuthToken = process.env.CALLS_TWILIO_AUTH_TOKEN?.trim();
+  if (globalAuthToken && !requireTenantSecrets) {
+    secrets.push({
+      id: "env:CALLS_TWILIO_AUTH_TOKEN",
+      secret: globalAuthToken,
+      source: "env"
+    });
+  }
+
+  if (!secrets.length) {
+    return { valid: false, missingSecret: requireTenantSecrets, matchedSecretId: null };
+  }
+
+  for (const secret of secrets) {
+    if (
+      validateTwilioWebhook({
+        pathname,
+        requestUrl,
+        signature,
+        params,
+        authToken: secret.secret
+      })
+    ) {
+      if (scope) {
+        await markProviderWebhookSecretUsed(secret.id, scope).catch(() => {});
+      }
+      return { valid: true, missingSecret: false, matchedSecretId: secret.id };
+    }
+  }
+
+  return { valid: false, missingSecret: false, matchedSecretId: null };
 }
 
 export function buildTwilioMediaFetchConfig(recordingUrl: string) {

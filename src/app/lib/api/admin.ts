@@ -153,13 +153,14 @@ export type WhatsAppFailedEvent = {
 
 export type AgentIntegration = {
   id: string;
+  tenant_key: string;
   name: string;
   provider: string;
   base_url: string;
   auth_type: string;
   shared_secret: string;
   status: "active" | "paused";
-  policy_mode: "draft_only" | "auto_send";
+  policy_mode: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
   scopes?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   policy?: Record<string, unknown>;
@@ -186,6 +187,338 @@ export type AgentOutboxMetrics = {
     lastFailedAt: string | null;
     lastError: string | null;
   };
+};
+
+export type AgentRunSummary = {
+  id: string;
+  tenant_key: string;
+  integration_id: string | null;
+  mode: string;
+  status: string;
+  lane_key: string;
+  source_event_type: string | null;
+  resource: Record<string, unknown>;
+  error: string | null;
+  queued_at: string;
+  dispatched_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentRunPolicyReplay = {
+  status: "complete" | "partial" | "blocked";
+  explanation: string;
+  missingEvidence: string[];
+  run: AgentRunSummary & {
+    command_envelope: Record<string, unknown>;
+    idempotency_key: string | null;
+  };
+  promptSandbox: Record<string, unknown> | null;
+  promptTemplate: {
+    id: string;
+    tenant_key: string;
+    workspace_key: string;
+    template_key: string;
+    template_version: string;
+    status: string;
+    template_hash: string;
+    activated_at: string | null;
+    retired_at: string | null;
+    metadata: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  evidence: {
+    events: Array<{
+      id: string;
+      run_id: string;
+      event_type: string;
+      status: string | null;
+      data: Record<string, unknown>;
+      created_at: string;
+    }>;
+    steps: Array<{
+      id: string;
+      run_id: string;
+      step_type: string;
+      status: string;
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+      error: string | null;
+      started_at: string;
+      completed_at: string | null;
+    }>;
+    toolCalls: Array<{
+      id: string;
+      run_id: string;
+      step_id: string | null;
+      tool_name: string;
+      status: string;
+      request: Record<string, unknown>;
+      response: Record<string, unknown>;
+      error: string | null;
+      requested_at: string;
+      completed_at: string | null;
+    }>;
+    guardEvents: AiGuardEventRecord[];
+    policyDecisions: AiPolicyDecisionRecord[];
+  };
+};
+
+export type KnowledgeFolder = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  parent_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeDocument = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  folder_id: string | null;
+  filename: string;
+  title: string | null;
+  content_type: string;
+  checksum_sha256: string;
+  byte_size: number;
+  status: string;
+  extraction_status: string;
+  extraction_error: string | null;
+  metadata: Record<string, unknown>;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeSearchResult = {
+  documentId: string;
+  chunkId: string;
+  title: string | null;
+  filename: string;
+  content: string;
+  score: number;
+  chunkIndex: number;
+};
+
+export type KnowledgeRetrievalEvent = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  query: string;
+  result_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type KnowledgeQuarantineEvent = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  filename: string;
+  content_type: string;
+  checksum_sha256: string;
+  byte_size: number;
+  reason_code: string;
+  scanner_status: string;
+  scanner: string | null;
+  scanner_signature: string | null;
+  detail: string | null;
+  storage_provider: string | null;
+  storage_bucket: string | null;
+  storage_key: string | null;
+  stored_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type KnowledgeRetentionDocument = {
+  id: string;
+  filename: string;
+  title: string | null;
+  status: string;
+  byteSize: number;
+  expiresAt: string;
+  legalHold: boolean;
+};
+
+export type KnowledgeRetentionSweepResult = {
+  dryRun: boolean;
+  cutoffAt: string;
+  matched: number;
+  deleted: number;
+  skippedLegalHold: number;
+  documents: KnowledgeRetentionDocument[];
+};
+
+export type KnowledgeExportBundle = {
+  formatVersion: "ai-knowledge-export.v1";
+  exportId: string;
+  tenantKey: string;
+  workspaceKey: string;
+  generatedAt: string;
+  includeDeleted: boolean;
+  includeBodyText: boolean;
+  documentCount: number;
+  chunkCount: number;
+  folders: KnowledgeFolder[];
+  documents: Array<{
+    id: string;
+    folderId: string | null;
+    filename: string;
+    title: string | null;
+    contentType: string;
+    checksumSha256: string;
+    byteSize: number;
+    status: string;
+    extractionStatus: string;
+    extractionError: string | null;
+    metadata: Record<string, unknown>;
+    publishedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+    bodyText?: string;
+    chunks: Array<{
+      id: string;
+      chunkIndex: number;
+      content: string;
+      tokenEstimate: number;
+      metadata: Record<string, unknown>;
+      createdAt: string;
+    }>;
+  }>;
+};
+
+export type KnowledgeIngestionReadiness = {
+  checkedAt: string;
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  scanner: {
+    status: "configured" | "required_unconfigured" | "optional_disabled";
+    required: boolean;
+    urlConfigured: boolean;
+    timeoutMs: number;
+  };
+  extractor: {
+    status: "configured" | "required_unconfigured";
+    urlConfigured: boolean;
+    timeoutMs: number;
+    supportedContentTypes: string[];
+  };
+  quarantineStorage: {
+    status: "configured" | "required_unconfigured" | "optional_disabled" | "enabled_unconfigured";
+    enabled: boolean;
+    required: boolean;
+    bucketConfigured: boolean;
+    missing: string[];
+    prefix: string;
+  };
+};
+
+export type TenantExportSection = {
+  key: string;
+  source: string;
+  rowCount: number;
+  exportedCount: number;
+  truncated: boolean;
+  redactedColumns: string[];
+  rows: Record<string, unknown>[];
+};
+
+export type TenantExportObjectRef = {
+  section: string;
+  rowId: string | null;
+  field: string;
+  key: string;
+  filename?: string | null;
+  contentType?: string | null;
+  sizeBytes?: number | null;
+};
+
+export type TenantExportBundle = {
+  formatVersion: "tenant-export.v1";
+  exportId: string;
+  tenantKey: string;
+  workspaceKey: string;
+  generatedAt: string;
+  limitPerSection: number;
+  sectionCount: number;
+  totalRows: number;
+  exportedRows: number;
+  redaction: {
+    secretsRedacted: true;
+    redactedColumnsBySection: Record<string, string[]>;
+  };
+  objectStorageManifest: TenantExportObjectRef[];
+  sections: TenantExportSection[];
+};
+
+export type AiGuardEventRecord = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  run_id: string | null;
+  integration_id: string | null;
+  source_kind: string;
+  source_id: string | null;
+  subject: string | null;
+  severity: string;
+  decision: string;
+  reason_codes: string[];
+  guard_version: string;
+  content_sample: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AiPolicyDecisionRecord = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  run_id: string | null;
+  integration_id: string | null;
+  policy_mode: string;
+  tool_name: string;
+  tool_class: string;
+  decision: string;
+  reason_codes: string[];
+  resource: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AiSafetyDiagnostics = {
+  summary: {
+    guardEvents: number;
+    maliciousGuardEvents: number;
+    suspiciousGuardEvents: number;
+    blockedPolicyDecisions: number;
+    reviewPolicyDecisions: number;
+    readOnlyPolicyDecisions: number;
+  };
+  guardEvents: AiGuardEventRecord[];
+  policyDecisions: AiPolicyDecisionRecord[];
+};
+
+export type AgentPromptTemplateRecord = {
+  id: string;
+  tenant_key: string;
+  workspace_key: string;
+  template_key: string;
+  template_version: string;
+  status: "draft" | "active" | "retired" | string;
+  template_body: Record<string, unknown>;
+  template_hash: string;
+  activated_at: string | null;
+  retired_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AgentFailedEvent = {
@@ -355,6 +688,17 @@ export type CallOutboxMetrics = {
     maxSkewSeconds: number;
     legacyBodySignature: boolean;
   };
+};
+
+export type CallProviderNumber = {
+  id: string;
+  provider: string;
+  phoneNumber: string;
+  accountSid: string | null;
+  status: "active" | "paused" | "inactive" | string;
+  metadata: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
 };
 
 export type CallFailedEvent = {
@@ -757,13 +1101,14 @@ export async function listAgentIntegrations() {
 }
 
 export function createAgentIntegration(input: {
+  tenantKey?: string;
   name: string;
   provider?: string;
   baseUrl: string;
   authType?: string;
   sharedSecret: string;
   status?: "active" | "paused";
-  policyMode?: "draft_only" | "auto_send";
+  policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
   scopes?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   policy?: Record<string, unknown>;
@@ -778,13 +1123,14 @@ export function createAgentIntegration(input: {
 export function updateAgentIntegration(
   agentId: string,
   input: {
+    tenantKey?: string;
     name?: string;
     provider?: string;
     baseUrl?: string;
     authType?: string;
     sharedSecret?: string;
     status?: "active" | "paused";
-    policyMode?: "draft_only" | "auto_send";
+    policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
     scopes?: Record<string, unknown>;
     capabilities?: Record<string, unknown>;
     policy?: Record<string, unknown>;
@@ -799,6 +1145,208 @@ export function updateAgentIntegration(
 
 export function getAgentOutboxMetrics(agentId: string) {
   return apiFetch<AgentOutboxMetrics>(`/api/admin/agents/${agentId}/outbox`);
+}
+
+export async function listAgentRuns(agentId: string, limit = 50) {
+  const payload = await apiFetch<{ runs: AgentRunSummary[] }>(
+    `/api/admin/agents/${agentId}/runs?limit=${limit}`
+  );
+  return payload.runs ?? [];
+}
+
+export async function getAgentRunReplay(agentId: string, runId: string) {
+  const payload = await apiFetch<{ replay: AgentRunPolicyReplay }>(
+    `/api/admin/agents/${agentId}/runs/${runId}/replay`
+  );
+  return payload.replay;
+}
+
+export async function listKnowledgeFolders() {
+  const payload = await apiFetch<{ folders: KnowledgeFolder[] }>("/api/admin/ai/knowledge/folders");
+  return payload.folders ?? [];
+}
+
+export function createKnowledgeFolder(input: { name: string; parentId?: string | null }) {
+  return apiFetch<{ status: string; folder: KnowledgeFolder }>("/api/admin/ai/knowledge/folders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function listKnowledgeDocuments() {
+  const payload = await apiFetch<{ documents: KnowledgeDocument[] }>(
+    "/api/admin/ai/knowledge/documents"
+  );
+  return payload.documents ?? [];
+}
+
+export function uploadKnowledgeDocument(input: {
+  file: File;
+  folderId?: string | null;
+  title?: string | null;
+  publish?: boolean;
+}) {
+  const form = new FormData();
+  form.set("file", input.file);
+  if (input.folderId) form.set("folderId", input.folderId);
+  if (input.title) form.set("title", input.title);
+  if (input.publish) form.set("publish", "true");
+  return apiFetch<{ status: string; document: KnowledgeDocument }>(
+    "/api/admin/ai/knowledge/documents",
+    {
+      method: "POST",
+      body: form
+    }
+  );
+}
+
+export function publishKnowledgeDocument(documentId: string) {
+  return apiFetch<{ status: string; document: KnowledgeDocument }>(
+    `/api/admin/ai/knowledge/documents/${documentId}/publish`,
+    { method: "POST" }
+  );
+}
+
+export function setKnowledgeDocumentLegalHold(input: {
+  documentId: string;
+  legalHold: boolean;
+  reason?: string | null;
+}) {
+  return apiFetch<{ status: string; document: KnowledgeDocument }>(
+    `/api/admin/ai/knowledge/documents/${input.documentId}/legal-hold`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        legalHold: input.legalHold,
+        reason: input.reason ?? null
+      })
+    }
+  );
+}
+
+export async function exportKnowledgeBundle(input?: {
+  includeDeleted?: boolean;
+  includeBodyText?: boolean;
+  limit?: number;
+}) {
+  const payload = await apiFetch<{ status: string; export: KnowledgeExportBundle }>(
+    "/api/admin/ai/knowledge/export",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {})
+    }
+  );
+  return payload.export;
+}
+
+export function searchKnowledge(input: { query: string; limit?: number }) {
+  return apiFetch<{ results: KnowledgeSearchResult[] }>("/api/admin/ai/knowledge/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function listKnowledgeRetrievalEvents(limit = 25) {
+  const payload = await apiFetch<{ events: KnowledgeRetrievalEvent[] }>(
+    `/api/admin/ai/knowledge/retrieval-events?limit=${limit}`
+  );
+  return payload.events ?? [];
+}
+
+export async function listKnowledgeQuarantineEvents(limit = 25) {
+  const payload = await apiFetch<{ events: KnowledgeQuarantineEvent[] }>(
+    `/api/admin/ai/knowledge/quarantine-events?limit=${limit}`
+  );
+  return payload.events ?? [];
+}
+
+export async function getKnowledgeIngestionReadiness() {
+  const payload = await apiFetch<{ readiness: KnowledgeIngestionReadiness }>(
+    "/api/admin/ai/knowledge/ingestion-readiness"
+  );
+  return payload.readiness;
+}
+
+export async function exportTenantDataBundle(input?: { limitPerSection?: number }) {
+  const payload = await apiFetch<{ status: string; export: TenantExportBundle }>(
+    "/api/admin/tenant/export",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {})
+    }
+  );
+  return payload.export;
+}
+
+export async function previewKnowledgeRetention(limit = 100) {
+  const payload = await apiFetch<{ result: KnowledgeRetentionSweepResult }>(
+    `/api/admin/ai/knowledge/retention?limit=${limit}`
+  );
+  return payload.result;
+}
+
+export async function runKnowledgeRetention(limit = 100) {
+  const payload = await apiFetch<{ status: string; result: KnowledgeRetentionSweepResult }>(
+    "/api/admin/ai/knowledge/retention",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit })
+    }
+  );
+  return payload.result;
+}
+
+export function getAiSafetyDiagnostics(limit = 50) {
+  return apiFetch<AiSafetyDiagnostics>(`/api/admin/ai/safety?limit=${limit}`);
+}
+
+export async function listAgentPromptTemplates(limit = 50) {
+  const payload = await apiFetch<{ templates: AgentPromptTemplateRecord[] }>(
+    `/api/admin/ai/prompts?limit=${limit}`
+  );
+  return payload.templates ?? [];
+}
+
+export function createAgentPromptTemplate(input: {
+  templateKey?: string;
+  templateVersion: string;
+  templateBody: Record<string, unknown>;
+  activate?: boolean;
+  reason?: string | null;
+}) {
+  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>("/api/admin/ai/prompts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export function activateAgentPromptTemplate(templateId: string, reason?: string | null) {
+  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
+    `/api/admin/ai/prompts/${templateId}/activate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason ?? null })
+    }
+  );
+}
+
+export function rollbackAgentPromptTemplate(input?: { templateKey?: string; reason?: string | null }) {
+  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
+    "/api/admin/ai/prompts/rollback",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {})
+    }
+  );
 }
 
 export function deliverAgentOutbox(agentId: string, limit = 25) {
@@ -879,6 +1427,38 @@ export function runInboundAlertCheck() {
 
 export function getCallOutboxMetrics() {
   return apiFetch<CallOutboxMetrics>("/api/admin/calls/outbox");
+}
+
+export async function listCallProviderNumbers() {
+  const payload = await apiFetch<{ numbers: CallProviderNumber[] }>(
+    "/api/admin/calls/provider-numbers"
+  );
+  return payload.numbers ?? [];
+}
+
+export function saveCallProviderNumber(input: {
+  id?: string | null;
+  provider: string;
+  phoneNumber: string;
+  accountSid?: string | null;
+  status?: "active" | "paused" | "inactive";
+  metadata?: Record<string, unknown> | null;
+}) {
+  return apiFetch<{ status: string; number: CallProviderNumber }>(
+    "/api/admin/calls/provider-numbers",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function deactivateCallProviderNumber(id: string) {
+  return apiFetch<{ status: string; number: CallProviderNumber }>(
+    `/api/admin/calls/provider-numbers?id=${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
 }
 
 export function runCallOutbox(limit = 25) {

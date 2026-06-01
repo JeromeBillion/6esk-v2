@@ -175,6 +175,9 @@ describe("PATCH /api/customers/[customerId]", () => {
       displayName: "John D.",
       primaryEmail: "john.d@techcorp.com",
       primaryPhone: "+27 710 000 009"
+    }, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith({
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -219,6 +222,9 @@ describe("PATCH /api/customers/[customerId]", () => {
     expect(mocks.dbQuery).not.toHaveBeenCalled();
     expect(mocks.updateCustomerProfile).toHaveBeenCalledWith(CUSTOMER_ID, {
       displayName: "John D."
+    }, {
+      tenantKey: "primary",
+      workspaceKey: "primary"
     });
   });
 });

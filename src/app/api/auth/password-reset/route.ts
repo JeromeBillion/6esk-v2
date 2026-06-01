@@ -24,10 +24,16 @@ export async function POST(request: Request) {
 
   const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
   const resetResult = await db.query(
-    `SELECT id, user_id, expires_at, used_at
-     FROM password_resets
-     WHERE token_hash = $1
-     ORDER BY created_at DESC
+    `SELECT pr.id, pr.user_id, pr.expires_at, pr.used_at,
+            COALESCE(pr.tenant_key, u.tenant_key, 'primary') AS tenant_key,
+            COALESCE(pr.workspace_key, u.workspace_key, 'primary') AS workspace_key
+     FROM password_resets pr
+     JOIN users u
+       ON u.id = pr.user_id
+      AND u.tenant_key = pr.tenant_key
+      AND u.workspace_key = pr.workspace_key
+     WHERE pr.token_hash = $1
+     ORDER BY pr.created_at DESC
      LIMIT 1`,
     [tokenHash]
   );
@@ -46,13 +52,26 @@ export async function POST(request: Request) {
   }
 
   const passwordHash = hashPassword(parsed.data.password);
-  await db.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [
-    passwordHash,
-    reset.user_id
-  ]);
-  await db.query("UPDATE password_resets SET used_at = now() WHERE id = $1", [reset.id]);
+  await db.query(
+    `UPDATE users
+     SET password_hash = $1, updated_at = now()
+     WHERE id = $2
+       AND tenant_key = $3
+       AND workspace_key = $4`,
+    [passwordHash, reset.user_id, reset.tenant_key, reset.workspace_key]
+  );
+  await db.query(
+    `UPDATE password_resets
+     SET used_at = now()
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [reset.id, reset.tenant_key, reset.workspace_key]
+  );
 
   await recordAuditLog({
+    tenantKey: reset.tenant_key,
+    workspaceKey: reset.workspace_key,
     action: "password_reset_completed",
     entityType: "user",
     entityId: reset.user_id

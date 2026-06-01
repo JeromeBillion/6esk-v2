@@ -1,9 +1,12 @@
 import { db } from "@/server/db";
 import { decryptSecret } from "@/server/agents/secret";
 import { getObjectBuffer } from "@/server/storage/r2";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type WhatsAppEventRow = {
   id: string;
+  tenant_key: string;
+  workspace_key: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -42,21 +45,26 @@ function getProcessingRecoverySeconds() {
   return Math.floor(configured);
 }
 
-async function getActiveAccount() {
+async function getActiveAccount(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const result = await db.query<WhatsAppAccount>(
     `SELECT id, provider, phone_number, access_token, status
      FROM whatsapp_accounts
      WHERE status = 'active'
+       ${scope ? "AND tenant_key = $1" : ""}
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    scope ? [scope.tenantKey] : []
   );
   return result.rows[0] ?? null;
 }
 
 async function lockPendingEvents(
   limit: number,
-  processingRecoverySeconds: number
+  processingRecoverySeconds: number,
+  scopeInput?: TenantScopeInput
 ): Promise<WhatsAppEventRow[]> {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -69,6 +77,7 @@ async function lockPendingEvents(
          SELECT id
          FROM whatsapp_events
          WHERE direction = 'outbound'
+           ${scope ? "AND tenant_key = $3" : ""}
            AND (
              (status = 'queued' AND next_attempt_at <= now())
              OR (
@@ -80,8 +89,8 @@ async function lockPendingEvents(
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
-      [limit, processingRecoverySeconds]
+       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
+      scope ? [limit, processingRecoverySeconds, scope.tenantKey] : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -94,23 +103,36 @@ async function lockPendingEvents(
 }
 
 async function markDelivered(
+  scopeInput: TenantScopeInput,
   eventId: string,
   messageRecordId?: string | null,
   providerMessageId?: string | null
 ) {
+  const scope = resolveTenantScope(scopeInput);
   await db.query(
     `UPDATE whatsapp_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_key = $2`,
+    [eventId, scope.tenantKey]
   );
 
   const sentAt = new Date();
   await db.query(
-    `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO whatsapp_status_events (
+       tenant_key,
+       workspace_key,
+       message_id,
+       external_message_id,
+       status,
+       occurred_at,
+       payload
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
+      scope.tenantKey,
+      scope.workspaceKey,
       messageRecordId ?? null,
       providerMessageId ?? null,
       "sent",
@@ -130,21 +152,30 @@ async function markDelivered(
        SET external_message_id = $1,
            wa_status = 'sent',
            wa_timestamp = $2
-       WHERE id = $3`,
-      [providerMessageId, sentAt, messageRecordId]
+       WHERE id = $3
+         AND tenant_key = $4`,
+      [providerMessageId, sentAt, messageRecordId, scope.tenantKey]
     );
   } else if (messageRecordId) {
     await db.query(
       `UPDATE messages
        SET wa_status = 'sent',
            wa_timestamp = $2
-       WHERE id = $1`,
-      [messageRecordId, sentAt]
+       WHERE id = $1
+         AND tenant_key = $3`,
+      [messageRecordId, sentAt, scope.tenantKey]
     );
   }
 }
 
-async function markFailed(eventId: string, attemptCount: number, errorMessage: string, messageRecordId?: string | null) {
+async function markFailed(
+  scopeInput: TenantScopeInput,
+  eventId: string,
+  attemptCount: number,
+  errorMessage: string,
+  messageRecordId?: string | null
+) {
+  const scope = resolveTenantScope(scopeInput);
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
   await db.query(
@@ -154,15 +185,26 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_key = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, scope.tenantKey]
   );
 
   if (messageRecordId) {
     await db.query(
-      `INSERT INTO whatsapp_status_events (message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO whatsapp_status_events (
+         tenant_key,
+         workspace_key,
+         message_id,
+         external_message_id,
+         status,
+         occurred_at,
+         payload
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         messageRecordId,
         null,
         "failed",
@@ -180,8 +222,9 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
       `UPDATE messages
        SET wa_status = 'failed',
            wa_timestamp = now()
-       WHERE id = $1`,
-      [messageRecordId]
+       WHERE id = $1
+         AND tenant_key = $2`,
+      [messageRecordId, scope.tenantKey]
     );
   }
 }
@@ -374,13 +417,11 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
   return { providerMessageId };
 }
 
-export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = {}) {
-  const account = await getActiveAccount();
-  if (!account) {
-    return { delivered: 0, skipped: 0, error: "No active WhatsApp account" };
-  }
-
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds());
+export async function deliverPendingWhatsAppEvents(
+  { limit = 5 }: DeliverArgs = {},
+  scopeInput?: TenantScopeInput
+) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
@@ -390,24 +431,30 @@ export async function deliverPendingWhatsAppEvents({ limit = 5 }: DeliverArgs = 
     const payload = event.payload ?? {};
     const messageRecordId =
       typeof payload.messageRecordId === "string" ? payload.messageRecordId : null;
+    const eventScope = { tenantKey: event.tenant_key, workspaceKey: event.workspace_key };
     try {
+      const account = await getActiveAccount(eventScope);
+      if (!account) {
+        throw new Error("No active WhatsApp account");
+      }
       if (account.provider !== "meta") {
         throw new Error(`Provider ${account.provider} not supported yet`);
       }
       const { providerMessageId } = await sendMetaMessage(account, payload);
-      await markDelivered(event.id, messageRecordId, providerMessageId);
+      await markDelivered(eventScope, event.id, messageRecordId, providerMessageId);
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "WhatsApp delivery failed";
       const attempts = event.attempt_count + 1;
-      await markFailed(event.id, attempts, message, messageRecordId);
+      await markFailed(eventScope, event.id, attempts, message, messageRecordId);
     }
   }
 
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function listFailedWhatsAppOutboxEvents(limit = 50) {
+export async function listFailedWhatsAppOutboxEvents(limit = 50, scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
   const result = await db.query<FailedWhatsAppOutboxEvent>(
     `SELECT
@@ -421,10 +468,11 @@ export async function listFailedWhatsAppOutboxEvents(limit = 50) {
        payload
      FROM whatsapp_events
      WHERE direction = 'outbound'
+       ${scope ? "AND tenant_key = $2" : ""}
        AND status = 'failed'
      ORDER BY updated_at DESC
      LIMIT $1`,
-    [normalizedLimit]
+    scope ? [normalizedLimit, scope.tenantKey] : [normalizedLimit]
   );
   return result.rows;
 }
@@ -434,7 +482,11 @@ type RetryFailedWhatsAppOutboxInput = {
   eventIds?: string[];
 };
 
-export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutboxInput = {}) {
+export async function retryFailedWhatsAppEvents(
+  input: RetryFailedWhatsAppOutboxInput = {},
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const eventIds = Array.from(
     new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -451,9 +503,10 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
                  updated_at = now()
              WHERE direction = 'outbound'
                AND status = 'failed'
+               ${scope ? "AND tenant_key = $2" : ""}
                AND id::text = ANY($1::text[])
              RETURNING id`,
-            [eventIds]
+            scope ? [eventIds, scope.tenantKey] : [eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
@@ -461,6 +514,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
                FROM whatsapp_events
                WHERE direction = 'outbound'
                  AND status = 'failed'
+                 ${scope ? "AND tenant_key = $2" : ""}
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -472,7 +526,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
              FROM failed
              WHERE evt.id = failed.id
              RETURNING evt.id`,
-            [normalizedLimit]
+            scope ? [normalizedLimit, scope.tenantKey] : [normalizedLimit]
           );
     await client.query("COMMIT");
     return {

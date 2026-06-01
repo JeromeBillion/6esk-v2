@@ -30,6 +30,7 @@ describe("listTicketsForUser", () => {
     await listTicketsForUser(user, {});
 
     const [sql] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(sql).toContain("t.tenant_key = $1");
     expect(sql).toContain("LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id");
     expect(sql).toContain("(t.mailbox_id IS NULL OR mb.type = 'platform')");
   });

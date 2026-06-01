@@ -3,6 +3,11 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getTranscriptAiJobMetrics } from "@/server/calls/transcript-ai-jobs";
 import { deliverPendingTranscriptAiJobs } from "@/server/calls/transcript-ai-worker";
+import {
+  isTenantIngressScopeError,
+  tenantScopeFromMachineRequestAsync,
+  tenantScopeFromUser
+} from "@/server/tenant-context";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -12,7 +17,8 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 8) || 8, 1), 25);
-  const metrics = await getTranscriptAiJobMetrics(limit);
+  const scope = tenantScopeFromUser(user);
+  const metrics = await getTranscriptAiJobMetrics(limit, scope);
   return Response.json(metrics);
 }
 
@@ -25,13 +31,24 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  let scope;
+  try {
+    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
+  } catch (error) {
+    if (isTenantIngressScopeError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
 
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 10) || 10, 1), 100);
 
   try {
-    const result = await deliverPendingTranscriptAiJobs({ limit });
+    const result = await deliverPendingTranscriptAiJobs({ limit }, scope);
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_transcript_ai_outbox_triggered",
       entityType: "call_transcript_ai_jobs",
@@ -41,6 +58,8 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run transcript AI outbox";
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_transcript_ai_outbox_trigger_failed",
       entityType: "call_transcript_ai_jobs",

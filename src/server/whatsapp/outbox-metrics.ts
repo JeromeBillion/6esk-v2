@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type WhatsAppAccountRow = {
   id: string;
@@ -33,12 +34,15 @@ function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
-export async function getWhatsAppOutboxMetrics() {
+export async function getWhatsAppOutboxMetrics(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const accountResult = await db.query<WhatsAppAccountRow>(
     `SELECT id, provider, phone_number, status, updated_at
      FROM whatsapp_accounts
+     ${scope ? "WHERE tenant_key = $1" : ""}
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    scope ? [scope.tenantKey] : []
   );
 
   const summaryResult = await db.query<WhatsAppOutboxSummaryRow>(
@@ -56,17 +60,21 @@ export async function getWhatsAppOutboxMetrics() {
        MAX(updated_at) FILTER (WHERE status = 'sent') AS last_sent_at,
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM whatsapp_events
-     WHERE direction = 'outbound'`
+     WHERE direction = 'outbound'
+       ${scope ? "AND tenant_key = $1" : ""}`,
+    scope ? [scope.tenantKey] : []
   );
 
   const errorResult = await db.query<WhatsAppOutboxErrorRow>(
     `SELECT last_error
      FROM whatsapp_events
      WHERE direction = 'outbound'
+       ${scope ? "AND tenant_key = $1" : ""}
        AND status = 'failed'
        AND last_error IS NOT NULL
      ORDER BY updated_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    scope ? [scope.tenantKey] : []
   );
 
   const account = accountResult.rows[0] ?? null;

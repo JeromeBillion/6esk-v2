@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const createMailboxSchema = z.object({
   address: z.string().email(),
@@ -14,6 +15,7 @@ export async function GET() {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const result = await db.query(
     `SELECT
@@ -36,10 +38,12 @@ export async function GET() {
         ) AS members
      FROM mailboxes m
      LEFT JOIN users owner ON owner.id = m.owner_user_id
-     LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
-     LEFT JOIN users member ON member.id = mm.user_id
+     LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id AND mm.tenant_key = m.tenant_key
+     LEFT JOIN users member ON member.id = mm.user_id AND member.tenant_key = m.tenant_key
+     WHERE m.tenant_key = $1
      GROUP BY m.id, owner.email
-     ORDER BY m.type, m.address`
+     ORDER BY m.type, m.address`,
+    [scope.tenantKey]
   );
 
   return Response.json({ mailboxes: result.rows });
@@ -50,6 +54,7 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -67,8 +72,8 @@ export async function POST(request: Request) {
   const memberEmails = [...new Set(parsed.data.memberEmails.map((email) => email.trim().toLowerCase()).filter(Boolean))];
 
   const existing = await db.query<{ id: string; type: "platform" | "personal" }>(
-    "SELECT id, type FROM mailboxes WHERE address = $1 LIMIT 1",
-    [address]
+    "SELECT id, type FROM mailboxes WHERE tenant_key = $1 AND address = $2 LIMIT 1",
+    [scope.tenantKey, address]
   );
 
   const existingMailbox = existing.rows[0] ?? null;
@@ -84,9 +89,10 @@ export async function POST(request: Request) {
     const memberResult = await db.query<{ id: string; email: string; display_name: string }>(
       `SELECT id, email, display_name
        FROM users
-       WHERE lower(email) = ANY($1::text[])
+       WHERE tenant_key = $1
+         AND lower(email) = ANY($2::text[])
        ORDER BY email`,
-      [memberEmails]
+      [scope.tenantKey, memberEmails]
     );
     resolvedMembers = memberResult.rows;
 
@@ -105,20 +111,23 @@ export async function POST(request: Request) {
   }
 
   const mailboxResult = await db.query<{ id: string; address: string; type: "platform"; created_at: string }>(
-    `INSERT INTO mailboxes (type, address, owner_user_id)
-     VALUES ('platform', $1, NULL)
-     ON CONFLICT (address) DO UPDATE SET address = EXCLUDED.address
+    `INSERT INTO mailboxes (tenant_key, workspace_key, type, address, owner_user_id)
+     VALUES ($1, $2, 'platform', $3, NULL)
+     ON CONFLICT (tenant_key, address) DO UPDATE SET address = EXCLUDED.address
      RETURNING id, address, type, created_at`,
-    [address]
+    [scope.tenantKey, scope.workspaceKey, address]
   );
   const mailbox = mailboxResult.rows[0];
 
-  await db.query("DELETE FROM mailbox_memberships WHERE mailbox_id = $1", [mailbox.id]);
+  await db.query("DELETE FROM mailbox_memberships WHERE mailbox_id = $1 AND tenant_key = $2", [
+    mailbox.id,
+    scope.tenantKey
+  ]);
   for (const member of resolvedMembers) {
     await db.query(
-      `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-       VALUES ($1, $2, 'member')`,
-      [mailbox.id, member.id]
+      `INSERT INTO mailbox_memberships (tenant_key, workspace_key, mailbox_id, user_id, access_level)
+       VALUES ($1, $2, $3, $4, 'member')`,
+      [scope.tenantKey, scope.workspaceKey, mailbox.id, member.id]
     );
   }
 

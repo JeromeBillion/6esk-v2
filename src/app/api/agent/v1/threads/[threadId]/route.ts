@@ -1,12 +1,23 @@
 import { db } from "@/server/db";
-import { getAgentFromRequest } from "@/server/agents/auth";
+import {
+  agentIngressErrorResponse,
+  agentScopeFromIntegration,
+  getAgentFromRequest
+} from "@/server/agents/auth";
 import { getObjectBuffer } from "@/server/storage/r2";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ threadId: string }> }
 ) {
-  const integration = await getAgentFromRequest(request);
+  let integration;
+  try {
+    integration = await getAgentFromRequest(request);
+  } catch (error) {
+    const response = agentIngressErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
   if (!integration) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -19,17 +30,23 @@ export async function GET(
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 50) || 50, 1), 200);
+  const scope = agentScopeFromIntegration(integration);
 
   const scopes = integration.scopes ?? {};
   const mailboxIds = Array.isArray((scopes as { mailbox_ids?: unknown }).mailbox_ids)
     ? ((scopes as { mailbox_ids: string[] }).mailbox_ids as string[])
     : [];
 
-  const values: Array<string | number | string[]> = [threadId, limit];
+  const values: Array<string | number | string[]> = [
+    threadId,
+    limit,
+    scope.tenantKey,
+    scope.workspaceKey
+  ];
   let mailboxFilter = "";
   if (mailboxIds.length) {
     values.push(mailboxIds);
-    mailboxFilter = `AND mailbox_id = ANY($3)`;
+    mailboxFilter = `AND mailbox_id = ANY($5)`;
   }
 
   const result = await db.query(
@@ -38,6 +55,8 @@ export async function GET(
             wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE thread_id = $1
+       AND tenant_key = $3
+       AND workspace_key = $4
      ${mailboxFilter}
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC
      LIMIT $2`,

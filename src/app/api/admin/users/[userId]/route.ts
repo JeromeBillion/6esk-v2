@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const updateSchema = z.object({
   roleId: z.string().uuid().optional(),
@@ -17,6 +18,7 @@ export async function PATCH(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -32,8 +34,12 @@ export async function PATCH(
 
   const { userId } = await params;
   const existing = await db.query(
-    "SELECT id, email, role_id, is_active FROM users WHERE id = $1",
-    [userId]
+    `SELECT id, email, role_id, is_active
+     FROM users
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [userId, scope.tenantKey, scope.workspaceKey]
   );
   const current = existing.rows[0];
   if (!current) {
@@ -59,19 +65,27 @@ export async function PATCH(
   }
 
   fields.push("updated_at = now()");
-  values.push(userId);
+  const userIdParamIndex = index;
+  values.push(userId, scope.tenantKey, scope.workspaceKey);
 
   const result = await db.query(
     `UPDATE users
      SET ${fields.join(", ")}
-     WHERE id = $${index}
+     WHERE id = $${userIdParamIndex}
+       AND tenant_key = $${userIdParamIndex + 1}
+       AND workspace_key = $${userIdParamIndex + 2}
      RETURNING id, email, display_name, role_id, is_active, created_at`,
     values
   );
 
   const updated = result.rows[0];
+  if (!updated) {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
 
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "user_updated",
     entityType: "user",

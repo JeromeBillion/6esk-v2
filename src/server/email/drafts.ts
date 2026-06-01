@@ -3,8 +3,11 @@ import { db } from "@/server/db";
 import { deleteObject, putObject } from "@/server/storage/r2";
 import { normalizeAddressList } from "@/server/email/normalize";
 import { getMessageById, type MessageRecord } from "@/server/messages";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type UpsertMailDraftArgs = {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   draftId?: string | null;
   mailboxId: string;
   fromEmail: string;
@@ -68,9 +71,15 @@ export function isMailDraftRecord(message: Pick<MessageRecord, "direction" | "se
   return message.direction === "outbound" && message.sent_at === null && message.metadata?.mail_state === "draft";
 }
 
-async function persistDraftBodies(draftId: string, text?: string | null, html?: string | null) {
-  const existing = await getMessageById(draftId);
-  const keyPrefix = `messages/${draftId}`;
+async function persistDraftBodies(
+  draftId: string,
+  text?: string | null,
+  html?: string | null,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
+  const existing = await getMessageById(draftId, scope);
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${draftId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -98,8 +107,9 @@ async function persistDraftBodies(draftId: string, text?: string | null, html?: 
      SET r2_key_text = $1,
          r2_key_html = $2,
          size_bytes = $3
-     WHERE id = $4`,
-    [textKey, htmlKey, sizeBytes || null, draftId]
+     WHERE id = $4
+       AND tenant_key = $5`,
+    [textKey, htmlKey, sizeBytes || null, draftId, scope.tenantKey]
   );
 
   const keysToDelete = [
@@ -118,7 +128,11 @@ async function persistDraftBodies(draftId: string, text?: string | null, html?: 
   );
 }
 
-export async function getMailboxMessageSummaryById(messageId: string) {
+export async function getMailboxMessageSummaryById(
+  messageId: string,
+  scopeInput?: TenantScopeInput
+) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const result = await db.query<MailboxMessageSummary>(
     `SELECT m.id, m.direction, m.channel, m.from_email, m.to_emails, m.subject, m.preview_text, m.received_at, m.sent_at,
             m.is_read, m.is_starred, m.is_pinned, m.is_spam, m.spam_reason, m.thread_id, m.message_id, m.created_at,
@@ -139,14 +153,17 @@ export async function getMailboxMessageSummaryById(messageId: string) {
             ) AS sort_at
      FROM messages m
      WHERE m.id = $1
+       AND m.tenant_key = $2
      LIMIT 1`,
-    [messageId]
+    [messageId, tenantKey]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function upsertMailDraft({
+  tenantKey,
+  workspaceKey,
   draftId,
   mailboxId,
   fromEmail,
@@ -160,6 +177,7 @@ export async function upsertMailDraft({
   inReplyTo,
   references
 }: UpsertMailDraftArgs) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const toList = normalizeAddressList(to ?? []);
   const ccList = normalizeAddressList(cc ?? []);
   const bccList = normalizeAddressList(bcc ?? []);
@@ -168,7 +186,7 @@ export async function upsertMailDraft({
 
   let resolvedDraftId = draftId ?? randomUUID();
   if (draftId) {
-    const existing = await getMessageById(draftId);
+    const existing = await getMessageById(draftId, scope);
     if (!existing || existing.mailbox_id !== mailboxId || !isMailDraftRecord(existing)) {
       throw new Error("Draft not found");
     }
@@ -187,7 +205,8 @@ export async function upsertMailDraft({
            preview_text = $9,
            is_read = true,
            metadata = $10::jsonb
-       WHERE id = $11`,
+       WHERE id = $11
+         AND tenant_key = $12`,
       [
         threadId?.trim() || null,
         inReplyTo?.trim() || null,
@@ -199,20 +218,23 @@ export async function upsertMailDraft({
         subject?.trim() || null,
         previewText,
         buildDraftMetadata(existing.metadata ?? null),
-        draftId
+        draftId,
+        scope.tenantKey
       ]
     );
   } else {
     await db.query(
       `INSERT INTO messages (
-        id, mailbox_id, direction, channel, thread_id, in_reply_to, reference_ids, provider,
+        id, tenant_key, workspace_key, mailbox_id, direction, channel, thread_id, in_reply_to, reference_ids, provider,
         from_email, to_emails, cc_emails, bcc_emails, subject, preview_text, is_read, metadata
       ) VALUES (
-        $1, $2, 'outbound', 'email', $3, $4, $5, 'draft',
-        $6, $7, $8, $9, $10, $11, true, $12::jsonb
+        $1, $2, $3, $4, 'outbound', 'email', $5, $6, $7, 'draft',
+        $8, $9, $10, $11, $12, $13, true, $14::jsonb
       )`,
       [
         resolvedDraftId,
+        scope.tenantKey,
+        scope.workspaceKey,
         mailboxId,
         threadId?.trim() || null,
         inReplyTo?.trim() || null,
@@ -228,12 +250,17 @@ export async function upsertMailDraft({
     );
   }
 
-  await persistDraftBodies(resolvedDraftId, text, html);
-  return getMailboxMessageSummaryById(resolvedDraftId);
+  await persistDraftBodies(resolvedDraftId, text, html, scope);
+  return getMailboxMessageSummaryById(resolvedDraftId, scope);
 }
 
-export async function deleteMailDraft(draftId: string, mailboxId?: string | null) {
-  const existing = await getMessageById(draftId);
+export async function deleteMailDraft(
+  draftId: string,
+  mailboxId?: string | null,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
+  const existing = await getMessageById(draftId, scope);
   if (!existing || !isMailDraftRecord(existing) || (mailboxId && existing.mailbox_id !== mailboxId)) {
     return false;
   }
@@ -241,11 +268,15 @@ export async function deleteMailDraft(draftId: string, mailboxId?: string | null
   const attachmentResult = await db.query<{ r2_key: string | null }>(
     `SELECT r2_key
      FROM attachments
-     WHERE message_id = $1`,
-    [draftId]
+     WHERE message_id = $1
+       AND tenant_key = $2`,
+    [draftId, scope.tenantKey]
   );
 
-  await db.query(`DELETE FROM messages WHERE id = $1`, [draftId]);
+  await db.query(`DELETE FROM messages WHERE id = $1 AND tenant_key = $2`, [
+    draftId,
+    scope.tenantKey
+  ]);
 
   const keys = [
     existing.r2_key_raw,

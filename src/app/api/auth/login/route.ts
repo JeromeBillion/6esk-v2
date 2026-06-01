@@ -5,7 +5,8 @@ import { verifyPassword } from "@/server/auth/password";
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1)
+  password: z.string().min(1),
+  tenantKey: z.string().min(1).optional()
 });
 
 export async function POST(request: Request) {
@@ -22,12 +23,14 @@ export async function POST(request: Request) {
   }
 
   const { email, password } = parsed.data;
+  const tenantKey = parsed.data.tenantKey?.trim() || "primary";
   const result = await db.query(
     `SELECT id, password_hash, is_active
      FROM users
-     WHERE lower(email) = $1
+     WHERE tenant_key = $1
+       AND lower(email) = $2
      LIMIT 1`,
-    [email.toLowerCase()]
+    [tenantKey, email.toLowerCase()]
   );
 
   const user = result.rows[0];

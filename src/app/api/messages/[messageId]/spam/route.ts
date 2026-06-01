@@ -4,6 +4,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { recordAuditLog } from "@/server/audit";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const schema = z.object({
   isSpam: z.boolean(),
@@ -23,7 +24,8 @@ export async function PATCH(
   }
 
   const { messageId } = await params;
-  const message = await getMessageById(messageId);
+  const scope = tenantScopeFromUser(user);
+  const message = await getMessageById(messageId, scope);
   if (!message) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -31,12 +33,12 @@ export async function PATCH(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (message.ticket_id) {
-      const assignedUserId = await getTicketAssignment(message.ticket_id);
+      const assignedUserId = await getTicketAssignment(message.ticket_id, scope);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, message.mailbox_id);
+      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, scope);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -59,12 +61,15 @@ export async function PATCH(
     `UPDATE messages
      SET is_spam = $1, spam_reason = $2
      WHERE id = $3
+       AND tenant_key = $4
      RETURNING id, is_spam, spam_reason`,
-    [parsed.data.isSpam, parsed.data.reason ?? null, messageId]
+    [parsed.data.isSpam, parsed.data.reason ?? null, messageId, scope.tenantKey]
   );
 
   await recordAuditLog({
     actorUserId: user.id,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     action: parsed.data.isSpam ? "message_marked_spam" : "message_unmarked_spam",
     entityType: "message",
     entityId: messageId,

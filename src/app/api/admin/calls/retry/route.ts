@@ -2,6 +2,11 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { retryFailedCallOutboxEvents } from "@/server/calls/outbox";
 import { recordAuditLog } from "@/server/audit";
+import {
+  isTenantIngressScopeError,
+  tenantScopeFromMachineRequestAsync,
+  tenantScopeFromUser
+} from "@/server/tenant-context";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -11,6 +16,15 @@ export async function POST(request: Request) {
 
   if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  let scope;
+  try {
+    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
+  } catch (error) {
+    if (isTenantIngressScopeError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
   }
 
   const url = new URL(request.url);
@@ -31,8 +45,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await retryFailedCallOutboxEvents({ limit, eventIds });
+    const result = await retryFailedCallOutboxEvents({ limit, eventIds }, scope);
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_triggered",
       entityType: "call_outbox_events",
@@ -48,6 +64,8 @@ export async function POST(request: Request) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed call outbox events";
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_failed",
       entityType: "call_outbox_events",
