@@ -1,9 +1,10 @@
 import { db } from "@/server/db";
-import { ACTION_FEES_CENT } from "@/server/tenant/catalog";
+import { estimateUsageRevenueCent } from "@/server/tenant/catalog";
 
 type MarginRow = {
   module_key: string;
   usage_kind: string;
+  provider_mode: string | null;
   quantity_total: string | number;
   cost_total_cent: string | number;
   event_count: string | number;
@@ -42,13 +43,6 @@ function toNumber(value: string | number) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function estimateFeePerEvent(moduleKey: string) {
-  if (moduleKey === "email") return ACTION_FEES_CENT.email;
-  if (moduleKey === "whatsapp") return ACTION_FEES_CENT.whatsapp;
-  if (moduleKey === "voice") return ACTION_FEES_CENT.voice;
-  return ACTION_FEES_CENT.ai;
-}
-
 function marginPercent(revenueCent: number, costCent: number) {
   if (revenueCent <= 0) return 0;
   const margin = ((revenueCent - costCent) / revenueCent) * 100;
@@ -61,17 +55,18 @@ export async function getTenantMarginSnapshot(input: {
 }): Promise<MarginSnapshot> {
   const windowDays = clampWindowDays(input.windowDays);
   const result = await db.query<MarginRow>(
-    `SELECT
+     `SELECT
        module_key,
        usage_kind,
+       provider_mode,
        SUM(quantity)::bigint AS quantity_total,
        SUM(cost_cent)::numeric AS cost_total_cent,
        COUNT(*)::bigint AS event_count
      FROM workspace_module_usage_events
      WHERE tenant_id = $1
        AND created_at >= now() - ($2::text || ' days')::interval
-     GROUP BY module_key, usage_kind
-     ORDER BY module_key, usage_kind`,
+     GROUP BY module_key, usage_kind, provider_mode
+     ORDER BY module_key, usage_kind, provider_mode`,
     [input.tenantId, String(windowDays)]
   );
 
@@ -90,7 +85,14 @@ export async function getTenantMarginSnapshot(input: {
     const eventCount = toNumber(row.event_count);
     const quantityTotal = toNumber(row.quantity_total);
     const costTotalCent = toNumber(row.cost_total_cent);
-    const revenueForRow = eventCount * estimateFeePerEvent(moduleKey);
+    const revenueForRow = estimateUsageRevenueCent({
+      moduleKey,
+      usageKind: row.usage_kind,
+      providerMode: row.provider_mode,
+      quantity: quantityTotal,
+      eventCount,
+      costCent: costTotalCent
+    });
 
     events += eventCount;
     quantity += quantityTotal;

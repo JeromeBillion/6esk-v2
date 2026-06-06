@@ -44,4 +44,21 @@ describe("module entitlement guard", () => {
       "11111111-1111-1111-1111-111111111111"
     );
   });
+
+  it("fails closed when workspace module runtime entitlement denies usage", async () => {
+    const { checkModuleEntitlement } = await import("@/server/tenant/module-guard");
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(false);
+
+    const allowed = await checkModuleEntitlement(
+      "email",
+      "11111111-1111-1111-1111-111111111111"
+    );
+
+    expect(allowed).toBe(false);
+    expect(mocks.isWorkspaceModuleEnabled).toHaveBeenCalledWith(
+      "email",
+      "primary",
+      "11111111-1111-1111-1111-111111111111"
+    );
+  });
 });

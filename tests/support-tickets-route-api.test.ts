@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   deliverPendingAgentEvents: vi.fn(),
   sendTicketReply: vi.fn(),
   putObject: vi.fn(),
+  isWorkspaceModuleEnabled: vi.fn(),
   dbQuery: vi.fn()
 }));
 
@@ -83,6 +84,11 @@ vi.mock("@/server/storage/r2", () => ({
   putObject: mocks.putObject
 }));
 
+vi.mock("@/server/workspace-modules", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/workspace-modules")>()),
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
+}));
+
 vi.mock("@/server/db", () => ({
   db: {
     query: mocks.dbQuery
@@ -140,6 +146,7 @@ describe("POST /api/support/tickets", () => {
     mocks.deliverPendingAgentEvents.mockResolvedValue(undefined);
     mocks.sendTicketReply.mockResolvedValue({ messageId: "message-1" });
     mocks.putObject.mockResolvedValue("messages/message-1/body.txt");
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
     mocks.dbQuery.mockResolvedValue({ rows: [], rowCount: 1 });
   });
 

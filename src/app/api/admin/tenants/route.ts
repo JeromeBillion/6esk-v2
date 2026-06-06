@@ -4,6 +4,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { isInternalStaff } from "@/server/auth/roles";
 import { isDemoModeEnabled } from "@/app/lib/demo-mode";
 import {
+  changeTenantPlan,
+  TenantLifecycleError,
   provisionTenant,
   suspendTenant,
   reactivateTenant,
@@ -103,7 +105,8 @@ export async function POST(request: Request) {
 // -----------------------------------------------------------------------
 const statusSchema = z.object({
   tenantId: z.string().uuid(),
-  action: z.enum(["suspend", "reactivate", "close"]),
+  action: z.enum(["suspend", "reactivate", "close", "change_plan"]),
+  plan: z.string().min(1).max(80).optional(),
   reason: z.string().optional()
 });
 
@@ -134,16 +137,35 @@ export async function PATCH(request: Request) {
 
   const { tenantId, action, reason } = parsed.data;
 
-  switch (action) {
-    case "suspend":
-      await suspendTenant(tenantId, reason ?? "No reason provided", user.id);
-      break;
-    case "reactivate":
-      await reactivateTenant(tenantId, user.id);
-      break;
-    case "close":
-      await closeTenant(tenantId, reason ?? "No reason provided", user.id);
-      break;
+  try {
+    switch (action) {
+      case "suspend":
+        await suspendTenant(tenantId, reason ?? "No reason provided", user.id);
+        break;
+      case "reactivate":
+        await reactivateTenant(tenantId, user.id);
+        break;
+      case "close":
+        await closeTenant(tenantId, reason ?? "No reason provided", user.id);
+        break;
+      case "change_plan":
+        if (!parsed.data.plan) {
+          return NextResponse.json({ error: "Plan is required" }, { status: 400 });
+        }
+        await changeTenantPlan({
+          tenantId,
+          plan: parsed.data.plan,
+          reason: reason ?? "No reason provided",
+          actorUserId: user.id
+        });
+        break;
+    }
+  } catch (err) {
+    const status = err instanceof TenantLifecycleError ? err.status : 500;
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal error" },
+      { status }
+    );
   }
 
   return NextResponse.json({ ok: true, tenantId, action });

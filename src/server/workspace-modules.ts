@@ -152,6 +152,37 @@ export async function saveWorkspaceModules(
   };
 }
 
+async function isTenantRuntimeActiveForModules(tenantId: string) {
+  try {
+    const result = await db.query<{ status: string }>(
+      `SELECT status::text
+       FROM tenants
+       WHERE id = $1
+       LIMIT 1`,
+      [tenantId]
+    );
+    const status = result.rows[0]?.status;
+    if (!status) {
+      logger.warn("Workspace module entitlement denied because tenant is missing", { tenantId });
+      return false;
+    }
+    if (status !== "active") {
+      logger.warn("Workspace module entitlement denied because tenant is not active", {
+        tenantId,
+        status
+      });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    logger.error("Workspace module entitlement denied because tenant status check failed", {
+      error,
+      tenantId
+    });
+    return false;
+  }
+}
+
 /**
  * Check if a specific module is enabled for a tenant's workspace.
  */
@@ -160,6 +191,9 @@ export async function isWorkspaceModuleEnabled(
   workspaceKey = DEFAULT_WORKSPACE_KEY,
   tenantId = DEFAULT_TENANT_ID
 ) {
+  if (!(await isTenantRuntimeActiveForModules(tenantId))) {
+    return false;
+  }
   const config = await getWorkspaceModules(workspaceKey, tenantId);
   return config.modules[moduleKey] === true;
 }

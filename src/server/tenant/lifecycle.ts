@@ -38,6 +38,8 @@ export async function provisionTenant({
   }
 
   const client = await db.connect();
+  let committed = false;
+  let provisionedTenant: TenantRecord | null = null;
   try {
     await client.query("BEGIN");
 
@@ -96,51 +98,227 @@ export async function provisionTenant({
     }
 
     await client.query("COMMIT");
-
-    // 5. Audit
-    await recordAuditLog({
-      tenantId: tenant.id,
-      actorUserId: actorUserId ?? null,
-      action: "tenant_provisioned",
-      entityType: "tenant",
-      entityId: tenant.id,
-      data: { slug, plan, displayName }
-    });
-
-    return {
-      id: tenant.id,
-      slug: tenant.slug,
-      displayName: tenant.display_name,
-      status: tenant.status,
-      plan: tenant.plan,
-      settings: tenant.settings,
-      createdAt: tenant.created_at,
-      updatedAt: tenant.updated_at
-    };
+    committed = true;
+    provisionedTenant = mapTenant(tenant);
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!committed) {
+      await client.query("ROLLBACK");
+    }
     throw err;
   } finally {
     client.release();
   }
+
+  if (!provisionedTenant) {
+    throw new TenantLifecycleError("Tenant provision did not return a row", "TENANT_NOT_FOUND", 404);
+  }
+
+  // 5. Audit
+  await recordAuditLog({
+    tenantId: provisionedTenant.id,
+    actorUserId: actorUserId ?? null,
+    action: "tenant_provisioned",
+    entityType: "tenant",
+    entityId: provisionedTenant.id,
+    data: { slug, plan, displayName }
+  });
+
+  return provisionedTenant;
 }
 
-/**
- * Suspend a tenant. Read-only access remains, writes are blocked.
- */
-export async function suspendTenant(tenantId: string, reason: string, actorUserId?: string | null) {
-  await db.query(
-    `UPDATE tenants SET status = 'suspended', updated_at = now() WHERE id = $1`,
-    [tenantId]
-  );
+export class TenantLifecycleError extends Error {
+  constructor(
+    message: string,
+    public readonly code:
+      | "TENANT_NOT_FOUND"
+      | "TENANT_SUSPENDED"
+      | "TENANT_CLOSED"
+      | "INVALID_TENANT_TRANSITION",
+    public readonly status = 400
+  ) {
+    super(message);
+    this.name = "TenantLifecycleError";
+  }
+}
+
+type TenantRow = {
+  id: string;
+  slug: string;
+  display_name: string;
+  status: TenantStatus;
+  plan: string;
+  settings: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type LifecycleEvent = {
+  action: string;
+  status: TenantStatus;
+  reason: string | null;
+  actorUserId: string | null;
+  at: string;
+  previousStatus?: TenantStatus;
+  previousPlan?: string;
+  nextPlan?: string;
+};
+
+function mapTenant(row: TenantRow): TenantRecord {
+  return {
+    id: row.id,
+    slug: row.slug,
+    displayName: row.display_name,
+    status: row.status,
+    plan: row.plan,
+    settings: row.settings ?? {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function appendLifecycleEvent(
+  settings: Record<string, unknown> | null | undefined,
+  event: LifecycleEvent
+) {
+  const safeSettings = isRecord(settings) ? settings : {};
+  const currentLifecycle = isRecord(safeSettings.lifecycle) ? safeSettings.lifecycle : {};
+  const currentHistory = Array.isArray(currentLifecycle.history)
+    ? currentLifecycle.history.slice(-24)
+    : [];
+
+  return {
+    ...safeSettings,
+    lifecycle: {
+      ...currentLifecycle,
+      status: event.status,
+      lastAction: event.action,
+      lastReason: event.reason,
+      lastActorUserId: event.actorUserId,
+      updatedAt: event.at,
+      suspendedAt:
+        event.status === "suspended" ? event.at : currentLifecycle.suspendedAt ?? null,
+      reactivatedAt:
+        event.action === "tenant_reactivated" ? event.at : currentLifecycle.reactivatedAt ?? null,
+      closedAt: event.status === "closed" ? event.at : currentLifecycle.closedAt ?? null,
+      history: [...currentHistory, event]
+    }
+  };
+}
+
+function requireTenantTransition(current: TenantStatus, next: TenantStatus) {
+  if (current === "closed" && next !== "closed") {
+    throw new TenantLifecycleError(
+      "Closed tenants are terminal and cannot be reactivated or suspended.",
+      "TENANT_CLOSED",
+      409
+    );
+  }
+}
+
+async function updateTenantStatus({
+  tenantId,
+  nextStatus,
+  reason,
+  actorUserId,
+  auditAction
+}: {
+  tenantId: string;
+  nextStatus: TenantStatus;
+  reason: string | null;
+  actorUserId?: string | null;
+  auditAction: string;
+}): Promise<TenantRecord> {
+  const client = await db.connect();
+  let committed = false;
+  let updatedTenant: TenantRecord | null = null;
+  let auditData: Record<string, unknown> | null = null;
+  try {
+    await client.query("BEGIN");
+
+    const currentResult = await client.query<TenantRow>(
+      `SELECT id, slug, display_name, status::text, plan, settings,
+              created_at::text, updated_at::text
+       FROM tenants
+       WHERE id = $1
+       FOR UPDATE`,
+      [tenantId]
+    );
+    const current = currentResult.rows[0];
+    if (!current) {
+      throw new TenantLifecycleError("Tenant not found", "TENANT_NOT_FOUND", 404);
+    }
+
+    requireTenantTransition(current.status, nextStatus);
+
+    const event: LifecycleEvent = {
+      action: auditAction,
+      status: nextStatus,
+      reason,
+      actorUserId: actorUserId ?? null,
+      at: new Date().toISOString(),
+      previousStatus: current.status
+    };
+    const settings = appendLifecycleEvent(current.settings, event);
+
+    const updateResult = await client.query<TenantRow>(
+      `UPDATE tenants
+       SET status = $2::tenant_status, settings = $3::jsonb, updated_at = now()
+       WHERE id = $1
+       RETURNING id, slug, display_name, status::text, plan, settings,
+                 created_at::text, updated_at::text`,
+      [tenantId, nextStatus, JSON.stringify(settings)]
+    );
+
+    await client.query("COMMIT");
+    committed = true;
+    updatedTenant = mapTenant(updateResult.rows[0]);
+    auditData = {
+      reason,
+      previousStatus: current.status,
+      status: nextStatus
+    };
+  } catch (error) {
+    if (!committed) {
+      await client.query("ROLLBACK");
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 
   await recordAuditLog({
     tenantId,
     actorUserId: actorUserId ?? null,
-    action: "tenant_suspended",
+    action: auditAction,
     entityType: "tenant",
     entityId: tenantId,
-    data: { reason }
+    data: auditData
+  });
+
+  if (!updatedTenant) {
+    throw new TenantLifecycleError("Tenant update did not return a row", "TENANT_NOT_FOUND", 404);
+  }
+  return updatedTenant;
+}
+
+/**
+ * Suspend a tenant. Read-only access remains, writes and new billable usage are blocked.
+ */
+export async function suspendTenant(
+  tenantId: string,
+  reason: string,
+  actorUserId?: string | null
+) {
+  return updateTenantStatus({
+    tenantId,
+    nextStatus: "suspended",
+    reason,
+    actorUserId,
+    auditAction: "tenant_suspended"
   });
 }
 
@@ -148,38 +326,152 @@ export async function suspendTenant(tenantId: string, reason: string, actorUserI
  * Reactivate a suspended tenant.
  */
 export async function reactivateTenant(tenantId: string, actorUserId?: string | null) {
-  await db.query(
-    `UPDATE tenants SET status = 'active', updated_at = now() WHERE id = $1 AND status = 'suspended'`,
-    [tenantId]
-  );
-
-  await recordAuditLog({
+  return updateTenantStatus({
     tenantId,
-    actorUserId: actorUserId ?? null,
-    action: "tenant_reactivated",
-    entityType: "tenant",
-    entityId: tenantId,
-    data: {}
+    nextStatus: "active",
+    reason: null,
+    actorUserId,
+    auditAction: "tenant_reactivated"
   });
 }
 
 /**
- * Close a tenant. All access is disabled.
+ * Close a tenant. All runtime access is disabled. Closed is intentionally terminal.
  */
 export async function closeTenant(tenantId: string, reason: string, actorUserId?: string | null) {
-  await db.query(
-    `UPDATE tenants SET status = 'closed', updated_at = now() WHERE id = $1`,
-    [tenantId]
-  );
+  return updateTenantStatus({
+    tenantId,
+    nextStatus: "closed",
+    reason,
+    actorUserId,
+    auditAction: "tenant_closed"
+  });
+}
+
+/**
+ * Change a tenant plan without mutating module entitlements.
+ *
+ * Entitlements remain the operational source of truth for feature access; plan changes
+ * update the commercial boundary and are reconciled by billing/ops workflows.
+ */
+export async function changeTenantPlan({
+  tenantId,
+  plan,
+  reason,
+  actorUserId
+}: {
+  tenantId: string;
+  plan: string;
+  reason?: string | null;
+  actorUserId?: string | null;
+}): Promise<TenantRecord> {
+  const normalizedPlan = plan.trim();
+  if (!normalizedPlan) {
+    throw new TenantLifecycleError("Tenant plan is required", "INVALID_TENANT_TRANSITION", 400);
+  }
+
+  const client = await db.connect();
+  let committed = false;
+  let updatedTenant: TenantRecord | null = null;
+  let auditData: Record<string, unknown> | null = null;
+  try {
+    await client.query("BEGIN");
+
+    const currentResult = await client.query<TenantRow>(
+      `SELECT id, slug, display_name, status::text, plan, settings,
+              created_at::text, updated_at::text
+       FROM tenants
+       WHERE id = $1
+       FOR UPDATE`,
+      [tenantId]
+    );
+    const current = currentResult.rows[0];
+    if (!current) {
+      throw new TenantLifecycleError("Tenant not found", "TENANT_NOT_FOUND", 404);
+    }
+    if (current.status === "closed") {
+      throw new TenantLifecycleError(
+        "Closed tenants cannot change plan.",
+        "TENANT_CLOSED",
+        409
+      );
+    }
+
+    const event: LifecycleEvent = {
+      action: "tenant_plan_changed",
+      status: current.status,
+      reason: reason ?? null,
+      actorUserId: actorUserId ?? null,
+      at: new Date().toISOString(),
+      previousPlan: current.plan,
+      nextPlan: normalizedPlan
+    };
+    const settings = appendLifecycleEvent(current.settings, event);
+
+    const updateResult = await client.query<TenantRow>(
+      `UPDATE tenants
+       SET plan = $2, settings = $3::jsonb, updated_at = now()
+       WHERE id = $1
+       RETURNING id, slug, display_name, status::text, plan, settings,
+                 created_at::text, updated_at::text`,
+      [tenantId, normalizedPlan, JSON.stringify(settings)]
+    );
+
+    await client.query("COMMIT");
+    committed = true;
+    updatedTenant = mapTenant(updateResult.rows[0]);
+    auditData = {
+      reason: reason ?? null,
+      previousPlan: current.plan,
+      plan: normalizedPlan
+    };
+  } catch (error) {
+    if (!committed) {
+      await client.query("ROLLBACK");
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 
   await recordAuditLog({
     tenantId,
     actorUserId: actorUserId ?? null,
-    action: "tenant_closed",
+    action: "tenant_plan_changed",
     entityType: "tenant",
     entityId: tenantId,
-    data: { reason }
+    data: auditData
   });
+
+  if (!updatedTenant) {
+    throw new TenantLifecycleError("Tenant update did not return a row", "TENANT_NOT_FOUND", 404);
+  }
+  return updatedTenant;
+}
+
+/**
+ * Fail-closed runtime gate used before new module usage, provider calls, or billable work.
+ */
+export async function assertTenantRuntimeActive(tenantId: string): Promise<TenantRecord> {
+  const tenant = await getTenantById(tenantId);
+  if (!tenant) {
+    throw new TenantLifecycleError("Tenant not found", "TENANT_NOT_FOUND", 404);
+  }
+  if (tenant.status === "suspended") {
+    throw new TenantLifecycleError(
+      "Tenant is suspended. New usage is blocked.",
+      "TENANT_SUSPENDED",
+      403
+    );
+  }
+  if (tenant.status === "closed") {
+    throw new TenantLifecycleError(
+      "Tenant is closed. Runtime access is disabled.",
+      "TENANT_CLOSED",
+      403
+    );
+  }
+  return tenant;
 }
 
 /**
@@ -205,16 +497,7 @@ export async function getTenantById(tenantId: string): Promise<TenantRecord | nu
   const row = result.rows[0];
   if (!row) return null;
 
-  return {
-    id: row.id,
-    slug: row.slug,
-    displayName: row.display_name,
-    status: row.status,
-    plan: row.plan,
-    settings: row.settings,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
+  return mapTenant(row);
 }
 
 /**
@@ -240,16 +523,7 @@ export async function getTenantBySlug(slug: string): Promise<TenantRecord | null
   const row = result.rows[0];
   if (!row) return null;
 
-  return {
-    id: row.id,
-    slug: row.slug,
-    displayName: row.display_name,
-    status: row.status,
-    plan: row.plan,
-    settings: row.settings,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
+  return mapTenant(row);
 }
 
 /**
@@ -289,16 +563,7 @@ export async function listTenants(filters?: {
     params
   );
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    displayName: row.display_name,
-    status: row.status,
-    plan: row.plan,
-    settings: row.settings,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
+  return result.rows.map((row) => mapTenant(row));
 }
 
 // -------------------------------------------------------------------------
