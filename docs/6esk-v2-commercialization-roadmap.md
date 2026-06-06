@@ -284,6 +284,12 @@ Commercial packaging must be enforced by system design, not sales promises.
 ### Admin Usage and Billing Visibility
 Customers and internal operators need a usage page in Admin before paid rollout.
 
+Current implementation status:
+- tenant-scoped billing lifecycle persistence now exists on migration `0054`, covering billing accounts, subscriptions, subscription items, signed adjustments, invoices, invoice lines, and collection/dunning events
+- `src/server/billing/lifecycle.ts` derives subscription items from the v2 modular catalog, estimates invoice lines from tenant-scoped usage events, applies pending credits/refunds/write-offs/prorations, computes VAT, creates invoice drafts, transitions invoice lifecycle status, and records collection events
+- tenant admins can read lifecycle billing visibility through the workspace billing API; internal staff can sync subscriptions, create audited adjustments, create invoice drafts, transition invoices, and record collection events through the backoffice billing API
+- provider payment collection, real payment-provider reconciliation, invoice PDF/export, and deployed finance dashboard evidence remain deploy/runtime work
+
 Required page capabilities:
 - current-month estimated bill, split by base modules, add-ons, usage charges, credits, and VAT where applicable
 - module-level usage counters for email, WhatsApp, voice, AI automation, Dexter orchestration, and webchat
@@ -866,6 +872,15 @@ A SaaS business dies if it cannot:
 8. hosted-email cost and margin tracking separate from connected-email mode
 9. tenant-facing Admin usage and billing page with charts, estimated invoice, usage exports, and explainable line items
 
+Current implementation status:
+- items 1-5 have a v2-native persistence foundation in code through migration `0054` and `src/server/billing/lifecycle.ts`
+- usage billing estimates use the existing tenant-scoped `workspace_module_usage_events` table and `estimateUsageRevenueCent` catalog rules
+- manual credits/refunds/write-offs/prorations are signed, tenant-scoped, statused records with audit logs
+- invoice drafts persist explainable line items, apply pending adjustments, and prevent duplicate active invoices per tenant/workspace billing period so invoice totals reconcile to the same source estimate
+- collection/dunning events are tenant-scoped records that update billing account collection posture
+- remaining work for item 6 is provider-spend/payment-provider reconciliation with deployed credentials and external dashboard evidence
+- remaining work for item 9 is customer-facing chart/export polish on top of the lifecycle API
+
 ### Financial Control Requirements
 - usage records must be tenant-scoped, append-only or reconciliation-safe, and traceable to source events
 - provider spend reconciliation must detect abnormal spikes by tenant/module
@@ -997,12 +1012,13 @@ Retained and verified in the current recovery branch:
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
 - v2-native Google/Microsoft auth-login adapter on migration `0053`, including identity-only OAuth scopes, CSRF state/nonce cookie, existing-user mapping, tenant login-domain policy enforcement, managed `oauth` SSO mode, audit events without raw email leakage, OAuth+MFA provider provenance, login-page MFA handling, and production env validation when `AUTH_OAUTH_LOGIN_ENABLED=true`
+- v2-native billing lifecycle persistence on migration `0054`, including tenant billing accounts, subscription/item persistence from the v2 module catalog, proration adjustments, signed credits/refunds/write-offs, duplicate-safe invoice drafts/lines/status transitions, collection/dunning events, tenant-admin billing visibility, internal backoffice billing actions, and focused regression coverage
 
 Still outstanding before v2 main can be considered deploy-ready:
 - provider call-site adoption for persisted tenant ingress/provider webhook secrets beyond WhatsApp where provider verification currently reads only process env and supports tenant-specific secrets
 - OAuth runtime evidence: provider app callback registration, staging Google/Microsoft smoke tests, and dashboard credential verification are deploy dependencies rather than additional core code
 - AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
-- billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
+- billing follow-through: provider payment/reconciliation wiring, invoice PDF/export, chart/export UI polish, and deployed finance dashboard evidence
 - tenant export/offboarding/query-scope audit slices
 - full verification: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `git diff --check`, stale-coupling scan, migration-sequence check, and roadmap reality check
 

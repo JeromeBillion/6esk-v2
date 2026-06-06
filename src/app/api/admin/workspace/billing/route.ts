@@ -6,6 +6,7 @@ import { getTenantById } from "@/server/tenant/lifecycle";
 import { encrypt } from "@/server/security/encryption";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { getTenantBillingLifecycleSnapshot } from "@/server/billing/lifecycle";
 
 const billingSettingsSchema = z.object({
   aiProviderMode: z.enum(["managed", "byo", "none"]).optional(),
@@ -33,7 +34,8 @@ export async function GET(request: Request) {
     aiProviderMode: tenant.settings?.aiProviderMode || "managed",
     hasCustomKey: !!tenant.settings?.aiProviderApiKey,
     customModel: tenant.settings?.aiProviderModel || null,
-    customBaseUrl: tenant.settings?.aiProviderBaseUrl || null
+    customBaseUrl: tenant.settings?.aiProviderBaseUrl || null,
+    billingLifecycle: await getTenantBillingLifecycleSnapshot({ tenantId })
   });
 }
 

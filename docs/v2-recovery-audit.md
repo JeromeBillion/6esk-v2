@@ -61,6 +61,14 @@ Date: 2026-06-06
   - tenant security policy now supports managed `oauth` SSO mode while keeping legacy `better_auth` as a compatibility value
   - OAuth login enforces tenant login-domain policy, rejects unverified Google email claims, records audit events without raw email leakage, and carries MFA provider provenance through `auth_mfa_challenges`
   - the login page now handles password/OAuth MFA challenges before entering the workspace
+- Semantically ported billing lifecycle persistence into v2-native `tenant_id` form:
+  - `db/migrations/0054_billing_lifecycle.sql`
+  - `src/server/billing/lifecycle.ts`
+  - tenant billing accounts, subscriptions, subscription items, signed billing adjustments, invoices, invoice lines, and collection/dunning events are tenant/workspace scoped
+  - subscription sync derives durable items from the v2 modular pricing catalog and records mid-period proration as a pending adjustment
+  - estimated invoices are built from persisted subscription items, tenant-scoped usage events, pending adjustments, and VAT rules
+  - internal backoffice billing actions can sync subscriptions, create audited credits/refunds/write-offs/prorations, create duplicate-safe invoice drafts, transition invoice status, and record collection events
+  - tenant admins can read current billing lifecycle visibility through the workspace billing API
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -69,7 +77,7 @@ Deferred for future semantic port, not lost:
 - Better Auth package adoption: rejected for this launch slice because v2 already has tenant-scoped `users`, `auth_sessions`, MFA, session revocation, and privileged-access state. The retained value is the provider-login capability, now implemented as a v2-native Google/Microsoft OAuth adapter. A future OIDC broker can still be added without replacing the v2 session source of truth.
 - Tenant ingress/provider webhook adoption for providers beyond WhatsApp: persisted v2-native services, admin routes, and WhatsApp fallback verification are now ported; future provider-specific webhook paths should consume the persisted secret lookup where they support tenant-specific secrets.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
-- Billing lifecycle modules: keep subscription/proration/credits/dunning/invoice lifecycle requirements, but merge against v2 pricing, margin, tenant lifecycle, and migration sequence.
+- Billing provider reconciliation and customer-facing export polish: core lifecycle persistence is now ported; provider payment evidence, invoice PDF/export, and chart/export UI polish remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
 
 ## Verification Expectations
@@ -114,3 +122,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/backoffice-privileged-access-api.test.ts`
   - `tests/backoffice-impersonate-api.test.ts`
   - `tests/security-readiness.test.ts`
+- Billing lifecycle persistence tests pass in the focused slice:
+  - `tests/billing-lifecycle.test.ts`
+  - `tests/admin-workspace-billing-api.test.ts`
+  - `tests/backoffice-billing-lifecycle-api.test.ts`
