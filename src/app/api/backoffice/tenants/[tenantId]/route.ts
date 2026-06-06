@@ -2,16 +2,33 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isInternalStaff } from "@/server/auth/roles";
 import {
+  changeTenantPlan,
+  TenantLifecycleError,
   getTenantById,
   suspendTenant,
   reactivateTenant,
   closeTenant
 } from "@/server/tenant/lifecycle";
 
-const updateStatusSchema = z.object({
-  action: z.enum(["suspend", "reactivate", "close"]),
-  reason: z.string().optional()
-});
+const updateStatusSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("suspend"),
+    reason: z.string().optional()
+  }),
+  z.object({
+    action: z.literal("reactivate"),
+    reason: z.string().optional()
+  }),
+  z.object({
+    action: z.literal("close"),
+    reason: z.string().optional()
+  }),
+  z.object({
+    action: z.literal("change_plan"),
+    plan: z.string().min(1).max(80),
+    reason: z.string().optional()
+  })
+]);
 
 export async function GET(
   request: Request,
@@ -67,12 +84,20 @@ export async function POST(
       await reactivateTenant(tenantId, user?.id);
     } else if (action === "close") {
       await closeTenant(tenantId, reason || "Administrative closure", user?.id);
+    } else if (action === "change_plan") {
+      await changeTenantPlan({
+        tenantId,
+        plan: parsed.data.plan,
+        reason: reason || "Administrative plan change",
+        actorUserId: user?.id
+      });
     }
 
     const updated = await getTenantById(tenantId);
     return Response.json({ tenant: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal error";
-    return Response.json({ error: message }, { status: 500 });
+    const status = error instanceof TenantLifecycleError ? error.status : 500;
+    return Response.json({ error: message }, { status });
   }
 }

@@ -50,16 +50,34 @@ The commercial test is simple: if we cannot explain and prove tenant isolation, 
 - all external AI/STT/providers are treated as subprocessors and untrusted network dependencies
 
 ## Commercial Packaging Model
+Commercial pricing is usage/outcome-based, not seat-based. Human users can be added without per-seat billing; the commercial engine charges for the platform, enabled modules, provider pass-through costs, AI outcomes, and retained storage.
+
+Current executable pricing contract:
+- Core OS: R699/month
+- WhatsApp module: R499/month
+- Voice module: R899/month
+- Managed AI module: R1,499/month
+- BYO AI module: R899/month
+- Managed email domain routing: R199/domain/month
+- Managed email mailbox: R79/mailbox/month
+- Managed email aliases: free
+- outbound email delivered: R0.05
+- inbound email processed: R0.03
+- WhatsApp and voice provider usage: provider cost plus 35% markup
+- STT transcript processing: R0.35/minute
+- AI outcome/action: R1.00
+- storage: R1.00/GB-month
+
 ### Core Platform (included)
 These should not be priced as standalone add-ons:
 - support workspace shell
 - analytics
 - admin
 - operations tooling
+- connected email workspace capability
 - human-to-6esk vanilla webchat
 
 ### Billable Modules
-- email workspace connectivity
 - managed email service
 - WhatsApp
 - voice
@@ -87,11 +105,14 @@ Commercial rule:
 
 ### AI Commercial Rule
 If a customer uses our managed AI stack:
-- they pay the AI module price inclusive of our orchestration/runtime margin and token cost model
+- they pay the Managed AI module price
+- they pay R1 per customer-visible AI outcome/action
+- managed-provider costs are captured separately and shown as provider cost, not hidden inside a seat model
 
 If a customer brings their own AI API/provider:
-- token cost is removed from our pricing model
-- we still charge for our orchestration/runtime layer and support margin
+- they pay the BYO AI module price
+- they pay R1 per customer-visible AI outcome/action
+- provider spend is paid directly by the customer to their provider
 
 ## v2 Success Criteria
 `6esk v2` is ready for market only when all of the following are true:
@@ -191,6 +212,16 @@ The move from `v1` internal/custom data to `v2` tenant data needs explicit tooli
 - prove no orphaned tenantless production records remain
 - keep rollback and read-only migration modes available until the cutover is verified
 
+### Current Implementation Status
+Multi-tenant core is closed for the current launch-gate scope:
+- tenant, organization, workspace, entitlement, audit, channel, ticket, customer, outbox, and billing paths have tenant IDs or tenant-derived context in the implemented services
+- tenant lifecycle service now validates provision/suspend/reactivate/close/plan-change operations, preserves lifecycle metadata in tenant settings, audits changes, and treats closed tenants as terminal
+- shared module entitlement checks now fail closed unless the tenant is runtime-active, so suspended/closed tenants cannot create new provider/module usage while historical records remain intact
+- backoffice tenant APIs expose lifecycle state and controlled plan/status changes for internal staff
+- focused regression tests cover lifecycle transitions, backoffice lifecycle control, and entitlement denial for inactive tenants
+
+Remaining export/delete/anonymize and legal-retention behavior is tracked under the data-lifecycle/compliance tracks, not this core isolation gate.
+
 ## Workstream B: Authentication, Identity, and Access
 ### Must-Haves
 - OAuth / OpenID Connect support
@@ -227,7 +258,7 @@ Commercial packaging must be enforced by system design, not sales promises.
 1. Entitlement engine for channels and AI modules.
 2. Metering for:
    - connected email volume
-   - managed email mailboxes / aliases / seats / sending volume
+   - managed email domains / mailboxes / aliases / sending volume
    - WhatsApp volume/templates
    - voice usage
    - AI text actions
@@ -341,9 +372,10 @@ If 6esk offers managed email service, we also need:
 ### Commercial Requirement
 Managed email service must meter and bill differently from connected-provider email.
 The roadmap must support:
-- mailbox/seat pricing
-- alias/domain pricing if needed
-- sending-volume pricing if needed
+- domain routing pricing
+- mailbox pricing
+- free aliases
+- sending-volume pricing
 - onboarding/service fees where justified
 
 ### Exit Criteria
@@ -923,7 +955,7 @@ This status table tracks the 13-item consolidation checklist used in current exe
 |---|---|---|
 | 1 | v1 lock gate | Deferred by instruction (out of scope for this execution pass) |
 | 2 | Security launch gates | Closed in this pass: fail-closed module entitlement context, tenant-scoped admin outbox execution, security readiness API |
-| 3 | Multi-tenant core | In progress (substantially implemented) |
+| 3 | Multi-tenant core | Closed in this pass: lifecycle transitions, plan-change control, runtime-active entitlement gate, backoffice lifecycle API, and focused regression tests |
 | 4 | Auth / identity / access | Closed in this pass: time-bounded break-glass impersonation with mandatory reason/ticket reference and expiry-aware session resolution |
 | 5 | Entitlements / packaging / metering | Closed in this pass: entitlement drift detection + repair API and tenant-scoped outbox metering paths |
 | 6 | Email productization | Closed in this pass: mailbox delivery mode visibility (`connected` vs `managed`) surfaced via mailbox APIs |

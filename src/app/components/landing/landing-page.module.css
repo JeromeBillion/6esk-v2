@@ -2222,6 +2222,82 @@
   color: rgba(255, 255, 255, 0.58);
 }
 
+.aiModeOptions {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.25rem;
+}
+
+.aiModeOption {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.58rem 0.62rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.035);
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.aiModeOption:hover,
+.aiModeOption:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+  outline: none;
+}
+
+.aiModeOptionSelected {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(244, 214, 255, 0.58);
+  transform: translateY(-1px);
+}
+
+.aiModeRadio {
+  width: 0.78rem;
+  height: 0.78rem;
+  margin-top: 0.16rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  box-shadow: inset 0 0 0 3px #111017;
+  background: transparent;
+}
+
+.aiModeOptionSelected .aiModeRadio {
+  border-color: #ffffff;
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 3px #111017,
+    0 0 14px rgba(255, 255, 255, 0.22);
+}
+
+.aiModeCopy {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.aiModeLabel {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.aiModePrice {
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.aiModeNote {
+  font-size: 0.67rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .calculatorTotal {
   display: flex;
   align-items: center;

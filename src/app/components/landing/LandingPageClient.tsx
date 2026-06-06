@@ -2,7 +2,7 @@
 
 import Image, { type StaticImageData } from "next/image";
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Bot,
@@ -149,10 +149,27 @@ const FOOTER_SECTIONS = [
   }
 ] as const;
 
+type AiPricingMode = "managed" | "byo";
+
+const AI_PRICING_OPTIONS = [
+  {
+    mode: "managed" as const,
+    label: "Managed AI",
+    price: 1499,
+    note: "6esk provider stack, provider costs shown separately."
+  },
+  {
+    mode: "byo" as const,
+    label: "BYO AI",
+    price: 899,
+    note: "Bring your own key and pay that provider directly."
+  }
+];
+
 const PRICING_MODULES = [
-  { id: "core", name: "Core OS", price: 499, description: "Email included. Foundation for every tenant.", mandatory: true, Icon: Workflow },
+  { id: "core", name: "Core OS", price: 699, description: "Email included. Foundation for every tenant.", mandatory: true, Icon: Workflow },
   { id: "whatsapp", name: "WhatsApp", price: 499, description: "Full Meta Business API integration.", Icon: MessageCircleMore },
-  { id: "voice", name: "Voice", price: 699, description: "Call center logic and recording.", Icon: PhoneCall },
+  { id: "voice", name: "Voice", price: 899, description: "Call center logic and recording.", Icon: PhoneCall },
   { id: "ai", name: "AI Orchestration", price: 1499, description: "Dexter AI, Auto-Resolution & Transcript analysis.", Icon: Bot }
 ];
 
@@ -169,13 +186,16 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
     time: ""
   });
   const [selectedModules, setSelectedModules] = useState<string[]>(["core"]);
+  const [selectedAiMode, setSelectedAiMode] = useState<AiPricingMode>("managed");
 
   const calculateTotal = useMemo(() => {
+    const selectedAiPrice = AI_PRICING_OPTIONS.find((option) => option.mode === selectedAiMode)?.price ?? 1499;
     return selectedModules.reduce((acc, moduleId) => {
+      if (moduleId === "ai") return acc + selectedAiPrice;
       const pricingModule = PRICING_MODULES.find((candidate) => candidate.id === moduleId);
       return acc + (pricingModule?.price ?? 0);
     }, 0);
-  }, [selectedModules]);
+  }, [selectedAiMode, selectedModules]);
 
   const toggleModule = (moduleId: string) => {
     const pricingModule = PRICING_MODULES.find((candidate) => candidate.id === moduleId);
@@ -186,6 +206,17 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
         ? current.filter((id) => id !== moduleId)
         : [...current, moduleId]
     );
+  };
+
+  const handleModuleKeyDown = (event: KeyboardEvent<HTMLDivElement>, moduleId: string) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleModule(moduleId);
+  };
+
+  const selectAiMode = (mode: AiPricingMode) => {
+    setSelectedAiMode(mode);
+    setSelectedModules((current) => (current.includes("ai") ? current : [...current, "ai"]));
   };
 
   useEffect(() => {
@@ -818,7 +849,7 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
               Build your own CRM.
             </h2>
             <p data-reveal className={styles.sectionIntro}>
-              No seat licenses. No hidden markups. Pay for the pieces you stack and the orchestration work the system does.
+              No seat licenses. Clear provider pass-throughs. Pay for the pieces you stack and the outcomes the system delivers.
             </p>
           </div>
 
@@ -843,14 +874,16 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
                     colors={["#c084fc", "#f472b6", "#38bdf8"]}
                     fillOpacity={selected ? 0.22 : 0.14}
                   >
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={pricingModule.mandatory ? -1 : 0}
                       className={cn(
                         styles.moduleCard,
                         selected && styles.moduleCardSelected,
                         pricingModule.mandatory && styles.moduleCardMandatory
                       )}
                       onClick={() => toggleModule(pricingModule.id)}
+                      onKeyDown={(event) => handleModuleKeyDown(event, pricingModule.id)}
                       aria-pressed={selected}
                       aria-disabled={pricingModule.mandatory || undefined}
                     >
@@ -859,7 +892,11 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
                           <ModuleIcon size={18} />
                         </span>
                         <span className={styles.modulePrice}>
-                          {pricingModule.mandatory ? "Base" : `+R${pricingModule.price}`}
+                          {pricingModule.mandatory
+                            ? "R699 base"
+                            : pricingModule.id === "ai"
+                              ? "R899 / R1,499"
+                              : `+R${pricingModule.price}`}
                         </span>
                       </span>
                       <span className={styles.moduleCardBody}>
@@ -870,8 +907,41 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
                           <span className={styles.moduleName}>{pricingModule.name}</span>
                         </span>
                         <span className={styles.moduleDescription}>{pricingModule.description}</span>
+                        {pricingModule.id === "ai" ? (
+                          <span className={styles.aiModeOptions} role="radiogroup" aria-label="AI module billing mode">
+                            {AI_PRICING_OPTIONS.map((option) => {
+                              const optionSelected = selectedAiMode === option.mode;
+                              return (
+                                <span
+                                  key={option.mode}
+                                  className={cn(styles.aiModeOption, optionSelected && styles.aiModeOptionSelected)}
+                                  role="radio"
+                                  aria-checked={optionSelected}
+                                  tabIndex={0}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    selectAiMode(option.mode);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter" && event.key !== " ") return;
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    selectAiMode(option.mode);
+                                  }}
+                                >
+                                  <span className={styles.aiModeRadio} />
+                                  <span className={styles.aiModeCopy}>
+                                    <span className={styles.aiModeLabel}>{option.label}</span>
+                                    <span className={styles.aiModePrice}>+R{option.price.toLocaleString()}/mo</span>
+                                    <span className={styles.aiModeNote}>{option.note}</span>
+                                  </span>
+                                </span>
+                              );
+                            })}
+                          </span>
+                        ) : null}
                       </span>
-                    </button>
+                    </div>
                   </BorderGlow>
                 );
               })}
@@ -893,24 +963,36 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
 
           <div data-reveal className={styles.orchestrationTable}>
             <div className={styles.orchestrationHeader}>
-              <span className={landingMonoFont.className}>Variable Orchestration Fees (Per Action)</span>
+              <span className={landingMonoFont.className}>Variable Usage Fees</span>
             </div>
             <div className={styles.orchestrationGrid}>
               <div className={styles.orchestrationRow}>
-                <span>Email Action</span>
-                <strong>R0.20</strong>
+                <span>Inbound Email</span>
+                <strong>R0.03</strong>
               </div>
               <div className={styles.orchestrationRow}>
-                <span>WhatsApp Action</span>
-                <strong>R0.99</strong>
+                <span>Outbound Email</span>
+                <strong>R0.05</strong>
               </div>
               <div className={styles.orchestrationRow}>
-                <span>Voice Call</span>
-                <strong>R2.50</strong>
+                <span>WhatsApp</span>
+                <strong>Provider cost + markup</strong>
               </div>
               <div className={styles.orchestrationRow}>
-                <span>AI Orchestration</span>
+                <span>Voice</span>
+                <strong>Provider cost + markup</strong>
+              </div>
+              <div className={styles.orchestrationRow}>
+                <span>STT Transcript</span>
+                <strong>R0.35/min</strong>
+              </div>
+              <div className={styles.orchestrationRow}>
+                <span>AI Outcome</span>
                 <strong>R1.00</strong>
+              </div>
+              <div className={styles.orchestrationRow}>
+                <span>Storage</span>
+                <strong>R1/GB-month</strong>
               </div>
             </div>
           </div>

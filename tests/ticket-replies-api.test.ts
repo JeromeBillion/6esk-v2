@@ -7,7 +7,8 @@ const OTHER_AGENT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   getTicketById: vi.fn(),
-  sendTicketReply: vi.fn()
+  sendTicketReply: vi.fn(),
+  isWorkspaceModuleEnabled: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -20,6 +21,11 @@ vi.mock("@/server/tickets", () => ({
 
 vi.mock("@/server/email/replies", () => ({
   sendTicketReply: mocks.sendTicketReply
+}));
+
+vi.mock("@/server/workspace-modules", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/workspace-modules")>()),
+  isWorkspaceModuleEnabled: mocks.isWorkspaceModuleEnabled
 }));
 
 import { POST } from "@/app/api/tickets/[ticketId]/replies/route";
@@ -61,6 +67,7 @@ describe("POST /api/tickets/[ticketId]/replies", () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
     mocks.getTicketById.mockResolvedValue(buildTicket());
     mocks.sendTicketReply.mockResolvedValue({ messageId: "msg-123" });
+    mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
   });
 
   it("returns 401 when session is missing", async () => {

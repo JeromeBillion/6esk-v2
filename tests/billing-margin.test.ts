@@ -22,17 +22,35 @@ describe("getTenantMarginSnapshot", () => {
       rows: [
         {
           module_key: "email",
-          usage_kind: "reply_sent",
+          usage_kind: "outbound_email",
+          provider_mode: null,
           quantity_total: 10,
           cost_total_cent: 30,
           event_count: 10
         },
         {
+          module_key: "email",
+          usage_kind: "direct_send",
+          provider_mode: null,
+          quantity_total: 10,
+          cost_total_cent: 0,
+          event_count: 10
+        },
+        {
           module_key: "voice",
           usage_kind: "outbound_call",
+          provider_mode: null,
           quantity_total: 2,
           cost_total_cent: 100,
           event_count: 2
+        },
+        {
+          module_key: "aiAutomation",
+          usage_kind: "transcript_analysis",
+          provider_mode: "managed",
+          quantity_total: 1200,
+          cost_total_cent: 25,
+          event_count: 1
         }
       ]
     });
@@ -42,9 +60,11 @@ describe("getTenantMarginSnapshot", () => {
       windowDays: 30
     });
 
-    expect(snapshot.totals.events).toBe(12);
-    expect(snapshot.totals.costCent).toBe(130);
-    expect(snapshot.totals.estimatedRevenueCent).toBe(700);
-    expect(snapshot.modules.find((row) => row.moduleKey === "email")?.estimatedRevenueCent).toBe(200);
+    expect(snapshot.totals.events).toBe(23);
+    expect(snapshot.totals.costCent).toBe(155);
+    expect(snapshot.totals.estimatedRevenueCent).toBe(310);
+    expect(snapshot.modules.find((row) => row.moduleKey === "email")?.estimatedRevenueCent).toBe(50);
+    expect(snapshot.modules.find((row) => row.moduleKey === "voice")?.estimatedRevenueCent).toBe(135);
+    expect(snapshot.modules.find((row) => row.moduleKey === "aiAutomation")?.estimatedRevenueCent).toBe(125);
   });
 });

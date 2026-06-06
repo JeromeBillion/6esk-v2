@@ -912,7 +912,7 @@ function buildInitialState(): DemoState {
       customerId: "cust-john",
       subject: "How to add team members?",
       category: "Account",
-      metadata: { seats: 14 },
+      metadata: { users: 14 },
       tags: ["account"],
       has_whatsapp: false,
       has_voice: false,
@@ -921,7 +921,7 @@ function buildInitialState(): DemoState {
       assigned_user_id: "user-elena",
       created_at: "2026-02-28T11:20:00Z",
       updated_at: "2026-02-28T11:48:00Z",
-      preview: "We onboarded new staff and need the right seat setup.",
+      preview: "We onboarded new staff and need the right role setup.",
       unread: false,
       archived: true
     })
@@ -1570,7 +1570,7 @@ function buildInitialState(): DemoState {
       to: [DEFAULT_MAILBOX_ADDRESS],
       subject: "How to add team members?",
       text:
-        "We onboarded new staff and need the right seat setup. Which role template do you recommend for analysts?",
+        "We onboarded new staff and need the right role setup. Which role template do you recommend for analysts?",
       receivedAt: "2026-02-28T11:20:00Z",
       sentAt: null
     }),

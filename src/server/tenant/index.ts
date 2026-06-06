@@ -19,6 +19,9 @@ export { createScopedDb, type ScopedDb } from "./scoped-db";
 
 // Lifecycle operations
 export {
+  TenantLifecycleError,
+  assertTenantRuntimeActive,
+  changeTenantPlan,
   provisionTenant,
   suspendTenant,
   reactivateTenant,
