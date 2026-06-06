@@ -97,6 +97,7 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
 
     expect(response.status).toBe(200);
     expect(body.windowDays).toBe(90);
+    expect(body.configuredSource).toBe("external-profile");
     expect(body.summary).toMatchObject({
       total: 20,
       matched: 12,
@@ -129,7 +130,15 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
     });
     expect(body.series).toHaveLength(2);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(1, expect.any(String), [90]);
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [90]);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(1, expect.any(String), [
+      90,
+      "external-profile",
+      "external-profile-cache"
+    ]);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [
+      90,
+      "external-profile",
+      "external-profile-cache"
+    ]);
   });
 });

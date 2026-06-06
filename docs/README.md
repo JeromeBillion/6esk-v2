@@ -15,7 +15,7 @@ This directory is intentionally compact and only keeps implementation-critical d
 - `docs/merge-feature-roadmap.md`
   - Current customer identity, customer history, and merge behavior/spec
 - `docs/webagent-escalation-dependencies.md`
-  - Cross-repo env/secret map for prediction backend, Venus runtime, and 6esk
+  - White-label webchat/profile plug contract for optional external profile enrichment
 - `docs/call-ops-runbook.md`
   - Call operations runbook (replay drill, outbox load/retry drill, rollback)
 - `docs/call-crm-staging-e2e.md`
@@ -24,8 +24,6 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Voice consent source-of-truth and recording/transcript retention wording
 - `docs/voice-pilot-runbook.md`
   - Current pilot/rollout checklist for the voice feature
-- `docs/Venus-Voice.md`
-  - Venus-to-6esk AI voice integration contract and safety model
 - `docs/pricing-model.md`
   - Working v2 modular pricing assumptions and usage-fee model
 - `docs/deploy-migrations.md`
@@ -34,6 +32,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Current npm audit baseline, release gate command, and remediation workflow
 - `docs/6esk-v2-commercialization-roadmap.md`
   - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including security launch gates, AI readiness, usage/billing, South Africa readiness, and BizOps
+- `docs/v2-recovery-audit.md`
+  - Recovery/audit record for the v2 workspace alignment incident, safety branches, retained work, and deferred wrong-folder work
 - `docs/6esk-v3-mobile-roadmap.md`
   - Mobile follow-on roadmap after v2 SaaS foundations
 

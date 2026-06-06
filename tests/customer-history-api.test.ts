@@ -59,7 +59,7 @@ function buildCustomer(id = CUSTOMER_ID) {
   return {
     id,
     kind: "registered",
-    external_system: "prediction-market-mvp",
+    external_system: "external-profile",
     external_user_id: "pm-user-123",
     display_name: "Known User",
     primary_email: "known.user@example.com",

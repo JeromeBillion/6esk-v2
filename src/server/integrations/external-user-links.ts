@@ -1,5 +1,5 @@
 import { db } from "@/server/db";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import type { ExternalProfile } from "@/server/integrations/external-profile";
 
 type InboundChannel = "email" | "whatsapp";
 type QueryExecutor = Pick<typeof db, "query">;
@@ -110,7 +110,7 @@ export async function upsertExternalUserLink({
   queryExecutor = db
 }: {
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   matchedBy?: string | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;

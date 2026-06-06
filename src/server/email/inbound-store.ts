@@ -13,9 +13,9 @@ import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { evaluateSpam } from "@/server/email/spam";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  buildExternalProfileMetadataPatch,
+  lookupExternalProfile
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
   resolveOrCreateCustomerForInbound,
@@ -96,26 +96,28 @@ export async function storeInboundEmail(data: InboundEmail) {
   }
 
   // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  let requesterProfile: Awaited<ReturnType<typeof lookupPredictionProfile>> | null = null;
+  let requesterProfile: Awaited<ReturnType<typeof lookupExternalProfile>> | null = null;
   let customerResolution: Awaited<ReturnType<typeof resolveOrCreateCustomerForInbound>> | null = null;
   let profileMetadataPatch: Record<string, unknown> = {};
   let existingTicketId: string | null = null;
   let inferredTags: string[] = [];
 
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
-    requesterProfile = await lookupPredictionProfile({ email: fromEmail });
+    requesterProfile = await lookupExternalProfile({ email: fromEmail });
     customerResolution = await resolveOrCreateCustomerForInbound({
       tenantId,
+      externalSystem:
+        requesterProfile.status === "matched" ? requesterProfile.externalSystem : undefined,
       profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
       inboundEmail: fromEmail
     });
     profileMetadataPatch =
       requesterProfile.status === "matched" && customerResolution?.conflict
         ? applyIdentityConflictMetadata(
-            buildProfileMetadataPatch(requesterProfile),
+            buildExternalProfileMetadataPatch(requesterProfile),
             customerResolution.conflict
           )
-        : buildProfileMetadataPatch(requesterProfile);
+        : buildExternalProfileMetadataPatch(requesterProfile);
 
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
@@ -278,7 +280,7 @@ export async function storeInboundEmail(data: InboundEmail) {
 
       if (requesterProfile?.status === "matched" && ticketId && !customerResolution?.conflict) {
         await upsertExternalUserLink({
-          externalSystem: "prediction-market-mvp",
+          externalSystem: requesterProfile.externalSystem,
           profile: requesterProfile.profile,
           matchedBy: requesterProfile.matchedBy,
           inboundEmail: fromEmail,
@@ -293,7 +295,7 @@ export async function storeInboundEmail(data: InboundEmail) {
           `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
            VALUES ($1, $2, $3, $4, $5)`,
           [tenantId, ticketId, "profile_enriched", null, {
-            source: "prediction-market-mvp",
+            source: requesterProfile.externalSystem,
             matchedBy: requesterProfile.matchedBy,
             externalUserId: requesterProfile.profile.id
           }]
@@ -303,7 +305,7 @@ export async function storeInboundEmail(data: InboundEmail) {
           `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
            VALUES ($1, $2, $3, $4, $5)`,
           [tenantId, ticketId, "customer_identity_conflict", null, {
-            source: "prediction-market-mvp",
+            source: requesterProfile.externalSystem,
             matchedBy: requesterProfile.matchedBy,
             conflict: customerResolution.conflict
           }]

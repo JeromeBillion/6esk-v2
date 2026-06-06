@@ -1,6 +1,9 @@
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import {
+  DEFAULT_EXTERNAL_PROFILE_SYSTEM,
+  type ExternalProfile
+} from "@/server/integrations/external-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { deleteObject } from "@/server/storage/r2";
@@ -243,7 +246,7 @@ async function upsertRegisteredCustomer({
 }: {
   tenantId: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -302,7 +305,7 @@ async function promoteCustomerWithProfile({
   customerId: string;
   tenantId: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -345,7 +348,7 @@ async function promoteCustomerWithProfile({
 
 export async function resolveOrCreateCustomerForInbound({
   tenantId = DEFAULT_TENANT_ID,
-  externalSystem = "prediction-market-mvp",
+  externalSystem = DEFAULT_EXTERNAL_PROFILE_SYSTEM,
   profile,
   inboundEmail,
   inboundPhone,
@@ -353,7 +356,7 @@ export async function resolveOrCreateCustomerForInbound({
 }: {
   tenantId?: string;
   externalSystem?: string;
-  profile?: PredictionProfile | null;
+  profile?: ExternalProfile | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;
   displayName?: string | null;

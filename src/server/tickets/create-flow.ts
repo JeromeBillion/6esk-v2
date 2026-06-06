@@ -17,10 +17,13 @@ import {
   type CustomerResolutionConflict
 } from "@/server/customers";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile,
-  type PredictionProfile
-} from "@/server/integrations/prediction-profile";
+  buildExternalProfileMetadataPatch,
+  enrichExternalProfileMetadata,
+  lookupExternalProfile,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import { normalizeCallPhone, queueOutboundCall } from "@/server/calls/service";
 import { deliverPendingCallEvents } from "@/server/calls/outbox";
@@ -93,70 +96,6 @@ function moduleDisabledResponse(request: Request, module: "email" | "whatsapp" |
   });
 }
 
-function enrichExternalProfileMetadata(metadata: Record<string, unknown> | null) {
-  if (!metadata) return null;
-
-  const hasExternalProfile =
-    typeof metadata.external_profile === "object" && metadata.external_profile !== null;
-  if (hasExternalProfile) {
-    return metadata;
-  }
-
-  const email = readString(metadata.appUserEmail);
-  const isAuthenticated = metadata.isAuthenticated === true;
-  if (!isAuthenticated || !email) {
-    return metadata;
-  }
-
-  const matchedAt = new Date().toISOString();
-  return {
-    ...metadata,
-    external_profile: {
-      source: "prediction-market-mvp-webchat",
-      externalUserId: readString(metadata.appUserId),
-      matchedBy: "session_auth",
-      matchedAt,
-      fullName: readString(metadata.appUserFullName),
-      email,
-      secondaryEmail: readString(metadata.appUserSecondaryEmail),
-      phoneNumber: readString(metadata.appUserPhone),
-      kycStatus: readString(metadata.appUserKycStatus),
-      accountStatus: readString(metadata.appUserAccountStatus)
-    },
-    profile_lookup: {
-      source: "prediction-market-mvp-webchat",
-      status: "matched",
-      matchedBy: "session_auth",
-      lookupAt: matchedAt
-    }
-  } as Record<string, unknown>;
-}
-
-function readProfileFromMetadata(
-  metadata: Record<string, unknown> | null
-): PredictionProfile | null {
-  if (!metadata) return null;
-  const payload = metadata.external_profile;
-  if (!payload || typeof payload !== "object") return null;
-  const profile = payload as Record<string, unknown>;
-
-  const id = readString(profile.externalUserId);
-  const email = readString(profile.email);
-  if (!id || !email) {
-    return null;
-  }
-
-  return {
-    id,
-    email,
-    secondaryEmail: readString(profile.secondaryEmail),
-    fullName: readString(profile.fullName),
-    phoneNumber: readString(profile.phoneNumber),
-    kycStatus: readString(profile.kycStatus),
-    accountStatus: readString(profile.accountStatus)
-  };
-}
-
 function readLookupPhoneFromMetadata(metadata: Record<string, unknown> | null) {
   if (!metadata) return null;
 
@@ -178,15 +117,6 @@ function readLookupPhoneFromMetadata(metadata: Record<string, unknown> | null) {
     readString(externalProfile?.phone) ??
     null
   );
-}
-
-function readLookupMatchedByFromMetadata(metadata: Record<string, unknown> | null) {
-  if (!metadata) return null;
-  const payload =
-    typeof metadata.profile_lookup === "object" && metadata.profile_lookup !== null
-      ? (metadata.profile_lookup as Record<string, unknown>)
-      : null;
-  return readString(payload?.matchedBy);
 }
 
 function applyIdentityConflictMetadata(
@@ -217,17 +147,17 @@ async function enrichInboundExternalMetadata({
   metadata: Record<string, unknown> | null;
 }) {
   const enriched = enrichExternalProfileMetadata(metadata);
-  if (readProfileFromMetadata(enriched)) {
+  if (readExternalProfileFromMetadata(enriched)) {
     return enriched;
   }
 
-  const lookup = await lookupPredictionProfile({
+  const lookup = await lookupExternalProfile({
     email: fromEmail,
     phone: readLookupPhoneFromMetadata(enriched) ?? undefined
   });
   return {
     ...(enriched ?? {}),
-    ...buildProfileMetadataPatch(lookup)
+    ...buildExternalProfileMetadataPatch(lookup)
   } as Record<string, unknown>;
 }
 
@@ -641,9 +571,11 @@ export async function processCreateTicket({
     fromEmail,
     metadata: (data.metadata as Record<string, unknown> | null) ?? null
   });
-  const resolvedProfile = readProfileFromMetadata(enrichedMetadata);
+  const resolvedProfile = readExternalProfileFromMetadata(enrichedMetadata);
+  const externalProfileSource = readExternalProfileSource(enrichedMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
     tenantId,
+    externalSystem: externalProfileSource,
     profile: resolvedProfile,
     inboundEmail: fromEmail
   });
@@ -686,10 +618,11 @@ export async function processCreateTicket({
   }
 
   if (resolvedProfile && !customerResolution?.conflict) {
+    const matchedBy = readExternalProfileMatchedBy(enrichedMetadata);
     await upsertExternalUserLink({
-      externalSystem: "prediction-market-mvp",
+      externalSystem: externalProfileSource,
       profile: resolvedProfile,
-      matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+      matchedBy,
       inboundEmail: fromEmail,
       ticketId,
       channel: "email"
@@ -699,19 +632,20 @@ export async function processCreateTicket({
       ticketId,
       eventType: "profile_enriched",
       data: {
-        source: "prediction-market-mvp",
-        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        source: externalProfileSource,
+        matchedBy,
         externalUserId: resolvedProfile.id
       }
     });
   } else if (resolvedProfile && customerResolution?.conflict) {
+    const matchedBy = readExternalProfileMatchedBy(enrichedMetadata);
     await recordTicketEvent({
       tenantId,
       ticketId,
       eventType: "customer_identity_conflict",
       data: {
-        source: "prediction-market-mvp",
-        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        source: externalProfileSource,
+        matchedBy,
         conflict: customerResolution.conflict
       }
     });

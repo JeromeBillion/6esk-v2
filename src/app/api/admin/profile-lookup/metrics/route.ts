@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
+import { getExternalProfileSystem } from "@/server/integrations/external-profile";
 
 type LookupSummaryRow = {
   total: number;
@@ -53,6 +54,8 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const windowDays = parseWindowDays(url.searchParams.get("days"));
+  const liveSource = getExternalProfileSystem();
+  const cacheSource = `${liveSource}-cache`;
 
   const scopedCte = `
     WITH scoped AS (
@@ -86,15 +89,15 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'prediction-market-mvp'
+             AND source = $2
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'prediction-market-mvp-cache'
+             AND source = $3
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
+             AND source NOT IN ($2, $3)
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
@@ -111,7 +114,7 @@ export async function GET(request: Request) {
          )::float8 AS p95_duration_ms
        FROM scoped
        WHERE lookup_at >= now() - make_interval(days => $1::int)`,
-      [windowDays]
+      [windowDays, liveSource, cacheSource]
     ),
     db.query<LookupSeriesRow>(
       `${scopedCte}
@@ -120,15 +123,15 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'prediction-market-mvp'
+             AND source = $2
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'prediction-market-mvp-cache'
+             AND source = $3
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
+             AND source NOT IN ($2, $3)
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
@@ -137,7 +140,7 @@ export async function GET(request: Request) {
        WHERE lookup_at >= now() - make_interval(days => $1::int)
        GROUP BY 1
        ORDER BY 1 ASC`,
-      [windowDays]
+      [windowDays, liveSource, cacheSource]
     )
   ]);
 
@@ -160,7 +163,8 @@ export async function GET(request: Request) {
   return Response.json({
     generatedAt: new Date().toISOString(),
     windowDays,
-    configuredTimeoutMs: parseTimeoutMs(process.env.PREDICTION_PROFILE_LOOKUP_TIMEOUT_MS),
+    configuredSource: liveSource,
+    configuredTimeoutMs: parseTimeoutMs(process.env.EXTERNAL_PROFILE_LOOKUP_TIMEOUT_MS),
     summary: {
       total: summary.total,
       matched: summary.matched,

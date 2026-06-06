@@ -9,25 +9,26 @@ vi.mock("@/server/integrations/external-user-links", () => ({
 }));
 
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  buildExternalProfileMetadataPatch,
+  lookupExternalProfile
+} from "@/server/integrations/external-profile";
 
 const ORIGINAL_ENV = { ...process.env };
 
 function applyLookupEnv() {
-  process.env.PREDICTION_PROFILE_LOOKUP_ENABLED = "true";
-  process.env.PREDICTION_PROFILE_LOOKUP_URL = "https://prediction.example.com";
-  process.env.PREDICTION_PROFILE_LOOKUP_SECRET = "test-secret";
-  process.env.PREDICTION_PROFILE_LOOKUP_TIMEOUT_MS = "200";
-  process.env.PREDICTION_PROFILE_LOOKUP_RETRY_COUNT = "0";
+  process.env.EXTERNAL_PROFILE_LOOKUP_ENABLED = "true";
+  process.env.EXTERNAL_PROFILE_LOOKUP_URL = "https://profiles.example.com";
+  process.env.EXTERNAL_PROFILE_LOOKUP_SECRET = "test-secret";
+  process.env.EXTERNAL_PROFILE_LOOKUP_TIMEOUT_MS = "200";
+  process.env.EXTERNAL_PROFILE_LOOKUP_RETRY_COUNT = "0";
 }
 
-describe("buildProfileMetadataPatch", () => {
+describe("buildExternalProfileMetadataPatch", () => {
   it("includes durationMs for matched lookups", () => {
-    const patch = buildProfileMetadataPatch({
+    const patch = buildExternalProfileMetadataPatch({
       status: "matched",
-      source: "prediction-market-mvp",
+      source: "external-profile",
+      externalSystem: "external-profile",
       matchedBy: "email",
       durationMs: 123,
       profile: {
@@ -48,7 +49,7 @@ describe("buildProfileMetadataPatch", () => {
   });
 
   it("includes durationMs and error details for errored lookups", () => {
-    const patch = buildProfileMetadataPatch({
+    const patch = buildExternalProfileMetadataPatch({
       status: "error",
       error: "timeout",
       durationMs: 1501
@@ -61,15 +62,15 @@ describe("buildProfileMetadataPatch", () => {
   });
 
   it("includes durationMs for missed and disabled lookups", () => {
-    const missedPatch = buildProfileMetadataPatch({ status: "missed", durationMs: 7 });
-    const disabledPatch = buildProfileMetadataPatch({ status: "disabled", durationMs: 0 });
+    const missedPatch = buildExternalProfileMetadataPatch({ status: "missed", durationMs: 7 });
+    const disabledPatch = buildExternalProfileMetadataPatch({ status: "disabled", durationMs: 0 });
 
     expect((missedPatch.profile_lookup as Record<string, unknown>).durationMs).toBe(7);
     expect((disabledPatch.profile_lookup as Record<string, unknown>).durationMs).toBe(0);
   });
 });
 
-describe("lookupPredictionProfile", () => {
+describe("lookupExternalProfile", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     applyLookupEnv();
@@ -92,7 +93,7 @@ describe("lookupPredictionProfile", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     mocks.findExternalUserLinkByIdentity.mockResolvedValue({
-      external_system: "prediction-market-mvp",
+      external_system: "external-profile",
       external_user_id: "cached-user-1",
       email: "user@example.com",
       phone: "+27710000001",
@@ -103,13 +104,14 @@ describe("lookupPredictionProfile", () => {
       last_channel: "email"
     });
 
-    const result = await lookupPredictionProfile({
+    const result = await lookupExternalProfile({
       email: "  USER@example.com "
     });
 
     expect(result).toMatchObject({
       status: "matched",
-      source: "prediction-market-mvp-cache",
+      source: "external-profile-cache",
+      externalSystem: "external-profile",
       matchedBy: "email"
     });
     if (result.status === "matched") {
@@ -119,7 +121,7 @@ describe("lookupPredictionProfile", () => {
       });
     }
     expect(mocks.findExternalUserLinkByIdentity).toHaveBeenCalledWith({
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "external-profile",
       email: "user@example.com",
       phone: null
     });
@@ -131,7 +133,7 @@ describe("lookupPredictionProfile", () => {
     const fetchMock = vi.fn().mockRejectedValue(timeoutError);
     vi.stubGlobal("fetch", fetchMock);
     mocks.findExternalUserLinkByIdentity.mockResolvedValue({
-      external_system: "prediction-market-mvp",
+      external_system: "external-profile",
       external_user_id: "cached-user-2",
       email: "phone-user@example.com",
       phone: "+27715550000",
@@ -142,17 +144,18 @@ describe("lookupPredictionProfile", () => {
       last_channel: "whatsapp"
     });
 
-    const result = await lookupPredictionProfile({
+    const result = await lookupExternalProfile({
       phone: "+27 71 555 0000"
     });
 
     expect(result).toMatchObject({
       status: "matched",
-      source: "prediction-market-mvp-cache",
+      source: "external-profile-cache",
+      externalSystem: "external-profile",
       matchedBy: "phone_number"
     });
     expect(mocks.findExternalUserLinkByIdentity).toHaveBeenCalledWith({
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "external-profile",
       email: null,
       phone: "+27715550000"
     });
@@ -175,13 +178,14 @@ describe("lookupPredictionProfile", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await lookupPredictionProfile({
+    const result = await lookupExternalProfile({
       email: "live@example.com"
     });
 
     expect(result).toMatchObject({
       status: "matched",
-      source: "prediction-market-mvp",
+      source: "external-profile",
+      externalSystem: "external-profile",
       matchedBy: "email"
     });
     expect(mocks.findExternalUserLinkByIdentity).not.toHaveBeenCalled();

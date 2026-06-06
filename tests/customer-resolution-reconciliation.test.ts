@@ -63,11 +63,11 @@ describe("resolveOrCreateCustomerForInbound", () => {
     });
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM customers"),
-      [TENANT_ID, "prediction-market-mvp", "user-123"]
+      [TENANT_ID, "external-profile", "user-123"]
     );
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE customers"),
-      expect.arrayContaining(["customer-existing", "prediction-market-mvp", "user-123"])
+      expect.arrayContaining(["customer-existing", "external-profile", "user-123"])
     );
     expect(
       mocks.dbQuery.mock.calls.some(
@@ -91,7 +91,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
           {
             id: "customer-canonical",
             kind: "registered",
-            external_system: "prediction-market-mvp",
+            external_system: "external-profile",
             external_user_id: "user-999"
           }
         ]
@@ -119,10 +119,10 @@ describe("resolveOrCreateCustomerForInbound", () => {
       kind: "registered",
       conflict: {
         type: "external_identity_conflict",
-        externalSystem: "prediction-market-mvp",
+        externalSystem: "external-profile",
         incomingExternalUserId: "user-123",
         existingExternalUserId: "user-999",
-        existingExternalSystem: "prediction-market-mvp",
+        existingExternalSystem: "external-profile",
         existingCustomerId: "customer-canonical",
         matchedIdentity: "email"
       }

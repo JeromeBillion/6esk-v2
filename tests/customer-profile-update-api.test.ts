@@ -62,7 +62,7 @@ function buildCustomer(overrides?: Partial<Record<string, unknown>>) {
   return {
     id: CUSTOMER_ID,
     kind: "registered",
-    external_system: "prediction-market-mvp",
+    external_system: "external-profile",
     external_user_id: "user-123",
     display_name: "John Davidson",
     primary_email: "john@techcorp.com",

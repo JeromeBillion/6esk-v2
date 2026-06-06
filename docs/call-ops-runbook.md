@@ -180,7 +180,8 @@ npm run calls:crm-e2e
 
 Optional:
 - set `DATABASE_URL` to validate local `ticket.call.*` sequence metadata from `agent_outbox`.
-- set `CRM_CALLS_VENUS_EVENTS_URL` (and optional `CRM_CALLS_VENUS_EVENTS_TOKEN`) to verify Venus event observation.
+- set `CRM_CALLS_TENANT_ID` to scope local `agent_outbox` checks to the staging tenant.
+- set `CRM_CALLS_AGENT_EVENTS_URL` (and optional `CRM_CALLS_AGENT_EVENTS_TOKEN`) to verify downstream agent event observation.
 
 ## Incident Triage
 

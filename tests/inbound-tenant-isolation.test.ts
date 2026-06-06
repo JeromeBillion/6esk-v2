@@ -13,8 +13,8 @@ const mocks = vi.hoisted(() => ({
   resolveInboundMailbox: vi.fn(),
   getOrCreateMailbox: vi.fn(),
   evaluateSpam: vi.fn(),
-  lookupPredictionProfile: vi.fn(),
-  buildProfileMetadataPatch: vi.fn(),
+  lookupExternalProfile: vi.fn(),
+  buildExternalProfileMetadataPatch: vi.fn(),
   resolveOrCreateCustomerForInbound: vi.fn(),
   upsertExternalUserLink: vi.fn(),
   inferTagsFromText: vi.fn(),
@@ -42,9 +42,9 @@ vi.mock("@/server/email/spam", () => ({
   evaluateSpam: mocks.evaluateSpam
 }));
 
-vi.mock("@/server/integrations/prediction-profile", () => ({
-  lookupPredictionProfile: mocks.lookupPredictionProfile,
-  buildProfileMetadataPatch: mocks.buildProfileMetadataPatch
+vi.mock("@/server/integrations/external-profile", () => ({
+  lookupExternalProfile: mocks.lookupExternalProfile,
+  buildExternalProfileMetadataPatch: mocks.buildExternalProfileMetadataPatch
 }));
 
 vi.mock("@/server/customers", () => ({
@@ -111,8 +111,8 @@ describe("inbound tenant isolation", () => {
       owner_user_id: null
     });
     mocks.evaluateSpam.mockResolvedValue({ isSpam: false, reason: null });
-    mocks.lookupPredictionProfile.mockResolvedValue({ status: "missed" });
-    mocks.buildProfileMetadataPatch.mockReturnValue({});
+    mocks.lookupExternalProfile.mockResolvedValue({ status: "missed" });
+    mocks.buildExternalProfileMetadataPatch.mockReturnValue({});
     mocks.resolveOrCreateCustomerForInbound.mockResolvedValue({
       customerId: CUSTOMER_ID,
       kind: "unregistered"

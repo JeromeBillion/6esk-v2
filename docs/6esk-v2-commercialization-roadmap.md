@@ -36,8 +36,8 @@ The commercial test is simple: if we cannot explain and prove tenant isolation, 
 
 ## Baseline Assumptions
 - architecture: true multi-tenant SaaS
-- `v2` can run with no Venus dependency
-- a forked AI orchestration module will originate from Venus, but be packaged as a 6esk module
+- `v2` has no hidden internal orchestration dependency
+- AI orchestration is Dexter-owned and packaged as a 6esk module
 - customers may choose:
   - no AI
   - 6esk-managed AI orchestration
@@ -82,7 +82,7 @@ These should not be priced as standalone add-ons:
 - WhatsApp
 - voice
 - AI automation
-- AI orchestration service module (forked from Venus)
+- AI orchestration service module
 - bring-your-own AI provider mode
 - implementation / professional services (business-side offering)
 
@@ -386,7 +386,7 @@ The roadmap must support:
 
 ## Workstream E: AI Productization
 ### Product Requirement
-The current Venus-derived capability must become an optional `6esk` module, not a hidden internal dependency.
+Dexter must be an optional `6esk` AI module, not a hidden internal dependency on an adjacent product.
 
 ### Modes To Support
 1. No AI.
@@ -429,7 +429,7 @@ These names are the target contract for Dexter and the admin UI. Existing aliase
 | `full_auto` | Dexter executes tenant-approved actions autonomously inside configured policy, scopes, spend caps, confidence thresholds, rate limits, idempotency, and kill switches. | No human approval. If an action is not preauthorized or confidence is insufficient, Dexter must deny, defer, or hand off to a human workflow without performing the side effect. |
 
 ### AI Production Readiness Sequence
-This work must proceed in small, reversible slices. The AI module cannot be treated as "done" just because the Venus-derived code exists in the repo.
+This work must proceed in small, reversible slices. The AI module cannot be treated as "done" until Dexter is tenant-scoped, policy-bound, observable, and locally verified.
 
 Completed production-readiness slices:
 - transcript AI jobs now require a tenant boundary before provider execution

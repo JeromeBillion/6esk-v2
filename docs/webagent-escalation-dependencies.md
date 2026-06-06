@@ -1,51 +1,54 @@
-# Webchat Escalation Dependencies (3 Repos)
+# White-Label Webchat/Profile Plug Contract
 
-Contract path:
-- `prediction-market-mvp` webchat/backend -> `Venus-develop` runtime -> `6esk`
+This contract keeps webchat and profile enrichment optional and customer-owned. It is not a dependency on any internal 6esk-adjacent product.
 
-## 1) prediction-market-mvp (`backend/.env`)
-- `VENUS_SERVICE_URL`
-- `VENUS_AGENT_ID`
-- `ELIZA_SERVER_AUTH_TOKEN`
-- `SUPPORT_TICKET_API_URL`
-- `SUPPORT_TICKET_API_SECRET`
-- `SUPPORT_PROFILE_LOOKUP_ENABLED=true`
-- `SUPPORT_PROFILE_LOOKUP_SECRET`
+## Supported Flow
+Customer webchat or profile system -> signed 6esk ingress -> ticket/customer identity enrichment.
 
-Notes:
-- `/api/v1/venus` forwards trusted app user metadata (`appUserEmail`, `appUserFullName`, etc.) to Venus.
+The external system may submit:
+- a support ticket through `POST /api/tickets/create`
+- authenticated end-user metadata through the ticket `metadata` object
+- an `external_profile` object when the tenant has a profile plug enabled
 
-## 2) Venus-develop (`packages/project-venus/.env`)
+6esk stores the supplied profile as tenant-scoped metadata and may link it to `customers` and `external_user_links`. 6esk may also call a tenant-configured external profile lookup plug through the `EXTERNAL_PROFILE_LOOKUP_*` contract when enabled.
 
-Required for webchat escalation bridge:
-- `VENUS_ENABLE_ESCALATION_BRIDGE=true`
-- `SIXESK_BASE_URL`
-- `SIXESK_INBOUND_SECRET`
+## Required 6esk Configuration
+- `INBOUND_SHARED_SECRET` for trusted machine ingress fallback
+- `EXTERNAL_PROFILE_SYSTEM`
+- `EXTERNAL_PROFILE_LOOKUP_ENABLED`
+- `EXTERNAL_PROFILE_LOOKUP_URL`
+- `EXTERNAL_PROFILE_LOOKUP_PATH`
+- `EXTERNAL_PROFILE_LOOKUP_SECRET`
+- `EXTERNAL_PROFILE_LOOKUP_TIMEOUT_MS`
+- `EXTERNAL_PROFILE_LOOKUP_RETRY_COUNT`
 
-Required for CRM plugin + outbox/action APIs:
-- `VENUS_ENABLE_CRM_AGENT=true`
-- `SIXESK_AGENT_KEY`
-- `SIXESK_SHARED_SECRET`
-- `SIXESK_POLICY_MODE=draft_only|auto_send`
+## Profile Metadata Shape
+```json
+{
+  "external_profile": {
+    "source": "white-label-webchat",
+    "externalUserId": "customer-123",
+    "matchedBy": "session_auth",
+    "matchedAt": "2026-06-02T10:00:00.000Z",
+    "fullName": "Customer Name",
+    "email": "customer@example.com",
+    "secondaryEmail": null,
+    "phoneNumber": "+27710000001",
+    "kycStatus": null,
+    "accountStatus": null
+  },
+  "profile_lookup": {
+    "source": "white-label-webchat",
+    "status": "matched",
+    "matchedBy": "session_auth",
+    "lookupAt": "2026-06-02T10:00:00.000Z"
+  }
+}
+```
 
-Optional merge policy controls:
-- `SIXESK_ALLOW_DIRECT_MERGE_ACTIONS=false|true`
-- `SIXESK_MIN_MERGE_CONFIDENCE=0.85`
-
-Cross-service auth:
-- `ELIZA_SERVER_AUTH_TOKEN`
-
-## 3) 6esk (`.env`)
-- `INBOUND_SHARED_SECRET`
-- `AGENT_SECRET_KEY`
-- `PREDICTION_PROFILE_LOOKUP_ENABLED=true`
-- `PREDICTION_PROFILE_LOOKUP_URL`
-- `PREDICTION_PROFILE_LOOKUP_SECRET`
-- `AGENT_MERGE_MIN_CONFIDENCE` (default `0.85`)
-- `TICKET_MERGE_MAX_MOVE_ROWS` (default `5000`)
-
-## Must-Match Values
-- `prediction-market-mvp ELIZA_SERVER_AUTH_TOKEN` = `Venus-develop ELIZA_SERVER_AUTH_TOKEN`
-- `Venus-develop SIXESK_INBOUND_SECRET` = `6esk INBOUND_SHARED_SECRET`
-- `prediction-market-mvp SUPPORT_PROFILE_LOOKUP_SECRET` = `6esk PREDICTION_PROFILE_LOOKUP_SECRET`
-- `prediction-market-mvp SUPPORT_TICKET_API_SECRET` = `6esk INBOUND_SHARED_SECRET`
+## Safety Rules
+- The tenant/plugin supplies profile metadata; 6esk does not trust it as verified truth.
+- Tenant scope and signature validation are mandatory in production.
+- `source` must identify the tenant plug, not an internal development system.
+- Conflicting external identities are recorded as conflicts and must not silently rebind canonical customer ownership.
+- Human-visible workflows should label this as an external profile plug, not as an internal dependency.

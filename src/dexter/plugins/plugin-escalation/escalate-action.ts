@@ -14,7 +14,7 @@ import {
 /* ------------------------------------------------------------------ */
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
-const PROFILE_SOURCE = 'prediction-market-mvp-webchat';
+const PROFILE_SOURCE = 'white-label-webchat';
 
 type IdentityDetails = {
   email: string | null;
