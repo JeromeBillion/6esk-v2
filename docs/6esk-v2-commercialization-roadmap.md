@@ -110,7 +110,7 @@ This section is the operating board for finishing `v2`. It exists to prevent sca
 - every package must close with code, docs/runbook updates where relevant, tests, and a named evidence artifact or verification command
 - no external tenant data is onboarded until `P0` launch gates are complete, verified, and reviewed
 - no new module polish should outrank tenant isolation, auth, AI safety, code-owned lifecycle controls, or incident readiness
-- old internal-platform, Venus, profile-lookup, and prediction-market assumptions must keep being removed or converted into tenant-safe, white-label extension points
+- old internal-platform and adjacent-product assumptions must keep being removed or converted into tenant-safe, white-label extension points
 - do not mark runtime, production-credential, provider-dashboard, deployed-infrastructure, real-R2, OAuth-smoke, branch-protection, backup/restore, physical-delete, or production evidence tasks complete from local workstation work
 
 ### Current Execution Stance: Pre-Deploy Core Code First

@@ -14,8 +14,8 @@ const {
   CRM_CALLS_FROM_PHONE,
   CRM_CALLS_TENANT_KEY = "primary",
   CRM_CALLS_WORKSPACE_KEY = "primary",
-  CRM_CALLS_VENUS_EVENTS_URL,
-  CRM_CALLS_VENUS_EVENTS_TOKEN,
+  CRM_CALLS_AGENT_EVENTS_URL,
+  CRM_CALLS_AGENT_EVENTS_TOKEN,
   DATABASE_URL
 } = process.env;
 
@@ -167,7 +167,7 @@ function formatCheckResult(name, passed, detail) {
   return `${prefix}: ${name}${detail ? ` -> ${detail}` : ""}`;
 }
 
-function normalizeVenusEvents(payload) {
+function normalizeObservedEvents(payload) {
   if (Array.isArray(payload)) return payload;
   if (payload && Array.isArray(payload.events)) return payload.events;
   if (payload && Array.isArray(payload.items)) return payload.items;
@@ -272,35 +272,35 @@ async function verifyLocalAgentOutboxSequence(callSessionId, scope = crmCallsSco
   }
 }
 
-async function verifyVenusObservation(callSessionId) {
-  if (!CRM_CALLS_VENUS_EVENTS_URL) {
+async function verifyAgentEventObservation(callSessionId) {
+  if (!CRM_CALLS_AGENT_EVENTS_URL) {
     return {
       skipped: true,
-      detail: "CRM_CALLS_VENUS_EVENTS_URL not set; skipped Venus observation check."
+      detail: "CRM_CALLS_AGENT_EVENTS_URL not set; skipped downstream event observation check."
     };
   }
 
-  const url = new URL(CRM_CALLS_VENUS_EVENTS_URL);
+  const url = new URL(CRM_CALLS_AGENT_EVENTS_URL);
   url.searchParams.set("callSessionId", callSessionId);
 
   const headers = {};
-  if (CRM_CALLS_VENUS_EVENTS_TOKEN) {
-    headers.Authorization = `Bearer ${CRM_CALLS_VENUS_EVENTS_TOKEN}`;
+  if (CRM_CALLS_AGENT_EVENTS_TOKEN) {
+    headers.Authorization = `Bearer ${CRM_CALLS_AGENT_EVENTS_TOKEN}`;
   }
 
   const response = await fetchJson(url.toString(), { headers });
   if (!response.ok || !response.json) {
     return {
       passed: false,
-      detail: `Venus events endpoint returned ${response.status}.`
+      detail: `Downstream events endpoint returned ${response.status}.`
     };
   }
 
-  const events = normalizeVenusEvents(response.json);
+  const events = normalizeObservedEvents(response.json);
   if (!events) {
     return {
       passed: false,
-      detail: "Venus events payload did not contain an events array."
+      detail: "Downstream events payload did not contain an events array."
     };
   }
 
@@ -308,7 +308,7 @@ async function verifyVenusObservation(callSessionId) {
   if (!callEvents.length) {
     return {
       passed: false,
-      detail: "No Venus events matched callSessionId."
+      detail: "No downstream events matched callSessionId."
     };
   }
 
@@ -323,7 +323,7 @@ async function verifyVenusObservation(callSessionId) {
     if (!seenTypes.has(required)) {
       return {
         passed: false,
-        detail: `Venus missing required event type '${required}'.`
+        detail: `Downstream observation missing required event type '${required}'.`
       };
     }
   }
@@ -337,7 +337,7 @@ async function verifyVenusObservation(callSessionId) {
     if (sequence <= lastSequence) {
       return {
         passed: false,
-        detail: `Venus observed non-monotonic sequence (${sequence} after ${lastSequence}).`
+        detail: `Downstream observation reported non-monotonic sequence (${sequence} after ${lastSequence}).`
       };
     }
     lastSequence = sequence;
@@ -345,7 +345,7 @@ async function verifyVenusObservation(callSessionId) {
 
   return {
     passed: true,
-    detail: `Venus observed ${callEvents.length} events for call session.`
+    detail: `Downstream observation reported ${callEvents.length} events for call session.`
   };
 }
 
@@ -501,13 +501,13 @@ async function main() {
     checks.push(formatCheckResult("Local sequence verification", false, localSequence.detail));
   }
 
-  const venusObservation = await verifyVenusObservation(callSessionId);
-  if (venusObservation.skipped) {
-    checks.push(formatCheckResult("Venus observation check", true, venusObservation.detail));
-  } else if (venusObservation.passed) {
-    checks.push(formatCheckResult("Venus observation check", true, venusObservation.detail));
+  const eventObservation = await verifyAgentEventObservation(callSessionId);
+  if (eventObservation.skipped) {
+    checks.push(formatCheckResult("Downstream event observation", true, eventObservation.detail));
+  } else if (eventObservation.passed) {
+    checks.push(formatCheckResult("Downstream event observation", true, eventObservation.detail));
   } else {
-    checks.push(formatCheckResult("Venus observation check", false, venusObservation.detail));
+    checks.push(formatCheckResult("Downstream event observation", false, eventObservation.detail));
   }
 
   console.log("CRM Calls staging E2E summary");
@@ -533,5 +533,6 @@ module.exports = {
   readEventCallSessionId,
   readEventSequence,
   readEventType,
+  verifyAgentEventObservation,
   verifyLocalAgentOutboxSequence
 };

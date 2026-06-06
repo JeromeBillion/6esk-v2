@@ -145,9 +145,9 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
   - VOICE-040 to VOICE-042
 - Sprint 4:
   - VOICE-043 to VOICE-055
-  - VENUS-100 to VENUS-102
+  - tenant extension event-observation checks
 - Sprint 5:
-  - VENUS-103 to VENUS-104
+  - tenant extension handoff and rollout checks
   - VOICE-070 to VOICE-073
 - Sprint 6:
   - VOICE-074 to VOICE-075
