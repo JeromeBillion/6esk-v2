@@ -234,6 +234,16 @@ Remaining export/delete/anonymize and legal-retention behavior is tracked under 
 - tenant-level security policy controls for MFA, session lifetime, allowed domains, and SSO enforcement
 - audit visibility for login, logout, failed login, MFA challenge, session revoke, role change, and support impersonation
 
+### Current Auth Implementation Status
+The current v2 recovery branch keeps `users` and `auth_sessions` as the identity/session source of truth. Managed Google/Microsoft login has been implemented as an adapter, not a duplicate auth database:
+- `db/migrations/0051_auth_security_foundations.sql` adds tenant security policy, session metadata, and MFA state.
+- `db/migrations/0052_privileged_access_grants.sql` adds MFA-gated internal support access grants.
+- `db/migrations/0053_auth_oauth_login.sql` adds managed OAuth SSO mode and MFA challenge provider provenance.
+- `/api/auth/oauth/authorize` and `/api/auth/oauth/callback` use identity scopes only, map provider email to an existing active v2 user, enforce tenant login-domain policy, and create v2 `auth_sessions`.
+- Password and OAuth sign-in both route enrolled privileged users through TOTP MFA before workspace access.
+
+Remaining auth work is deploy/runtime evidence rather than core code: register provider callback URLs, set `AUTH_OAUTH_LOGIN_ENABLED=true` with Google/Microsoft auth credentials, perform staging OAuth smoke tests, and decide whether a future enterprise OIDC broker/SCIM track is needed.
+
 ### Commercial Requirement
 Auth can no longer assume a single internal company operating model. Identity must support:
 - multiple companies
@@ -986,10 +996,11 @@ Retained and verified in the current recovery branch:
 - production env validation for tenant ingress and provider webhook secret encryption keys
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
+- v2-native Google/Microsoft auth-login adapter on migration `0053`, including identity-only OAuth scopes, CSRF state/nonce cookie, existing-user mapping, tenant login-domain policy enforcement, managed `oauth` SSO mode, audit events without raw email leakage, OAuth+MFA provider provenance, login-page MFA handling, and production env validation when `AUTH_OAUTH_LOGIN_ENABLED=true`
 
 Still outstanding before v2 main can be considered deploy-ready:
 - provider call-site adoption for persisted tenant ingress/provider webhook secrets beyond WhatsApp where provider verification currently reads only process env and supports tenant-specific secrets
-- Better Auth/Google/Microsoft OAuth provider adapter and final session-management UI adapted to v2 `tenant_id`
+- OAuth runtime evidence: provider app callback registration, staging Google/Microsoft smoke tests, and dashboard credential verification are deploy dependencies rather than additional core code
 - AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
 - billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
 - tenant export/offboarding/query-scope audit slices

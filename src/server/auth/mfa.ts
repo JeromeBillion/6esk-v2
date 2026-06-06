@@ -59,6 +59,7 @@ export type MfaChallengeVerification =
       workspaceKey: string;
       factorId: string;
       challengeId: string;
+      authProvider: string;
     }
   | {
       ok: false;
@@ -83,6 +84,12 @@ const MFA_CHALLENGE_TTL_MINUTES = 10;
 const MFA_ENROLLMENT_TTL_MINUTES = 10;
 const MFA_MAX_CHALLENGE_ATTEMPTS = 5;
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function normalizeMfaSessionAuthProvider(value: string | undefined | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return "password_mfa";
+  return /^[a-z0-9_:-]{1,80}$/.test(normalized) ? normalized : "password_mfa";
+}
 
 function readBoolean(value: string | undefined | null) {
   const normalized = value?.trim().toLowerCase();
@@ -322,20 +329,25 @@ export async function getMfaStatusForUser(user: ScopedUser): Promise<MfaStatus> 
   return { required, factors };
 }
 
-export async function createMfaChallenge(user: Pick<ScopedUser, "id" | "tenant_id">) {
+export async function createMfaChallenge(
+  user: Pick<ScopedUser, "id" | "tenant_id">,
+  options: { authProvider?: string | null } = {}
+) {
   const scope = resolveScope(user);
   const challengeToken = `mfa_${randomBytes(32).toString("base64url")}`;
   const expiresAt = expiresInMinutes(MFA_CHALLENGE_TTL_MINUTES);
+  const authProvider = normalizeMfaSessionAuthProvider(options.authProvider);
   await db.query(
     `INSERT INTO auth_mfa_challenges (
        tenant_id,
        workspace_key,
        user_id,
        challenge_hash,
+       auth_provider,
        expires_at
      )
-     VALUES ($1, $2, $3, $4, $5)`,
-    [scope.tenantId, scope.workspaceKey, scope.userId, tokenHash(challengeToken), expiresAt]
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [scope.tenantId, scope.workspaceKey, scope.userId, tokenHash(challengeToken), authProvider, expiresAt]
   );
   return { challengeToken, expiresAt } satisfies MfaChallengeStart;
 }
@@ -472,6 +484,7 @@ export async function verifyMfaChallenge({
     tenant_id: string;
     workspace_key: string;
     user_id: string;
+    auth_provider: string | null;
     attempt_count: number;
     expired: boolean;
   }>(
@@ -479,6 +492,7 @@ export async function verifyMfaChallenge({
             tenant_id,
             workspace_key,
             user_id,
+            auth_provider,
             attempt_count,
             expires_at <= now() AS expired
      FROM auth_mfa_challenges
@@ -580,7 +594,8 @@ export async function verifyMfaChallenge({
       tenantId: scope.tenantId,
       workspaceKey: scope.workspaceKey,
       factorId: factor.id,
-      challengeId: challenge.id
+      challengeId: challenge.id,
+      authProvider: normalizeMfaSessionAuthProvider(challenge.auth_provider)
     };
   }
 

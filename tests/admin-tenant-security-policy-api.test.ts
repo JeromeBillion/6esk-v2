@@ -129,4 +129,42 @@ describe("/api/admin/tenant/security-policy", () => {
       })
     );
   });
+
+  it("accepts managed OAuth as the tenant SSO provider mode", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("tenant_admin"));
+    mocks.upsertTenantSecurityPolicy.mockResolvedValue({
+      ...POLICY,
+      allowed_login_domains: ["acme.example"],
+      enforce_sso: true,
+      auth_provider: "oauth"
+    });
+
+    const response = await PUT(
+      new Request("http://localhost/api/admin/tenant/security-policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          allowedLoginDomains: ["acme.example"],
+          enforceSso: true,
+          requireMfaForAdmins: true,
+          sessionTtlDays: 14,
+          authProvider: "oauth"
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.policy).toMatchObject({
+      enforceSso: true,
+      authProvider: "oauth"
+    });
+    expect(mocks.upsertTenantSecurityPolicy).toHaveBeenCalledWith(
+      { tenantId: TENANT_ID, workspaceKey: "primary" },
+      expect.objectContaining({
+        enforceSso: true,
+        authProvider: "oauth"
+      })
+    );
+  });
 });

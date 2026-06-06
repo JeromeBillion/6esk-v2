@@ -19,6 +19,7 @@ const envSchema = z.object({
   AUTH_MFA_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
   AUTH_REQUIRE_MFA_ADMIN: optionalBooleanish,
   AUTH_MFA_ISSUER: optionalNonEmptyString,
+  AUTH_OAUTH_LOGIN_ENABLED: optionalBooleanish,
   ADMIN_IP_ALLOWLIST: z.string().optional(),
   AGENT_IP_ALLOWLIST: z.string().optional(),
   TENANT_INGRESS_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
@@ -77,11 +78,18 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: optionalNonEmptyString,
   GOOGLE_OAUTH_REDIRECT_URI: optionalUrl,
   GOOGLE_PUBSUB_TOPIC: optionalNonEmptyString,
+  GOOGLE_AUTH_CLIENT_ID: optionalNonEmptyString,
+  GOOGLE_AUTH_CLIENT_SECRET: optionalNonEmptyString,
+  GOOGLE_AUTH_REDIRECT_URI: optionalUrl,
   MICROSOFT_OAUTH_CLIENT_ID: optionalNonEmptyString,
   MICROSOFT_OAUTH_CLIENT_SECRET: optionalNonEmptyString,
   MICROSOFT_OAUTH_TENANT_ID: optionalNonEmptyString,
   MICROSOFT_OAUTH_REDIRECT_URI: optionalUrl,
   MICROSOFT_WEBHOOK_URL: optionalUrl,
+  MICROSOFT_AUTH_CLIENT_ID: optionalNonEmptyString,
+  MICROSOFT_AUTH_CLIENT_SECRET: optionalNonEmptyString,
+  MICROSOFT_AUTH_TENANT_ID: optionalNonEmptyString,
+  MICROSOFT_AUTH_REDIRECT_URI: optionalUrl,
   ZOHO_OAUTH_CLIENT_ID: optionalNonEmptyString,
   ZOHO_OAUTH_CLIENT_SECRET: optionalNonEmptyString,
   ZOHO_OAUTH_REDIRECT_URI: optionalUrl,
@@ -160,6 +168,27 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
     "MICROSOFT_OAUTH_CLIENT_SECRET",
     "MICROSOFT_OAUTH_REDIRECT_URI"
   ], issues);
+
+  requireCompleteGroup(source, [
+    "GOOGLE_AUTH_CLIENT_ID",
+    "GOOGLE_AUTH_CLIENT_SECRET",
+    "GOOGLE_AUTH_REDIRECT_URI"
+  ], issues);
+  requireCompleteGroup(source, [
+    "MICROSOFT_AUTH_CLIENT_ID",
+    "MICROSOFT_AUTH_CLIENT_SECRET",
+    "MICROSOFT_AUTH_REDIRECT_URI"
+  ], issues);
+  if (isEnabled(source, "AUTH_OAUTH_LOGIN_ENABLED")) {
+    requireKeys(source, [
+      "GOOGLE_AUTH_CLIENT_ID",
+      "GOOGLE_AUTH_CLIENT_SECRET",
+      "GOOGLE_AUTH_REDIRECT_URI",
+      "MICROSOFT_AUTH_CLIENT_ID",
+      "MICROSOFT_AUTH_CLIENT_SECRET",
+      "MICROSOFT_AUTH_REDIRECT_URI"
+    ], issues);
+  }
   requireCompleteGroup(source, [
     "ZOHO_OAUTH_CLIENT_ID",
     "ZOHO_OAUTH_CLIENT_SECRET",

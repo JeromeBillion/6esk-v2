@@ -84,6 +84,23 @@ describe("validateEnv", () => {
     expect(() => validateEnv(env)).toThrow(/GOOGLE_OAUTH_REDIRECT_URI/);
   });
 
+  it("requires Google and Microsoft auth login config when OAuth login is enabled", () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_OAUTH_LOGIN_ENABLED: "true",
+      GOOGLE_AUTH_CLIENT_ID: "google-auth-client-id",
+      GOOGLE_AUTH_CLIENT_SECRET: "google-auth-client-secret",
+      GOOGLE_AUTH_REDIRECT_URI: "https://app.6esk.example/api/auth/oauth/callback",
+      MICROSOFT_AUTH_CLIENT_ID: "",
+      MICROSOFT_AUTH_CLIENT_SECRET: "",
+      MICROSOFT_AUTH_REDIRECT_URI: ""
+    };
+
+    expect(() => validateEnv(env)).toThrow(/MICROSOFT_AUTH_CLIENT_ID/);
+    expect(() => validateEnv(env)).toThrow(/MICROSOFT_AUTH_CLIENT_SECRET/);
+    expect(() => validateEnv(env)).toThrow(/MICROSOFT_AUTH_REDIRECT_URI/);
+  });
+
   it("requires explicit alpha acknowledgement when Dexter runtime is enabled in production", () => {
     const envWithoutAck = {
       ...baseEnv(),

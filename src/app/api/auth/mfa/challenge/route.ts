@@ -33,8 +33,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid MFA challenge", code: result.code }, { status: 401 });
   }
 
+  const authProvider = result.authProvider ?? "password_mfa";
   await createSession(result.userId, {
-    authProvider: "password_mfa",
+    authProvider,
     requestHeaders: request.headers
   });
   await recordAuditLog({
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
     entityId: result.challengeId,
     data: {
       factorId: result.factorId,
-      authProvider: "password_mfa"
+      authProvider
     }
   });
 

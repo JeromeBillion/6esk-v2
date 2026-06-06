@@ -8,7 +8,7 @@ export type TenantSecurityPolicy = {
   enforce_sso: boolean;
   require_mfa_for_admins: boolean;
   session_ttl_days: number;
-  auth_provider: "password" | "better_auth" | "oidc_broker" | string;
+  auth_provider: "password" | "oauth" | "better_auth" | "oidc_broker" | string;
   oidc_issuer: string | null;
 };
 
@@ -17,7 +17,7 @@ export type TenantSecurityPolicyUpdate = {
   enforceSso: boolean;
   requireMfaForAdmins: boolean;
   sessionTtlDays: number;
-  authProvider: "password" | "better_auth" | "oidc_broker";
+  authProvider: "password" | "oauth" | "better_auth" | "oidc_broker";
   oidcIssuer?: string | null;
 };
 
@@ -125,7 +125,7 @@ export async function upsertTenantSecurityPolicy(
   const sessionTtlDays = Math.min(Math.max(Math.trunc(input.sessionTtlDays), 1), 90);
 
   if (input.enforceSso && authProvider === "password") {
-    throw new Error("SSO enforcement requires Better Auth or an OIDC broker.");
+    throw new Error("SSO enforcement requires OAuth or an OIDC broker.");
   }
   if (input.enforceSso && allowedDomains.length === 0) {
     throw new Error("SSO enforcement requires at least one allowed login domain.");

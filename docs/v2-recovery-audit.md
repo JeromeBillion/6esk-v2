@@ -52,12 +52,21 @@ Date: 2026-06-06
   - backoffice APIs for grant request/list/stats and internal-admin approve/revoke/post-event review
   - impersonation now requires an MFA-authenticated internal staff session and an active tenant-scoped privileged-access grant for the support user
   - active grant id is recorded on the auth session, impersonation duration is capped by grant expiry, denial/start/end/review events are audited, and security readiness now reports active grants plus grants needing review
+- Semantically ported the Google/Microsoft auth-login adapter into v2-native `tenant_id` form:
+  - `db/migrations/0053_auth_oauth_login.sql`
+  - `src/server/auth/oauth-login.ts`
+  - `/api/auth/oauth/authorize` and `/api/auth/oauth/callback`
+  - auth OAuth uses identity scopes only and does not create mailbox OAuth connections or persist provider refresh tokens
+  - provider identity maps to existing active `users`; `auth_sessions` remains the session source of truth
+  - tenant security policy now supports managed `oauth` SSO mode while keeping legacy `better_auth` as a compatibility value
+  - OAuth login enforces tenant login-domain policy, rejects unverified Google email claims, records audit events without raw email leakage, and carries MFA provider provenance through `auth_mfa_challenges`
+  - the login page now handles password/OAuth MFA challenges before entering the workspace
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
 
 Deferred for future semantic port, not lost:
-- Better Auth/OAuth provider adapter: keep the idea, but port only against v2 auth/session and tenant-id contracts. The v2-native session/MFA/security-policy and privileged-access foundations are now present; Google/Microsoft login wiring remains a separate slice.
+- Better Auth package adoption: rejected for this launch slice because v2 already has tenant-scoped `users`, `auth_sessions`, MFA, session revocation, and privileged-access state. The retained value is the provider-login capability, now implemented as a v2-native Google/Microsoft OAuth adapter. A future OIDC broker can still be added without replacing the v2 session source of truth.
 - Tenant ingress/provider webhook adoption for providers beyond WhatsApp: persisted v2-native services, admin routes, and WhatsApp fallback verification are now ported; future provider-specific webhook paths should consume the persisted secret lookup where they support tenant-specific secrets.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing lifecycle modules: keep subscription/proration/credits/dunning/invoice lifecycle requirements, but merge against v2 pricing, margin, tenant lifecycle, and migration sequence.
@@ -97,6 +106,9 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-tenant-security-policy-api.test.ts`
   - `tests/auth-sessions-api.test.ts`
   - `tests/password-reset-api.test.ts`
+- Auth OAuth login adapter tests pass in the focused slice:
+  - `tests/auth-oauth-login-api.test.ts`
+  - `tests/env-validation.test.ts`
 - Privileged-access grant tests pass in the focused slice:
   - `tests/privileged-access.test.ts`
   - `tests/backoffice-privileged-access-api.test.ts`

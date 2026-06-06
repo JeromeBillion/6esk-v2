@@ -13,7 +13,7 @@ const securityPolicySchema = z.object({
   enforceSso: z.boolean().optional().default(false),
   requireMfaForAdmins: z.boolean().optional().default(true),
   sessionTtlDays: z.number().int().min(1).max(90).optional().default(14),
-  authProvider: z.enum(["password", "better_auth", "oidc_broker"]).optional().default("password"),
+  authProvider: z.enum(["password", "oauth", "better_auth", "oidc_broker"]).optional().default("password"),
   oidcIssuer: z.string().url().optional().nullable()
 });
 

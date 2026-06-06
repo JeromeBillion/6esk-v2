@@ -47,6 +47,7 @@ describe("auth MFA service", () => {
             tenant_id: TENANT_ID,
             workspace_key: "primary",
             user_id: USER_ID,
+            auth_provider: "google_oauth_mfa",
             attempt_count: 0,
             expired: false
           }
@@ -70,7 +71,8 @@ describe("auth MFA service", () => {
       tenantId: TENANT_ID,
       userId: USER_ID,
       factorId: "factor-1",
-      challengeId: "challenge-1"
+      challengeId: "challenge-1",
+      authProvider: "google_oauth_mfa"
     });
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(3, expect.stringContaining("last_used_at"), [
       "factor-1",
@@ -95,6 +97,7 @@ describe("auth MFA service", () => {
             tenant_id: TENANT_ID,
             workspace_key: "primary",
             user_id: USER_ID,
+            auth_provider: "password_mfa",
             attempt_count: 0,
             expired: false
           }
@@ -125,5 +128,20 @@ describe("auth MFA service", () => {
       TENANT_ID,
       "primary"
     ]);
+  });
+
+  it("stores the intended final session provider on MFA challenges", async () => {
+    const { createMfaChallenge } = await import("@/server/auth/mfa");
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    await createMfaChallenge(
+      { id: USER_ID, tenant_id: TENANT_ID },
+      { authProvider: "microsoft_oauth_mfa" }
+    );
+
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("auth_provider"),
+      expect.arrayContaining(["microsoft_oauth_mfa"])
+    );
   });
 });
