@@ -49,6 +49,7 @@ describe("POST /api/auth/password-reset", () => {
         {
           id: "reset-1",
           user_id: "user-1",
+          tenant_id: "tenant-1",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           used_at: null
         }
@@ -73,17 +74,19 @@ describe("POST /api/auth/password-reset", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.clientQuery).toHaveBeenCalledWith("DELETE FROM auth_sessions WHERE user_id = $1", [
+    expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("revoke_reason = 'password_reset'"), [
       "user-1"
     ]);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: "tenant-1",
         action: "password_reset_completed",
         data: { revokedSessionCount: 2 }
       })
     );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: "tenant-1",
         action: "password_reset_sessions_revoked",
         data: { revokedSessionCount: 2 }
       })

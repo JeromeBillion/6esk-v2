@@ -38,12 +38,20 @@ Date: 2026-06-06
   - WhatsApp inbound webhook verification now falls back to tenant-scoped persisted Meta app secrets when the global `WHATSAPP_APP_SECRET` does not validate
   - production env validation for persisted secret encryption keys
   - focused tests for tenant-scoped metadata, rotation, env fallback, tenant-admin route access, one-time plaintext return, audit logging, and fail-closed encryption config
+- Semantically ported the auth/session/MFA foundation into v2-native `tenant_id` form:
+  - `db/migrations/0051_auth_security_foundations.sql`
+  - tenant security policies for allowed login domains, SSO enforcement flags, admin MFA requirement, session TTL, and planned auth-provider mode
+  - session metadata for auth provider, device/IP fingerprints, revocation timestamp, and revocation reason
+  - TOTP MFA enrollment/challenge tables and dependency-free TOTP verification service
+  - password login now respects tenant SSO/domain policy, creates MFA challenges for enrolled privileged users, and gates privileged users into MFA enrollment when required
+  - users can list/revoke their own sessions, password resets revoke sessions in place, and tenant admins can read/update tenant security policy
+  - focused tests cover policy API access, MFA challenge/enrollment API paths, login policy/MFA boundaries, session revocation, password-reset revocation evidence, and production env validation
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
 
 Deferred for future semantic port, not lost:
-- Better Auth/MFA/privileged-access additions: keep the idea, but port only against v2 auth/session and tenant-id contracts.
+- Better Auth/OAuth provider adapter and privileged-access grant workflow: keep the idea, but port only against v2 auth/session and tenant-id contracts. The v2-native session/MFA/security-policy foundation is now present; Google/Microsoft OAuth wiring and just-in-time privileged access remain separate slices.
 - Tenant ingress/provider webhook adoption for providers beyond WhatsApp: persisted v2-native services, admin routes, and WhatsApp fallback verification are now ported; future provider-specific webhook paths should consume the persisted secret lookup where they support tenant-specific secrets.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing lifecycle modules: keep subscription/proration/credits/dunning/invoice lifecycle requirements, but merge against v2 pricing, margin, tenant lifecycle, and migration sequence.
@@ -75,3 +83,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-provider-webhook-secrets-api.test.ts`
   - `tests/whatsapp-provider-webhook-secrets-api.test.ts`
   - `tests/env-validation.test.ts`
+- Auth/session/MFA foundation tests pass in the focused slice:
+  - `tests/auth-session-hardening.test.ts`
+  - `tests/auth-mfa.test.ts`
+  - `tests/auth-login-mfa-api.test.ts`
+  - `tests/auth-mfa-api.test.ts`
+  - `tests/admin-tenant-security-policy-api.test.ts`
+  - `tests/auth-sessions-api.test.ts`
+  - `tests/password-reset-api.test.ts`

@@ -16,6 +16,9 @@ const envSchema = z.object({
   SUPPORT_ADDRESS: optionalNonEmptyString,
   INBOUND_SHARED_SECRET: optionalNonEmptyString,
   AGENT_SECRET_KEY: optionalSecretString,
+  AUTH_MFA_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
+  AUTH_REQUIRE_MFA_ADMIN: optionalBooleanish,
+  AUTH_MFA_ISSUER: optionalNonEmptyString,
   ADMIN_IP_ALLOWLIST: z.string().optional(),
   AGENT_IP_ALLOWLIST: z.string().optional(),
   TENANT_INGRESS_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
@@ -133,6 +136,7 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
   requireKeys(source, [
     "INBOUND_SHARED_SECRET",
     "AGENT_SECRET_KEY",
+    "AUTH_MFA_SECRET_ENCRYPTION_KEY",
     "CRON_SECRET",
     "OAUTH_ENCRYPTION_KEY",
     "TENANT_INGRESS_SECRET_ENCRYPTION_KEY",

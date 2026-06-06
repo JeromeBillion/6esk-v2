@@ -16,6 +16,9 @@ function baseEnv() {
     R2_BUCKET: "6esk-emails",
     INBOUND_SHARED_SECRET: "inbound-secret",
     AGENT_SECRET_KEY: "agent-secret-long-enough",
+    AUTH_MFA_SECRET_ENCRYPTION_KEY: "d".repeat(64),
+    AUTH_REQUIRE_MFA_ADMIN: "true",
+    AUTH_MFA_ISSUER: "6esk",
     TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "b".repeat(64),
     PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "c".repeat(64),
     CRON_SECRET: "cron-secret",
@@ -54,6 +57,7 @@ describe("validateEnv", () => {
       ...baseEnv(),
       CALLS_PROVIDER: "mock",
       CRON_SECRET: "",
+      AUTH_MFA_SECRET_ENCRYPTION_KEY: "",
       TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "",
       PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "",
       AI_API_KEY: "",
@@ -62,6 +66,7 @@ describe("validateEnv", () => {
     };
 
     expect(() => validateEnv(env)).toThrow(/CRON_SECRET/);
+    expect(() => validateEnv(env)).toThrow(/AUTH_MFA_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/TENANT_INGRESS_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/AI_API_KEY\|OPENAI_API_KEY/);

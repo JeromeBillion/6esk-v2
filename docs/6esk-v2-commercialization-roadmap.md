@@ -984,10 +984,11 @@ Retained and verified in the current recovery branch:
 - tenant-admin API routes for tenant ingress/provider webhook secret list, rotate, and revoke, with audit logging and one-time plaintext return
 - WhatsApp inbound webhook verification now uses tenant-scoped persisted Meta app secrets as a fallback when the global `WHATSAPP_APP_SECRET` does not validate
 - production env validation for tenant ingress and provider webhook secret encryption keys
+- v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 
 Still outstanding before v2 main can be considered deploy-ready:
 - provider call-site adoption for persisted tenant ingress/provider webhook secrets beyond WhatsApp where provider verification currently reads only process env and supports tenant-specific secrets
-- Better Auth/MFA/session management/privileged-access port, adapted to v2 `tenant_id`
+- Better Auth/Google/Microsoft OAuth provider adapter, final session-management UI, and privileged-access grant workflow adapted to v2 `tenant_id`
 - AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
 - billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
 - tenant export/offboarding/query-scope audit slices

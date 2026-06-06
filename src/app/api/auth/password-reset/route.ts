@@ -24,10 +24,11 @@ export async function POST(request: Request) {
 
   const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
   const resetResult = await db.query(
-    `SELECT id, user_id, expires_at, used_at
-     FROM password_resets
-     WHERE token_hash = $1
-     ORDER BY created_at DESC
+    `SELECT pr.id, pr.user_id, pr.expires_at, pr.used_at, u.tenant_id
+     FROM password_resets pr
+     JOIN users u ON u.id = pr.user_id
+     WHERE pr.token_hash = $1
+     ORDER BY pr.created_at DESC
      LIMIT 1`,
     [tokenHash]
   );
@@ -55,9 +56,14 @@ export async function POST(request: Request) {
       reset.user_id
     ]);
     await client.query("UPDATE password_resets SET used_at = now() WHERE id = $1", [reset.id]);
-    const revoked = await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [
-      reset.user_id
-    ]);
+    const revoked = await client.query(
+      `UPDATE auth_sessions
+       SET revoked_at = now(),
+           revoke_reason = 'password_reset'
+       WHERE user_id = $1
+         AND revoked_at IS NULL`,
+      [reset.user_id]
+    );
     revokedSessionCount = revoked.rowCount ?? 0;
     await client.query("COMMIT");
   } catch (error) {
@@ -68,6 +74,7 @@ export async function POST(request: Request) {
   }
 
   await recordAuditLog({
+    tenantId: reset.tenant_id,
     action: "password_reset_completed",
     entityType: "user",
     entityId: reset.user_id,
@@ -78,6 +85,7 @@ export async function POST(request: Request) {
 
   if (revokedSessionCount > 0) {
     await recordAuditLog({
+      tenantId: reset.tenant_id,
       action: "password_reset_sessions_revoked",
       entityType: "user",
       entityId: reset.user_id,
