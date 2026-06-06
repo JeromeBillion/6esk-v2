@@ -981,10 +981,11 @@ Retained and verified in the current recovery branch:
 - white-label external profile cleanup replacing stale adjacent-product coupling
 - CRM call E2E downstream observer cleanup using `CRM_CALLS_AGENT_EVENTS_*`
 - v2-native tenant ingress/provider webhook secret persistence on migration `0050`, keyed by `tenant_id` and `workspace_key`
+- tenant-admin API routes for tenant ingress/provider webhook secret list, rotate, and revoke, with audit logging and one-time plaintext return
 - production env validation for tenant ingress and provider webhook secret encryption keys
 
 Still outstanding before v2 main can be considered deploy-ready:
-- route wiring and provider call-site adoption for persisted tenant ingress/provider webhook secrets
+- provider call-site adoption for persisted tenant ingress/provider webhook secrets where provider verification currently reads only process env
 - Better Auth/MFA/session management/privileged-access port, adapted to v2 `tenant_id`
 - AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
 - billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
