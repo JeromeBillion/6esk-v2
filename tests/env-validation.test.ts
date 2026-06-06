@@ -16,6 +16,8 @@ function baseEnv() {
     R2_BUCKET: "6esk-emails",
     INBOUND_SHARED_SECRET: "inbound-secret",
     AGENT_SECRET_KEY: "agent-secret-long-enough",
+    TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "b".repeat(64),
+    PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "c".repeat(64),
     CRON_SECRET: "cron-secret",
     OAUTH_ENCRYPTION_KEY: "a".repeat(64),
     WHATSAPP_VERIFY_TOKEN: "whatsapp-verify",
@@ -52,12 +54,16 @@ describe("validateEnv", () => {
       ...baseEnv(),
       CALLS_PROVIDER: "mock",
       CRON_SECRET: "",
+      TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "",
+      PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "",
       AI_API_KEY: "",
       OPENAI_API_KEY: "",
       UPSTASH_REDIS_REST_TOKEN: ""
     };
 
     expect(() => validateEnv(env)).toThrow(/CRON_SECRET/);
+    expect(() => validateEnv(env)).toThrow(/TENANT_INGRESS_SECRET_ENCRYPTION_KEY/);
+    expect(() => validateEnv(env)).toThrow(/PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/AI_API_KEY\|OPENAI_API_KEY/);
     expect(() => validateEnv(env)).toThrow(/CALLS_PROVIDER must not be mock/);
     expect(() => validateEnv(env)).toThrow(/UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN/);

@@ -29,13 +29,19 @@ Date: 2026-06-06
   - `CRM_CALLS_AGENT_EVENTS_*` replaces legacy downstream observer envs
   - local `agent_outbox` verification is scoped by v2 `CRM_CALLS_TENANT_ID`
   - regression tests cover the generic downstream observation contract
+- Semantically ported tenant ingress/provider webhook secret persistence from the wrong-folder work into v2-native `tenant_id` form:
+  - `db/migrations/0050_tenant_ingress_provider_webhook_secrets.sql`
+  - `src/server/tenant-ingress-secrets.ts`
+  - `src/server/provider-webhook-secrets.ts`
+  - production env validation for persisted secret encryption keys
+  - focused tests for tenant-scoped metadata, rotation, env fallback, and fail-closed encryption config
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
 
 Deferred for future semantic port, not lost:
 - Better Auth/MFA/privileged-access additions: keep the idea, but port only against v2 auth/session and tenant-id contracts.
-- Tenant ingress/provider webhook hardening: keep the security requirement, but adapt to v2 `tenant_id`, existing route ownership, and production env validation.
+- Tenant ingress/provider webhook admin route wiring and provider integration call-site adoption: persisted v2-native services are now ported, but deploy-facing routes/callers still need a follow-up slice.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing lifecycle modules: keep subscription/proration/credits/dunning/invoice lifecycle requirements, but merge against v2 pricing, margin, tenant lifecycle, and migration sequence.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
@@ -58,3 +64,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/inbound-tenant-isolation.test.ts`
   - `tests/calls-crm-e2e-script.test.ts`
 - Stale coupling scan is clean after the white-label conversion.
+- `npm run typecheck` passes after adding the missing script.
+- Tenant ingress/provider webhook slice tests pass:
+  - `tests/tenant-ingress-secrets.test.ts`
+  - `tests/provider-webhook-secrets.test.ts`
+  - `tests/env-validation.test.ts`

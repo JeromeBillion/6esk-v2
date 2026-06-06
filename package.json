@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "audit:security": "npm audit --audit-level=high",
     "audit:full": "npm audit",
     "db:migrate": "node scripts/migrate.js",

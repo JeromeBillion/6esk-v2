@@ -967,6 +967,30 @@ This status table tracks the 13-item consolidation checklist used in current exe
 | 12 | 6esk Work | Closed in this pass: unified backoffice overview API combining tenant/ops/security/finance posture |
 | 13 | GTM / public readiness | Pending |
 
+## Recovery Alignment Refresh (June 6, 2026)
+
+This section is the current consolidation truth while the accidental wrong-folder work is being semantically retained in the real v2 repo. Older "closed in this pass" entries remain historical until code is re-verified on the v2 recovery branch.
+
+Current authoritative branch:
+- `recovery/v2-retain-all-work` in `C:\Users\choma\Desktop\6esk-v2`
+- remote: `https://github.com/JeromeBillion/6esk-v2.git`
+
+Retained and verified in the current recovery branch:
+- original v2 baseline and migration sequence through `0049`
+- local v2 dirty work preserved from `b717f43`
+- white-label external profile cleanup replacing stale adjacent-product coupling
+- CRM call E2E downstream observer cleanup using `CRM_CALLS_AGENT_EVENTS_*`
+- v2-native tenant ingress/provider webhook secret persistence on migration `0050`, keyed by `tenant_id` and `workspace_key`
+- production env validation for tenant ingress and provider webhook secret encryption keys
+
+Still outstanding before v2 main can be considered deploy-ready:
+- route wiring and provider call-site adoption for persisted tenant ingress/provider webhook secrets
+- Better Auth/MFA/session management/privileged-access port, adapted to v2 `tenant_id`
+- AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
+- billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
+- tenant export/offboarding/query-scope audit slices
+- full verification: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `git diff --check`, stale-coupling scan, migration-sequence check, and roadmap reality check
+
 ## Production-Readiness Audit Findings (May 2026)
 
 A full backend audit was conducted against the current `v2` codebase. Findings are mapped to the roadmap workstreams and security gates they block.
