@@ -98,7 +98,7 @@ describe("/api/admin/calls/outbox", () => {
     });
   });
 
-  it("POST returns 401 for non-admin users without valid secret", async () => {
+  it("POST returns 403 for logged-in non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await POST(
@@ -106,8 +106,8 @@ describe("/api/admin/calls/outbox", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(401);
-    expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
     expect(mocks.deliverPendingCallEvents).not.toHaveBeenCalled();
   });
 
@@ -126,10 +126,10 @@ describe("/api/admin/calls/outbox", () => {
       skipped: 0,
       provider: "mock"
     });
-    expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({
-      limit: 25,
-      tenantId: null
-    });
+    expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith(
+      { limit: 25 },
+      { tenantKey: "primary", workspaceKey: "primary" }
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "call_outbox_triggered"

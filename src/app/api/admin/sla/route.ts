@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const slaSchema = z.object({
   firstResponseMinutes: z.number().int().positive(),
@@ -11,19 +9,18 @@ const slaSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
      FROM sla_configs
-     WHERE is_active = true AND tenant_id = $1
+     WHERE tenant_key = $1
+       AND is_active = true
      ORDER BY created_at DESC
      LIMIT 1`,
-    [tenantId]
+    [scope.tenantKey]
   );
 
   const row = result.rows[0];
@@ -41,10 +38,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -58,23 +54,31 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const { firstResponseMinutes, resolutionMinutes } = parsed.data;
+
   await db.query(
-    "UPDATE sla_configs SET is_active = false WHERE is_active = true AND tenant_id = $1",
-    [tenantId]
+    "UPDATE sla_configs SET is_active = false WHERE tenant_key = $1 AND is_active = true",
+    [scope.tenantKey]
   );
 
   const result = await db.query(
-    `INSERT INTO sla_configs (first_response_target_minutes, resolution_target_minutes, is_active, tenant_id)
-     VALUES ($1, $2, true, $3)
+    `INSERT INTO sla_configs (
+       tenant_key,
+       workspace_key,
+       first_response_target_minutes,
+       resolution_target_minutes,
+       is_active
+     )
+     VALUES ($1, $2, $3, $4, true)
      RETURNING first_response_target_minutes, resolution_target_minutes`,
-    [parsed.data.firstResponseMinutes, parsed.data.resolutionMinutes, tenantId]
+    [scope.tenantKey, scope.workspaceKey, firstResponseMinutes, resolutionMinutes]
   );
 
   const row = result.rows[0];
 
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "sla_updated",
     entityType: "sla_config",

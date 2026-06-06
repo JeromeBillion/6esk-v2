@@ -1,11 +1,12 @@
 import { db } from "@/server/db";
 import { updateCallSessionStatus } from "@/server/calls/service";
 import { sendOutboundCall } from "@/server/calls/provider";
-import { recordModuleUsageEvent } from "@/server/module-metering";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type CallOutboxEventRow = {
   id: string;
-  tenant_id: string;
+  tenant_key: string;
+  workspace_key: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -23,7 +24,6 @@ export type FailedCallOutboxEvent = {
 
 type DeliverCallOutboxArgs = {
   limit?: number;
-  tenantId?: string | null;
 };
 
 type CallOutboxSummaryRow = {
@@ -69,45 +69,38 @@ function getProcessingRecoverySeconds() {
 async function lockPendingEvents(
   limit: number,
   processingRecoverySeconds: number,
-  tenantId?: string | null
+  scopeInput?: TenantScopeInput
 ): Promise<CallOutboxEventRow[]> {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const values: Array<number | string> = [limit, processingRecoverySeconds];
-    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
-    if (tenantId) {
-      values.push(tenantId);
-    }
     const result = await client.query<CallOutboxEventRow>(
       `UPDATE call_outbox_events
        SET status = 'processing',
            last_error = NULL,
            updated_at = now()
        WHERE id IN (
-         SELECT fair_q.id FROM (
-           SELECT e.id,
-                  ROW_NUMBER() OVER (PARTITION BY e.tenant_id ORDER BY e.created_at ASC) as rn
-           FROM call_outbox_events e
-           JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
-           WHERE e.direction = 'outbound'
-             ${tenantClause}
-             AND (wm.modules->>'voice')::boolean = true
-             AND (
-               (e.status = 'queued' AND e.next_attempt_at <= now())
-               OR (
-                 e.status = 'processing'
-                 AND e.updated_at <= now() - make_interval(secs => $2::int)
-               )
+         SELECT id
+         FROM call_outbox_events
+         WHERE direction = 'outbound'
+           ${scope ? "AND tenant_key = $3" : ""}
+           ${scope ? "AND workspace_key = $4" : ""}
+           AND (
+             (status = 'queued' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $2::int)
              )
-         ) fair_q
-         WHERE fair_q.rn <= GREATEST(1, $1::int / 2)
-         ORDER BY fair_q.rn ASC, fair_q.id ASC
+           )
+         ORDER BY created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, payload, attempt_count`,
-      values
+       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
+      scope
+        ? [limit, processingRecoverySeconds, scope.tenantKey, scope.workspaceKey]
+        : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -121,11 +114,15 @@ async function lockPendingEvents(
 
 async function markDelivered({
   eventId,
+  tenantKey,
+  workspaceKey,
   callSessionId,
   provider,
   providerCallId
 }: {
   eventId: string;
+  tenantKey: string;
+  workspaceKey: string;
   callSessionId: string | null;
   provider: string;
   providerCallId: string | null;
@@ -134,8 +131,10 @@ async function markDelivered({
     `UPDATE call_outbox_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [eventId, tenantKey, workspaceKey]
   );
 
   if (!callSessionId) {
@@ -157,11 +156,15 @@ async function markDelivered({
 
 async function markFailed({
   eventId,
+  tenantKey,
+  workspaceKey,
   attemptCount,
   errorMessage,
   callSessionId
 }: {
   eventId: string;
+  tenantKey: string;
+  workspaceKey: string;
   attemptCount: number;
   errorMessage: string;
   callSessionId: string | null;
@@ -176,8 +179,18 @@ async function markFailed({
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_key = $6
+       AND workspace_key = $7`,
+    [
+      status,
+      attemptCount,
+      errorMessage.slice(0, 500),
+      nextAttempt,
+      eventId,
+      tenantKey,
+      workspaceKey
+    ]
   );
 
   if (status === "failed" && callSessionId) {
@@ -194,12 +207,12 @@ async function markFailed({
   }
 }
 
-export async function deliverPendingCallEvents({
-  limit = 5,
-  tenantId = null
-}: DeliverCallOutboxArgs = {}) {
+export async function deliverPendingCallEvents(
+  { limit = 5 }: DeliverCallOutboxArgs = {},
+  scopeInput?: TenantScopeInput
+) {
   const provider = getCallProvider();
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -207,33 +220,32 @@ export async function deliverPendingCallEvents({
   let delivered = 0;
   for (const event of pending) {
     const payload = event.payload ?? {};
+    const eventScope = resolveTenantScope({
+      tenantKey: event.tenant_key,
+      workspaceKey: event.workspace_key
+    });
     const callSessionId =
       typeof payload.callSessionId === "string" ? payload.callSessionId : null;
     try {
-      const { providerCallId } = await sendOutboundCall(provider, event.id, payload);
+      const { providerCallId } = await sendOutboundCall(provider, event.id, payload, {
+        tenantKey: eventScope.tenantKey,
+        workspaceKey: eventScope.workspaceKey
+      });
       await markDelivered({
         eventId: event.id,
+        tenantKey: eventScope.tenantKey,
+        workspaceKey: eventScope.workspaceKey,
         callSessionId,
         provider,
         providerCallId
       });
-
-      // Record FinOps usage: Call base cost approx 10 cents (placeholder)
-      await recordModuleUsageEvent({
-        tenantId: event.tenant_id,
-        moduleKey: "voice",
-        usageKind: "outbound_call",
-        actorType: "system",
-        quantity: 1,
-        costCent: 170.0, 
-        metadata: { eventId: event.id, callSessionId }
-      });
-
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Call delivery failed";
       await markFailed({
         eventId: event.id,
+        tenantKey: eventScope.tenantKey,
+        workspaceKey: eventScope.workspaceKey,
         attemptCount: event.attempt_count + 1,
         errorMessage: message,
         callSessionId
@@ -244,10 +256,9 @@ export async function deliverPendingCallEvents({
   return { delivered, skipped: pending.length - delivered, provider };
 }
 
-export async function getCallOutboxMetrics(tenantId?: string | null) {
+export async function getCallOutboxMetrics(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const provider = getCallProvider();
-  const values = tenantId ? [tenantId] : [];
-  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
   const summaryResult = await db.query<CallOutboxSummaryRow>(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
@@ -264,20 +275,22 @@ export async function getCallOutboxMetrics(tenantId?: string | null) {
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM call_outbox_events
      WHERE direction = 'outbound'
-       ${tenantClause}`,
-    values
+       ${scope ? "AND tenant_key = $1" : ""}
+       ${scope ? "AND workspace_key = $2" : ""}`,
+    scope ? [scope.tenantKey, scope.workspaceKey] : []
   );
 
   const errorResult = await db.query<CallOutboxErrorRow>(
     `SELECT last_error
      FROM call_outbox_events
      WHERE direction = 'outbound'
-       ${tenantClause}
+       ${scope ? "AND tenant_key = $1" : ""}
+       ${scope ? "AND workspace_key = $2" : ""}
        AND status = 'failed'
        AND last_error IS NOT NULL
      ORDER BY updated_at DESC
      LIMIT 1`,
-    values
+    scope ? [scope.tenantKey, scope.workspaceKey] : []
   );
 
   const summary = summaryResult.rows[0] ?? {
@@ -309,13 +322,9 @@ export async function getCallOutboxMetrics(tenantId?: string | null) {
   };
 }
 
-export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string | null) {
+export async function listFailedCallOutboxEvents(limit = 50, scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
-  const values: Array<number | string> = [normalizedLimit];
-  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
-  if (tenantId) {
-    values.push(tenantId);
-  }
   const result = await db.query<FailedCallOutboxEvent>(
     `SELECT
        id,
@@ -328,11 +337,12 @@ export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string |
        payload
      FROM call_outbox_events
      WHERE direction = 'outbound'
-       ${tenantClause}
+       ${scope ? "AND tenant_key = $2" : ""}
+       ${scope ? "AND workspace_key = $3" : ""}
        AND status = 'failed'
      ORDER BY updated_at DESC
      LIMIT $1`,
-    values
+    scope ? [normalizedLimit, scope.tenantKey, scope.workspaceKey] : [normalizedLimit]
   );
   return result.rows;
 }
@@ -340,13 +350,17 @@ export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string |
 type RetryFailedCallOutboxInput = {
   limit?: number;
   eventIds?: string[];
-  tenantId?: string | null;
 };
 
-export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxInput = {}) {
-  const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+export async function retryFailedCallOutboxEvents(
+  input: RetryFailedCallOutboxInput | number = {},
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+  const normalizedInput = typeof input === "number" ? { limit: input } : input;
+  const normalizedLimit = Math.min(Math.max(normalizedInput.limit ?? 25, 1), 100);
   const eventIds = Array.from(
-    new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
+    new Set((normalizedInput.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
   ).slice(0, 100);
   const client = await db.connect();
   try {
@@ -359,19 +373,21 @@ export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxIn
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE direction = 'outbound'
-               ${input.tenantId ? "AND tenant_id = $2" : ""}
                AND status = 'failed'
+               ${scope ? "AND tenant_key = $2" : ""}
+               ${scope ? "AND workspace_key = $3" : ""}
                AND id::text = ANY($1::text[])
              RETURNING id`,
-            input.tenantId ? [eventIds, input.tenantId] : [eventIds]
+            scope ? [eventIds, scope.tenantKey, scope.workspaceKey] : [eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM call_outbox_events
                WHERE direction = 'outbound'
-                 ${input.tenantId ? "AND tenant_id = $2" : ""}
                  AND status = 'failed'
+                 ${scope ? "AND tenant_key = $2" : ""}
+                 ${scope ? "AND workspace_key = $3" : ""}
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -382,8 +398,10 @@ export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxIn
                  updated_at = now()
              FROM failed
              WHERE evt.id = failed.id
+               ${scope ? "AND evt.tenant_key = $2" : ""}
+               ${scope ? "AND evt.workspace_key = $3" : ""}
              RETURNING evt.id`,
-            input.tenantId ? [normalizedLimit, input.tenantId] : [normalizedLimit]
+            scope ? [normalizedLimit, scope.tenantKey, scope.workspaceKey] : [normalizedLimit]
           );
     await client.query("COMMIT");
     return {

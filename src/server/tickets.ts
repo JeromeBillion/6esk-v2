@@ -1,11 +1,16 @@
 import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import {
+  resolveTenantScope,
+  tenantScopeFromUser,
+  type TenantScopeInput
+} from "@/server/tenant-context";
 
 export type TicketRecord = {
   id: string;
-  tenant_id: string;
+  tenant_key?: string;
+  workspace_key?: string;
   ticket_number: number;
   mailbox_id: string | null;
   customer_id: string | null;
@@ -33,29 +38,29 @@ export function formatTicketDisplayId(ticketNumber: number | null | undefined) {
   return `#${ticketNumber}`;
 }
 
-export async function resolveTicketIdForInbound(
-  references: string[],
-  tenantId = DEFAULT_TENANT_ID
-) {
+export async function resolveTicketIdForInbound(references: string[], scope?: TenantScopeInput) {
   if (references.length === 0) {
     return null;
   }
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
 
   const result = await db.query<{ ticket_id: string }>(
     `SELECT ticket_id
      FROM messages
      WHERE message_id = ANY($1)
-       AND tenant_id = $2
+       AND tenant_key = $2
+       AND workspace_key = $3
        AND ticket_id IS NOT NULL
      LIMIT 1`,
-    [references, tenantId]
+    [references, tenantKey, workspaceKey]
   );
 
   return result.rows[0]?.ticket_id ?? null;
 }
 
 export async function createTicket({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantKey,
+  workspaceKey,
   mailboxId,
   customerId,
   requesterEmail,
@@ -63,7 +68,8 @@ export async function createTicket({
   category,
   metadata
 }: {
-  tenantId?: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   mailboxId: string;
   customerId?: string | null;
   requesterEmail: string;
@@ -71,23 +77,42 @@ export async function createTicket({
   category?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO tickets (
+       tenant_key, workspace_key, mailbox_id, customer_id, requester_email, subject, category, metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
-    [tenantId, mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
+    [
+      scope.tenantKey,
+      scope.workspaceKey,
+      mailboxId,
+      customerId ?? null,
+      requesterEmail,
+      subject ?? null,
+      category ?? null,
+      metadata ?? {}
+    ]
   );
 
   return result.rows[0].id;
 }
 
-export async function mergeTicketMetadata(ticketId: string, patch: Record<string, unknown>) {
+export async function mergeTicketMetadata(
+  ticketId: string,
+  patch: Record<string, unknown>,
+  scope?: TenantScopeInput
+) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
   await db.query(
     `UPDATE tickets
      SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
          updated_at = now()
-     WHERE id = $1`,
-    [ticketId, JSON.stringify(patch)]
+     WHERE id = $1
+       AND tenant_key = $3
+       AND workspace_key = $4`,
+    [ticketId, JSON.stringify(patch), tenantKey, workspaceKey]
   );
 }
 
@@ -123,29 +148,35 @@ export function appendMergedFromMetadata(
 }
 
 export async function recordTicketEvent({
-  tenantId = DEFAULT_TENANT_ID,
   ticketId,
   eventType,
   actorUserId,
-  data
+  data,
+  tenantKey,
+  workspaceKey
 }: {
-  tenantId?: string;
   ticketId: string;
   eventType: string;
   actorUserId?: string | null;
   data?: Record<string, unknown> | null;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   await db.query(
-    `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [tenantId, ticketId, eventType, actorUserId ?? null, data ?? null]
+    `INSERT INTO ticket_events (
+       tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data
+     )
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [scope.tenantKey, scope.workspaceKey, ticketId, eventType, actorUserId ?? null, data ?? null]
   );
 }
 
-export async function reopenTicketIfNeeded(ticketId: string, tenantId: string) {
+export async function reopenTicketIfNeeded(ticketId: string, scope?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
   const result = await db.query<{ status: string }>(
-    "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
-    [ticketId, tenantId]
+    "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+    [ticketId, tenantKey, workspaceKey]
   );
   const status = result.rows[0]?.status;
   if (!status) {
@@ -154,65 +185,79 @@ export async function reopenTicketIfNeeded(ticketId: string, tenantId: string) {
 
   if (status === "solved" || status === "closed") {
     await db.query(
-      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
-      [ticketId, tenantId]
+      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+      [ticketId, tenantKey, workspaceKey]
     );
     await recordTicketEvent({
-      tenantId,
       ticketId,
       eventType: "ticket_reopened",
+      tenantKey,
+      workspaceKey,
       data: { previousStatus: status }
     });
   }
 }
 
-export async function ensureTags(tagNames: string[]) {
+export async function ensureTags(tagNames: string[], scopeInput?: TenantScopeInput) {
   const clean = Array.from(new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean)));
   if (clean.length === 0) {
     return [];
   }
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
 
   // Batch upsert all tags in a single query using UNNEST
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tags (name)
-     SELECT unnest($1::text[])
-     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+    `INSERT INTO tags (tenant_key, workspace_key, name)
+     SELECT $1, $2, unnest($3::text[])
+     ON CONFLICT (tenant_key, name) DO UPDATE SET name = EXCLUDED.name
      RETURNING id`,
-    [clean]
+    [tenantKey, workspaceKey, clean]
   );
   return result.rows.map((row) => row.id);
 }
 
-export async function addTagsToTicket(ticketId: string, tagNames: string[]) {
-  const tagIds = await ensureTags(tagNames);
+export async function addTagsToTicket(
+  ticketId: string,
+  tagNames: string[],
+  scopeInput?: TenantScopeInput
+) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
+  const tagIds = await ensureTags(tagNames, scopeInput);
   if (tagIds.length === 0) {
     return;
   }
 
   // Batch insert all ticket-tag associations in a single query
   await db.query(
-    `INSERT INTO ticket_tags (ticket_id, tag_id)
-     SELECT $1, unnest($2::uuid[])
+    `INSERT INTO ticket_tags (tenant_key, workspace_key, ticket_id, tag_id)
+     SELECT $1, $2, $3, unnest($4::uuid[])
      ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-    [ticketId, tagIds]
+    [tenantKey, workspaceKey, ticketId, tagIds]
   );
 }
 
-export async function removeTagsFromTicket(ticketId: string, tagNames: string[]) {
+export async function removeTagsFromTicket(
+  ticketId: string,
+  tagNames: string[],
+  scopeInput?: TenantScopeInput
+) {
   const clean = Array.from(
     new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean))
   );
   if (clean.length === 0) {
     return;
   }
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
 
   await db.query(
     `DELETE FROM ticket_tags
      WHERE ticket_id = $1
+       AND tenant_key = $2
+       AND workspace_key = $4
        AND tag_id IN (
-         SELECT id FROM tags WHERE name = ANY($2)
+         SELECT id FROM tags WHERE tenant_key = $2 AND workspace_key = $4 AND name = ANY($3)
        )`,
-    [ticketId, clean]
+    [ticketId, tenantKey, clean, workspaceKey]
   );
 }
 
@@ -260,16 +305,14 @@ export async function listTicketsForUser(
     channel?: string | null;
   }
 ) {
-  const values: Array<string> = [];
+  const { tenantKey, workspaceKey } = tenantScopeFromUser(user);
+  const values: Array<string> = [tenantKey, workspaceKey];
   const conditions: string[] = [
+    `t.tenant_key = $1`,
+    `t.workspace_key = $2`,
     "t.merged_into_ticket_id IS NULL",
     "(t.mailbox_id IS NULL OR mb.type = 'platform')"
   ];
-
-  // v2: tenant isolation — always scope to the user's tenant
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
-  values.push(tenantId);
-  conditions.push(`t.tenant_id = $${values.length}`);
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
@@ -291,12 +334,7 @@ export async function listTicketsForUser(
   }
 
   if (filters?.search) {
-    // Escape ILIKE wildcards to prevent pattern injection (C-3)
-    const escaped = filters.search
-      .replace(/\\/g, "\\\\")
-      .replace(/%/g, "\\%")
-      .replace(/_/g, "\\_");
-    values.push(`%${escaped}%`);
+    values.push(`%${filters.search}%`);
     conditions.push(
       `(t.subject ILIKE $${values.length} OR t.requester_email ILIKE $${values.length})`
     );
@@ -304,13 +342,16 @@ export async function listTicketsForUser(
 
   if (filters?.tag) {
     values.push(filters.tag.toLowerCase());
-    conditions.push(
-      `EXISTS (
-        SELECT 1
-        FROM ticket_tags ttf
-        JOIN tags tagf ON tagf.id = ttf.tag_id
-        WHERE ttf.ticket_id = t.id AND tagf.name = $${values.length}
-      )`
+	    conditions.push(
+	      `EXISTS (
+	        SELECT 1
+	        FROM ticket_tags ttf
+	        JOIN tags tagf ON tagf.id = ttf.tag_id AND tagf.tenant_key = ttf.tenant_key AND tagf.workspace_key = ttf.workspace_key
+	        WHERE ttf.ticket_id = t.id
+	          AND ttf.tenant_key = t.tenant_key
+	          AND ttf.workspace_key = t.workspace_key
+	          AND tagf.name = $${values.length}
+	      )`
     );
   }
 
@@ -323,13 +364,14 @@ export async function listTicketsForUser(
       const requesterPlaceholder = `$${values.length}`;
       conditions.push(
         `(
-          EXISTS (
-            SELECT 1
-            FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id
-              AND channel_msg.tenant_id = t.tenant_id
-              AND channel_msg.channel = ${placeholder}
-          )
+	          EXISTS (
+	            SELECT 1
+	            FROM messages channel_msg
+	            WHERE channel_msg.ticket_id = t.id
+	              AND channel_msg.tenant_key = t.tenant_key
+	              AND channel_msg.workspace_key = t.workspace_key
+	              AND channel_msg.channel = ${placeholder}
+	          )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
       );
@@ -341,13 +383,14 @@ export async function listTicketsForUser(
       const requesterPlaceholder = `$${values.length}`;
       conditions.push(
         `(
-          EXISTS (
-            SELECT 1
-            FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id
-              AND channel_msg.tenant_id = t.tenant_id
-              AND channel_msg.channel = ${placeholder}
-          )
+	          EXISTS (
+	            SELECT 1
+	            FROM messages channel_msg
+	            WHERE channel_msg.ticket_id = t.id
+	              AND channel_msg.tenant_key = t.tenant_key
+	              AND channel_msg.workspace_key = t.workspace_key
+	              AND channel_msg.channel = ${placeholder}
+	          )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
       );
@@ -364,20 +407,22 @@ export async function listTicketsForUser(
       conditions.push(
         `NOT EXISTS (
           SELECT 1
-          FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id
-            AND channel_msg.tenant_id = t.tenant_id
-            AND channel_msg.channel = ${whatsappPlaceholder}
-        )`
+	          FROM messages channel_msg
+	          WHERE channel_msg.ticket_id = t.id
+	            AND channel_msg.tenant_key = t.tenant_key
+	            AND channel_msg.workspace_key = t.workspace_key
+	            AND channel_msg.channel = ${whatsappPlaceholder}
+	        )`
       );
       conditions.push(
         `NOT EXISTS (
           SELECT 1
-          FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id
-            AND channel_msg.tenant_id = t.tenant_id
-            AND channel_msg.channel = ${voicePlaceholder}
-        )`
+	          FROM messages channel_msg
+	          WHERE channel_msg.ticket_id = t.id
+	            AND channel_msg.tenant_key = t.tenant_key
+	            AND channel_msg.workspace_key = t.workspace_key
+	            AND channel_msg.channel = ${voicePlaceholder}
+	        )`
       );
       conditions.push(`t.requester_email NOT ILIKE ${whatsappRequesterPlaceholder}`);
       conditions.push(`t.requester_email NOT ILIKE ${voiceRequesterPlaceholder}`);
@@ -387,64 +432,76 @@ export async function listTicketsForUser(
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.tenant_id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.tenant_key, t.workspace_key,
+            t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
-            EXISTS (
-              SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'whatsapp'
-            ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
-            EXISTS (
-              SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'voice'
-            ) OR t.requester_email ILIKE 'voice:%' AS has_voice
+	            EXISTS (
+	              SELECT 1 FROM messages msg
+	              WHERE msg.ticket_id = t.id
+	                AND msg.tenant_key = t.tenant_key
+	                AND msg.workspace_key = t.workspace_key
+	                AND msg.channel = 'whatsapp'
+	            ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+	            EXISTS (
+	              SELECT 1 FROM messages msg
+	              WHERE msg.ticket_id = t.id
+	                AND msg.tenant_key = t.tenant_key
+	                AND msg.workspace_key = t.workspace_key
+	                AND msg.channel = 'voice'
+	            ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
-     LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
-     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
-     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id AND mb.tenant_key = t.tenant_key AND mb.workspace_key = t.workspace_key
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_key = t.tenant_key AND tt.workspace_key = t.workspace_key
+     LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_key = t.tenant_key AND tag.workspace_key = t.workspace_key
      ${whereClause}
      GROUP BY t.id
-     ORDER BY t.created_at DESC
-     LIMIT 200`,
+     ORDER BY t.created_at DESC`,
     values
   );
 
   return result.rows;
 }
 
-export async function getTicketById(ticketId: string, tenantId: string) {
-  const values = [ticketId, tenantId];
-  const tenantClause = "AND t.tenant_id = $2";
+export async function getTicketById(ticketId: string, scope?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
   const result = await db.query<TicketRecord>(
-    `SELECT t.id, t.tenant_id, t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
+    `SELECT t.id, t.tenant_key, t.workspace_key,
+            t.mailbox_id, t.customer_id, t.requester_email, t.subject, t.category, t.metadata,
             t.ticket_number,
             t.status, t.priority, t.assigned_user_id, t.created_at, t.updated_at,
             t.merged_into_ticket_id, t.merged_by_user_id, t.merged_at,
             COALESCE(array_agg(tag.name) FILTER (WHERE tag.name IS NOT NULL), '{}') AS tags,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'whatsapp'
+              WHERE msg.ticket_id = t.id
+                AND msg.tenant_key = t.tenant_key
+                AND msg.workspace_key = t.workspace_key
+                AND msg.channel = 'whatsapp'
             ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'voice'
+              WHERE msg.ticket_id = t.id
+                AND msg.tenant_key = t.tenant_key
+                AND msg.workspace_key = t.workspace_key
+                AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
-     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
-     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_key = t.tenant_key AND tt.workspace_key = t.workspace_key
+     LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_key = t.tenant_key AND tag.workspace_key = t.workspace_key
      WHERE t.id = $1
-       ${tenantClause}
+       AND t.tenant_key = $2
+       AND t.workspace_key = $3
      GROUP BY t.id`,
-    values
+    [ticketId, tenantKey, workspaceKey]
   );
   return result.rows[0] ?? null;
 }
 
-export async function listTicketMessages(ticketId: string, tenantId: string) {
-  const values = [ticketId, tenantId];
-  const tenantClause = "AND m.tenant_id = $2";
+export async function listTicketMessages(ticketId: string, scope?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
   const result = await db.query(
     `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.subject,
             m.preview_text, m.received_at, m.sent_at, m.wa_status, m.wa_timestamp,
@@ -461,26 +518,27 @@ export async function listTicketMessages(ticketId: string, tenantId: string) {
               '[]'
             ) AS attachments
      FROM messages m
-     LEFT JOIN attachments a ON a.message_id = m.id AND a.tenant_id = m.tenant_id
+     LEFT JOIN attachments a ON a.message_id = m.id AND a.tenant_key = m.tenant_key AND a.workspace_key = m.workspace_key
      WHERE m.ticket_id = $1
-       ${tenantClause}
+       AND m.tenant_key = $2
+       AND m.workspace_key = $3
      GROUP BY m.id
      ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) ASC`,
-    values
+    [ticketId, tenantKey, workspaceKey]
   );
   return result.rows;
 }
 
-export async function listTicketEvents(ticketId: string, tenantId: string) {
-  const values = [ticketId, tenantId];
-  const tenantClause = "AND tenant_id = $2";
+export async function listTicketEvents(ticketId: string, scope?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scope);
   const result = await db.query(
     `SELECT id, event_type, actor_user_id, data, created_at
      FROM ticket_events
      WHERE ticket_id = $1
-       ${tenantClause}
+       AND tenant_key = $2
+       AND workspace_key = $3
      ORDER BY created_at ASC`,
-    values
+    [ticketId, tenantKey, workspaceKey]
   );
   return result.rows;
 }

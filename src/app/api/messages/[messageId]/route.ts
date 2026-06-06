@@ -8,7 +8,7 @@ import {
 } from "@/server/messages";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { db } from "@/server/db";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   _request: Request,
@@ -18,10 +18,10 @@ export async function GET(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
 
   const { messageId } = await params;
-  const message = await getMessageById(messageId, tenantId);
+  const scope = tenantScopeFromUser(user);
+  const message = await getMessageById(messageId, scope);
   if (!message) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -29,19 +29,19 @@ export async function GET(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (message.ticket_id) {
-      const assignedUserId = await getTicketAssignment(message.ticket_id, tenantId);
+      const assignedUserId = await getTicketAssignment(message.ticket_id, scope);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, tenantId);
+      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, scope);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     }
   }
 
-  const attachments = await getAttachmentsForMessage(message.id, tenantId);
+  const attachments = await getAttachmentsForMessage(message.id, scope);
   const textKey = message.r2_key_text;
   const htmlKey = message.r2_key_html;
   let statusEvents: Array<{
@@ -74,10 +74,10 @@ export async function GET(
     }>(
       `SELECT id, status, occurred_at, external_message_id, payload
        FROM whatsapp_status_events
-       WHERE tenant_id = $3
-         AND (message_id = $1 OR external_message_id = $2)
+       WHERE tenant_key = $1
+         AND (message_id = $2 OR external_message_id = $3)
        ORDER BY occurred_at ASC, created_at ASC`,
-      [message.id, message.external_message_id ?? null, tenantId]
+      [scope.tenantKey, message.id, message.external_message_id ?? null]
     );
     statusEvents = eventsResult.rows.map((row) => ({
       id: row.id,
@@ -109,11 +109,11 @@ export async function GET(
       `SELECT id, status, from_phone, to_phone, direction, duration_seconds, 
               started_at, ended_at, created_by, transcript_r2_key, recording_url, recording_r2_key
        FROM call_sessions
-       WHERE message_id = $1
-         AND ticket_id IN (SELECT id FROM tickets WHERE tenant_id = $2)
+       WHERE tenant_key = $1
+         AND message_id = $2
        ORDER BY updated_at DESC
        LIMIT 1`,
-      [message.id, tenantId]
+      [scope.tenantKey, message.id]
     );
     const session = callSessionResult.rows[0];
     if (session) {
@@ -149,9 +149,10 @@ export async function GET(
       }>(
         `SELECT id, event_type, occurred_at, payload
          FROM call_events
-         WHERE call_session_id = $1
+         WHERE tenant_key = $1
+           AND call_session_id = $2
          ORDER BY occurred_at ASC`,
-        [session.id]
+        [scope.tenantKey, session.id]
       );
       statusEvents = callEventsResult.rows.map((row) => ({
         id: row.id,
@@ -230,10 +231,10 @@ export async function PATCH(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
 
   const { messageId } = await params;
-  const message = await getMessageById(messageId, tenantId);
+  const scope = tenantScopeFromUser(user);
+  const message = await getMessageById(messageId, scope);
   if (!message) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -241,12 +242,12 @@ export async function PATCH(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (message.ticket_id) {
-      const assignedUserId = await getTicketAssignment(message.ticket_id, tenantId);
+      const assignedUserId = await getTicketAssignment(message.ticket_id, scope);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, tenantId);
+      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, scope);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -286,24 +287,24 @@ export async function PATCH(
 
   let updatedIds: string[] = [];
   if (message.thread_id) {
-    values.push(message.thread_id, message.id, message.mailbox_id, tenantId);
+    values.push(message.thread_id, message.id, message.mailbox_id, scope.tenantKey);
     const result = await db.query<{ id: string }>(
       `UPDATE messages
        SET ${updates.join(", ")}
        WHERE (thread_id = $${index++} OR id = $${index++})
          AND mailbox_id = $${index++}
-         AND tenant_id = $${index++}
+         AND tenant_key = $${index++}
        RETURNING id`,
       values
     );
     updatedIds = result.rows.map((row) => row.id);
   } else {
-    values.push(message.id, tenantId);
+    values.push(message.id, scope.tenantKey);
     const result = await db.query<{ id: string }>(
       `UPDATE messages
        SET ${updates.join(", ")}
        WHERE id = $${index++}
-         AND tenant_id = $${index++}
+         AND tenant_key = $${index++}
        RETURNING id`,
       values
     );

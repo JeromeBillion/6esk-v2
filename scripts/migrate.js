@@ -19,14 +19,6 @@ async function loadApplied(client) {
   return new Set(result.rows.map((row) => row.filename));
 }
 
-function splitSqlStatements(sql) {
-  return sql
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter(Boolean)
-    .map((statement) => `${statement};`);
-}
-
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -52,10 +44,7 @@ async function main() {
       const requiresNonTransactionalRun = /create\s+index\s+concurrently/i.test(sql);
 
       if (requiresNonTransactionalRun) {
-        const statements = splitSqlStatements(sql);
-        for (const statement of statements) {
-          await client.query(statement);
-        }
+        await client.query(sql);
         await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [file]);
         console.log(`Applied ${file} (non-transactional)`);
         continue;

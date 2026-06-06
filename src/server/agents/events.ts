@@ -9,11 +9,9 @@ type Actor = {
 export type AgentEventPayload = {
   event_id: string;
   event_type: string;
-  tenant_id?: string;
   occurred_at: string;
   org_id: string;
   resource: {
-    tenant_id?: string | null;
     ticket_id?: string | null;
     message_id?: string | null;
     mailbox_id?: string | null;
@@ -24,14 +22,15 @@ export type AgentEventPayload = {
   pointers?: Record<string, string>;
 };
 
-const ORG_ID = "6ex-support";
+function getAgentOrgId() {
+  return process.env.AGENT_ORG_ID?.trim() || "default-support";
+}
 
 export function buildAgentEvent({
   eventType,
   ticketId,
   messageId,
   mailboxId,
-  tenantId,
   actorUserId,
   excerpt,
   threadId
@@ -40,7 +39,6 @@ export function buildAgentEvent({
   ticketId?: string | null;
   messageId?: string | null;
   mailboxId?: string | null;
-  tenantId?: string | null;
   actorUserId?: string | null;
   excerpt?: string | null;
   threadId?: string | null;
@@ -60,11 +58,9 @@ export function buildAgentEvent({
   return {
     event_id: randomUUID(),
     event_type: eventType,
-    ...(tenantId ? { tenant_id: tenantId } : {}),
     occurred_at: new Date().toISOString(),
-    org_id: ORG_ID,
+    org_id: getAgentOrgId(),
     resource: {
-      tenant_id: tenantId ?? null,
       ticket_id: ticketId ?? null,
       message_id: messageId ?? null,
       mailbox_id: mailboxId ?? null

@@ -1,8 +1,8 @@
 import { db } from "@/server/db";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import type { ExternalProfile } from "@/server/integrations/external-profile";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type InboundChannel = "email" | "whatsapp";
-type QueryExecutor = Pick<typeof db, "query">;
 
 export function normalizeLinkEmail(value: string | null | undefined) {
   if (!value) return null;
@@ -33,6 +33,8 @@ export function deriveMatchConfidence(matchedBy: string | null | undefined) {
 }
 
 export type ExternalUserLinkMatch = {
+  tenant_key?: string;
+  workspace_key?: string;
   external_system: string;
   external_user_id: string;
   email: string | null;
@@ -45,14 +47,19 @@ export type ExternalUserLinkMatch = {
 };
 
 export async function findExternalUserLinkByIdentity({
+  tenantKey,
+  workspaceKey,
   externalSystem,
   email,
   phone
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   externalSystem: string;
   email?: string | null;
   phone?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedEmail = normalizeLinkEmail(email);
   const normalizedPhone = normalizeLinkPhone(phone);
 
@@ -62,6 +69,8 @@ export async function findExternalUserLinkByIdentity({
 
   const result = await db.query<ExternalUserLinkMatch>(
     `SELECT
+       tenant_key,
+       workspace_key,
        external_system,
        external_user_id,
        email,
@@ -72,52 +81,56 @@ export async function findExternalUserLinkByIdentity({
        last_ticket_id,
        last_channel
      FROM external_user_links
-     WHERE external_system = $1
+     WHERE tenant_key = $1
+       AND external_system = $2
        AND (
-         ($2::text IS NOT NULL AND LOWER(email) = $2::text)
-         OR ($3::text IS NOT NULL AND phone = $3::text)
+         ($3::text IS NOT NULL AND LOWER(email) = $3::text)
+         OR ($4::text IS NOT NULL AND phone = $4::text)
        )
      ORDER BY
        CASE
-         WHEN $2::text IS NOT NULL
-           AND LOWER(email) = $2::text
-           AND $3::text IS NOT NULL
-           AND phone = $3::text
+         WHEN $3::text IS NOT NULL
+           AND LOWER(email) = $3::text
+           AND $4::text IS NOT NULL
+           AND phone = $4::text
            THEN 0
-         WHEN $2::text IS NOT NULL AND LOWER(email) = $2::text
+         WHEN $3::text IS NOT NULL AND LOWER(email) = $3::text
            THEN 1
-         WHEN $3::text IS NOT NULL AND phone = $3::text
+         WHEN $4::text IS NOT NULL AND phone = $4::text
            THEN 2
          ELSE 3
        END ASC,
        confidence DESC NULLS LAST,
        last_seen_at DESC
      LIMIT 1`,
-    [externalSystem, normalizedEmail, normalizedPhone]
+    [scope.tenantKey, externalSystem, normalizedEmail, normalizedPhone]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function upsertExternalUserLink({
+  tenantKey,
+  workspaceKey,
   externalSystem,
   profile,
   matchedBy,
   inboundEmail,
   inboundPhone,
   ticketId,
-  channel,
-  queryExecutor = db
+  channel
 }: {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   matchedBy?: string | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;
   ticketId: string;
   channel: InboundChannel;
-  queryExecutor?: QueryExecutor;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const email = normalizeLinkEmail(inboundEmail) ?? normalizeLinkEmail(profile.email);
   const phone = normalizeLinkPhone(inboundPhone) ?? normalizeLinkPhone(profile.phoneNumber);
 
@@ -127,8 +140,10 @@ export async function upsertExternalUserLink({
 
   const confidence = deriveMatchConfidence(matchedBy);
 
-  await queryExecutor.query(
+  await db.query(
     `INSERT INTO external_user_links (
+      tenant_key,
+      workspace_key,
       external_system,
       external_user_id,
       email,
@@ -140,9 +155,9 @@ export async function upsertExternalUserLink({
       last_seen_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, now(), now()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
     )
-    ON CONFLICT (external_system, external_user_id)
+    ON CONFLICT (tenant_key, external_system, external_user_id)
     DO UPDATE SET
       email = COALESCE(EXCLUDED.email, external_user_links.email),
       phone = COALESCE(EXCLUDED.phone, external_user_links.phone),
@@ -153,6 +168,8 @@ export async function upsertExternalUserLink({
       last_seen_at = GREATEST(external_user_links.last_seen_at, EXCLUDED.last_seen_at),
       updated_at = now()`,
     [
+      scope.tenantKey,
+      scope.workspaceKey,
       externalSystem,
       profile.id,
       email,

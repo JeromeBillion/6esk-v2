@@ -6,6 +6,7 @@ import {
   type CallTranscriptQaFlag,
   type CallTranscriptQaStatus
 } from "@/server/calls/transcript-ai-provider";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type NumericLike = number | string | null;
 
@@ -59,7 +60,8 @@ type TranscriptAiErrorRow = {
 
 type TranscriptAiLockRow = {
   id: string;
-  tenant_id: string;
+  tenant_key: string;
+  workspace_key: string;
   call_session_id: string;
   provider: string;
   transcript_r2_key: string;
@@ -91,7 +93,8 @@ type TranscriptAiFailedRow = {
 };
 
 type EnqueueTranscriptAiJobArgs = {
-  tenantId: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   callSessionId: string;
   transcriptR2Key: string;
   metadata?: Record<string, unknown> | null;
@@ -126,11 +129,13 @@ function getProcessingRecoverySeconds() {
 }
 
 export async function enqueueCallTranscriptAiJob({
-  tenantId,
+  tenantKey,
+  workspaceKey,
   callSessionId,
   transcriptR2Key,
   metadata = null
 }: EnqueueTranscriptAiJobArgs) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const provider = getTranscriptAiProvider();
   const result = await db.query<{
     id: string;
@@ -139,18 +144,18 @@ export async function enqueueCallTranscriptAiJob({
     transcript_r2_key: string;
   }>(
     `INSERT INTO call_transcript_ai_jobs (
-       tenant_id,
+       tenant_key,
+       workspace_key,
        call_session_id,
        provider,
        transcript_r2_key,
        status,
        next_attempt_at,
        metadata
-     ) VALUES ($1, $2, $3, $4, 'queued', now(), $5::jsonb)
+     ) VALUES ($1, $2, $3, $4, $5, 'queued', now(), $6::jsonb)
      ON CONFLICT (call_session_id)
      DO UPDATE
-       SET tenant_id = EXCLUDED.tenant_id,
-           provider = EXCLUDED.provider,
+       SET provider = EXCLUDED.provider,
            transcript_r2_key = EXCLUDED.transcript_r2_key,
            status = CASE
              WHEN call_transcript_ai_jobs.status = 'completed'
@@ -228,11 +233,12 @@ export async function enqueueCallTranscriptAiJob({
            updated_at = now()
      RETURNING id, status, provider, transcript_r2_key`,
     [
-      tenantId,
+      scope.tenantKey,
+      scope.workspaceKey,
       callSessionId,
       provider,
       transcriptR2Key,
-      JSON.stringify({ ...(metadata ?? {}), tenantId })
+      JSON.stringify(metadata ?? {})
     ]
   );
 
@@ -246,7 +252,12 @@ export async function enqueueCallTranscriptAiJob({
   };
 }
 
-async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeconds: number) {
+async function lockPendingTranscriptAiJobs(
+  limit: number,
+  processingRecoverySeconds: number,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -259,6 +270,7 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
          SELECT id
          FROM call_transcript_ai_jobs
          WHERE
+           ${scope ? "tenant_key = $3 AND workspace_key = $4 AND" : ""}
            (
              (status = 'queued' AND next_attempt_at <= now())
              OR (
@@ -270,8 +282,10 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, call_session_id, provider, transcript_r2_key, metadata, attempt_count`,
-      [limit, processingRecoverySeconds]
+       RETURNING id, tenant_key, workspace_key, call_session_id, provider, transcript_r2_key, metadata, attempt_count`,
+      scope
+        ? [limit, processingRecoverySeconds, scope.tenantKey, scope.workspaceKey]
+        : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -285,6 +299,7 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
 
 export async function markTranscriptAiJobCompleted({
   jobId,
+  scope: scopeInput,
   attemptCount,
   providerJobId,
   qaStatus,
@@ -295,6 +310,7 @@ export async function markTranscriptAiJobCompleted({
   rawResponse
 }: {
   jobId: string;
+  scope: TenantScopeInput;
   attemptCount: number;
   providerJobId?: string | null;
   qaStatus: CallTranscriptQaStatus;
@@ -304,6 +320,7 @@ export async function markTranscriptAiJobCompleted({
   actionItems: CallTranscriptActionItem[];
   rawResponse?: Record<string, unknown> | null;
 }) {
+  const scope = resolveTenantScope(scopeInput);
   await db.query(
     `UPDATE call_transcript_ai_jobs
      SET status = 'completed',
@@ -318,7 +335,9 @@ export async function markTranscriptAiJobCompleted({
          submitted_at = COALESCE(submitted_at, now()),
          completed_at = now(),
          updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1
+       AND tenant_key = $10
+       AND workspace_key = $11`,
     [
       jobId,
       attemptCount,
@@ -328,20 +347,25 @@ export async function markTranscriptAiJobCompleted({
       resolutionNote,
       JSON.stringify(qaFlags),
       JSON.stringify(actionItems),
-      rawResponse ? JSON.stringify(rawResponse) : null
+      rawResponse ? JSON.stringify(rawResponse) : null,
+      scope.tenantKey,
+      scope.workspaceKey
     ]
   );
 }
 
 export async function markTranscriptAiJobFailed({
   jobId,
+  scope: scopeInput,
   attemptCount,
   errorMessage
 }: {
   jobId: string;
+  scope: TenantScopeInput;
   attemptCount: number;
   errorMessage: string;
 }) {
+  const scope = resolveTenantScope(scopeInput);
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
   await db.query(
@@ -351,12 +375,23 @@ export async function markTranscriptAiJobFailed({
          last_error = $4,
          next_attempt_at = $5,
          updated_at = now()
-     WHERE id = $1`,
-    [jobId, status, attemptCount, errorMessage.slice(0, 500), nextAttempt]
+     WHERE id = $1
+       AND tenant_key = $6
+       AND workspace_key = $7`,
+    [
+      jobId,
+      status,
+      attemptCount,
+      errorMessage.slice(0, 500),
+      nextAttempt,
+      scope.tenantKey,
+      scope.workspaceKey
+    ]
   );
 }
 
-export async function getTranscriptAiJobMetrics(limit = 8) {
+export async function getTranscriptAiJobMetrics(limit = 8, scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const provider = getTranscriptAiProvider();
   const normalizedLimit = Math.min(Math.max(limit, 1), 25);
 
@@ -374,15 +409,20 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
          MIN(next_attempt_at) FILTER (WHERE status = 'queued') AS next_attempt_at,
          MAX(completed_at) AS last_completed_at,
          MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
-       FROM call_transcript_ai_jobs`
+       FROM call_transcript_ai_jobs
+       ${scope ? "WHERE tenant_key = $1 AND workspace_key = $2" : ""}`,
+      scope ? [scope.tenantKey, scope.workspaceKey] : []
     ),
     db.query<TranscriptAiErrorRow>(
       `SELECT last_error
        FROM call_transcript_ai_jobs
        WHERE status = 'failed'
+         ${scope ? "AND tenant_key = $1" : ""}
+         ${scope ? "AND workspace_key = $2" : ""}
          AND last_error IS NOT NULL
        ORDER BY updated_at DESC
-       LIMIT 1`
+       LIMIT 1`,
+      scope ? [scope.tenantKey, scope.workspaceKey] : []
     ),
     db.query<TranscriptAiAnalysisSummaryRow>(
       `SELECT
@@ -421,7 +461,9 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
            WHERE status = 'completed'
              AND completed_at >= now() - interval '24 hours'
          ), 0)::int AS total_action_items_24h
-       FROM call_transcript_ai_jobs`
+       FROM call_transcript_ai_jobs
+       ${scope ? "WHERE tenant_key = $1 AND workspace_key = $2" : ""}`,
+      scope ? [scope.tenantKey, scope.workspaceKey] : []
     ),
     db.query<TranscriptAiRecentFlaggedRow>(
       `SELECT
@@ -435,15 +477,20 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
          job.action_items,
          job.completed_at
        FROM call_transcript_ai_jobs job
-       JOIN call_sessions session ON session.id = job.call_session_id
+       JOIN call_sessions session
+         ON session.id = job.call_session_id
+        AND session.tenant_key = job.tenant_key
+        AND session.workspace_key = job.workspace_key
        WHERE job.status = 'completed'
+         ${scope ? "AND job.tenant_key = $2" : ""}
+         ${scope ? "AND job.workspace_key = $3" : ""}
          AND (
            job.qa_status IN ('watch', 'review')
            OR jsonb_array_length(job.qa_flags) > 0
          )
        ORDER BY job.completed_at DESC NULLS LAST
        LIMIT $1`,
-      [normalizedLimit]
+      scope ? [normalizedLimit, scope.tenantKey, scope.workspaceKey] : [normalizedLimit]
     )
   ]);
 
@@ -503,7 +550,8 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
   };
 }
 
-export async function listFailedTranscriptAiJobs(limit = 30) {
+export async function listFailedTranscriptAiJobs(limit = 30, scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(limit, 1), 100);
   const result = await db.query<TranscriptAiFailedRow>(
     `SELECT
@@ -517,9 +565,11 @@ export async function listFailedTranscriptAiJobs(limit = 30) {
        updated_at
      FROM call_transcript_ai_jobs
      WHERE status = 'failed'
+       ${scope ? "AND tenant_key = $2" : ""}
+       ${scope ? "AND workspace_key = $3" : ""}
      ORDER BY updated_at DESC
      LIMIT $1`,
-    [normalizedLimit]
+    scope ? [normalizedLimit, scope.tenantKey, scope.workspaceKey] : [normalizedLimit]
   );
 
   return result.rows.map((row) => ({
@@ -534,7 +584,11 @@ export async function listFailedTranscriptAiJobs(limit = 30) {
   }));
 }
 
-export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInput = {}) {
+export async function retryFailedTranscriptAiJobs(
+  input: RetryTranscriptAiJobInput = {},
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const jobIds = Array.from(
     new Set((input.jobIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -550,15 +604,19 @@ export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInp
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE status = 'failed'
+               ${scope ? "AND tenant_key = $2" : ""}
+               ${scope ? "AND workspace_key = $3" : ""}
                AND id::text = ANY($1::text[])
              RETURNING id`,
-            [jobIds]
+            scope ? [jobIds, scope.tenantKey, scope.workspaceKey] : [jobIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM call_transcript_ai_jobs
                WHERE status = 'failed'
+                 ${scope ? "AND tenant_key = $2" : ""}
+                 ${scope ? "AND workspace_key = $3" : ""}
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -569,8 +627,10 @@ export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInp
                  updated_at = now()
              FROM failed
              WHERE job.id = failed.id
+               ${scope ? "AND job.tenant_key = $2" : ""}
+               ${scope ? "AND job.workspace_key = $3" : ""}
              RETURNING job.id`,
-            [normalizedLimit]
+            scope ? [normalizedLimit, scope.tenantKey, scope.workspaceKey] : [normalizedLimit]
           );
     await client.query("COMMIT");
     return {

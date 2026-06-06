@@ -8,7 +8,7 @@ import {
   listCustomerHistory,
   resolveOrCreateCustomerForInbound
 } from "@/server/customers";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   request: Request,
@@ -20,8 +20,8 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
-  const ticket = await getTicketById(ticketId, tenantId);
+  const scope = tenantScopeFromUser(user);
+  const ticket = await getTicketById(ticketId, scope);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -43,13 +43,14 @@ export async function GET(
         ? ticket.requester_email.replace(/^voice:/, "")
         : null;
     const customerResolution = await resolveOrCreateCustomerForInbound({
-      tenantId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       inboundEmail: requesterEmail,
       inboundPhone: requesterPhone
     });
     customerId = customerResolution?.customerId ?? null;
     if (customerId) {
-      await attachCustomerToTicket(ticketId, customerId, tenantId);
+      await attachCustomerToTicket(ticketId, customerId, scope);
     }
   }
 
@@ -64,14 +65,14 @@ export async function GET(
   const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 30, 1), 100);
 
   const [customer, historyPage] = await Promise.all([
-    getCustomerById(customerId, tenantId),
-    listCustomerHistory(customerId, tenantId, {
+    getCustomerById(customerId, scope),
+    listCustomerHistory(customerId, {
       limit,
       cursor: cursorParam
-    })
+    }, scope)
   ]);
 
-  const identities = customer ? await listCustomerIdentities(customer.id, tenantId) : [];
+  const identities = customer ? await listCustomerIdentities(customer.id, scope) : [];
 
   return Response.json({
     customer: customer

@@ -1,5 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  resolveCallSessionProviderScope: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  markProviderWebhookSecretUsed: vi.fn()
+}));
+
+vi.mock("@/server/calls/service", () => ({
+  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
+}));
+
+vi.mock("@/server/provider-webhook-secrets", () => {
+  class ProviderWebhookSecretConfigurationError extends Error {}
+  return {
+    ProviderWebhookSecretConfigurationError,
+    listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+    markProviderWebhookSecretUsed: mocks.markProviderWebhookSecretUsed,
+    shouldRequireTenantProviderWebhookSecrets: () =>
+      process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
+      process.env.NODE_ENV === "production"
+  };
+});
+
 import { POST } from "@/app/api/internal/calls/stt/deepgram/route";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -13,8 +35,15 @@ describe("POST /api/internal/calls/stt/deepgram", () => {
       CALLS_STT_PROVIDER_HTTP_SECRET: "internal-secret",
       CALLS_STT_DEEPGRAM_API_KEY: "deepgram-api-key",
       CALLS_STT_DEEPGRAM_CALLBACK_TOKEN: "deepgram-callback-token",
-      CALLS_STT_DEEPGRAM_MODEL: "nova-3"
+      CALLS_STT_DEEPGRAM_MODEL: "nova-3",
+      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
     };
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.markProviderWebhookSecretUsed.mockResolvedValue(undefined);
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ request_id: "dg-request-1" }), {
         status: 200,
@@ -107,5 +136,82 @@ describe("POST /api/internal/calls/stt/deepgram", () => {
       }
     });
     expect(Buffer.isBuffer(init.body)).toBe(true);
+  });
+
+  it("uses tenant-scoped internal and callback secrets in strict mode", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
+      { id: "secret-1", secret: "tenant-http-secret", source: "db" }
+    ]);
+    const form = new FormData();
+    form.set(
+      "job",
+      JSON.stringify({
+        jobId: "11111111-1111-1111-1111-111111111111",
+        callSessionId: "22222222-2222-2222-2222-222222222222",
+        callbackUrl: "https://app.6esk.test/api/calls/transcript",
+        callbackSecret: "tenant-dg-token",
+        metadata: {}
+      })
+    );
+    form.set("audio", new File([Buffer.from("audio")], "call.mp3", { type: "audio/mpeg" }));
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/stt/deepgram", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "tenant-http-secret"
+        },
+        body: form
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantKey: "tenant-a", workspaceKey: "workspace-a" },
+      provider: "managed_stt",
+      secretType: "http_secret"
+    });
+    expect(mocks.markProviderWebhookSecretUsed).toHaveBeenCalledWith("secret-1", {
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+
+    const [url] = vi.mocked(global.fetch).mock.calls[0] as [URL | string, RequestInit];
+    expect(String(url)).toContain(
+      "callback=https%3A%2F%2Fapp.6esk.test%2Fapi%2Fcalls%2Ftranscript%3Fcallback_token%3Dtenant-dg-token"
+    );
+  });
+
+  it("fails closed in strict mode when the tenant has no internal STT secret", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    const form = new FormData();
+    form.set(
+      "job",
+      JSON.stringify({
+        jobId: "11111111-1111-1111-1111-111111111111",
+        callSessionId: "22222222-2222-2222-2222-222222222222",
+        callbackUrl: "https://app.6esk.test/api/calls/transcript",
+        callbackSecret: "tenant-dg-token",
+        metadata: {}
+      })
+    );
+    form.set("audio", new File([Buffer.from("audio")], "call.mp3", { type: "audio/mpeg" }));
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/stt/deepgram", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "tenant-http-secret"
+        },
+        body: form
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({ code: "provider_webhook_secret_missing" });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

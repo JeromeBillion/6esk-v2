@@ -91,7 +91,6 @@ vi.mock("@/server/agents/outbox", () => ({
 import { POST } from "@/app/api/tickets/create/route";
 
 const ORIGINAL_ENV = { ...process.env };
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 describe("POST /api/tickets/create call-mode voice policy", () => {
   beforeEach(() => {
@@ -102,11 +101,10 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
       email: "agent@6ex.co.za",
       display_name: "Agent",
       role_id: "role-1",
-      role_name: "agent",
-      tenant_id: TENANT_ID
+      role_name: "agent"
     });
     mocks.canManageTickets.mockReturnValue(true);
-    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1", tenant_id: TENANT_ID });
+    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1" });
     mocks.inferTagsFromText.mockReturnValue([]);
     mocks.normalizeCallPhone.mockReturnValue("+15551234567");
     mocks.getHumanVoicePolicyFromEnv.mockReturnValue({ voice: {} });
@@ -147,37 +145,6 @@ describe("POST /api/tickets/create call-mode voice policy", () => {
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
-  });
-
-  it("rejects unsupported integration API versions before side effects", async () => {
-    const response = await POST(
-      new Request("http://localhost/api/tickets/create", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-6esk-api-version": "1999-01-01"
-        },
-        body: JSON.stringify({
-          contactMode: "email",
-          from: "customer@example.com",
-          subject: "Unsupported version",
-          description: "Should fail before processing."
-        })
-      })
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(body).toMatchObject({
-      ok: false,
-      code: "unsupported_api_version",
-      error: "x-6esk-api-version value is not supported.",
-      meta: {
-        apiVersion: "1999-01-01"
-      }
-    });
-    expect(mocks.getSessionUser).not.toHaveBeenCalled();
-    expect(mocks.createTicket).not.toHaveBeenCalled();
   });
 
   it("returns blocked when call-mode policy denies the request", async () => {

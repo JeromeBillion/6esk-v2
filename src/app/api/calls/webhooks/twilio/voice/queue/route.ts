@@ -13,14 +13,14 @@ import {
 import {
   buildTwilioPublicUrl,
   normalizeTwilioParams,
-  validateTwilioWebhook
+  validateTwilioWebhookForTenant
 } from "@/server/calls/twilio";
 import { recordAuditLog } from "@/server/audit";
+import { resolveCallSessionProviderScope } from "@/server/calls/service";
 import {
-  integrationError,
-  validateIntegrationApiVersion
-} from "@/server/api-contract";
-import { runInBackground } from "@/server/async";
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
 
 function readString(value: FormDataEntryValue | string | null | undefined) {
   if (typeof value !== "string") return null;
@@ -36,11 +36,6 @@ function buildHangupTwiML() {
 }
 
 export async function POST(request: Request) {
-  const versionError = validateIntegrationApiVersion(request);
-  if (versionError) {
-    return versionError;
-  }
-
   const formData = await request.formData();
   const params = normalizeTwilioParams(
     new URLSearchParams(
@@ -49,15 +44,68 @@ export async function POST(request: Request) {
       )
     )
   );
-  const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/voice/queue",
-    requestUrl: request.url,
-    signature: request.headers.get("x-twilio-signature"),
-    params
-  });
+  const requestParams = new URL(request.url).searchParams;
+  const callSessionId = readString(requestParams.get("callSessionId"));
+  const operatorUserId = readString(requestParams.get("operatorUserId"));
+  const attempt = Number(requestParams.get("attempt") ?? "0");
 
-  if (!isValid) {
-    runInBackground(recordAuditLog({
+  if (!callSessionId || !operatorUserId) {
+    return Response.json({ error: "callSessionId and operatorUserId are required" }, { status: 400 });
+  }
+
+  const scope = await resolveCallSessionProviderScope({ callSessionId });
+  if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
+    void recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/voice/queue",
+        mode: "twilio_signature",
+        reason: "unresolved_call_provider_route",
+        callSessionId
+      }
+    }).catch(() => {});
+    return Response.json(
+      { error: "Call session not found", code: "unresolved_call_provider_route" },
+      { status: 404 }
+    );
+  }
+
+  let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
+  try {
+    verification = await validateTwilioWebhookForTenant({
+      scope,
+      providerAccountId: params.AccountSid ?? null,
+      pathname: "/api/calls/webhooks/twilio/voice/queue",
+      requestUrl: request.url,
+      signature: request.headers.get("x-twilio-signature"),
+      params
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return Response.json(
+        {
+          error: error.message,
+          code: "provider_webhook_secret_configuration_missing"
+        },
+        { status: 503 }
+      );
+    }
+    throw error;
+  }
+
+  if (verification.missingSecret) {
+    return Response.json(
+      {
+        error: "Provider webhook secret is not configured for this tenant.",
+        code: "provider_webhook_secret_missing"
+      },
+      { status: 503 }
+    );
+  }
+
+  if (!verification.valid) {
+    void recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -65,34 +113,20 @@ export async function POST(request: Request) {
         mode: "twilio_signature",
         reason: "invalid_signature"
       }
-    }), "Failed to record rejected Twilio queue webhook audit event");
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
+    }).catch(() => {});
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const requestParams = new URL(request.url).searchParams;
-  const callSessionId = readString(requestParams.get("callSessionId"));
-  const operatorUserId = readString(requestParams.get("operatorUserId"));
-  const attempt = Number(requestParams.get("attempt") ?? "0");
   const offeredUserIds = parseQueuedOperatorIds(requestParams.get("offered"));
   const dialStatus = readString(formData.get("DialCallStatus"));
   const parentFromPhone = readString(formData.get("From"));
   const parentToPhone = readString(formData.get("To"));
 
-  if (!callSessionId || !operatorUserId) {
-    return integrationError(request, {
-      status: 400,
-      code: "missing_queue_fields",
-      message: "callSessionId and operatorUserId are required"
-    });
-  }
-
   if (operatorUserId) {
     const outcome = shouldContinueVoiceQueue(dialStatus) ? "missed" : "connected";
     await markVoiceOperatorQueueOutcome({
+      tenantKey: scope?.tenantKey,
+      workspaceKey: scope?.workspaceKey,
       userId: operatorUserId,
       callSessionId,
       outcome
@@ -105,6 +139,8 @@ export async function POST(request: Request) {
 
   const exhaustedOperators = Array.from(new Set([...offeredUserIds, operatorUserId]));
   const operator = await reserveNextVoiceDeskOperatorForCall({
+    tenantKey: scope?.tenantKey,
+    workspaceKey: scope?.workspaceKey,
     callSessionId,
     excludeUserIds: exhaustedOperators
   });

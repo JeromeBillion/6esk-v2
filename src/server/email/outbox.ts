@@ -1,12 +1,13 @@
 import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
-import { recordModuleUsageEvent } from "@/server/module-metering";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type NumericLike = number | string | null | undefined;
 
 type EmailOutboxEventRow = {
   id: string;
-  tenant_id: string;
+  tenant_key: string;
+  workspace_key: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
@@ -40,7 +41,6 @@ type OutboxAttachmentRow = {
 
 type DeliverArgs = {
   limit?: number;
-  tenantId?: string | null;
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
@@ -65,45 +65,35 @@ function toIso(value: Date | null | undefined) {
 async function lockPendingEvents(
   limit: number,
   processingRecoverySeconds: number,
-  tenantId?: string | null
+  scopeInput?: TenantScopeInput
 ) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const values: Array<number | string> = [limit, processingRecoverySeconds];
-    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
-    if (tenantId) {
-      values.push(tenantId);
-    }
     const result = await client.query<EmailOutboxEventRow>(
       `UPDATE email_outbox_events
        SET status = 'processing',
            last_error = NULL,
            updated_at = now()
        WHERE id IN (
-         SELECT fair_q.id FROM (
-           SELECT e.id,
-                  ROW_NUMBER() OVER (PARTITION BY e.tenant_id ORDER BY e.created_at ASC) as rn
-           FROM email_outbox_events e
-           JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
-           WHERE e.direction = 'outbound'
-             ${tenantClause}
-             AND (wm.modules->>'email')::boolean = true
-             AND (
-               (e.status = 'queued' AND e.next_attempt_at <= now())
-               OR (
-                 e.status = 'processing'
-                 AND e.updated_at <= now() - make_interval(secs => $2::int)
-               )
+         SELECT id
+         FROM email_outbox_events
+         WHERE direction = 'outbound'
+           ${scope ? "AND tenant_key = $3" : ""}
+           AND (
+             (status = 'queued' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $2::int)
              )
-         ) fair_q
-         WHERE fair_q.rn <= GREATEST(1, $1::int / 2)
-         ORDER BY fair_q.rn ASC, fair_q.id ASC
+           )
+         ORDER BY created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, payload, attempt_count`,
-      values
+       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
+      scope ? [limit, processingRecoverySeconds, scope.tenantKey] : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -115,13 +105,14 @@ async function lockPendingEvents(
   }
 }
 
-async function loadOutboxMessage(messageId: string) {
+async function loadOutboxMessage(messageId: string, tenantKey: string) {
   const messageResult = await db.query<OutboxMessageRow>(
     `SELECT id, r2_key_text, r2_key_html, message_id, in_reply_to, reference_ids
      FROM messages
      WHERE id = $1
+       AND tenant_key = $2
      LIMIT 1`,
-    [messageId]
+    [messageId, tenantKey]
   );
   const message = messageResult.rows[0];
   if (!message) {
@@ -132,8 +123,9 @@ async function loadOutboxMessage(messageId: string) {
     `SELECT filename, content_type, r2_key
      FROM attachments
      WHERE message_id = $1
+       AND tenant_key = $2
      ORDER BY created_at ASC`,
-    [messageId]
+    [messageId, tenantKey]
   );
 
   const text = message.r2_key_text ? (await getObjectBuffer(message.r2_key_text)).buffer.toString("utf-8") : null;
@@ -158,14 +150,14 @@ async function loadOutboxMessage(messageId: string) {
   };
 }
 
-async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>) {
+async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>, tenantKey: string) {
   const messageRecordId =
     typeof payload.messageRecordId === "string" ? payload.messageRecordId : null;
   if (!messageRecordId) {
     throw new Error("Email outbox payload missing messageRecordId");
   }
 
-  const { message, text, html, attachments } = await loadOutboxMessage(messageRecordId);
+  const { message, text, html, attachments } = await loadOutboxMessage(messageRecordId, tenantKey);
   const from = typeof payload.from === "string" ? payload.from : "";
   const to = Array.isArray(payload.to) ? payload.to.filter((value): value is string => typeof value === "string") : [];
   const cc = Array.isArray(payload.cc) ? payload.cc.filter((value): value is string => typeof value === "string") : [];
@@ -177,108 +169,63 @@ async function sendQueuedEmail(eventId: string, payload: Record<string, unknown>
     throw new Error("Queued email payload is incomplete");
   }
 
-  const connection = await import("@/server/oauth/connections").then(m => m.getActiveConnectionForMailbox(from));
+  const resendPayload = {
+    from,
+    to,
+    cc: cc.length ? cc : undefined,
+    bcc: bcc.length ? bcc : undefined,
+    subject,
+    html: html ?? undefined,
+    text: text ?? undefined,
+    reply_to: replyTo,
+    headers: {
+      ...(message.message_id ? { "Message-ID": message.message_id } : {}),
+      ...(message.in_reply_to ? { "In-Reply-To": message.in_reply_to } : {}),
+      ...(message.reference_ids?.length ? { References: message.reference_ids.join(" ") } : {})
+    },
+    attachments: attachments.length
+      ? attachments.map((attachment) => ({
+          filename: attachment.filename,
+          content: attachment.contentBase64,
+          contentType: attachment.contentType
+        }))
+      : undefined
+  };
 
-  let providerMessageId: string | null = null;
-  let finalProvider = "resend";
+  const resendResponse = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(resendPayload)
+  });
 
-  if (connection?.provider === "google" || connection?.provider === "microsoft" || connection?.provider === "zoho") {
-    const { getConnectionTokens } = await import("@/server/oauth/connections");
-    const { decryptToken } = await import("@/server/oauth/crypto");
-
-    const tokens = await getConnectionTokens(connection.id);
-    if (!tokens) throw new Error("Connection tokens missing");
-
-    const combinedStr = decryptToken(tokens.accessTokenEnc, tokens.tokenIv);
-    const { accessToken } = JSON.parse(combinedStr);
-
-    const emailPayload = {
-      to,
-      cc: cc.length ? cc : undefined,
-      bcc: bcc.length ? bcc : undefined,
-      subject,
-      html: html ?? undefined,
-      text: text ?? undefined,
-      replyTo,
-      inReplyTo: message.in_reply_to ?? undefined,
-      references: message.reference_ids?.length ? message.reference_ids : undefined
-    };
-
-    if (connection.provider === "google") {
-      const { sendGmailMessage } = await import("@/server/oauth/providers/google");
-      const result = await sendGmailMessage(accessToken, emailPayload);
-      providerMessageId = result.messageId;
-      finalProvider = "google";
-    } else if (connection.provider === "microsoft") {
-      const { sendOutlookMessage } = await import("@/server/oauth/providers/microsoft");
-      const result = await sendOutlookMessage(accessToken, emailPayload);
-      providerMessageId = result.messageId;
-      finalProvider = "microsoft";
-    } else if (connection.provider === "zoho") {
-      const { sendZohoMessage } = await import("@/server/oauth/providers/zoho");
-      // Zoho needs accountId which we stored in provider_account_id
-      const result = await sendZohoMessage(accessToken, connection.provider_account_id!, emailPayload);
-      providerMessageId = result.messageId;
-      finalProvider = "zoho";
-    }
-  } else {
-    // Fallback to Resend
-    const resendPayload = {
-      from,
-      to,
-      cc: cc.length ? cc : undefined,
-      bcc: bcc.length ? bcc : undefined,
-      subject,
-      html: html ?? undefined,
-      text: text ?? undefined,
-      reply_to: replyTo,
-      headers: {
-        ...(message.message_id ? { "Message-ID": message.message_id } : {}),
-        ...(message.in_reply_to ? { "In-Reply-To": message.in_reply_to } : {}),
-        ...(message.reference_ids?.length ? { References: message.reference_ids.join(" ") } : {})
-      },
-      attachments: attachments.length
-        ? attachments.map((attachment) => ({
-            filename: attachment.filename,
-            content: attachment.contentBase64,
-            contentType: attachment.contentType
-          }))
-        : undefined
-    };
-
-    const resendResponse = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": `email-outbox:${eventId}`
-      },
-      body: JSON.stringify(resendPayload)
-    });
-
-    if (!resendResponse.ok) {
-      const errorBody = await resendResponse.text();
-      throw new Error(errorBody || `Resend request failed for outbox event ${eventId}`);
-    }
-
-    const resendData = (await resendResponse.json()) as { id?: string; messageId?: string };
-    providerMessageId = resendData.id ?? resendData.messageId ?? null;
+  if (!resendResponse.ok) {
+    const errorBody = await resendResponse.text();
+    throw new Error(errorBody || `Resend request failed for outbox event ${eventId}`);
   }
 
+  const resendData = (await resendResponse.json()) as { id?: string; messageId?: string };
   return {
     messageRecordId,
-    providerMessageId,
-    provider: finalProvider
+    providerMessageId: resendData.id ?? resendData.messageId ?? null
   };
 }
 
-async function markDelivered(eventId: string, messageRecordId: string | null, providerMessageId: string | null) {
+async function markDelivered(
+  eventId: string,
+  messageRecordId: string | null,
+  providerMessageId: string | null,
+  tenantKey: string
+) {
   await db.query(
     `UPDATE email_outbox_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_key = $2`,
+    [eventId, tenantKey]
   );
 
   if (!messageRecordId) {
@@ -295,12 +242,19 @@ async function markDelivered(eventId: string, messageRecordId: string | null, pr
            'sent_via_outbox_at', now()::text,
            'last_send_error', NULL
          )
-     WHERE id = $2`,
-    [providerMessageId, messageRecordId]
+     WHERE id = $2
+       AND tenant_key = $3`,
+    [providerMessageId, messageRecordId, tenantKey]
   );
 }
 
-async function markFailed(eventId: string, attemptCount: number, errorMessage: string, messageRecordId: string | null) {
+async function markFailed(
+  eventId: string,
+  attemptCount: number,
+  errorMessage: string,
+  messageRecordId: string | null,
+  tenantKey: string
+) {
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
 
@@ -311,8 +265,9 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_key = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, tenantKey]
   );
 
   if (messageRecordId) {
@@ -322,25 +277,32 @@ async function markFailed(eventId: string, attemptCount: number, errorMessage: s
          'mail_state', $1,
          'last_send_error', $2
        )
-       WHERE id = $3`,
-      [status === "failed" ? "failed" : "queued", errorMessage.slice(0, 500), messageRecordId]
+       WHERE id = $3
+         AND tenant_key = $4`,
+      [status === "failed" ? "failed" : "queued", errorMessage.slice(0, 500), messageRecordId, tenantKey]
     );
   }
 }
 
-export async function enqueueEmailOutboxEvent(payload: Record<string, unknown>, tenantId?: string) {
-  const finalTenantId = tenantId || "00000000-0000-0000-0000-000000000001";
+export async function enqueueEmailOutboxEvent(
+  payload: Record<string, unknown>,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
   const result = await db.query<{ id: string }>(
-    `INSERT INTO email_outbox_events (tenant_id, direction, payload, status)
-     VALUES ($1, 'outbound', $2::jsonb, 'queued')
+    `INSERT INTO email_outbox_events (tenant_key, workspace_key, direction, payload, status)
+     VALUES ($1, $2, 'outbound', $3::jsonb, 'queued')
      RETURNING id`,
-    [finalTenantId, payload]
+    [scope.tenantKey, scope.workspaceKey, payload]
   );
   return result.rows[0]?.id ?? null;
 }
 
-export async function deliverPendingEmailOutboxEvents({ limit = 5, tenantId = null }: DeliverArgs = {}) {
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
+export async function deliverPendingEmailOutboxEvents(
+  { limit = 5 }: DeliverArgs = {},
+  scopeInput?: TenantScopeInput
+) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
@@ -358,38 +320,26 @@ export async function deliverPendingEmailOutboxEvents({ limit = 5, tenantId = nu
              'mail_state', 'processing',
              'last_send_error', NULL
            )
-           WHERE id = $1`,
-          [messageRecordId]
+           WHERE id = $1
+             AND tenant_key = $2`,
+          [messageRecordId, event.tenant_key]
         );
       }
 
-      const { providerMessageId } = await sendQueuedEmail(event.id, payload);
-      await markDelivered(event.id, messageRecordId, providerMessageId);
-
-      // Record FinOps usage: Resend cost is $1 per 1000 = $0.001 (0.1 cents)
-      await recordModuleUsageEvent({
-        tenantId: event.tenant_id,
-        moduleKey: "email",
-        usageKind: "outbound_email",
-        actorType: "system",
-        quantity: 1,
-        costCent: 1.7, 
-        metadata: { eventId: event.id, messageId: messageRecordId }
-      });
-
+      const { providerMessageId } = await sendQueuedEmail(event.id, payload, event.tenant_key);
+      await markDelivered(event.id, messageRecordId, providerMessageId, event.tenant_key);
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Email outbox delivery failed";
-      await markFailed(event.id, event.attempt_count + 1, message, messageRecordId);
+      await markFailed(event.id, event.attempt_count + 1, message, messageRecordId, event.tenant_key);
     }
   }
 
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function getEmailOutboxMetrics(tenantId?: string | null) {
-  const values = tenantId ? [tenantId] : [];
-  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
+export async function getEmailOutboxMetrics(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const summaryResult = await db.query<EmailOutboxSummaryRow>(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
@@ -406,8 +356,8 @@ export async function getEmailOutboxMetrics(tenantId?: string | null) {
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM email_outbox_events
      WHERE direction = 'outbound'
-       ${tenantClause}`,
-    values
+       ${scope ? "AND tenant_key = $1" : ""}`,
+    scope ? [scope.tenantKey] : []
   );
 
   const summary = summaryResult.rows[0] ?? {

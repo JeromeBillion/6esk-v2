@@ -1,6 +1,7 @@
 const {
   APP_URL,
   INBOUND_SHARED_SECRET,
+  WHATSAPP_OUTBOX_SECRET,
   CALLS_OUTBOX_SECRET,
   JOBS_RUNNER_INTERVAL_SECONDS,
   JOBS_RUNNER_ENABLE_INBOUND,
@@ -8,14 +9,16 @@ const {
   JOBS_RUNNER_ENABLE_WHATSAPP,
   JOBS_RUNNER_ENABLE_CALLS,
   JOBS_RUNNER_ENABLE_TRANSCRIPTS,
-  JOBS_RUNNER_ENABLE_TRANSCRIPT_AI,
-  JOBS_RUNNER_ENABLE_METERING_SYNC
+  JOBS_RUNNER_ENABLE_TRANSCRIPT_AI
 } = process.env;
+const { tenantIngressHeaders } = require("./tenant-ingress-headers");
 
-const secret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
+const inboundSecret = INBOUND_SHARED_SECRET || "";
+const whatsappSecret = WHATSAPP_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
+const callsSecret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
 
-if (!APP_URL || !secret) {
-  console.error("APP_URL and CALLS_OUTBOX_SECRET (or INBOUND_SHARED_SECRET) are required");
+if (!APP_URL) {
+  console.error("APP_URL is required");
   process.exit(1);
 }
 
@@ -26,39 +29,48 @@ const jobSpecs = [
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_INBOUND, true),
     name: "inbound-retry",
-    path: "/api/admin/inbound/retry?limit=25"
+    path: "/api/admin/inbound/retry?limit=25",
+    secret: inboundSecret
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_EMAIL, true),
     name: "email-outbox",
-    path: "/api/admin/email/outbox?limit=25"
+    path: "/api/admin/email/outbox?limit=25",
+    secret: inboundSecret
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_WHATSAPP, true),
     name: "whatsapp-outbox",
-    path: "/api/admin/whatsapp/outbox?limit=25"
+    path: "/api/admin/whatsapp/outbox?limit=25",
+    secret: whatsappSecret
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_CALLS, true),
     name: "calls-outbox",
-    path: "/api/admin/calls/outbox?limit=25"
+    path: "/api/admin/calls/outbox?limit=25",
+    secret: callsSecret
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_TRANSCRIPTS, true),
     name: "calls-transcripts",
-    path: "/api/admin/calls/transcripts/outbox?limit=25"
+    path: "/api/admin/calls/transcripts/outbox?limit=25",
+    secret: callsSecret
   },
   {
     enabled: parseBoolean(JOBS_RUNNER_ENABLE_TRANSCRIPT_AI, true),
     name: "calls-transcripts-ai",
-    path: "/api/admin/calls/transcripts/ai?limit=25"
-  },
-  {
-    enabled: parseBoolean(JOBS_RUNNER_ENABLE_METERING_SYNC, true),
-    name: "metering-sync",
-    path: "/api/admin/metering/sync?limit=100"
+    path: "/api/admin/calls/transcripts/ai?limit=25",
+    secret: callsSecret
   }
 ].filter((job) => job.enabled);
+
+const jobsMissingSecrets = jobSpecs.filter((job) => !job.secret);
+if (jobsMissingSecrets.length) {
+  console.error(
+    `Missing shared secret for enabled jobs: ${jobsMissingSecrets.map((job) => job.name).join(", ")}`
+  );
+  process.exit(1);
+}
 
 let shouldStop = false;
 let seenStopSignal = false;
@@ -100,12 +112,15 @@ function safeJsonParse(value) {
   }
 }
 
-async function callMaintenanceEndpoint(pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
+async function callMaintenanceEndpoint(job) {
+  const url = `${baseUrl}${job.path}`;
+  const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "x-6esk-secret": secret
-    }
+    headers: tenantIngressHeaders({
+      url,
+      method: "POST",
+      headers: { "x-6esk-secret": job.secret }
+    })
   });
 
   const text = await response.text();
@@ -113,7 +128,7 @@ async function callMaintenanceEndpoint(pathname) {
 
   if (!response.ok) {
     const message = payload?.error || payload?.message || text || `Request failed: ${response.status}`;
-    throw new Error(`${pathname} -> ${message}`);
+    throw new Error(`${job.path} -> ${message}`);
   }
 
   return payload;
@@ -122,7 +137,7 @@ async function callMaintenanceEndpoint(pathname) {
 async function runJob(job) {
   const startedAt = new Date().toISOString();
   console.log(`[jobs-runner] ${job.name} started at ${startedAt}`);
-  const payload = await callMaintenanceEndpoint(job.path);
+  const payload = await callMaintenanceEndpoint(job);
   console.log(`[jobs-runner] ${job.name}: ${JSON.stringify(payload)}`);
 }
 

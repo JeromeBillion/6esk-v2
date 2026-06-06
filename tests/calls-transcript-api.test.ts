@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authorizeCallWebhook: vi.fn(),
   attachCallTranscript: vi.fn(),
+  resolveCallSessionProviderScope: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  markProviderWebhookSecretUsed: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -11,12 +14,25 @@ vi.mock("@/server/calls/webhook", () => ({
 }));
 
 vi.mock("@/server/calls/service", () => ({
-  attachCallTranscript: mocks.attachCallTranscript
+  attachCallTranscript: mocks.attachCallTranscript,
+  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
 }));
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
+
+vi.mock("@/server/provider-webhook-secrets", () => {
+  class ProviderWebhookSecretConfigurationError extends Error {}
+  return {
+    ProviderWebhookSecretConfigurationError,
+    listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+    markProviderWebhookSecretUsed: mocks.markProviderWebhookSecretUsed,
+    shouldRequireTenantProviderWebhookSecrets: () =>
+      process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
+      process.env.NODE_ENV === "production"
+  };
+});
 
 import { POST } from "@/app/api/calls/transcript/route";
 
@@ -25,8 +41,17 @@ const ORIGINAL_ENV = { ...process.env };
 describe("POST /api/calls/transcript", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env = { ...ORIGINAL_ENV };
+    process.env = {
+      ...ORIGINAL_ENV,
+      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
+    };
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.markProviderWebhookSecretUsed.mockResolvedValue(undefined);
     mocks.authorizeCallWebhook.mockReturnValue({
       authorized: true,
       mode: "hmac",
@@ -225,5 +250,85 @@ describe("POST /api/calls/transcript", () => {
       callSessionId: "11111111-1111-1111-1111-111111111111"
     });
     expect(mocks.authorizeCallWebhook).not.toHaveBeenCalled();
+  });
+
+  it("uses tenant-scoped Deepgram callback tokens in strict mode", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN = "global-token";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
+      { id: "secret-1", secret: "tenant-dg-token", source: "db" }
+    ]);
+
+    const response = await POST(
+      new Request("http://localhost/api/calls/transcript?callback_token=tenant-dg-token", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          metadata: {
+            request_id: "dg-request-3",
+            extra: {
+              callSessionId: "11111111-1111-1111-1111-111111111111"
+            }
+          },
+          results: {
+            utterances: [
+              {
+                speaker: 0,
+                transcript: "The callback token is tenant scoped."
+              }
+            ]
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantKey: "tenant-a", workspaceKey: "workspace-a" },
+      provider: "deepgram",
+      secretType: "callback_token"
+    });
+    expect(mocks.markProviderWebhookSecretUsed).toHaveBeenCalledWith("secret-1", {
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
+    });
+    expect(mocks.authorizeCallWebhook).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for Deepgram callbacks without a tenant callback token in strict mode", async () => {
+    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+
+    const response = await POST(
+      new Request("http://localhost/api/calls/transcript?callback_token=missing-token", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          metadata: {
+            request_id: "dg-request-4",
+            extra: {
+              callSessionId: "11111111-1111-1111-1111-111111111111"
+            }
+          },
+          results: {
+            utterances: [
+              {
+                speaker: 0,
+                transcript: "This should not attach."
+              }
+            ]
+          }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({ code: "provider_webhook_secret_missing" });
+    expect(mocks.attachCallTranscript).not.toHaveBeenCalled();
   });
 });

@@ -1,18 +1,18 @@
 import { db } from "@/server/db";
 import { decryptSecret } from "@/server/agents/secret";
 import { getObjectBuffer } from "@/server/storage/r2";
-import { recordModuleUsageEvent } from "@/server/module-metering";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type WhatsAppEventRow = {
   id: string;
-  tenant_id: string;
+  tenant_key: string;
+  workspace_key: string;
   payload: Record<string, unknown>;
   attempt_count: number;
 };
 
 export type FailedWhatsAppOutboxEvent = {
   id: string;
-  tenant_id: string;
   status: string;
   attempt_count: number;
   last_error: string | null;
@@ -24,7 +24,6 @@ export type FailedWhatsAppOutboxEvent = {
 
 type WhatsAppAccount = {
   id: string;
-  tenant_id: string;
   provider: string;
   phone_number: string;
   access_token: string | null;
@@ -33,7 +32,6 @@ type WhatsAppAccount = {
 
 type DeliverArgs = {
   limit?: number;
-  tenantId?: string | null;
 };
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
@@ -47,17 +45,16 @@ function getProcessingRecoverySeconds() {
   return Math.floor(configured);
 }
 
-async function getActiveAccount(tenantId?: string | null) {
-  const values = tenantId ? [tenantId] : [];
-  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
+async function getActiveAccount(scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const result = await db.query<WhatsAppAccount>(
-    `SELECT id, tenant_id, provider, phone_number, access_token, status
+    `SELECT id, provider, phone_number, access_token, status
      FROM whatsapp_accounts
      WHERE status = 'active'
-       ${tenantClause}
+       ${scope ? "AND tenant_key = $1" : ""}
      ORDER BY created_at DESC
      LIMIT 1`,
-    values
+    scope ? [scope.tenantKey] : []
   );
   return result.rows[0] ?? null;
 }
@@ -65,45 +62,35 @@ async function getActiveAccount(tenantId?: string | null) {
 async function lockPendingEvents(
   limit: number,
   processingRecoverySeconds: number,
-  tenantId?: string | null
+  scopeInput?: TenantScopeInput
 ): Promise<WhatsAppEventRow[]> {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const values: Array<number | string> = [limit, processingRecoverySeconds];
-    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
-    if (tenantId) {
-      values.push(tenantId);
-    }
     const result = await client.query(
       `UPDATE whatsapp_events
        SET status = 'processing',
            last_error = NULL,
            updated_at = now()
        WHERE id IN (
-         SELECT fair_q.id FROM (
-           SELECT e.id,
-                  ROW_NUMBER() OVER (PARTITION BY e.tenant_id ORDER BY e.created_at ASC) as rn
-           FROM whatsapp_events e
-           JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
-           WHERE e.direction = 'outbound'
-             ${tenantClause}
-             AND (wm.modules->>'whatsapp')::boolean = true
-             AND (
-               (e.status = 'queued' AND e.next_attempt_at <= now())
-               OR (
-                 e.status = 'processing'
-                 AND e.updated_at <= now() - make_interval(secs => $2::int)
-               )
+         SELECT id
+         FROM whatsapp_events
+         WHERE direction = 'outbound'
+           ${scope ? "AND tenant_key = $3" : ""}
+           AND (
+             (status = 'queued' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $2::int)
              )
-         ) fair_q
-         WHERE fair_q.rn <= GREATEST(1, $1::int / 2)
-         ORDER BY fair_q.rn ASC, fair_q.id ASC
+           )
+         ORDER BY created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, payload, attempt_count`,
-      values
+       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
+      scope ? [limit, processingRecoverySeconds, scope.tenantKey] : [limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -116,26 +103,36 @@ async function lockPendingEvents(
 }
 
 async function markDelivered(
+  scopeInput: TenantScopeInput,
   eventId: string,
-  tenantId: string,
   messageRecordId?: string | null,
   providerMessageId?: string | null
 ) {
+  const scope = resolveTenantScope(scopeInput);
   await db.query(
     `UPDATE whatsapp_events
      SET status = 'sent',
          updated_at = now()
      WHERE id = $1
-       AND tenant_id = $2`,
-    [eventId, tenantId]
+       AND tenant_key = $2`,
+    [eventId, scope.tenantKey]
   );
 
   const sentAt = new Date();
   await db.query(
-    `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+    `INSERT INTO whatsapp_status_events (
+       tenant_key,
+       workspace_key,
+       message_id,
+       external_message_id,
+       status,
+       occurred_at,
+       payload
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
-      tenantId,
+      scope.tenantKey,
+      scope.workspaceKey,
       messageRecordId ?? null,
       providerMessageId ?? null,
       "sent",
@@ -156,8 +153,8 @@ async function markDelivered(
            wa_status = 'sent',
            wa_timestamp = $2
        WHERE id = $3
-         AND tenant_id = $4`,
-      [providerMessageId, sentAt, messageRecordId, tenantId]
+         AND tenant_key = $4`,
+      [providerMessageId, sentAt, messageRecordId, scope.tenantKey]
     );
   } else if (messageRecordId) {
     await db.query(
@@ -165,19 +162,20 @@ async function markDelivered(
        SET wa_status = 'sent',
            wa_timestamp = $2
        WHERE id = $1
-         AND tenant_id = $3`,
-      [messageRecordId, sentAt, tenantId]
+         AND tenant_key = $3`,
+      [messageRecordId, sentAt, scope.tenantKey]
     );
   }
 }
 
 async function markFailed(
+  scopeInput: TenantScopeInput,
   eventId: string,
-  tenantId: string,
   attemptCount: number,
   errorMessage: string,
   messageRecordId?: string | null
 ) {
+  const scope = resolveTenantScope(scopeInput);
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= 5 ? "failed" : "queued";
   await db.query(
@@ -188,16 +186,25 @@ async function markFailed(
          next_attempt_at = $4,
          updated_at = now()
      WHERE id = $5
-       AND tenant_id = $6`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, tenantId]
+       AND tenant_key = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, scope.tenantKey]
   );
 
   if (messageRecordId) {
     await db.query(
-      `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO whatsapp_status_events (
+         tenant_key,
+         workspace_key,
+         message_id,
+         external_message_id,
+         status,
+         occurred_at,
+         payload
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
-        tenantId,
+        scope.tenantKey,
+        scope.workspaceKey,
         messageRecordId,
         null,
         "failed",
@@ -216,13 +223,13 @@ async function markFailed(
        SET wa_status = 'failed',
            wa_timestamp = now()
        WHERE id = $1
-         AND tenant_id = $2`,
-      [messageRecordId, tenantId]
+         AND tenant_key = $2`,
+      [messageRecordId, scope.tenantKey]
     );
   }
 }
 
-function buildMetaPayload(payload: Record<string, unknown>, eventId: string) {
+function buildMetaPayload(payload: Record<string, unknown>) {
   const to = typeof payload.to === "string" ? payload.to : "";
   const template = typeof payload.template === "object" && payload.template
     ? (payload.template as Record<string, unknown>)
@@ -239,7 +246,6 @@ function buildMetaPayload(payload: Record<string, unknown>, eventId: string) {
         messaging_product: "whatsapp",
         to,
         type: "template",
-        biz_opaque_callback_data: eventId,
         template: {
           name,
           language: { code: language },
@@ -255,7 +261,6 @@ function buildMetaPayload(payload: Record<string, unknown>, eventId: string) {
       messaging_product: "whatsapp",
       to,
       type: "text",
-      biz_opaque_callback_data: eventId,
       text: { body: text }
     }
   };
@@ -307,7 +312,7 @@ async function uploadMetaMedia(
   return data.id ?? null;
 }
 
-async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string, unknown>, eventId: string) {
+async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string, unknown>) {
   const accessToken = account.access_token ? decryptSecret(account.access_token) : "";
   if (!accessToken) {
     throw new Error("Missing WhatsApp access token");
@@ -359,7 +364,6 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
       messaging_product: "whatsapp",
       to: typeof payload.to === "string" ? payload.to : "",
       type: mediaType,
-      biz_opaque_callback_data: eventId,
       [mediaType]: {
         id: mediaId,
         ...(caption && mediaType !== "audio" ? { caption } : {})
@@ -386,7 +390,7 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
     return { providerMessageId };
   }
 
-  const { body, to } = buildMetaPayload(payload, eventId);
+  const { body, to } = buildMetaPayload(payload);
   if (!to) {
     throw new Error("Missing WhatsApp recipient");
   }
@@ -413,67 +417,48 @@ async function sendMetaMessage(account: WhatsAppAccount, payload: Record<string,
   return { providerMessageId };
 }
 
-export async function deliverPendingWhatsAppEvents({ limit = 5, tenantId = null }: DeliverArgs = {}) {
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
+export async function deliverPendingWhatsAppEvents(
+  { limit = 5 }: DeliverArgs = {},
+  scopeInput?: TenantScopeInput
+) {
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0 };
   }
 
   let delivered = 0;
-  const accountByTenant = new Map<string, WhatsAppAccount | null>();
   for (const event of pending) {
     const payload = event.payload ?? {};
     const messageRecordId =
       typeof payload.messageRecordId === "string" ? payload.messageRecordId : null;
+    const eventScope = { tenantKey: event.tenant_key, workspaceKey: event.workspace_key };
     try {
-      let account = accountByTenant.get(event.tenant_id);
-      if (account === undefined) {
-        account = await getActiveAccount(event.tenant_id);
-        accountByTenant.set(event.tenant_id, account);
-      }
+      const account = await getActiveAccount(eventScope);
       if (!account) {
-        await markFailed(event.id, event.tenant_id, event.attempt_count + 1, "No active WhatsApp account", messageRecordId);
-        continue;
+        throw new Error("No active WhatsApp account");
       }
       if (account.provider !== "meta") {
         throw new Error(`Provider ${account.provider} not supported yet`);
       }
-      const { providerMessageId } = await sendMetaMessage(account, payload, event.id);
-      await markDelivered(event.id, event.tenant_id, messageRecordId, providerMessageId);
-
-      // Record FinOps usage: WhatsApp cost approx 5 cents (placeholder)
-      await recordModuleUsageEvent({
-        tenantId: event.tenant_id,
-        moduleKey: "whatsapp",
-        usageKind: "outbound_whatsapp",
-        actorType: "system",
-        quantity: 1,
-        costCent: 85.0, 
-        metadata: { eventId: event.id, messageId: messageRecordId }
-      });
-
+      const { providerMessageId } = await sendMetaMessage(account, payload);
+      await markDelivered(eventScope, event.id, messageRecordId, providerMessageId);
       delivered += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "WhatsApp delivery failed";
       const attempts = event.attempt_count + 1;
-      await markFailed(event.id, event.tenant_id, attempts, message, messageRecordId);
+      await markFailed(eventScope, event.id, attempts, message, messageRecordId);
     }
   }
 
   return { delivered, skipped: pending.length - delivered };
 }
 
-export async function listFailedWhatsAppOutboxEvents(limit = 50, tenantId?: string | null) {
+export async function listFailedWhatsAppOutboxEvents(limit = 50, scopeInput?: TenantScopeInput) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
-  const values: Array<number | string> = [normalizedLimit];
-  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
-  if (tenantId) {
-    values.push(tenantId);
-  }
   const result = await db.query<FailedWhatsAppOutboxEvent>(
     `SELECT
        id,
-       tenant_id,
        status,
        attempt_count,
        last_error,
@@ -483,11 +468,11 @@ export async function listFailedWhatsAppOutboxEvents(limit = 50, tenantId?: stri
        payload
      FROM whatsapp_events
      WHERE direction = 'outbound'
+       ${scope ? "AND tenant_key = $2" : ""}
        AND status = 'failed'
-       ${tenantClause}
      ORDER BY updated_at DESC
      LIMIT $1`,
-    values
+    scope ? [normalizedLimit, scope.tenantKey] : [normalizedLimit]
   );
   return result.rows;
 }
@@ -495,10 +480,13 @@ export async function listFailedWhatsAppOutboxEvents(limit = 50, tenantId?: stri
 type RetryFailedWhatsAppOutboxInput = {
   limit?: number;
   eventIds?: string[];
-  tenantId?: string | null;
 };
 
-export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutboxInput = {}) {
+export async function retryFailedWhatsAppEvents(
+  input: RetryFailedWhatsAppOutboxInput = {},
+  scopeInput?: TenantScopeInput
+) {
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const eventIds = Array.from(
     new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -515,10 +503,10 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
                  updated_at = now()
              WHERE direction = 'outbound'
                AND status = 'failed'
+               ${scope ? "AND tenant_key = $2" : ""}
                AND id::text = ANY($1::text[])
-               ${input.tenantId ? "AND tenant_id = $2" : ""}
              RETURNING id`,
-            input.tenantId ? [eventIds, input.tenantId] : [eventIds]
+            scope ? [eventIds, scope.tenantKey] : [eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
@@ -526,7 +514,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
                FROM whatsapp_events
                WHERE direction = 'outbound'
                  AND status = 'failed'
-                 ${input.tenantId ? "AND tenant_id = $2" : ""}
+                 ${scope ? "AND tenant_key = $2" : ""}
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -538,7 +526,7 @@ export async function retryFailedWhatsAppEvents(input: RetryFailedWhatsAppOutbox
              FROM failed
              WHERE evt.id = failed.id
              RETURNING evt.id`,
-            input.tenantId ? [normalizedLimit, input.tenantId] : [normalizedLimit]
+            scope ? [normalizedLimit, scope.tenantKey] : [normalizedLimit]
           );
     await client.query("COMMIT");
     return {

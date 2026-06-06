@@ -1,42 +1,39 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   createAgentIntegration,
   listAgentIntegrations
 } from "@/server/agents/integrations";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { AGENT_POLICY_MODE_VALUES } from "@/server/agents/policy-modes";
 
 const createSchema = z.object({
+  tenantKey: z.string().min(1).optional(),
   name: z.string().min(1),
   baseUrl: z.string().url(),
   sharedSecret: z.string().min(8),
   provider: z.string().optional(),
   authType: z.string().optional(),
   status: z.enum(["active", "paused"]).optional(),
-  policyMode: z.enum(["draft_only", "auto_send"]).optional(),
+  policyMode: z.enum(AGENT_POLICY_MODE_VALUES).optional(),
   scopes: z.record(z.unknown()).optional(),
   capabilities: z.record(z.unknown()).optional(),
   policy: z.record(z.unknown()).optional()
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const agents = await listAgentIntegrations(tenantId);
+  const { scope } = access;
+  const agents = await listAgentIntegrations(scope);
   return Response.json({ agents });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -50,10 +47,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const agent = await createAgentIntegration({ ...parsed.data, tenantId });
+  const agent = await createAgentIntegration({
+    ...parsed.data,
+    tenantKey: scope.tenantKey
+  });
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "agent_integration_created",
     entityType: "agent_integration",

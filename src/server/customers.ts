@@ -1,15 +1,17 @@
 import { db } from "@/server/db";
-import { logger } from "@/server/logger";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import {
+  DEFAULT_EXTERNAL_PROFILE_SYSTEM,
+  type ExternalProfile
+} from "@/server/integrations/external-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
-import { deleteObject } from "@/server/storage/r2";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 export type CustomerKind = "registered" | "unregistered";
 
 export type CustomerRecord = {
   id: string;
-  tenant_id?: string;
+  tenant_key?: string;
+  workspace_key?: string;
   kind: CustomerKind;
   external_system: string | null;
   external_user_id: string | null;
@@ -73,16 +75,18 @@ type Queryable = {
 };
 
 async function upsertCustomerIdentity({
+  tenantKey,
+  workspaceKey,
   customerId,
-  tenantId,
   identityType,
   identityValue,
   isPrimary,
   source,
   queryable = db
 }: {
+  tenantKey: string;
+  workspaceKey: string;
   customerId: string;
-  tenantId: string;
   identityType: "email" | "phone";
   identityValue: string;
   isPrimary: boolean;
@@ -91,51 +95,47 @@ async function upsertCustomerIdentity({
 }) {
   await queryable.query(
     `INSERT INTO customer_identities (
-      tenant_id, customer_id, identity_type, identity_value, is_primary, source, updated_at
+      tenant_key, workspace_key, customer_id, identity_type, identity_value, is_primary, source, updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, now()
+      $1, $2, $3, $4, $5, $6, $7, now()
     )
-    ON CONFLICT (identity_type, identity_value)
+    ON CONFLICT (tenant_key, identity_type, identity_value)
     DO UPDATE SET
       is_primary =
         CASE
           WHEN customer_identities.customer_id = EXCLUDED.customer_id
-            AND customer_identities.tenant_id = EXCLUDED.tenant_id
             THEN customer_identities.is_primary OR EXCLUDED.is_primary
           ELSE customer_identities.is_primary
         END,
       source =
         CASE
           WHEN customer_identities.customer_id = EXCLUDED.customer_id
-            AND customer_identities.tenant_id = EXCLUDED.tenant_id
             THEN EXCLUDED.source
           ELSE customer_identities.source
         END,
       updated_at =
         CASE
           WHEN customer_identities.customer_id = EXCLUDED.customer_id
-            AND customer_identities.tenant_id = EXCLUDED.tenant_id
             THEN now()
           ELSE customer_identities.updated_at
-        END
-    WHERE customer_identities.tenant_id = EXCLUDED.tenant_id`,
-    [tenantId, customerId, identityType, identityValue, isPrimary, source]
+        END`,
+    [tenantKey, workspaceKey, customerId, identityType, identityValue, isPrimary, source]
   );
 }
 
 async function findCanonicalCustomerByIdentity({
-  tenantId,
+  tenantKey,
   email,
   phone,
   queryable = db
 }: {
-  tenantId: string;
+  tenantKey: string;
   email: string | null;
   phone: string | null;
   queryable?: Queryable;
 }) {
   const conditions: string[] = [];
-  const values: string[] = [tenantId];
+  const values: string[] = [tenantKey];
 
   if (email) {
     values.push("email", email);
@@ -168,8 +168,8 @@ async function findCanonicalCustomerByIdentity({
     `SELECT c.id, c.kind, c.external_system, c.external_user_id
      FROM customer_identities ci
      JOIN customers c ON c.id = ci.customer_id
-     WHERE ci.tenant_id = $1
-       AND c.tenant_id = $1
+     WHERE ci.tenant_key = $1
+       AND c.tenant_key = $1
        AND c.merged_into_customer_id IS NULL
        AND (${conditions.join(" OR ")})
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
@@ -181,12 +181,12 @@ async function findCanonicalCustomerByIdentity({
 }
 
 async function findCustomerByExternalRef({
-  tenantId,
+  tenantKey,
   externalSystem,
   externalUserId,
   queryable = db
 }: {
-  tenantId: string;
+  tenantKey: string;
   externalSystem: string;
   externalUserId: string;
   queryable?: Queryable;
@@ -199,41 +199,46 @@ async function findCustomerByExternalRef({
   }>(
     `SELECT id, kind, external_system, external_user_id
      FROM customers
-     WHERE merged_into_customer_id IS NULL
-       AND tenant_id = $1
+     WHERE tenant_key = $1
+       AND merged_into_customer_id IS NULL
        AND external_system = $2
        AND external_user_id = $3
      LIMIT 1`,
-    [tenantId, externalSystem, externalUserId]
+    [tenantKey, externalSystem, externalUserId]
   );
 
   return result.rows[0] ?? null;
 }
 
 async function createUnregisteredCustomer({
-  tenantId,
+  tenantKey,
+  workspaceKey,
   displayName,
   email,
   phone,
   queryable = db
 }: {
-  tenantId: string;
+  tenantKey: string;
+  workspaceKey: string;
   displayName: string | null;
   email: string | null;
   phone: string | null;
   queryable?: Queryable;
 }) {
   const result = await queryable.query<{ id: string }>(
-    `INSERT INTO customers (tenant_id, kind, display_name, primary_email, primary_phone)
-     VALUES ($1, 'unregistered', $2, $3, $4)
+    `INSERT INTO customers (
+       tenant_key, workspace_key, kind, display_name, primary_email, primary_phone
+     )
+     VALUES ($1, $2, 'unregistered', $3, $4, $5)
      RETURNING id`,
-    [tenantId, displayName, email, phone]
+    [tenantKey, workspaceKey, displayName, email, phone]
   );
   return result.rows[0].id;
 }
 
 async function upsertRegisteredCustomer({
-  tenantId,
+  tenantKey,
+  workspaceKey,
   externalSystem,
   profile,
   email,
@@ -241,9 +246,10 @@ async function upsertRegisteredCustomer({
   displayName,
   queryable = db
 }: {
-  tenantId: string;
+  tenantKey: string;
+  workspaceKey: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -254,7 +260,8 @@ async function upsertRegisteredCustomer({
 
   const result = await queryable.query<{ id: string }>(
     `INSERT INTO customers (
-      tenant_id,
+      tenant_key,
+      workspace_key,
       kind,
       external_system,
       external_user_id,
@@ -262,18 +269,18 @@ async function upsertRegisteredCustomer({
       primary_email,
       primary_phone
     ) VALUES (
-      $1, 'registered', $2, $3, $4, $5, $6
+      $1, $2, 'registered', $3, $4, $5, $6, $7
     )
-    ON CONFLICT (external_system, external_user_id)
+    ON CONFLICT (tenant_key, external_system, external_user_id)
     DO UPDATE SET
       display_name = COALESCE(EXCLUDED.display_name, customers.display_name),
       primary_email = COALESCE(EXCLUDED.primary_email, customers.primary_email),
       primary_phone = COALESCE(EXCLUDED.primary_phone, customers.primary_phone),
       updated_at = now()
-    WHERE customers.tenant_id = EXCLUDED.tenant_id
     RETURNING id`,
     [
-      tenantId,
+      tenantKey,
+      workspaceKey,
       externalSystem,
       profile.id,
       profile.fullName ?? displayName,
@@ -282,16 +289,12 @@ async function upsertRegisteredCustomer({
     ]
   );
 
-  const row = result.rows[0];
-  if (!row) {
-    throw new CustomerIdentityConflictError("External customer reference belongs to another tenant.");
-  }
-  return row.id;
+  return result.rows[0].id;
 }
 
 async function promoteCustomerWithProfile({
+  tenantKey,
   customerId,
-  tenantId,
   externalSystem,
   profile,
   email,
@@ -299,10 +302,10 @@ async function promoteCustomerWithProfile({
   displayName,
   queryable = db
 }: {
+  tenantKey: string;
   customerId: string;
-  tenantId: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -327,7 +330,7 @@ async function promoteCustomerWithProfile({
          primary_phone = COALESCE($6, primary_phone),
          updated_at = now()
      WHERE id = $1
-       AND tenant_id = $7
+       AND tenant_key = $7
      RETURNING id`,
     [
       customerId,
@@ -336,7 +339,7 @@ async function promoteCustomerWithProfile({
       profile.fullName ?? displayName,
       preferredEmail,
       preferredPhone,
-      tenantId
+      tenantKey
     ]
   );
 
@@ -344,20 +347,23 @@ async function promoteCustomerWithProfile({
 }
 
 export async function resolveOrCreateCustomerForInbound({
-  tenantId = DEFAULT_TENANT_ID,
-  externalSystem = "prediction-market-mvp",
+  tenantKey,
+  workspaceKey,
+  externalSystem = DEFAULT_EXTERNAL_PROFILE_SYSTEM,
   profile,
   inboundEmail,
   inboundPhone,
   displayName
 }: {
-  tenantId?: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   externalSystem?: string;
-  profile?: PredictionProfile | null;
+  profile?: ExternalProfile | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;
   displayName?: string | null;
 }): Promise<CustomerResolution | null> {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const normalizedEmail = normalizeLinkEmail(inboundEmail ?? undefined);
   const normalizedPhone = normalizeLinkPhone(inboundPhone ?? undefined);
 
@@ -386,13 +392,13 @@ export async function resolveOrCreateCustomerForInbound({
 
     if (profile) {
       const registeredCustomer = await findCustomerByExternalRef({
-        tenantId,
+        tenantKey: scope.tenantKey,
         externalSystem,
         externalUserId: profile.id,
         queryable: client
       });
       const canonical = await findCanonicalCustomerByIdentity({
-        tenantId,
+        tenantKey: scope.tenantKey,
         email: primaryEmail,
         phone: primaryPhone,
         queryable: client
@@ -412,8 +418,8 @@ export async function resolveOrCreateCustomerForInbound({
         };
       } else if (registeredCustomer) {
         customerId = await promoteCustomerWithProfile({
+          tenantKey: scope.tenantKey,
           customerId: registeredCustomer.id,
-          tenantId,
           externalSystem,
           profile,
           email: normalizedEmail,
@@ -424,8 +430,8 @@ export async function resolveOrCreateCustomerForInbound({
         kind = "registered";
       } else if (canonical && canonical.kind === "unregistered") {
         customerId = await promoteCustomerWithProfile({
+          tenantKey: scope.tenantKey,
           customerId: canonical.id,
-          tenantId,
           externalSystem,
           profile,
           email: normalizedEmail,
@@ -448,7 +454,8 @@ export async function resolveOrCreateCustomerForInbound({
         };
       } else {
         customerId = await upsertRegisteredCustomer({
-          tenantId,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           externalSystem,
           profile,
           email: normalizedEmail,
@@ -460,7 +467,7 @@ export async function resolveOrCreateCustomerForInbound({
       }
     } else {
       const existing = await findCanonicalCustomerByIdentity({
-        tenantId,
+        tenantKey: scope.tenantKey,
         email: normalizedEmail,
         phone: normalizedPhone,
         queryable: client
@@ -471,7 +478,8 @@ export async function resolveOrCreateCustomerForInbound({
         kind = existing.kind;
       } else {
         customerId = await createUnregisteredCustomer({
-          tenantId,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
           displayName: displayName ?? null,
           email: normalizedEmail,
           phone: normalizedPhone,
@@ -487,7 +495,8 @@ export async function resolveOrCreateCustomerForInbound({
     if (identityEmail) {
       await upsertCustomerIdentity({
         customerId,
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         identityType: "email",
         identityValue: identityEmail,
         isPrimary: true,
@@ -499,7 +508,8 @@ export async function resolveOrCreateCustomerForInbound({
     if (identityPhone) {
       await upsertCustomerIdentity({
         customerId,
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         identityType: "phone",
         identityValue: identityPhone,
         isPrimary: true,
@@ -511,7 +521,8 @@ export async function resolveOrCreateCustomerForInbound({
     if (normalizedEmail && normalizedEmail !== identityEmail) {
       await upsertCustomerIdentity({
         customerId,
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         identityType: "email",
         identityValue: normalizedEmail,
         isPrimary: false,
@@ -523,7 +534,8 @@ export async function resolveOrCreateCustomerForInbound({
     if (normalizedPhone && normalizedPhone !== identityPhone) {
       await upsertCustomerIdentity({
         customerId,
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         identityType: "phone",
         identityValue: normalizedPhone,
         isPrimary: false,
@@ -537,77 +549,81 @@ export async function resolveOrCreateCustomerForInbound({
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-    } catch (rollbackErr) {
-      logger.warn("Transaction ROLLBACK failed", { error: rollbackErr, fn: "resolveOrCreateCustomer" });
-    }
+    } catch {}
     throw error;
   } finally {
     client.release();
   }
 }
 
-export async function attachCustomerToTicket(ticketId: string, customerId: string | null, tenantId: string) {
+export async function attachCustomerToTicket(
+  ticketId: string,
+  customerId: string | null,
+  scopeInput?: TenantScopeInput
+) {
   if (!customerId) return false;
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query(
     `UPDATE tickets
      SET customer_id = $2,
          updated_at = now()
      WHERE id = $1
-       AND tenant_id = $3
-       AND customer_id IS NULL
-       AND EXISTS (
-         SELECT 1
-         FROM customers c
-         WHERE c.id = $2
-           AND c.tenant_id = $3
-       )`,
-    [ticketId, customerId, tenantId]
+       AND tenant_key = $3
+       AND workspace_key = $4
+       AND customer_id IS NULL`,
+    [ticketId, customerId, tenantKey, workspaceKey]
   );
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function getCustomerByTicketId(ticketId: string, tenantId: string) {
+export async function getCustomerByTicketId(ticketId: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<{ customer_id: string | null }>(
     `SELECT customer_id
-     FROM tickets t
-     WHERE t.id = $1
-       AND t.tenant_id = $2`,
-    [ticketId, tenantId]
+     FROM tickets
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [ticketId, tenantKey, workspaceKey]
   );
   return result.rows[0]?.customer_id ?? null;
 }
 
-export async function getCustomerById(customerId: string, tenantId: string) {
+export async function getCustomerById(customerId: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<CustomerRecord>(
-    `SELECT id, tenant_id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+    `SELECT id, tenant_key, workspace_key,
+            kind, external_system, external_user_id, display_name, primary_email, primary_phone,
             address,
             merged_into_customer_id,
             merged_at
      FROM customers
      WHERE id = $1
-       AND tenant_id = $2`,
-    [customerId, tenantId]
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [customerId, tenantKey, workspaceKey]
   );
   return result.rows[0] ?? null;
 }
 
 export async function updateCustomerProfile(
   customerId: string,
-  tenantId: string,
   input: {
     displayName?: string | null;
     primaryEmail?: string | null;
     primaryPhone?: string | null;
     address?: string | null;
-  }
+  },
+  scopeInput?: TenantScopeInput
 ) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const displayNameProvided = Object.prototype.hasOwnProperty.call(input, "displayName");
   const emailProvided = Object.prototype.hasOwnProperty.call(input, "primaryEmail");
   const phoneProvided = Object.prototype.hasOwnProperty.call(input, "primaryPhone");
   const addressProvided = Object.prototype.hasOwnProperty.call(input, "address");
 
   if (!displayNameProvided && !emailProvided && !phoneProvided && !addressProvided) {
-    return getCustomerById(customerId, tenantId);
+    return getCustomerById(customerId, { tenantKey, workspaceKey });
   }
 
   const normalizedEmail = emailProvided
@@ -626,16 +642,17 @@ export async function updateCustomerProfile(
     await client.query("BEGIN");
 
     const customerResult = await client.query<CustomerRecord>(
-      `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
-              address,
-              merged_into_customer_id,
-              merged_at
-       FROM customers
-       WHERE id = $1
-         AND tenant_id = $2
-       FOR UPDATE`,
-      [customerId, tenantId]
-    );
+	      `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+	              address,
+	              merged_into_customer_id,
+	              merged_at
+	       FROM customers
+	       WHERE id = $1
+	         AND tenant_key = $2
+	         AND workspace_key = $3
+	       FOR UPDATE`,
+	      [customerId, tenantKey, workspaceKey]
+	    );
     const customer = customerResult.rows[0];
     if (!customer) {
       await client.query("ROLLBACK");
@@ -647,14 +664,15 @@ export async function updateCustomerProfile(
     }
 
     if (emailProvided && normalizedEmail) {
-      const conflict = await client.query<{ customer_id: string }>(
-        `SELECT customer_id
-         FROM customer_identities
-         WHERE identity_type = 'email'
-           AND identity_value = $1
-         LIMIT 1`,
-        [normalizedEmail]
-      );
+	      const conflict = await client.query<{ customer_id: string }>(
+	        `SELECT customer_id
+	         FROM customer_identities
+	         WHERE tenant_key = $1
+	           AND identity_type = 'email'
+	           AND identity_value = $2
+	         LIMIT 1`,
+	        [tenantKey, normalizedEmail]
+	      );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
         throw new CustomerIdentityConflictError("Email already belongs to a different customer.");
@@ -662,14 +680,15 @@ export async function updateCustomerProfile(
     }
 
     if (phoneProvided && normalizedPhone) {
-      const conflict = await client.query<{ customer_id: string }>(
-        `SELECT customer_id
-         FROM customer_identities
-         WHERE identity_type = 'phone'
-           AND identity_value = $1
-         LIMIT 1`,
-        [normalizedPhone]
-      );
+	      const conflict = await client.query<{ customer_id: string }>(
+	        `SELECT customer_id
+	         FROM customer_identities
+	         WHERE tenant_key = $1
+	           AND identity_type = 'phone'
+	           AND identity_value = $2
+	         LIMIT 1`,
+	        [tenantKey, normalizedPhone]
+	      );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
         throw new CustomerIdentityConflictError("Phone number already belongs to a different customer.");
@@ -698,48 +717,50 @@ export async function updateCustomerProfile(
     }
 
     if (fields.length > 0) {
-      values.push(customerId);
-      values.push(tenantId);
-      await client.query(
-        `UPDATE customers
-         SET ${fields.join(", ")},
-             updated_at = now()
-          WHERE id = $${index++}
-            AND tenant_id = $${index}`,
-        values
-      );
+	      values.push(customerId);
+	      values.push(tenantKey);
+	      values.push(workspaceKey);
+	      await client.query(
+	        `UPDATE customers
+	         SET ${fields.join(", ")},
+	             updated_at = now()
+	         WHERE id = $${index}
+	           AND tenant_key = $${index + 1}
+	           AND workspace_key = $${index + 2}`,
+	        values
+	      );
     }
 
     if (emailProvided) {
       await client.query(
         `UPDATE customer_identities
-          SET is_primary = false,
-              updated_at = now()
-          WHERE customer_id = $1
-            AND tenant_id = $2
-            AND identity_type = 'email'`,
-        [customerId, tenantId]
-      );
+         SET is_primary = false,
+             updated_at = now()
+	         WHERE customer_id = $1
+	           AND tenant_key = $2
+	           AND workspace_key = $3
+	           AND identity_type = 'email'`,
+	        [customerId, tenantKey, workspaceKey]
+	      );
       if (normalizedEmail) {
         await client.query(
           `INSERT INTO customer_identities (
+             tenant_key,
+             workspace_key,
              customer_id,
-             tenant_id,
              identity_type,
              identity_value,
              is_primary,
              source,
              updated_at
-           ) VALUES ($1, $2, 'email', $3, true, 'manual_profile_edit', now())
-           ON CONFLICT (identity_type, identity_value)
+           ) VALUES ($1, $2, $3, 'email', $4, true, 'manual_profile_edit', now())
+           ON CONFLICT (tenant_key, identity_type, identity_value)
            DO UPDATE SET
              customer_id = EXCLUDED.customer_id,
-             tenant_id = EXCLUDED.tenant_id,
              is_primary = true,
              source = EXCLUDED.source,
-             updated_at = now()
-           WHERE customer_identities.tenant_id = EXCLUDED.tenant_id`,
-          [customerId, tenantId, normalizedEmail]
+             updated_at = now()`,
+          [tenantKey, workspaceKey, customerId, normalizedEmail]
         );
       }
     }
@@ -747,75 +768,76 @@ export async function updateCustomerProfile(
     if (phoneProvided) {
       await client.query(
         `UPDATE customer_identities
-          SET is_primary = false,
-              updated_at = now()
-          WHERE customer_id = $1
-            AND tenant_id = $2
-            AND identity_type = 'phone'`,
-        [customerId, tenantId]
-      );
+         SET is_primary = false,
+             updated_at = now()
+	         WHERE customer_id = $1
+	           AND tenant_key = $2
+	           AND workspace_key = $3
+	           AND identity_type = 'phone'`,
+	        [customerId, tenantKey, workspaceKey]
+	      );
       if (normalizedPhone) {
         await client.query(
           `INSERT INTO customer_identities (
+             tenant_key,
+             workspace_key,
              customer_id,
-             tenant_id,
              identity_type,
              identity_value,
              is_primary,
              source,
              updated_at
-           ) VALUES ($1, $2, 'phone', $3, true, 'manual_profile_edit', now())
-           ON CONFLICT (identity_type, identity_value)
+           ) VALUES ($1, $2, $3, 'phone', $4, true, 'manual_profile_edit', now())
+           ON CONFLICT (tenant_key, identity_type, identity_value)
            DO UPDATE SET
              customer_id = EXCLUDED.customer_id,
-             tenant_id = EXCLUDED.tenant_id,
              is_primary = true,
              source = EXCLUDED.source,
-             updated_at = now()
-           WHERE customer_identities.tenant_id = EXCLUDED.tenant_id`,
-          [customerId, tenantId, normalizedPhone]
+             updated_at = now()`,
+          [tenantKey, workspaceKey, customerId, normalizedPhone]
         );
       }
     }
 
     await client.query("COMMIT");
-    return getCustomerById(customerId, tenantId);
+    return getCustomerById(customerId, { tenantKey, workspaceKey });
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-    } catch (rollbackErr) {
-      logger.warn("Transaction ROLLBACK failed", { error: rollbackErr, fn: "updateCustomer" });
-    }
+    } catch {}
     throw error;
   } finally {
     client.release();
   }
 }
 
-export async function listCustomerIdentities(customerId: string, tenantId: string) {
+export async function listCustomerIdentities(customerId: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<CustomerIdentityRecord>(
-    `SELECT ci.identity_type, ci.identity_value, ci.is_primary
-     FROM customer_identities ci
-     WHERE ci.customer_id = $1
-       AND ci.tenant_id = $2
-     ORDER BY ci.is_primary DESC, ci.identity_type ASC, ci.identity_value ASC`,
-    [customerId, tenantId]
+    `SELECT identity_type, identity_value, is_primary
+     FROM customer_identities
+     WHERE customer_id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3
+     ORDER BY is_primary DESC, identity_type ASC, identity_value ASC`,
+    [customerId, tenantKey, workspaceKey]
   );
   return result.rows;
 }
 
 export async function listCustomerHistory(
   customerId: string,
-  tenantId: string,
-  options?: { limit?: number; cursor?: string | null }
+  options?: { limit?: number; cursor?: string | null },
+  scopeInput?: TenantScopeInput
 ): Promise<CustomerHistoryPage> {
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const normalizedLimit = Math.min(Math.max(options?.limit ?? 40, 1), 200);
   const fetchLimit = normalizedLimit + 1;
   const cursorValue = options?.cursor ?? null;
   const cursorDate = cursorValue ? new Date(cursorValue) : null;
   const cursorIso =
     cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate.toISOString() : null;
-  const customer = await getCustomerById(customerId, tenantId);
+  const customer = await getCustomerById(customerId, { tenantKey, workspaceKey });
   if (!customer || customer.merged_into_customer_id) {
     return { items: [], nextCursor: null };
   }
@@ -825,11 +847,12 @@ export async function listCustomerHistory(
     identity_value: string;
   }>(
     `SELECT identity_type, identity_value
-     FROM customer_identities
-     WHERE customer_id = $1
-       AND tenant_id = $2`,
-    [customerId, tenantId]
-  );
+	     FROM customer_identities
+	     WHERE customer_id = $1
+	       AND tenant_key = $2
+	       AND workspace_key = $3`,
+	    [customerId, tenantKey, workspaceKey]
+	  );
 
   const emails = identityResult.rows
     .filter((row) => row.identity_type === "email")
@@ -867,40 +890,42 @@ export async function listCustomerHistory(
          t.priority,
          t.requester_email,
          EXISTS (
-            SELECT 1 FROM messages wm
-            WHERE wm.ticket_id = t.id AND wm.tenant_id = t.tenant_id AND wm.channel = 'whatsapp'
-          ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
-          EXISTS (
-            SELECT 1 FROM messages vm
-            WHERE vm.ticket_id = t.id AND vm.tenant_id = t.tenant_id AND vm.channel = 'voice'
-          ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
+	           SELECT 1 FROM messages wm
+	           WHERE wm.ticket_id = t.id AND wm.tenant_key = $1 AND wm.workspace_key = $2 AND wm.channel = 'whatsapp'
+	         ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+	         EXISTS (
+	           SELECT 1 FROM messages vm
+	           WHERE vm.ticket_id = t.id AND vm.tenant_key = $1 AND vm.workspace_key = $2 AND vm.channel = 'voice'
+	         ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
          COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at,
          COALESCE(
            (
              SELECT im.preview_text
-              FROM messages im
-              WHERE im.ticket_id = t.id
-                AND im.tenant_id = t.tenant_id
-                AND im.direction = 'inbound'
-               AND (
-                 (cardinality($2::text[]) > 0 AND lower(im.from_email) = ANY($2::text[]))
-                 OR (
-                   cardinality($3::text[]) > 0
-                   AND (
-                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($3::text[])
-                     OR COALESCE(im.wa_contact, '') = ANY($3::text[])
-                   )
-                 )
+             FROM messages im
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
+	               AND (
+	                 (cardinality($4::text[]) > 0 AND lower(im.from_email) = ANY($4::text[]))
+	                 OR (
+	                   cardinality($5::text[]) > 0
+	                   AND (
+	                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($5::text[])
+	                     OR COALESCE(im.wa_contact, '') = ANY($5::text[])
+	                   )
+	                 )
                )
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            ),
            (
              SELECT im.preview_text
-              FROM messages im
-              WHERE im.ticket_id = t.id
-                AND im.tenant_id = t.tenant_id
-                AND im.direction = 'inbound'
+             FROM messages im
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            )
@@ -908,38 +933,41 @@ export async function listCustomerHistory(
          COALESCE(
            (
              SELECT COALESCE(im.received_at, im.sent_at, im.created_at)
-              FROM messages im
-              WHERE im.ticket_id = t.id
-                AND im.tenant_id = t.tenant_id
-                AND im.direction = 'inbound'
-               AND (
-                 (cardinality($2::text[]) > 0 AND lower(im.from_email) = ANY($2::text[]))
-                 OR (
-                   cardinality($3::text[]) > 0
-                   AND (
-                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($3::text[])
-                     OR COALESCE(im.wa_contact, '') = ANY($3::text[])
-                   )
-                 )
+             FROM messages im
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
+	               AND (
+	                 (cardinality($4::text[]) > 0 AND lower(im.from_email) = ANY($4::text[]))
+	                 OR (
+	                   cardinality($5::text[]) > 0
+	                   AND (
+	                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($5::text[])
+	                     OR COALESCE(im.wa_contact, '') = ANY($5::text[])
+	                   )
+	                 )
                )
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            ),
            (
              SELECT COALESCE(im.received_at, im.sent_at, im.created_at)
-              FROM messages im
-              WHERE im.ticket_id = t.id
-                AND im.tenant_id = t.tenant_id
-                AND im.direction = 'inbound'
+             FROM messages im
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            )
          ) AS last_customer_inbound_at
        FROM tickets t
-       LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_id = t.tenant_id
-       WHERE t.customer_id = $1
-         AND t.tenant_id = $4
-         AND t.merged_into_ticket_id IS NULL
+	       LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_key = t.tenant_key AND m.workspace_key = t.workspace_key
+	       WHERE t.tenant_key = $1
+	         AND t.workspace_key = $2
+	         AND t.customer_id = $3
+	         AND t.merged_into_ticket_id IS NULL
        GROUP BY t.id
      )
      SELECT
@@ -955,11 +983,11 @@ export async function listCustomerHistory(
        last_customer_inbound_preview,
        last_customer_inbound_at
      FROM ticket_history
-      WHERE ($5::timestamptz IS NULL OR last_message_at < $5::timestamptz)
-      ORDER BY last_message_at DESC NULLS LAST, id DESC
-      LIMIT $6`,
-    [customerId, emails, phones, tenantId, cursorIso, fetchLimit]
-  );
+	     WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz)
+	     ORDER BY last_message_at DESC NULLS LAST, id DESC
+	     LIMIT $7`,
+	    [tenantKey, workspaceKey, customerId, emails, phones, cursorIso, fetchLimit]
+	  );
 
   const mapped = historyResult.rows.map((row) => ({
     ticketId: row.id,
@@ -986,84 +1014,3 @@ export async function listCustomerHistory(
 
   return { items, nextCursor };
 }
-
-/**
- * Executes a full POPIA/Data Subject Deletion request.
- * Removes the customer and all associated DB records (via CASCADE),
- * and permanently deletes all files (emails, attachments, call recordings) from Object Storage.
- */
-export async function deleteCustomerAndData(customerId: string, tenantId: string) {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-
-    // Verify ownership
-    const verify = await client.query("SELECT id FROM customers WHERE id = $1 AND tenant_id = $2", [customerId, tenantId]);
-    if (verify.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return false;
-    }
-
-    // Get all R2 keys to delete
-    const messageKeys = await client.query(`
-      SELECT m.r2_key_text, m.r2_key_html 
-      FROM messages m 
-      JOIN tickets t ON t.id = m.ticket_id 
-      WHERE t.customer_id = $1 AND t.tenant_id = $2
-    `, [customerId, tenantId]);
-
-    const attachmentKeys = await client.query(`
-      SELECT a.r2_key 
-      FROM attachments a 
-      JOIN messages m ON m.id = a.message_id 
-      JOIN tickets t ON t.id = m.ticket_id 
-      WHERE t.customer_id = $1 AND t.tenant_id = $2
-    `, [customerId, tenantId]);
-
-    const callRecordingKeys = await client.query(`
-      SELECT recording_r2_key, transcript_r2_key 
-      FROM call_sessions 
-      WHERE customer_id = $1 AND tenant_id = $2
-    `, [customerId, tenantId]);
-
-    // Gather all keys
-    const keysToDelete: string[] = [];
-    
-    for (const row of messageKeys.rows) {
-      if (row.r2_key_text) keysToDelete.push(row.r2_key_text);
-      if (row.r2_key_html) keysToDelete.push(row.r2_key_html);
-    }
-    for (const row of attachmentKeys.rows) {
-      if (row.r2_key) keysToDelete.push(row.r2_key);
-    }
-    for (const row of callRecordingKeys.rows) {
-      if (row.recording_r2_key) keysToDelete.push(row.recording_r2_key);
-      if (row.transcript_r2_key) keysToDelete.push(row.transcript_r2_key);
-    }
-
-    // Delete the customer. The DB uses ON DELETE CASCADE for tickets, messages, etc.
-    const deleteRes = await client.query(
-      `DELETE FROM customers WHERE id = $1 AND tenant_id = $2 RETURNING id`,
-      [customerId, tenantId]
-    );
-
-    await client.query("COMMIT");
-
-    // Attempt to delete objects from R2
-    // We do this after commit. If it fails, the objects are orphaned but data subject is gone from DB.
-    if (deleteRes.rows.length > 0 && keysToDelete.length > 0) {
-      // Run deletions in parallel with catch to prevent one failure from stopping all
-      await Promise.allSettled(
-        keysToDelete.map(key => deleteObject(key).catch(e => console.error("Failed to delete R2 object", key, e)))
-      );
-    }
-
-    return deleteRes.rows.length > 0;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-

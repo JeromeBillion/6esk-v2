@@ -13,16 +13,19 @@ import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { evaluateSpam } from "@/server/email/spam";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  DEFAULT_EXTERNAL_PROFILE_SYSTEM,
+  buildExternalProfileMetadataPatch,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource,
+  type ExternalProfile
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
-import { logger } from "@/server/logger";
-import { runInBackground } from "@/server/async";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
@@ -55,7 +58,8 @@ function applyIdentityConflictMetadata(
   return next;
 }
 
-export async function storeInboundEmail(data: InboundEmail) {
+export async function storeInboundEmail(data: InboundEmail, scopeInput?: TenantScopeInput) {
+  const requestedScope = resolveTenantScope(scopeInput);
   const toList = normalizeAddressList(data.to);
   const ccList = normalizeAddressList(data.cc ?? undefined);
   const bccList = normalizeAddressList(data.bcc ?? undefined);
@@ -67,23 +71,33 @@ export async function storeInboundEmail(data: InboundEmail) {
 
   const supportAddress = getSupportAddress();
   const primaryRecipient = toList[0];
-  const mailbox = await resolveInboundMailbox(primaryRecipient, supportAddress);
+  const mailbox = await resolveInboundMailbox(primaryRecipient, supportAddress, requestedScope);
   if (!mailbox) {
     throw new Error(`Mailbox ${primaryRecipient} is not configured.`);
   }
-  const tenantId = mailbox.tenant_id;
+  const scope = resolveTenantScope({
+    tenantKey: mailbox.tenant_key ?? requestedScope.tenantKey,
+    workspaceKey: mailbox.workspace_key ?? requestedScope.workspaceKey
+  });
 
   const spamDecision = await evaluateSpam({
     fromEmail,
     subject: data.subject,
-    text: data.text
+    text: data.text,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
   });
 
   // ── Idempotency check (outside transaction, read-only) ──
   if (data.messageId) {
     const existing = await db.query(
-      "SELECT id, ticket_id FROM messages WHERE message_id = $1 AND mailbox_id = $2 AND tenant_id = $3 LIMIT 1",
-      [data.messageId, mailbox.id, tenantId]
+      `SELECT id, ticket_id
+       FROM messages
+       WHERE tenant_key = $1
+         AND message_id = $2
+         AND mailbox_id = $3
+       LIMIT 1`,
+      [scope.tenantKey, data.messageId, mailbox.id]
     );
     if ((existing.rowCount ?? 0) > 0) {
       return {
@@ -95,32 +109,49 @@ export async function storeInboundEmail(data: InboundEmail) {
     }
   }
 
-  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  let requesterProfile: Awaited<ReturnType<typeof lookupPredictionProfile>> | null = null;
+  // ── Phase 1: Resolve deterministic data BEFORE the transaction ──
+  let requesterProfile: ExternalProfile | null = null;
+  let profileSource = DEFAULT_EXTERNAL_PROFILE_SYSTEM;
+  let profileMatchedBy: string | null = null;
   let customerResolution: Awaited<ReturnType<typeof resolveOrCreateCustomerForInbound>> | null = null;
   let profileMetadataPatch: Record<string, unknown> = {};
   let existingTicketId: string | null = null;
   let inferredTags: string[] = [];
 
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
-    requesterProfile = await lookupPredictionProfile({ email: fromEmail });
+    const inboundMetadata = ((data.metadata as Record<string, unknown> | null) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    requesterProfile = readExternalProfileFromMetadata(inboundMetadata);
+    profileSource = readExternalProfileSource(inboundMetadata);
+    profileMatchedBy = readExternalProfileMatchedBy(inboundMetadata);
     customerResolution = await resolveOrCreateCustomerForInbound({
-      tenantId,
-      profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
+      externalSystem: profileSource,
+      profile: requesterProfile,
       inboundEmail: fromEmail
     });
     profileMetadataPatch =
-      requesterProfile.status === "matched" && customerResolution?.conflict
-        ? applyIdentityConflictMetadata(
-            buildProfileMetadataPatch(requesterProfile),
-            customerResolution.conflict
-          )
-        : buildProfileMetadataPatch(requesterProfile);
+      requesterProfile
+        ? buildExternalProfileMetadataPatch({
+            profile: requesterProfile,
+            source: profileSource,
+            matchedBy: profileMatchedBy
+          })
+        : {};
+    if (requesterProfile && customerResolution?.conflict) {
+      profileMetadataPatch = applyIdentityConflictMetadata(
+        profileMetadataPatch,
+        customerResolution.conflict
+      );
+    }
 
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
     );
-    existingTicketId = await resolveTicketIdForInbound(references, tenantId);
+    existingTicketId = await resolveTicketIdForInbound(references, scope);
 
     if (!existingTicketId) {
       inferredTags = data.tags?.length
@@ -188,11 +219,14 @@ export async function storeInboundEmail(data: InboundEmail) {
         };
 
         const ticketResult = await client.query<{ id: string }>(
-          `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO tickets (
+             tenant_key, workspace_key, mailbox_id, customer_id, requester_email, subject, category, metadata
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id`,
           [
-            tenantId,
+            scope.tenantKey,
+            scope.workspaceKey,
             mailbox.id,
             customerResolution?.customerId ?? null,
             fromEmail,
@@ -205,132 +239,135 @@ export async function storeInboundEmail(data: InboundEmail) {
         createdNewTicket = true;
 
         await client.query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, ticketId, "ticket_created", null, null]
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scope.tenantKey, scope.workspaceKey, ticketId, "ticket_created", null, null]
         );
 
         if (inferredTags.length) {
           const cleanTags = Array.from(new Set(inferredTags.map((t) => t.toLowerCase().trim()).filter(Boolean)));
           for (const tag of cleanTags) {
             const tagResult = await client.query<{ id: string }>(
-              `INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-              [tag]
+              `INSERT INTO tags (tenant_key, workspace_key, name)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (tenant_key, name) DO UPDATE SET name = EXCLUDED.name
+               RETURNING id`,
+              [scope.tenantKey, scope.workspaceKey, tag]
             );
             await client.query(
-              `INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2) ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-              [ticketId, tagResult.rows[0].id]
+              `INSERT INTO ticket_tags (tenant_key, workspace_key, ticket_id, tag_id)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+              [scope.tenantKey, scope.workspaceKey, ticketId, tagResult.rows[0].id]
             );
           }
           await client.query(
-            `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [tenantId, ticketId, "tags_assigned", null, { tags: inferredTags }]
+            `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [scope.tenantKey, scope.workspaceKey, ticketId, "tags_assigned", null, { tags: inferredTags }]
           );
         }
       } else {
-        // Reopen ticket if it was resolved/closed
-        const statusResult = await client.query<{ status: string }>(
-          "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
-          [ticketId, tenantId]
-        );
+	        // Reopen ticket if it was resolved/closed
+	        const statusResult = await client.query<{ status: string }>(
+	          "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	          [ticketId, scope.tenantKey, scope.workspaceKey]
+	        );
         const currentStatus = statusResult.rows[0]?.status;
         if (currentStatus === "solved" || currentStatus === "closed") {
+	          await client.query(
+	            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	            [ticketId, scope.tenantKey, scope.workspaceKey]
+	          );
           await client.query(
-            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
-            [ticketId, tenantId]
-          );
-          await client.query(
-            `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [tenantId, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+            `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [scope.tenantKey, scope.workspaceKey, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
           );
         }
 
-        if (requesterProfile?.status === "matched") {
+        if (requesterProfile) {
           await client.query(
-          `UPDATE tickets
+            `UPDATE tickets
              SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                  updated_at = now()
-             WHERE id = $1
-               AND tenant_id = $3`,
-            [ticketId, JSON.stringify(profileMetadataPatch), tenantId]
-          );
+	             WHERE id = $1
+	               AND tenant_key = $3
+	               AND workspace_key = $4`,
+	            [ticketId, JSON.stringify(profileMetadataPatch), scope.tenantKey, scope.workspaceKey]
+	          );
         }
       }
 
       if (ticketId && customerResolution?.customerId) {
         const customerAttachResult = await client.query(
-          `UPDATE tickets SET customer_id = $2, updated_at = now()
-           WHERE id = $1
-             AND tenant_id = $3
-             AND (customer_id IS NULL OR customer_id != $2)
-             AND EXISTS (
-               SELECT 1
-               FROM customers c
-               WHERE c.id = $2
-                 AND c.tenant_id = $3
-             )`,
-          [ticketId, customerResolution.customerId, tenantId]
-        );
+	          `UPDATE tickets SET customer_id = $2, updated_at = now()
+	           WHERE id = $1
+	             AND tenant_key = $3
+	             AND workspace_key = $4
+	             AND (customer_id IS NULL OR customer_id != $2)`,
+	          [ticketId, customerResolution.customerId, scope.tenantKey, scope.workspaceKey]
+	        );
         attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
       }
 
-      if (requesterProfile?.status === "matched" && ticketId && !customerResolution?.conflict) {
+      if (requesterProfile && ticketId && !customerResolution?.conflict) {
         await upsertExternalUserLink({
-          externalSystem: "prediction-market-mvp",
-          profile: requesterProfile.profile,
-          matchedBy: requesterProfile.matchedBy,
+          tenantKey: scope.tenantKey,
+          workspaceKey: scope.workspaceKey,
+          externalSystem: profileSource,
+          profile: requesterProfile,
+          matchedBy: profileMatchedBy,
           inboundEmail: fromEmail,
           ticketId,
-          channel: "email",
-          queryExecutor: client
+          channel: "email"
         });
       }
 
-      if (createdNewTicket && requesterProfile?.status === "matched" && !customerResolution?.conflict) {
+      if (createdNewTicket && requesterProfile && !customerResolution?.conflict) {
         await client.query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, ticketId, "profile_enriched", null, {
-            source: "prediction-market-mvp",
-            matchedBy: requesterProfile.matchedBy,
-            externalUserId: requesterProfile.profile.id
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scope.tenantKey, scope.workspaceKey, ticketId, "profile_enriched", null, {
+            source: profileSource,
+            matchedBy: profileMatchedBy,
+            externalUserId: requesterProfile.id
           }]
         );
-      } else if (ticketId && requesterProfile?.status === "matched" && customerResolution?.conflict) {
+      } else if (ticketId && requesterProfile && customerResolution?.conflict) {
         await client.query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, ticketId, "customer_identity_conflict", null, {
-            source: "prediction-market-mvp",
-            matchedBy: requesterProfile.matchedBy,
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scope.tenantKey, scope.workspaceKey, ticketId, "customer_identity_conflict", null, {
+            source: profileSource,
+            matchedBy: profileMatchedBy,
             conflict: customerResolution.conflict
           }]
         );
       }
 
       await client.query(
-        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [tenantId, ticketId, "message_received", null, null]
+        `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [scope.tenantKey, scope.workspaceKey, ticketId, "message_received", null, null]
       );
     }
 
     // Insert the message row
     await client.query(
       `INSERT INTO messages (
-        tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
+        id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, in_reply_to, reference_ids,
         from_email, to_emails, cc_emails, bcc_emails, subject, preview_text,
         received_at, is_read, is_spam, spam_reason
       ) VALUES (
-        $1, $2, $3, $4, 'inbound', $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14,
-        $15, false, $16, $17
+        $1, $2, $3, $4, $5, 'inbound', $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15,
+        $16, false, $17, $18
       )`,
       [
-        tenantId,
         messageId,
+        scope.tenantKey,
+        scope.workspaceKey,
         mailbox.id,
         ticketId,
         data.messageId,
@@ -351,13 +388,14 @@ export async function storeInboundEmail(data: InboundEmail) {
 
     // Insert attachment metadata rows (buffers already decoded in memory)
     for (const resolved of resolvedAttachments) {
-      const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+      const r2Key = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
       await client.query(
-        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO attachments (id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          tenantId,
           resolved.attachmentId,
+          scope.tenantKey,
+          scope.workspaceKey,
           messageId,
           resolved.originalFilename,
           resolved.contentType,
@@ -378,7 +416,7 @@ export async function storeInboundEmail(data: InboundEmail) {
   // ── Phase 3: Post-commit side effects (R2 uploads, agent events) ──
   // These run after the transaction commits. If they fail, the DB state
   // is consistent and the data can be backfilled or retried.
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   let rawKey: string | null = null;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
@@ -438,7 +476,7 @@ export async function storeInboundEmail(data: InboundEmail) {
   }
 
   for (const resolved of resolvedAttachments) {
-    const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+    const r2Key = `${keyPrefix}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
     try {
       await putObject({
         key: r2Key,
@@ -452,20 +490,10 @@ export async function storeInboundEmail(data: InboundEmail) {
         target: resolved.originalFilename,
         detail: error instanceof Error ? error.message : "unknown upload error"
       });
-      await db
-        .query(`DELETE FROM attachments WHERE id = $1 AND tenant_id = $2`, [
-          resolved.attachmentId,
-          tenantId
-        ])
-        .catch((cleanupError) => {
-          logger.warn("Failed to delete attachment row after R2 upload failure", {
-            error: cleanupError,
-            fn: "storeInboundEmail",
-            tenantId,
-            messageId,
-            attachmentId: resolved.attachmentId
-          });
-        });
+      await db.query(`DELETE FROM attachments WHERE id = $1 AND tenant_key = $2`, [
+        resolved.attachmentId,
+        scope.tenantKey
+      ]).catch(() => {});
     }
   }
 
@@ -473,8 +501,8 @@ export async function storeInboundEmail(data: InboundEmail) {
     `UPDATE messages
      SET r2_key_raw = $1, r2_key_text = $2, r2_key_html = $3, size_bytes = $4
      WHERE id = $5
-       AND tenant_id = $6`,
-    [rawKey, textKey, htmlKey, sizeBytes || null, messageId, tenantId]
+       AND tenant_key = $6`,
+    [rawKey, textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey]
   );
 
   if (mailbox.type === "platform" && ticketId && !spamDecision.isSpam) {
@@ -484,22 +512,30 @@ export async function storeInboundEmail(data: InboundEmail) {
       ticketId,
       messageId,
       mailboxId: mailbox.id,
-      tenantId,
       excerpt: previewText,
       threadId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
+    await enqueueAgentEvent({
+      eventType: "ticket.message.created",
+      payload: messageEvent,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
+    });
 
     if (createdNewTicket) {
       const ticketEvent = buildAgentEvent({
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
-        tenantId,
         excerpt: previewText,
         threadId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+      await enqueueAgentEvent({
+        eventType: "ticket.created",
+        payload: ticketEvent,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
+      });
     }
 
     if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
@@ -507,13 +543,13 @@ export async function storeInboundEmail(data: InboundEmail) {
         eventType: "customer.identity.resolved",
         ticketId,
         mailboxId: mailbox.id,
-        tenantId,
         excerpt: `Resolved customer ${customerResolution.customerId}`,
         threadId
       });
       await enqueueAgentEvent({
         eventType: "customer.identity.resolved",
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         payload: {
           ...identityEvent,
           customer: {
@@ -524,7 +560,7 @@ export async function storeInboundEmail(data: InboundEmail) {
             email: fromEmail,
             phone: null
           },
-          matchedByProfile: requesterProfile?.status === "matched",
+          matchedByProfile: Boolean(requesterProfile),
           ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
         }
       });
@@ -533,10 +569,11 @@ export async function storeInboundEmail(data: InboundEmail) {
     if (failedStorageItems.length > 0) {
       await db
         .query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
-            tenantId,
+            scope.tenantKey,
+            scope.workspaceKey,
             ticketId,
             "message_storage_partial",
             null,
@@ -546,23 +583,10 @@ export async function storeInboundEmail(data: InboundEmail) {
             }
           ]
         )
-        .catch((eventError) => {
-          logger.warn("Failed to record partial email storage event", {
-            error: eventError,
-            fn: "storeInboundEmail",
-            tenantId,
-            ticketId,
-            messageId
-          });
-        });
+        .catch(() => {});
     }
 
-    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
-      fn: "storeInboundEmail",
-      tenantId,
-      ticketId,
-      messageId
-    });
+    void deliverPendingAgentEvents().catch(() => {});
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

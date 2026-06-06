@@ -1,12 +1,10 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   getInboundAlertConfig,
   saveInboundAlertConfig
 } from "@/server/email/inbound-alert-config";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const settingsSchema = z.object({
   webhookUrl: z.union([z.string().url(), z.literal("")]),
@@ -16,20 +14,18 @@ const settingsSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const config = await getInboundAlertConfig();
+  const { scope } = access;
+  const config = await getInboundAlertConfig(scope);
   return Response.json({ config });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let body: unknown;
   try {
@@ -43,9 +39,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const config = await saveInboundAlertConfig(parsed.data);
+  const config = await saveInboundAlertConfig(parsed.data, scope);
   await recordAuditLog({
-    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "inbound_alert_config_updated",
     entityType: "inbound_alert_config",

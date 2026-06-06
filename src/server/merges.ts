@@ -1,9 +1,8 @@
 import { db } from "@/server/db";
-import { logger } from "@/server/logger";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { appendMergedFromMetadata } from "@/server/tickets";
-import { runInBackground } from "@/server/async";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 import type { PoolClient } from "pg";
 
 type MergeErrorCode =
@@ -42,25 +41,28 @@ function getTicketMergeMaxMoveRows() {
   return parsed;
 }
 
-async function getTicketChannel(client: PoolClient, ticketId: string) {
+async function getTicketChannel(client: PoolClient, ticketId: string, tenantKey: string) {
   const result = await client.query<{ has_whatsapp: boolean; has_voice: boolean }>(
     `SELECT
        EXISTS (
          SELECT 1
          FROM messages
          WHERE ticket_id = $1
+           AND tenant_key = $2
            AND channel = 'whatsapp'
        ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
        EXISTS (
          SELECT 1
          FROM messages
          WHERE ticket_id = $1
+           AND tenant_key = $2
            AND channel = 'voice'
        ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      WHERE t.id = $1
+       AND t.tenant_key = $2
      LIMIT 1`,
-    [ticketId]
+    [ticketId, tenantKey]
   );
   if (result.rows[0]?.has_whatsapp) {
     return "whatsapp" as const;
@@ -81,6 +83,7 @@ async function getExistingTicketLink(
   client: PoolClient,
   sourceTicketId: string,
   targetTicketId: string,
+  tenantKey: string,
   relationshipType = "linked_case"
 ) {
   const pair = canonicalizeTicketPair(sourceTicketId, targetTicketId);
@@ -91,11 +94,12 @@ async function getExistingTicketLink(
   }>(
     `SELECT id, source_ticket_id, target_ticket_id
      FROM ticket_links
-     WHERE relationship_type = $3
+     WHERE tenant_key = $3
+       AND relationship_type = $4
        AND LEAST(source_ticket_id, target_ticket_id) = $1::uuid
        AND GREATEST(source_ticket_id, target_ticket_id) = $2::uuid
      LIMIT 1`,
-    [pair.firstTicketId, pair.secondTicketId, relationshipType]
+    [pair.firstTicketId, pair.secondTicketId, tenantKey, relationshipType]
   );
   return result.rows[0] ?? null;
 }
@@ -103,22 +107,19 @@ async function getExistingTicketLink(
 async function publishAgentMergeEvent({
   eventType,
   payload,
-  tenantId
+  tenantKey,
+  workspaceKey
 }: {
   eventType: string;
   payload: Record<string, unknown>;
-  tenantId: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
   try {
-    await enqueueAgentEvent({ eventType, payload, tenantId });
-    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
-      fn: "publishMergeAgentEvent",
-      tenantId,
-      eventType
-    });
-  } catch (error) {
+    await enqueueAgentEvent({ eventType, payload, tenantKey, workspaceKey });
+    void deliverPendingAgentEvents().catch(() => {});
+  } catch {
     // Never fail merge execution because of event delivery issues.
-    logger.error("Failed to publish agent merge event", { error, eventType, tenantId });
   }
 }
 
@@ -193,19 +194,10 @@ export type LinkedTicketSummary = {
 
 export async function listLinkedTickets(
   ticketId: string,
-  tenantId?: string | null
+  scopeInput?: TenantScopeInput
 ): Promise<LinkedTicketSummary[]> {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const client = await db.connect();
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId
-    ? `AND linked.tenant_id = $2
-       AND EXISTS (
-         SELECT 1
-         FROM tickets current_ticket
-         WHERE current_ticket.id = $1::uuid
-           AND current_ticket.tenant_id = $2::uuid
-       )`
-    : "";
   try {
     const result = await client.query<{
       link_id: string;
@@ -238,12 +230,14 @@ export async function listLinkedTickets(
            SELECT 1
            FROM messages msg
            WHERE msg.ticket_id = linked.id
+             AND msg.tenant_key = linked.tenant_key
              AND msg.channel = 'whatsapp'
          ) OR linked.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
          EXISTS (
            SELECT 1
            FROM messages msg
            WHERE msg.ticket_id = linked.id
+             AND msg.tenant_key = linked.tenant_key
              AND msg.channel = 'voice'
          ) OR linked.requester_email ILIKE 'voice:%' AS has_voice,
          tl.created_at AS linked_at,
@@ -254,11 +248,12 @@ export async function listLinkedTickets(
            WHEN tl.source_ticket_id = $1::uuid THEN tl.target_ticket_id
            ELSE tl.source_ticket_id
          END
+        AND linked.tenant_key = tl.tenant_key
        WHERE tl.relationship_type = 'linked_case'
+         AND tl.tenant_key = $2
          AND (tl.source_ticket_id = $1::uuid OR tl.target_ticket_id = $1::uuid)
-         ${tenantClause}
        ORDER BY tl.created_at DESC`,
-      values
+      [ticketId, tenantKey]
     );
 
     return result.rows.map((row) => ({
@@ -284,11 +279,16 @@ export async function listLinkedTickets(
 
 export async function preflightTicketMerge({
   sourceTicketId,
-  targetTicketId
+  targetTicketId,
+  tenantKey,
+  workspaceKey
 }: {
   sourceTicketId: string;
   targetTicketId: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }): Promise<TicketMergePreflight> {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -315,8 +315,9 @@ export async function preflightTicketMerge({
          priority,
          assigned_user_id
        FROM tickets
-       WHERE id = ANY($1::uuid[])`,
-      [[sourceTicketId, targetTicketId]]
+       WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2`,
+      [[sourceTicketId, targetTicketId], scope.tenantKey]
     );
 
     if (ticketResult.rowCount !== 2) {
@@ -330,8 +331,8 @@ export async function preflightTicketMerge({
     }
 
     const [sourceChannel, targetChannel] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scope.tenantKey),
+      getTicketChannel(client, targetTicketId, scope.tenantKey)
     ]);
 
     const countsResult = await client.query<{
@@ -343,21 +344,23 @@ export async function preflightTicketMerge({
       new_tag_count: string;
     }>(
       `SELECT
-         (SELECT COUNT(*) FROM messages WHERE ticket_id = $1) AS messages_count,
-         (SELECT COUNT(*) FROM replies WHERE ticket_id = $1) AS replies_count,
-         (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1) AS events_count,
-         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1) AS drafts_count,
-         (SELECT COUNT(*) FROM ticket_tags WHERE ticket_id = $1) AS source_tag_count,
+         (SELECT COUNT(*) FROM messages WHERE ticket_id = $1 AND tenant_key = $3) AS messages_count,
+         (SELECT COUNT(*) FROM replies WHERE ticket_id = $1 AND tenant_key = $3) AS replies_count,
+         (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1 AND tenant_key = $3) AS events_count,
+         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1 AND tenant_key = $3) AS drafts_count,
+         (SELECT COUNT(*) FROM ticket_tags WHERE ticket_id = $1 AND tenant_key = $3) AS source_tag_count,
          (
            SELECT COUNT(*)
            FROM ticket_tags source_tags
            LEFT JOIN ticket_tags target_tags
              ON target_tags.ticket_id = $2
             AND target_tags.tag_id = source_tags.tag_id
+            AND target_tags.tenant_key = source_tags.tenant_key
            WHERE source_tags.ticket_id = $1
+             AND source_tags.tenant_key = $3
              AND target_tags.tag_id IS NULL
          ) AS new_tag_count`,
-      [sourceTicketId, targetTicketId]
+      [sourceTicketId, targetTicketId, scope.tenantKey]
     );
 
     const counts = countsResult.rows[0];
@@ -426,11 +429,16 @@ export async function preflightTicketMerge({
 
 export async function preflightTicketLink({
   sourceTicketId,
-  targetTicketId
+  targetTicketId,
+  tenantKey,
+  workspaceKey
 }: {
   sourceTicketId: string;
   targetTicketId: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }): Promise<TicketLinkPreflight> {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -457,8 +465,9 @@ export async function preflightTicketLink({
          priority,
          assigned_user_id
        FROM tickets
-       WHERE id = ANY($1::uuid[])`,
-      [[sourceTicketId, targetTicketId]]
+       WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2`,
+      [[sourceTicketId, targetTicketId], scope.tenantKey]
     );
 
     if (ticketResult.rowCount !== 2) {
@@ -472,9 +481,9 @@ export async function preflightTicketLink({
     }
 
     const [sourceChannel, targetChannel, existingLink] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId),
-      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scope.tenantKey),
+      getTicketChannel(client, targetTicketId, scope.tenantKey),
+      getExistingTicketLink(client, sourceTicketId, targetTicketId, scope.tenantKey)
     ]);
 
     let blockingCode: "already_merged" | "already_linked" | null = null;
@@ -556,11 +565,16 @@ export type CustomerMergePreflight = {
 
 export async function preflightCustomerMerge({
   sourceCustomerId,
-  targetCustomerId
+  targetCustomerId,
+  tenantKey,
+  workspaceKey
 }: {
   sourceCustomerId: string;
   targetCustomerId: string;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }): Promise<CustomerMergePreflight> {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceCustomerId === targetCustomerId) {
     throw new MergeError("invalid_input", "Source and target customers must be different.");
   }
@@ -583,8 +597,9 @@ export async function preflightCustomerMerge({
          primary_phone,
          merged_into_customer_id
        FROM customers
-       WHERE id = ANY($1::uuid[])`,
-      [[sourceCustomerId, targetCustomerId]]
+       WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2`,
+      [[sourceCustomerId, targetCustomerId], scope.tenantKey]
     );
 
     if (customerResult.rowCount !== 2) {
@@ -606,22 +621,25 @@ export async function preflightCustomerMerge({
       identities_to_move_count: string;
     }>(
       `SELECT
-         (SELECT COUNT(*) FROM tickets WHERE customer_id = $1) AS total_tickets,
+         (SELECT COUNT(*) FROM tickets WHERE customer_id = $1 AND tenant_key = $3) AS total_tickets,
          (
            SELECT COUNT(*)
            FROM tickets
            WHERE customer_id = $1
+             AND tenant_key = $3
              AND merged_into_ticket_id IS NULL
          ) AS active_tickets,
          (
            SELECT COUNT(*)
            FROM tickets t
            WHERE t.customer_id = $1
+             AND t.tenant_key = $3
              AND t.merged_into_ticket_id IS NULL
              AND EXISTS (
                SELECT 1
                FROM messages m
                WHERE m.ticket_id = t.id
+                 AND m.tenant_key = t.tenant_key
                  AND m.channel = 'whatsapp'
              )
          ) AS active_whatsapp_tickets,
@@ -629,17 +647,20 @@ export async function preflightCustomerMerge({
             SELECT COUNT(*)
             FROM tickets t
             WHERE t.customer_id = $1
+              AND t.tenant_key = $3
               AND t.merged_into_ticket_id IS NULL
               AND NOT EXISTS (
                 SELECT 1
                 FROM messages m
                 WHERE m.ticket_id = t.id
+                  AND m.tenant_key = t.tenant_key
                   AND m.channel = 'whatsapp'
               )
               AND NOT EXISTS (
                 SELECT 1
                 FROM messages m
                 WHERE m.ticket_id = t.id
+                  AND m.tenant_key = t.tenant_key
                   AND m.channel = 'voice'
               )
           ) AS active_email_tickets,
@@ -647,20 +668,23 @@ export async function preflightCustomerMerge({
            SELECT COUNT(*)
            FROM customer_identities
            WHERE customer_id = $1
+             AND tenant_key = $3
          ) AS source_identity_count,
          (
            SELECT COUNT(*)
            FROM customer_identities source_identity
            WHERE source_identity.customer_id = $1
+             AND source_identity.tenant_key = $3
              AND NOT EXISTS (
                SELECT 1
                FROM customer_identities target_identity
                WHERE target_identity.customer_id = $2
+                 AND target_identity.tenant_key = $3
                  AND target_identity.identity_type = source_identity.identity_type
                  AND target_identity.identity_value = source_identity.identity_value
              )
          ) AS identities_to_move_count`,
-      [sourceCustomerId, targetCustomerId]
+      [sourceCustomerId, targetCustomerId, scope.tenantKey]
     );
 
     const counts = countsResult.rows[0];
@@ -713,13 +737,18 @@ export async function mergeTickets({
   sourceTicketId,
   targetTicketId,
   actorUserId,
-  reason
+  reason,
+  tenantKey,
+  workspaceKey
 }: {
   sourceTicketId: string;
   targetTicketId: string;
   actorUserId?: string | null;
   reason?: string | null;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -730,17 +759,19 @@ export async function mergeTickets({
 
     const lockResult = await client.query<{
       id: string;
-      tenant_id: string;
+      tenant_key: string;
+      workspace_key: string;
       customer_id: string | null;
       merged_into_ticket_id: string | null;
       mailbox_id: string | null;
       metadata: Record<string, unknown> | null;
     }>(
-      `SELECT id, tenant_id, customer_id, merged_into_ticket_id, mailbox_id, metadata
+      `SELECT id, tenant_key, workspace_key, customer_id, merged_into_ticket_id, mailbox_id, metadata
        FROM tickets
        WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2
        FOR UPDATE`,
-      [[sourceTicketId, targetTicketId]]
+      [[sourceTicketId, targetTicketId], scope.tenantKey]
     );
 
     if (lockResult.rowCount !== 2) {
@@ -756,14 +787,13 @@ export async function mergeTickets({
     if (source.merged_into_ticket_id || target.merged_into_ticket_id) {
       throw new MergeError("already_merged", "Source or target ticket is already merged.");
     }
-    if (source.tenant_id !== target.tenant_id) {
-      throw new MergeError("invalid_input", "Source and target tickets must belong to the same tenant.");
+    if (source.tenant_key !== target.tenant_key) {
+      throw new MergeError("invalid_input", "Tickets from different tenants cannot be merged.");
     }
-    const tenantId = target.tenant_id;
 
     const [sourceChannel, targetChannel] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scope.tenantKey),
+      getTicketChannel(client, targetTicketId, scope.tenantKey)
     ]);
 
     if (sourceChannel !== targetChannel) {
@@ -780,11 +810,11 @@ export async function mergeTickets({
       drafts_count: string;
     }>(
       `SELECT
-         (SELECT COUNT(*) FROM messages WHERE ticket_id = $1) AS messages_count,
-         (SELECT COUNT(*) FROM replies WHERE ticket_id = $1) AS replies_count,
-         (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1) AS events_count,
-         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1) AS drafts_count`,
-      [sourceTicketId]
+         (SELECT COUNT(*) FROM messages WHERE ticket_id = $1 AND tenant_key = $2) AS messages_count,
+         (SELECT COUNT(*) FROM replies WHERE ticket_id = $1 AND tenant_key = $2) AS replies_count,
+         (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1 AND tenant_key = $2) AS events_count,
+         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1 AND tenant_key = $2) AS drafts_count`,
+      [sourceTicketId, scope.tenantKey]
     );
     const sourceMoveCounts = moveCountResult.rows[0];
     const moveRowTotal =
@@ -803,44 +833,50 @@ export async function mergeTickets({
     const movedMessages = await client.query(
       `UPDATE messages
        SET ticket_id = $1
-       WHERE ticket_id = $2`,
-      [targetTicketId, sourceTicketId]
+       WHERE ticket_id = $2
+         AND tenant_key = $3`,
+      [targetTicketId, sourceTicketId, scope.tenantKey]
     );
 
     const movedReplies = await client.query(
       `UPDATE replies
        SET ticket_id = $1
-       WHERE ticket_id = $2`,
-      [targetTicketId, sourceTicketId]
+       WHERE ticket_id = $2
+         AND tenant_key = $3`,
+      [targetTicketId, sourceTicketId, scope.tenantKey]
     );
 
     const movedEvents = await client.query(
       `UPDATE ticket_events
        SET ticket_id = $1
-       WHERE ticket_id = $2`,
-      [targetTicketId, sourceTicketId]
+       WHERE ticket_id = $2
+         AND tenant_key = $3`,
+      [targetTicketId, sourceTicketId, scope.tenantKey]
     );
 
     const movedDrafts = await client.query(
       `UPDATE agent_drafts
        SET ticket_id = $1
-       WHERE ticket_id = $2`,
-      [targetTicketId, sourceTicketId]
+       WHERE ticket_id = $2
+         AND tenant_key = $3`,
+      [targetTicketId, sourceTicketId, scope.tenantKey]
     );
 
     await client.query(
-      `INSERT INTO ticket_tags (ticket_id, tag_id)
-       SELECT $1, tag_id
+      `INSERT INTO ticket_tags (tenant_key, workspace_key, ticket_id, tag_id)
+       SELECT tenant_key, workspace_key, $1, tag_id
        FROM ticket_tags
        WHERE ticket_id = $2
+         AND tenant_key = $3
        ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-      [targetTicketId, sourceTicketId]
+      [targetTicketId, sourceTicketId, scope.tenantKey]
     );
 
     await client.query(
       `DELETE FROM ticket_tags
-       WHERE ticket_id = $1`,
-      [sourceTicketId]
+       WHERE ticket_id = $1
+         AND tenant_key = $2`,
+      [sourceTicketId, scope.tenantKey]
     );
 
     const summary = {
@@ -863,8 +899,9 @@ export async function mergeTickets({
        SET customer_id = COALESCE(customer_id, $2),
            metadata = $3::jsonb,
            updated_at = now()
-       WHERE id = $1`,
-      [targetTicketId, source.customer_id, JSON.stringify(targetMetadata)]
+       WHERE id = $1
+         AND tenant_key = $4`,
+      [targetTicketId, source.customer_id, JSON.stringify(targetMetadata), scope.tenantKey]
     );
 
     await client.query(
@@ -874,13 +911,15 @@ export async function mergeTickets({
            merged_at = $3,
            status = 'closed',
            updated_at = now()
-       WHERE id = $4`,
-      [targetTicketId, actorUserId ?? null, mergedAt, sourceTicketId]
+       WHERE id = $4
+         AND tenant_key = $5`,
+      [targetTicketId, actorUserId ?? null, mergedAt, sourceTicketId, scope.tenantKey]
     );
 
     await client.query(
       `INSERT INTO ticket_merges (
-        tenant_id,
+        tenant_key,
+        workspace_key,
         source_ticket_id,
         target_ticket_id,
         source_channel,
@@ -889,10 +928,11 @@ export async function mergeTickets({
         actor_user_id,
         summary
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8
+        $1, $2, $3, $4, $5, $6, $7, $8, $9
       )`,
       [
-        tenantId,
+        scope.tenantKey,
+        scope.workspaceKey,
         sourceTicketId,
         targetTicketId,
         sourceChannel,
@@ -904,25 +944,27 @@ export async function mergeTickets({
     );
 
     await client.query(
-      `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+      `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
        VALUES
-       ($6, $1, 'ticket_merged', $2, $3),
-       ($6, $4, 'ticket_merged_into', $2, $5)`,
+       ($1, $2, $3, 'ticket_merged', $4, $5),
+       ($1, $2, $6, 'ticket_merged_into', $4, $7)`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         sourceTicketId,
         actorUserId ?? null,
         { targetTicketId, reason: reason ?? null, mergedAt },
         targetTicketId,
-        { sourceTicketId, reason: reason ?? null, mergedAt, ...summary },
-        tenantId
+        { sourceTicketId, reason: reason ?? null, mergedAt, ...summary }
       ]
     );
 
     await client.query(
-      `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
-       VALUES ($1, $2, 'ticket_merged', 'ticket', $3, $4)`,
+      `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, $2, $3, 'ticket_merged', 'ticket', $4, $5)`,
       [
-        tenantId,
+        scope.tenantKey,
+        scope.workspaceKey,
         actorUserId ?? null,
         sourceTicketId,
         { sourceTicketId, targetTicketId, reason: reason ?? null, mergedAt, ...summary }
@@ -935,14 +977,14 @@ export async function mergeTickets({
       eventType: "ticket.merged",
       ticketId: targetTicketId,
       mailboxId: target.mailbox_id ?? source.mailbox_id ?? null,
-      tenantId,
       actorUserId: actorUserId ?? null,
       threadId: targetTicketId,
       excerpt: `Merged ticket ${sourceTicketId} into ${targetTicketId}`
     });
     await publishAgentMergeEvent({
       eventType: "ticket.merged",
-      tenantId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       payload: {
         ...mergeEvent,
         merge: {
@@ -976,14 +1018,19 @@ export async function linkTickets({
   targetTicketId,
   actorUserId,
   reason,
-  metadata
+  metadata,
+  tenantKey,
+  workspaceKey
 }: {
   sourceTicketId: string;
   targetTicketId: string;
   actorUserId?: string | null;
   reason?: string | null;
   metadata?: Record<string, unknown> | null;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -994,7 +1041,8 @@ export async function linkTickets({
 
     const lockResult = await client.query<{
       id: string;
-      tenant_id: string;
+      tenant_key: string;
+      workspace_key: string;
       customer_id: string | null;
       merged_into_ticket_id: string | null;
       mailbox_id: string | null;
@@ -1006,7 +1054,8 @@ export async function linkTickets({
     }>(
       `SELECT
          id,
-         tenant_id,
+         tenant_key,
+         workspace_key,
          customer_id,
          merged_into_ticket_id,
          mailbox_id,
@@ -1017,8 +1066,9 @@ export async function linkTickets({
          assigned_user_id
        FROM tickets
        WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2
        FOR UPDATE`,
-      [[sourceTicketId, targetTicketId]]
+      [[sourceTicketId, targetTicketId], scope.tenantKey]
     );
 
     if (lockResult.rowCount !== 2) {
@@ -1034,15 +1084,14 @@ export async function linkTickets({
     if (source.merged_into_ticket_id || target.merged_into_ticket_id) {
       throw new MergeError("already_merged", "Source or target ticket is already merged.");
     }
-    if (source.tenant_id !== target.tenant_id) {
-      throw new MergeError("invalid_input", "Source and target tickets must belong to the same tenant.");
+    if (source.tenant_key !== target.tenant_key) {
+      throw new MergeError("invalid_input", "Tickets from different tenants cannot be linked.");
     }
-    const tenantId = target.tenant_id;
 
     const [sourceChannel, targetChannel, existingLink] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId),
-      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scope.tenantKey),
+      getTicketChannel(client, targetTicketId, scope.tenantKey),
+      getExistingTicketLink(client, sourceTicketId, targetTicketId, scope.tenantKey)
     ]);
 
     if (existingLink) {
@@ -1053,6 +1102,8 @@ export async function linkTickets({
 
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO ticket_links (
+         tenant_key,
+         workspace_key,
          relationship_type,
          source_ticket_id,
          target_ticket_id,
@@ -1064,19 +1115,23 @@ export async function linkTickets({
          actor_user_id,
          metadata
        ) VALUES (
-         'linked_case',
          $1,
          $2,
+         'linked_case',
          $3,
          $4,
          $5,
          $6,
          $7,
          $8,
-         $9
+         $9,
+         $10,
+         $11
        )
        RETURNING id`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         sourceTicketId,
         targetTicketId,
         sourceChannel,
@@ -1092,11 +1147,13 @@ export async function linkTickets({
     const linkId = inserted.rows[0]?.id ?? null;
 
     await client.query(
-      `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+      `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
        VALUES
-       ($6, $1, 'ticket_linked_case', $3, $4),
-       ($6, $2, 'ticket_linked_case', $3, $5)`,
+       ($1, $2, $3, 'ticket_linked_case', $5, $6),
+       ($1, $2, $4, 'ticket_linked_case', $5, $7)`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         sourceTicketId,
         targetTicketId,
         actorUserId ?? null,
@@ -1115,16 +1172,16 @@ export async function linkTickets({
           relationshipType: "linked_case",
           reason: reason ?? null,
           linkedAt
-        },
-        tenantId
+        }
       ]
     );
 
     await client.query(
-      `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
-       VALUES ($1, $2, 'ticket_linked_case', 'ticket_link', $3, $4)`,
+      `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, $2, $3, 'ticket_linked_case', 'ticket_link', $4, $5)`,
       [
-        tenantId,
+        scope.tenantKey,
+        scope.workspaceKey,
         actorUserId ?? null,
         linkId,
         {
@@ -1146,14 +1203,14 @@ export async function linkTickets({
       eventType: "ticket.linked_case",
       ticketId: targetTicketId,
       mailboxId: target.mailbox_id ?? source.mailbox_id ?? null,
-      tenantId,
       actorUserId: actorUserId ?? null,
       threadId: targetTicketId,
       excerpt: `Linked ticket ${sourceTicketId} with ${targetTicketId}`
     });
     await publishAgentMergeEvent({
       eventType: "ticket.linked_case",
-      tenantId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       payload: {
         ...linkEvent,
         link: {
@@ -1194,13 +1251,18 @@ export async function mergeCustomers({
   sourceCustomerId,
   targetCustomerId,
   actorUserId,
-  reason
+  reason,
+  tenantKey,
+  workspaceKey
 }: {
   sourceCustomerId: string;
   targetCustomerId: string;
   actorUserId?: string | null;
   reason?: string | null;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (sourceCustomerId === targetCustomerId) {
     throw new MergeError("invalid_input", "Source and target customers must be different.");
   }
@@ -1211,16 +1273,18 @@ export async function mergeCustomers({
 
     const customerLock = await client.query<{
       id: string;
-      tenant_id: string;
+      tenant_key: string;
+      workspace_key: string;
       primary_email: string | null;
       primary_phone: string | null;
       merged_into_customer_id: string | null;
     }>(
-      `SELECT id, tenant_id, primary_email, primary_phone, merged_into_customer_id
+      `SELECT id, tenant_key, workspace_key, primary_email, primary_phone, merged_into_customer_id
        FROM customers
        WHERE id = ANY($1::uuid[])
+         AND tenant_key = $2
        FOR UPDATE`,
-      [[sourceCustomerId, targetCustomerId]]
+      [[sourceCustomerId, targetCustomerId], scope.tenantKey]
     );
 
     if (customerLock.rowCount !== 2) {
@@ -1236,18 +1300,17 @@ export async function mergeCustomers({
     if (source.merged_into_customer_id || target.merged_into_customer_id) {
       throw new MergeError("already_merged", "Source or target customer is already merged.");
     }
-    if (source.tenant_id !== target.tenant_id) {
-      throw new MergeError("invalid_input", "Source and target customers must belong to the same tenant.");
+    if (source.tenant_key !== target.tenant_key) {
+      throw new MergeError("invalid_input", "Customers from different tenants cannot be merged.");
     }
-    const tenantId = target.tenant_id;
 
     const movedTickets = await client.query(
       `UPDATE tickets
        SET customer_id = $1,
            updated_at = now()
        WHERE customer_id = $2
-         AND tenant_id = $3`,
-      [targetCustomerId, sourceCustomerId, tenantId]
+         AND tenant_key = $3`,
+      [targetCustomerId, sourceCustomerId, source.tenant_key]
     );
 
     const targetRepresentativeTicket = await client.query<{
@@ -1257,16 +1320,17 @@ export async function mergeCustomers({
       `SELECT id, mailbox_id
        FROM tickets
        WHERE customer_id = $1
-         AND tenant_id = $2
+         AND tenant_key = $2
          AND merged_into_ticket_id IS NULL
        ORDER BY COALESCE(updated_at, created_at) DESC
        LIMIT 1`,
-      [targetCustomerId, tenantId]
+      [targetCustomerId, source.tenant_key]
     );
 
     const movedIdentityInsert = await client.query(
       `INSERT INTO customer_identities (
-        tenant_id,
+        tenant_key,
+        workspace_key,
         customer_id,
         identity_type,
         identity_value,
@@ -1276,7 +1340,8 @@ export async function mergeCustomers({
         updated_at
       )
       SELECT
-        $3,
+        tenant_key,
+        workspace_key,
         $1,
         identity_type,
         identity_value,
@@ -1286,16 +1351,16 @@ export async function mergeCustomers({
         now()
       FROM customer_identities
       WHERE customer_id = $2
-        AND tenant_id = $3
-      ON CONFLICT (identity_type, identity_value) DO NOTHING`,
-      [targetCustomerId, sourceCustomerId, tenantId]
+        AND tenant_key = $3
+      ON CONFLICT (tenant_key, identity_type, identity_value) DO NOTHING`,
+      [targetCustomerId, sourceCustomerId, source.tenant_key]
     );
 
     await client.query(
       `DELETE FROM customer_identities
        WHERE customer_id = $1
-         AND tenant_id = $2`,
-      [sourceCustomerId, tenantId]
+         AND tenant_key = $2`,
+      [sourceCustomerId, source.tenant_key]
     );
 
     await client.query(
@@ -1304,8 +1369,8 @@ export async function mergeCustomers({
            primary_phone = COALESCE(primary_phone, $3),
            updated_at = now()
        WHERE id = $1
-         AND tenant_id = $4`,
-      [targetCustomerId, source.primary_email, source.primary_phone, tenantId]
+         AND tenant_key = $4`,
+      [targetCustomerId, source.primary_email, source.primary_phone, source.tenant_key]
     );
 
     await client.query(
@@ -1316,28 +1381,37 @@ export async function mergeCustomers({
            merged_at = now(),
            updated_at = now()
        WHERE id = $4
-         AND tenant_id = $5`,
-      [targetCustomerId, reason ?? null, actorUserId ?? null, sourceCustomerId, tenantId]
+         AND tenant_key = $5`,
+      [targetCustomerId, reason ?? null, actorUserId ?? null, sourceCustomerId, source.tenant_key]
     );
 
     await client.query(
       `INSERT INTO customer_merges (
-        tenant_id,
+        tenant_key,
+        workspace_key,
         source_customer_id,
         target_customer_id,
         reason,
         actor_user_id
       ) VALUES (
-        $1, $2, $3, $4, $5
+        $1, $2, $3, $4, $5, $6
       )`,
-      [tenantId, sourceCustomerId, targetCustomerId, reason ?? null, actorUserId ?? null]
+      [
+        source.tenant_key,
+        source.workspace_key,
+        sourceCustomerId,
+        targetCustomerId,
+        reason ?? null,
+        actorUserId ?? null
+      ]
     );
 
     await client.query(
-      `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
-       VALUES ($1, $2, 'customer_merged', 'customer', $3, $4)`,
+      `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
+       VALUES ($1, $2, $3, 'customer_merged', 'customer', $4, $5)`,
       [
-        tenantId,
+        source.tenant_key,
+        source.workspace_key,
         actorUserId ?? null,
         sourceCustomerId,
         {
@@ -1357,14 +1431,14 @@ export async function mergeCustomers({
       eventType: "customer.merged",
       ticketId: representative?.id ?? null,
       mailboxId: representative?.mailbox_id ?? null,
-      tenantId,
       actorUserId: actorUserId ?? null,
       threadId: representative?.id ?? null,
       excerpt: `Merged customer ${sourceCustomerId} into ${targetCustomerId}`
     });
     await publishAgentMergeEvent({
       eventType: "customer.merged",
-      tenantId,
+      tenantKey: source.tenant_key,
+      workspaceKey: source.workspace_key,
       payload: {
         ...mergeEvent,
         merge: {

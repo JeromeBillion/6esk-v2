@@ -2,12 +2,6 @@ import { z } from "zod";
 import { attachCallRecording } from "@/server/calls/service";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
-import {
-  integrationError,
-  integrationSuccess,
-  validateIntegrationApiVersion
-} from "@/server/api-contract";
-import { runInBackground } from "@/server/async";
 
 const callRecordingSchema = z.object({
   callSessionId: z.string().uuid().optional().nullable(),
@@ -35,11 +29,6 @@ function parseTimestamp(value: string | number | null | undefined) {
 }
 
 export async function POST(request: Request) {
-  const versionError = validateIntegrationApiVersion(request);
-  if (versionError) {
-    return versionError;
-  }
-
   const rawBody = await request.text();
   const authorization = authorizeCallWebhook({
     rawBody,
@@ -51,7 +40,7 @@ export async function POST(request: Request) {
   });
 
   if (!authorization.authorized) {
-    runInBackground(recordAuditLog({
+    void recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -59,42 +48,28 @@ export async function POST(request: Request) {
         mode: authorization.mode,
         reason: authorization.reason
       }
-    }), "Failed to record rejected call recording webhook audit event");
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
+    }).catch(() => {});
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: unknown;
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_json",
-      message: "Invalid JSON body"
-    });
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const parsed = callRecordingSchema.safeParse(payload);
   if (!parsed.success) {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_payload",
-      message: "Invalid payload",
-      details: parsed.error.flatten()
-    });
+    return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
   const data = parsed.data;
   if (!data.callSessionId && !data.providerCallId) {
-    return integrationError(request, {
-      status: 400,
-      code: "missing_call_identifier",
-      message: "callSessionId or providerCallId is required"
-    });
+    return Response.json(
+      { error: "callSessionId or providerCallId is required" },
+      { status: 400 }
+    );
   }
 
   const occurredAt = parseTimestamp(data.timestamp);
@@ -109,19 +84,11 @@ export async function POST(request: Request) {
   });
 
   if (result.status === "not_found") {
-    return integrationError(request, {
-      status: 404,
-      code: "call_session_not_found",
-      message: "Call session not found"
-    });
+    return Response.json({ error: "Call session not found" }, { status: 404 });
   }
   if (result.status === "failed") {
-    return integrationError(request, {
-      status: 400,
-      code: "recording_attach_failed",
-      message: result.detail
-    });
+    return Response.json({ error: result.detail }, { status: 400 });
   }
 
-  return integrationSuccess(request, result);
+  return Response.json(result);
 }

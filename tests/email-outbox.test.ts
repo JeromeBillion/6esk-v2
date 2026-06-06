@@ -28,6 +28,8 @@ describe("email outbox", () => {
           rows: [
             {
               id: "evt-1",
+              tenant_key: "primary",
+              workspace_key: "primary",
               payload: {
                 messageRecordId: "msg-1",
                 from: "jerome.choma@6ex.co.za",
@@ -87,9 +89,6 @@ describe("email outbox", () => {
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-    expect((requestInit as RequestInit).headers).toMatchObject({
-      "Idempotency-Key": "email-outbox:evt-1"
-    });
     const payload = JSON.parse(String((requestInit as RequestInit).body));
     expect(payload).toMatchObject({
       from: "jerome.choma@6ex.co.za",
@@ -99,23 +98,7 @@ describe("email outbox", () => {
     });
     expect(mocks.query).toHaveBeenCalledWith(
       expect.stringContaining("SET external_message_id = $1"),
-      ["provider-msg-1", "msg-1"]
-    );
-  });
-
-  it("applies tenant-scoped locking when tenantId is provided", async () => {
-    const { deliverPendingEmailOutboxEvents } = await import("@/server/email/outbox");
-
-    await deliverPendingEmailOutboxEvents({
-      limit: 2,
-      tenantId: "22222222-2222-2222-2222-222222222222"
-    });
-    const client = await mocks.connect.mock.results.at(-1)?.value;
-
-    expect(client.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("AND e.tenant_id = $3"),
-      [2, 300, "22222222-2222-2222-2222-222222222222"]
+      ["provider-msg-1", "msg-1", "primary"]
     );
   });
 });

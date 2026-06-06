@@ -25,8 +25,6 @@ const mocks = vi.hoisted(() => ({
   recordModuleUsageEvent: vi.fn()
 }));
 
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
-
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
 }));
@@ -114,8 +112,7 @@ function buildUser() {
     email: "agent@6ex.co.za",
     display_name: "Agent",
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: "agent",
-    tenant_id: TENANT_ID
+    role_name: "agent"
   };
 }
 
@@ -127,10 +124,9 @@ describe("channel module guards", () => {
     mocks.isLeadAdmin.mockReturnValue(false);
     mocks.hasMailboxAccess.mockResolvedValue(true);
     mocks.findMailbox.mockResolvedValue(null);
-    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1", tenant_id: TENANT_ID });
+    mocks.getOrCreateMailbox.mockResolvedValue({ id: "mailbox-1" });
     mocks.getTicketById.mockResolvedValue({
       id: "11111111-1111-1111-1111-111111111111",
-      tenant_id: TENANT_ID,
       mailbox_id: "mailbox-1",
       assigned_user_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       requester_email: "customer@example.com",

@@ -1,9 +1,7 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   provider: z.string().min(1).optional(),
@@ -18,10 +16,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ templateId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { templateId } = await params;
   let payload: unknown;
@@ -71,15 +68,15 @@ export async function PATCH(
   }
 
   fields.push("updated_at = now()");
-  values.push(templateId);
-
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  values.push(tenantId);
+  const templateIdParamIndex = index;
+  values.push(templateId, scope.tenantKey, scope.workspaceKey);
 
   const result = await db.query(
     `UPDATE whatsapp_templates
      SET ${fields.join(", ")}
-     WHERE id = $${index} AND tenant_id = $${index + 1}
+     WHERE id = $${templateIdParamIndex}
+       AND tenant_key = $${templateIdParamIndex + 1}
+       AND workspace_key = $${templateIdParamIndex + 2}
      RETURNING id, provider, name, language, category, status, components`,
     values
   );
@@ -90,7 +87,8 @@ export async function PATCH(
   }
 
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_updated",
     entityType: "whatsapp_template",
@@ -105,18 +103,18 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ templateId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { templateId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `DELETE FROM whatsapp_templates
-     WHERE id = $1 AND tenant_id = $2
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3
      RETURNING id, name, language`,
-    [templateId, tenantId]
+    [templateId, scope.tenantKey, scope.workspaceKey]
   );
 
   const deleted = result.rows[0];
@@ -125,7 +123,8 @@ export async function DELETE(
   }
 
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_deleted",
     entityType: "whatsapp_template",

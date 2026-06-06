@@ -4,6 +4,7 @@ import {
   aggregateInboundFailureReasons,
   type InboundFailureReason
 } from "@/server/email/inbound-metrics";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type AlertResult = {
   sent: boolean;
@@ -16,51 +17,59 @@ type AlertResult = {
   topFailureReasons?: InboundFailureReason[];
 };
 
-async function getFailureCount(windowMinutes: number) {
+async function getFailureCount(windowMinutes: number, scopeInput?: TenantScopeInput) {
+  const scope = resolveTenantScope(scopeInput);
   const result = await db.query<{ count: string }>(
     `SELECT COUNT(*)::text as count
      FROM inbound_events
      WHERE status = 'failed'
+       AND tenant_key = $2
        AND created_at >= now() - ($1::text || ' minutes')::interval`,
-    [windowMinutes.toString()]
+    [windowMinutes.toString(), scope.tenantKey]
   );
   return Number(result.rows[0]?.count ?? 0);
 }
 
-async function getTopFailureReasons(windowMinutes: number, limit = 3) {
+async function getTopFailureReasons(windowMinutes: number, limit = 3, scopeInput?: TenantScopeInput) {
+  const scope = resolveTenantScope(scopeInput);
   const result = await db.query<{ last_error: string | null; count: string | number }>(
     `SELECT
        COALESCE(NULLIF(last_error, ''), 'unknown') AS last_error,
        COUNT(*)::int AS count
      FROM inbound_events
      WHERE status = 'failed'
+       AND tenant_key = $2
        AND created_at >= now() - ($1::text || ' minutes')::interval
      GROUP BY 1
      ORDER BY 2 DESC
      LIMIT 25`,
-    [windowMinutes.toString()]
+    [windowMinutes.toString(), scope.tenantKey]
   );
 
   return aggregateInboundFailureReasons(result.rows, limit);
 }
 
-async function getLastAlertSent() {
+async function getLastAlertSent(scopeInput?: TenantScopeInput) {
+  const scope = resolveTenantScope(scopeInput);
   const result = await db.query<{ last_sent_at: string | null }>(
     `SELECT last_sent_at
      FROM inbound_alerts
-     WHERE alert_type = 'inbound_failures'
-     LIMIT 1`
+     WHERE tenant_key = $1
+       AND alert_type = 'inbound_failures'
+     LIMIT 1`,
+    [scope.tenantKey]
   );
   return result.rows[0]?.last_sent_at ? new Date(result.rows[0].last_sent_at) : null;
 }
 
-async function upsertLastAlertSent(timestamp: Date) {
+async function upsertLastAlertSent(timestamp: Date, scopeInput?: TenantScopeInput) {
+  const scope = resolveTenantScope(scopeInput);
   await db.query(
-    `INSERT INTO inbound_alerts (alert_type, last_sent_at)
-     VALUES ('inbound_failures', $1)
-     ON CONFLICT (alert_type) DO UPDATE
+    `INSERT INTO inbound_alerts (tenant_key, workspace_key, alert_type, last_sent_at)
+     VALUES ($1, $2, 'inbound_failures', $3)
+     ON CONFLICT (tenant_key, alert_type) DO UPDATE
        SET last_sent_at = EXCLUDED.last_sent_at`,
-    [timestamp]
+    [scope.tenantKey, scope.workspaceKey, timestamp]
   );
 }
 
@@ -77,8 +86,9 @@ async function sendWebhook(webhookUrl: string, payload: Record<string, unknown>)
   }
 }
 
-export async function sendInboundFailureAlert(): Promise<AlertResult> {
-  const config = await getInboundAlertConfig();
+export async function sendInboundFailureAlert(scopeInput?: TenantScopeInput): Promise<AlertResult> {
+  const scope = resolveTenantScope(scopeInput);
+  const config = await getInboundAlertConfig(scope);
   const webhook = config.webhookUrl;
   if (!webhook) {
     return {
@@ -96,7 +106,7 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
   const windowMinutes = config.windowMinutes;
   const cooldownMinutes = config.cooldownMinutes;
 
-  const failures = await getFailureCount(windowMinutes);
+  const failures = await getFailureCount(windowMinutes, scope);
   if (failures < threshold) {
     return {
       sent: false,
@@ -109,7 +119,7 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
     };
   }
 
-  const lastSent = await getLastAlertSent();
+  const lastSent = await getLastAlertSent(scope);
   if (lastSent) {
     const elapsedMinutes = (Date.now() - lastSent.getTime()) / 60000;
     if (elapsedMinutes < cooldownMinutes) {
@@ -125,7 +135,7 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
     }
   }
 
-  const topFailureReasons = await getTopFailureReasons(windowMinutes, 3);
+  const topFailureReasons = await getTopFailureReasons(windowMinutes, 3, scope);
   const topReasonSummary = topFailureReasons.length
     ? topFailureReasons.map((reason) => `${reason.label} (${reason.count})`).join(", ")
     : "No classified reasons";
@@ -140,7 +150,7 @@ export async function sendInboundFailureAlert(): Promise<AlertResult> {
   };
 
   await sendWebhook(webhook, payload);
-  await upsertLastAlertSent(new Date());
+  await upsertLastAlertSent(new Date(), scope);
 
   return {
     sent: true,

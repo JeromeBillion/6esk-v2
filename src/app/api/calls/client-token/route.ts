@@ -2,7 +2,8 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { createDeskVoiceAccessToken } from "@/server/calls/voice-client";
 import { getVoiceOperatorPresence } from "@/server/calls/operators";
-import { checkModuleEntitlement } from "@/server/tenant/module-guard";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET() {
   const user = await getSessionUser();
@@ -12,11 +13,8 @@ export async function GET() {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const tenantId = user.tenant_id;
-  if (!tenantId) {
-    return Response.json({ error: "Tenant missing" }, { status: 403 });
-  }
-  if (!(await checkModuleEntitlement("voice", tenantId))) {
+  const scope = tenantScopeFromUser(user);
+  if (!(await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",
@@ -29,7 +27,7 @@ export async function GET() {
 
   try {
     const token = createDeskVoiceAccessToken(user.id);
-    const presence = await getVoiceOperatorPresence(user.id);
+    const presence = await getVoiceOperatorPresence(user.id, scope);
     return Response.json({
       identity: token.identity,
       accessToken: token.token,

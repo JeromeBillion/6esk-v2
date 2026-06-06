@@ -3,10 +3,12 @@ import { db } from "@/server/db";
 import { deleteObject, putObject } from "@/server/storage/r2";
 import { normalizeAddressList } from "@/server/email/normalize";
 import { getMessageById, type MessageRecord } from "@/server/messages";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type UpsertMailDraftArgs = {
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
   draftId?: string | null;
-  tenantId: string;
   mailboxId: string;
   fromEmail: string;
   to?: string[] | null;
@@ -69,9 +71,15 @@ export function isMailDraftRecord(message: Pick<MessageRecord, "direction" | "se
   return message.direction === "outbound" && message.sent_at === null && message.metadata?.mail_state === "draft";
 }
 
-async function persistDraftBodies(draftId: string, tenantId: string, text?: string | null, html?: string | null) {
-  const existing = await getMessageById(draftId, tenantId);
-  const keyPrefix = `messages/${draftId}`;
+async function persistDraftBodies(
+  draftId: string,
+  text?: string | null,
+  html?: string | null,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
+  const existing = await getMessageById(draftId, scope);
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${draftId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -100,8 +108,8 @@ async function persistDraftBodies(draftId: string, tenantId: string, text?: stri
          r2_key_html = $2,
          size_bytes = $3
      WHERE id = $4
-       AND tenant_id = $5`,
-    [textKey, htmlKey, sizeBytes || null, draftId, tenantId]
+       AND tenant_key = $5`,
+    [textKey, htmlKey, sizeBytes || null, draftId, scope.tenantKey]
   );
 
   const keysToDelete = [
@@ -113,19 +121,22 @@ async function persistDraftBodies(draftId: string, tenantId: string, text?: stri
     keysToDelete.map(async (key) => {
       try {
         await deleteObject(key);
-      } catch (error) {
+      } catch {
         // Best-effort cleanup for cleared draft bodies.
-        console.error("[Drafts] Failed to delete R2 object:", key, error instanceof Error ? error.message : error);
       }
     })
   );
 }
 
-export async function getMailboxMessageSummaryById(messageId: string, tenantId: string) {
+export async function getMailboxMessageSummaryById(
+  messageId: string,
+  scopeInput?: TenantScopeInput
+) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const result = await db.query<MailboxMessageSummary>(
     `SELECT m.id, m.direction, m.channel, m.from_email, m.to_emails, m.subject, m.preview_text, m.received_at, m.sent_at,
             m.is_read, m.is_starred, m.is_pinned, m.is_spam, m.spam_reason, m.thread_id, m.message_id, m.created_at,
-            EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.tenant_id = m.tenant_id) AS has_attachments,
+            EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments,
             COALESCE(
               m.metadata->>'mail_state',
               CASE
@@ -142,17 +153,18 @@ export async function getMailboxMessageSummaryById(messageId: string, tenantId: 
             ) AS sort_at
      FROM messages m
      WHERE m.id = $1
-       AND m.tenant_id = $2
+       AND m.tenant_key = $2
      LIMIT 1`,
-    [messageId, tenantId]
+    [messageId, tenantKey]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function upsertMailDraft({
+  tenantKey,
+  workspaceKey,
   draftId,
-  tenantId,
   mailboxId,
   fromEmail,
   to,
@@ -165,6 +177,7 @@ export async function upsertMailDraft({
   inReplyTo,
   references
 }: UpsertMailDraftArgs) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const toList = normalizeAddressList(to ?? []);
   const ccList = normalizeAddressList(cc ?? []);
   const bccList = normalizeAddressList(bcc ?? []);
@@ -173,7 +186,7 @@ export async function upsertMailDraft({
 
   let resolvedDraftId = draftId ?? randomUUID();
   if (draftId) {
-    const existing = await getMessageById(draftId, tenantId);
+    const existing = await getMessageById(draftId, scope);
     if (!existing || existing.mailbox_id !== mailboxId || !isMailDraftRecord(existing)) {
       throw new Error("Draft not found");
     }
@@ -193,7 +206,7 @@ export async function upsertMailDraft({
            is_read = true,
            metadata = $10::jsonb
        WHERE id = $11
-         AND tenant_id = $12`,
+         AND tenant_key = $12`,
       [
         threadId?.trim() || null,
         inReplyTo?.trim() || null,
@@ -206,21 +219,22 @@ export async function upsertMailDraft({
         previewText,
         buildDraftMetadata(existing.metadata ?? null),
         draftId,
-        tenantId
+        scope.tenantKey
       ]
     );
   } else {
     await db.query(
       `INSERT INTO messages (
-        tenant_id, id, mailbox_id, direction, channel, thread_id, in_reply_to, reference_ids, provider,
+        id, tenant_key, workspace_key, mailbox_id, direction, channel, thread_id, in_reply_to, reference_ids, provider,
         from_email, to_emails, cc_emails, bcc_emails, subject, preview_text, is_read, metadata
       ) VALUES (
-        $1, $2, $3, 'outbound', 'email', $4, $5, $6, 'draft',
-        $7, $8, $9, $10, $11, $12, true, $13::jsonb
+        $1, $2, $3, $4, 'outbound', 'email', $5, $6, $7, 'draft',
+        $8, $9, $10, $11, $12, $13, true, $14::jsonb
       )`,
       [
-        tenantId,
         resolvedDraftId,
+        scope.tenantKey,
+        scope.workspaceKey,
         mailboxId,
         threadId?.trim() || null,
         inReplyTo?.trim() || null,
@@ -236,12 +250,17 @@ export async function upsertMailDraft({
     );
   }
 
-  await persistDraftBodies(resolvedDraftId, tenantId, text, html);
-  return getMailboxMessageSummaryById(resolvedDraftId, tenantId);
+  await persistDraftBodies(resolvedDraftId, text, html, scope);
+  return getMailboxMessageSummaryById(resolvedDraftId, scope);
 }
 
-export async function deleteMailDraft(draftId: string, tenantId: string, mailboxId?: string | null) {
-  const existing = await getMessageById(draftId, tenantId);
+export async function deleteMailDraft(
+  draftId: string,
+  mailboxId?: string | null,
+  scopeInput?: TenantScopeInput
+) {
+  const scope = resolveTenantScope(scopeInput);
+  const existing = await getMessageById(draftId, scope);
   if (!existing || !isMailDraftRecord(existing) || (mailboxId && existing.mailbox_id !== mailboxId)) {
     return false;
   }
@@ -250,11 +269,14 @@ export async function deleteMailDraft(draftId: string, tenantId: string, mailbox
     `SELECT r2_key
      FROM attachments
      WHERE message_id = $1
-       AND tenant_id = $2`,
-    [draftId, tenantId]
+       AND tenant_key = $2`,
+    [draftId, scope.tenantKey]
   );
 
-  await db.query(`DELETE FROM messages WHERE id = $1 AND tenant_id = $2`, [draftId, tenantId]);
+  await db.query(`DELETE FROM messages WHERE id = $1 AND tenant_key = $2`, [
+    draftId,
+    scope.tenantKey
+  ]);
 
   const keys = [
     existing.r2_key_raw,
@@ -267,9 +289,8 @@ export async function deleteMailDraft(draftId: string, tenantId: string, mailbox
     keys.map(async (key) => {
       try {
         await deleteObject(key);
-      } catch (error) {
+      } catch {
         // Best-effort cleanup; the draft row is already gone.
-        console.error("[Drafts] Failed to delete R2 object:", key, error instanceof Error ? error.message : error);
       }
     })
   );

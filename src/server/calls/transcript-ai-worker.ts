@@ -1,17 +1,20 @@
 import { getObjectBuffer } from "@/server/storage/r2";
 import { recordAuditLog } from "@/server/audit";
 import { getTranscriptAiProvider, submitTranscriptAiJob } from "@/server/calls/transcript-ai-provider";
-import { logger } from "@/server/logger";
 import {
   getProcessingRecoverySeconds,
   lockPendingTranscriptAiJobs,
   markTranscriptAiJobCompleted,
   markTranscriptAiJobFailed
 } from "@/server/calls/transcript-ai-jobs";
+import type { TenantScopeInput } from "@/server/tenant-context";
 
-export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: number } = {}) {
+export async function deliverPendingTranscriptAiJobs(
+  { limit = 5 }: { limit?: number } = {},
+  scopeInput?: TenantScopeInput
+) {
   const provider = getTranscriptAiProvider();
-  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds());
+  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds(), scopeInput);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -31,14 +34,15 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
         callSessionId: job.call_session_id,
         transcriptR2Key: job.transcript_r2_key,
         transcriptText,
-        metadata: {
-          ...(job.metadata ?? {}),
-          tenantId: job.tenant_id
-        }
+        metadata: job.metadata ?? null
       });
 
       await markTranscriptAiJobCompleted({
         jobId: job.id,
+        scope: {
+          tenantKey: job.tenant_key,
+          workspaceKey: job.workspace_key
+        },
         attemptCount: job.attempt_count + 1,
         providerJobId: result.providerJobId,
         qaStatus: result.qaStatus,
@@ -54,29 +58,25 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
       const detail = error instanceof Error ? error.message : "Transcript AI dispatch failed";
       await markTranscriptAiJobFailed({
         jobId: job.id,
+        scope: {
+          tenantKey: job.tenant_key,
+          workspaceKey: job.workspace_key
+        },
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });
-      try {
-        await recordAuditLog({
-          tenantId: job.tenant_id,
-          action: "call_transcript_ai_job_failed",
-          entityType: "call_transcript_ai_jobs",
-          entityId: job.id,
-          data: {
-            provider,
-            callSessionId: job.call_session_id,
-            detail
-          }
-        });
-      } catch (auditError) {
-        logger.warn("Failed to record transcript AI job failure audit event", {
-          error: auditError,
-          tenantId: job.tenant_id,
-          jobId: job.id,
-          callSessionId: job.call_session_id
-        });
-      }
+      await recordAuditLog({
+        tenantKey: job.tenant_key,
+        workspaceKey: job.workspace_key,
+        action: "call_transcript_ai_job_failed",
+        entityType: "call_transcript_ai_jobs",
+        entityId: job.id,
+        data: {
+          provider,
+          callSessionId: job.call_session_id,
+          detail
+        }
+      }).catch(() => {});
     }
   }
 

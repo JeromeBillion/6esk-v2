@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const filtersSchema = z
   .object({
@@ -41,6 +42,7 @@ export async function PATCH(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -69,14 +71,15 @@ export async function PATCH(
   }
   updates.push("updated_at = now()");
 
-  values.push(viewId, user.id);
+  values.push(viewId, user.id, scope.tenantKey);
 
   try {
     const result = await db.query<SavedViewRow>(
       `UPDATE support_saved_views
        SET ${updates.join(", ")}
        WHERE id = $${index++}
-         AND user_id = $${index}
+         AND user_id = $${index++}
+         AND tenant_key = $${index}
        RETURNING id, name, filters, created_at, updated_at`,
       values
     );
@@ -110,13 +113,15 @@ export async function DELETE(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const scope = tenantScopeFromUser(user);
 
   const { viewId } = await params;
   const result = await db.query(
     `DELETE FROM support_saved_views
      WHERE id = $1
-       AND user_id = $2`,
-    [viewId, user.id]
+       AND user_id = $2
+       AND tenant_key = $3`,
+    [viewId, user.id, scope.tenantKey]
   );
 
   if ((result.rowCount ?? 0) === 0) {

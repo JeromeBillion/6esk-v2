@@ -78,7 +78,7 @@ describe("support saved views API", () => {
     ]);
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM support_saved_views"),
-      [USER_ID]
+      ["primary", USER_ID]
     );
   });
 
@@ -159,7 +159,8 @@ describe("support saved views API", () => {
     expect(body).toMatchObject({ status: "deleted" });
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("DELETE FROM support_saved_views"), [
       VIEW_ID,
-      USER_ID
+      USER_ID,
+      "primary"
     ]);
   });
 });

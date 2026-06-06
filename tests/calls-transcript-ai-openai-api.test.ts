@@ -1,28 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  getTenantAiProviderConfig: vi.fn(),
-  recordModuleUsageEvent: vi.fn()
-}));
-
-vi.mock("@/server/tenant/ai-provider", () => ({
-  getTenantAiProviderConfig: mocks.getTenantAiProviderConfig
-}));
-
-vi.mock("@/server/module-metering", () => ({
-  recordModuleUsageEvent: mocks.recordModuleUsageEvent
-}));
-
 import { POST } from "@/app/api/internal/calls/transcript-ai/provider/route";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalFetch = global.fetch;
-const TENANT_ID = "33333333-3333-3333-3333-333333333333";
 
 describe("POST /api/internal/calls/transcript-ai/provider", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
     process.env = {
       ...ORIGINAL_ENV,
       CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET: "qa-secret",
@@ -31,14 +16,6 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
       AI_MODEL: "gpt-5-mini",
       AI_BASE_URL: "https://api.openai.com/v1"
     };
-    mocks.getTenantAiProviderConfig.mockResolvedValue({
-      provider: "openai",
-      model: "gpt-5-mini",
-      apiKey: "openai-key",
-      baseUrl: "https://api.openai.com/v1",
-      providerMode: "managed"
-    });
-    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -55,8 +32,7 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
           jobId: "11111111-1111-1111-1111-111111111111",
           callSessionId: "22222222-2222-2222-2222-222222222222",
           transcriptR2Key: "messages/msg/transcript.txt",
-          transcriptText: "Test transcript",
-          metadata: { tenantId: TENANT_ID }
+          transcriptText: "Test transcript"
         })
       })
     );
@@ -122,8 +98,7 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
           jobId: "11111111-1111-1111-1111-111111111111",
           callSessionId: "22222222-2222-2222-2222-222222222222",
           transcriptR2Key: "messages/msg/transcript.txt",
-          transcriptText: "Caller asked for a payout update and escalation.",
-          metadata: { tenantId: TENANT_ID }
+          transcriptText: "Caller asked for a payout update and escalation."
         })
       })
     );
@@ -146,25 +121,13 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
         })
       })
     );
-    expect(mocks.recordModuleUsageEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: TENANT_ID,
-        moduleKey: "aiAutomation",
-        providerMode: "managed",
-        quantity: 1120,
-        unit: "tokens"
-      })
-    );
   });
 
-  it("uses the resolved tenant provider label, model, and base URL", async () => {
-    mocks.getTenantAiProviderConfig.mockResolvedValue({
-      provider: "openrouter",
-      model: "openai/gpt-5-mini",
-      apiKey: "router-key",
-      baseUrl: "https://openrouter.example/api/v1",
-      providerMode: "byo"
-    });
+  it("uses the global provider label, model, and base URL when overridden", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    process.env.AI_MODEL = "openai/gpt-5-mini";
+    process.env.AI_BASE_URL = "https://openrouter.example/api/v1";
+    process.env.AI_API_KEY = "router-key";
 
     global.fetch = vi.fn().mockResolvedValue(
       new Response(
@@ -195,8 +158,7 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
           jobId: "11111111-1111-1111-1111-111111111111",
           callSessionId: "22222222-2222-2222-2222-222222222222",
           transcriptR2Key: "messages/msg/transcript.txt",
-          transcriptText: "Resolved call transcript.",
-          metadata: { tenantId: TENANT_ID }
+          transcriptText: "Resolved call transcript."
         })
       })
     );
@@ -216,66 +178,5 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
         })
       })
     );
-    expect(mocks.recordModuleUsageEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: TENANT_ID,
-        providerMode: "byo"
-      })
-    );
-  });
-
-  it("rejects transcript AI jobs without a valid tenant boundary", async () => {
-    global.fetch = vi.fn() as typeof fetch;
-
-    const response = await POST(
-      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-6esk-secret": "qa-secret"
-        },
-        body: JSON.stringify({
-          jobId: "11111111-1111-1111-1111-111111111111",
-          callSessionId: "22222222-2222-2222-2222-222222222222",
-          transcriptR2Key: "messages/msg/transcript.txt",
-          transcriptText: "Resolved call transcript."
-        })
-      })
-    );
-
-    expect(response.status).toBe(400);
-    expect(mocks.getTenantAiProviderConfig).not.toHaveBeenCalled();
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  it("does not call an AI provider when tenant AI mode is disabled", async () => {
-    mocks.getTenantAiProviderConfig.mockResolvedValue({
-      provider: "none",
-      model: "",
-      apiKey: "",
-      baseUrl: "",
-      providerMode: "none"
-    });
-    global.fetch = vi.fn() as typeof fetch;
-
-    const response = await POST(
-      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-6esk-secret": "qa-secret"
-        },
-        body: JSON.stringify({
-          jobId: "11111111-1111-1111-1111-111111111111",
-          callSessionId: "22222222-2222-2222-2222-222222222222",
-          transcriptR2Key: "messages/msg/transcript.txt",
-          transcriptText: "Resolved call transcript.",
-          metadata: { tenantId: TENANT_ID }
-        })
-      })
-    );
-
-    expect(response.status).toBe(403);
-    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

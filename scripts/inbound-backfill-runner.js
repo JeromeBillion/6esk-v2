@@ -6,6 +6,7 @@ const {
   INBOUND_JOB_MAX_RUNS,
   INBOUND_ALERT_EVERY_RUN
 } = process.env;
+const { tenantIngressHeaders } = require("./tenant-ingress-headers");
 
 if (!APP_URL || !INBOUND_SHARED_SECRET) {
   console.error("APP_URL and INBOUND_SHARED_SECRET are required");
@@ -56,9 +57,14 @@ function sleep(ms) {
 }
 
 async function callMaintenanceEndpoint(pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
+  const url = `${baseUrl}${pathname}`;
+  const response = await fetch(url, {
     method: "POST",
-    headers: { "x-6esk-secret": INBOUND_SHARED_SECRET }
+    headers: tenantIngressHeaders({
+      url,
+      method: "POST",
+      headers: { "x-6esk-secret": INBOUND_SHARED_SECRET }
+    })
   });
 
   const text = await response.text();

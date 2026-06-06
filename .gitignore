@@ -14,6 +14,10 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.tsbuildinfo
+
+# local release evidence captures
+.launch-evidence/
 
 # misc
 .DS_Store

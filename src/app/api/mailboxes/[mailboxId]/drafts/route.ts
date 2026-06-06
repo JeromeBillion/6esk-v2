@@ -2,7 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { listInboxMailboxesForUser } from "@/server/mailboxes";
 import { upsertMailDraft } from "@/server/email/drafts";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const mailboxDraftSchema = z.object({
   draftId: z.string().uuid().optional().nullable(),
@@ -26,7 +26,7 @@ export async function POST(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const scope = tenantScopeFromUser(user);
 
   const mailboxes = await listInboxMailboxesForUser(user);
   const mailbox = mailboxes.find((entry) => entry.id === mailboxId);
@@ -48,8 +48,9 @@ export async function POST(
 
   try {
     const draft = await upsertMailDraft({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       draftId: parsed.data.draftId ?? null,
-      tenantId,
       mailboxId,
       fromEmail: mailbox.address,
       to: parsed.data.to ?? null,

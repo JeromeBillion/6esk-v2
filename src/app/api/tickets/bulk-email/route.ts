@@ -8,10 +8,9 @@ import { getCustomerById, listCustomerIdentities } from "@/server/customers";
 import { recordTicketEvent } from "@/server/tickets";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
-import { checkModuleEntitlement } from "@/server/tenant/module-guard";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
-import { runInBackground } from "@/server/async";
+import { tenantScopeFromUser, type TenantScopeInput } from "@/server/tenant-context";
 
 const bulkEmailSchema = z.object({
   ticketIds: z.array(z.string().uuid()).min(1).max(100),
@@ -42,7 +41,7 @@ function normalizeRecipientEmail(value: string | null | undefined) {
   return normalized || null;
 }
 
-async function resolveRecipientEmail(row: TicketSelectionRow, tenantId: string) {
+async function resolveRecipientEmail(row: TicketSelectionRow, scopeInput?: TenantScopeInput) {
   const fallbackTicketEmail =
     row.requester_email.startsWith("whatsapp:") || row.requester_email.startsWith("voice:")
       ? null
@@ -52,13 +51,13 @@ async function resolveRecipientEmail(row: TicketSelectionRow, tenantId: string) 
     return fallbackTicketEmail;
   }
 
-  const customer = await getCustomerById(row.customer_id, tenantId);
+  const customer = await getCustomerById(row.customer_id, scopeInput);
   const primaryEmail = normalizeRecipientEmail(customer?.primary_email);
   if (primaryEmail) {
     return primaryEmail;
   }
 
-  const identities = await listCustomerIdentities(row.customer_id, tenantId);
+  const identities = await listCustomerIdentities(row.customer_id, scopeInput);
   const identityEmail = identities.find((identity) => identity.identity_type === "email")?.identity_value;
   return normalizeRecipientEmail(identityEmail) ?? fallbackTicketEmail;
 }
@@ -71,8 +70,8 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
-  if (!(await checkModuleEntitlement("email", tenantId))) {
+  const scope = tenantScopeFromUser(user);
+  if (!(await isWorkspaceModuleEnabled("email", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",
@@ -99,10 +98,10 @@ export async function POST(request: Request) {
   const ticketsResult = await db.query<TicketSelectionRow>(
     `SELECT id, customer_id, requester_email, subject, assigned_user_id
      FROM tickets
-     WHERE id = ANY($1::uuid[])
-       AND tenant_id = $2
+     WHERE tenant_key = $1
+       AND id = ANY($2::uuid[])
        AND merged_into_ticket_id IS NULL`,
-    [uniqueTicketIds, tenantId]
+    [scope.tenantKey, uniqueTicketIds]
   );
   const rows = ticketsResult.rows;
 
@@ -135,7 +134,7 @@ export async function POST(request: Request) {
   }> = [];
 
   for (const row of rows) {
-    const recipientEmail = await resolveRecipientEmail(row, tenantId);
+    const recipientEmail = await resolveRecipientEmail(row, scope);
     if (!recipientEmail) {
       results.push({
         sourceTicketId: row.id,
@@ -165,7 +164,8 @@ export async function POST(request: Request) {
 
     try {
       const created = await createOutboundEmailTicket({
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         actorUserId: user.id,
         toEmail: recipientEmail,
         subject: parsed.data.subject,
@@ -197,10 +197,11 @@ export async function POST(request: Request) {
       });
 
       await recordTicketEvent({
-        tenantId,
         ticketId: row.id,
         eventType: "bulk_email_ticket_created",
         actorUserId: user.id,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         data: {
           recipientEmail,
           createdTicketId: created.ticketId,
@@ -209,8 +210,9 @@ export async function POST(request: Request) {
       });
 
       await recordAuditLog({
-        tenantId,
         actorUserId: user.id,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         action: "ticket_bulk_email_created",
         entityType: "ticket",
         entityId: row.id,
@@ -223,8 +225,9 @@ export async function POST(request: Request) {
       });
 
       await recordAuditLog({
-        tenantId,
         actorUserId: user.id,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         action: "ticket_bulk_email_created",
         entityType: "ticket",
         entityId: created.ticketId,
@@ -236,7 +239,8 @@ export async function POST(request: Request) {
         }
       });
       await recordModuleUsageEvent({
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         moduleKey: "email",
         usageKind: "bulk_email_created",
         actorType: "human",
@@ -267,11 +271,7 @@ export async function POST(request: Request) {
   const failed = results.filter((result) => result.status === "failed");
 
   if (created.length > 0) {
-    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
-      route: "/api/tickets/bulk-email",
-      tenantId,
-      createdCount: created.length
-    });
+    void deliverPendingAgentEvents().catch(() => {});
   }
 
   return Response.json({

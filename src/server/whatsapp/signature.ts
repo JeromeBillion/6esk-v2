@@ -15,16 +15,14 @@ export function buildWhatsAppSignature(body: string, appSecret: string) {
 export function verifyWhatsAppSignature({
   body,
   providedSignature,
-  appSecret,
-  requireSignature = false
+  appSecret
 }: {
   body: string;
   providedSignature: string | null | undefined;
   appSecret: string | null | undefined;
-  requireSignature?: boolean;
 }) {
   if (!appSecret) {
-    return !requireSignature;
+    return true;
   }
 
   const normalizedProvided = normalizeSignature(providedSignature);

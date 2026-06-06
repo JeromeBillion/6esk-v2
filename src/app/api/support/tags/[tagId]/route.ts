@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
 
@@ -13,10 +12,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ tagId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -50,12 +48,14 @@ export async function PATCH(
   }
 
   values.push(tagId);
+  values.push(scope.tenantKey);
 
   try {
     const result = await db.query(
       `UPDATE tags
        SET ${fields.join(", ")}
        WHERE id = $${index}
+         AND tenant_key = $${index + 1}
        RETURNING id, name, description`,
       values
     );
@@ -64,6 +64,8 @@ export async function PATCH(
     }
     const updated = result.rows[0];
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "tag_updated",
       entityType: "tag",
@@ -80,17 +82,21 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ tagId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { tagId } = await params;
-  const result = await db.query("DELETE FROM tags WHERE id = $1 RETURNING id", [tagId]);
+  const result = await db.query("DELETE FROM tags WHERE id = $1 AND tenant_key = $2 RETURNING id", [
+    tagId,
+    scope.tenantKey
+  ]);
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "tag_deleted",
     entityType: "tag",

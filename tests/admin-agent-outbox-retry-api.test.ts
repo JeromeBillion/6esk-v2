@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
-
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   getAgentIntegrationById: vi.fn(),
@@ -33,7 +31,9 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_key: "tenant-a",
+    workspace_key: "workspace-a"
   };
 }
 
@@ -74,9 +74,10 @@ describe("POST /api/admin/agents/[agentId]/outbox/retry", () => {
     expect(body).toMatchObject({ status: "ok", retried: 2 });
     expect(mocks.retryFailedAgentEvents).toHaveBeenCalledWith({
       integrationId: "agent-1",
-      tenantId: DEFAULT_TENANT_ID,
       limit: 10,
-      eventIds: []
+      eventIds: [],
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a"
     });
   });
 

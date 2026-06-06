@@ -1,9 +1,7 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const templateSchema = z.object({
   provider: z.string().min(1).default("meta"),
@@ -15,28 +13,26 @@ const templateSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT id, provider, name, language, category, status, components, created_at, updated_at
      FROM whatsapp_templates
-     WHERE tenant_id = $1
+     WHERE tenant_key = $1
+       AND workspace_key = $2
      ORDER BY name, language`,
-    [tenantId]
+    [scope.tenantKey, scope.workspaceKey]
   );
 
   return Response.json({ templates: result.rows });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -53,11 +49,10 @@ export async function POST(request: Request) {
   const data = parsed.data;
   const status = data.status ?? "active";
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
-    `INSERT INTO whatsapp_templates (provider, name, language, category, status, components, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (provider, name, language)
+    `INSERT INTO whatsapp_templates (tenant_key, workspace_key, provider, name, language, category, status, components)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (tenant_key, workspace_key, provider, name, language)
      DO UPDATE SET
        category = EXCLUDED.category,
        status = EXCLUDED.status,
@@ -65,19 +60,21 @@ export async function POST(request: Request) {
        updated_at = now()
      RETURNING id, provider, name, language, category, status, components`,
     [
+      scope.tenantKey,
+      scope.workspaceKey,
       data.provider,
       data.name,
       data.language,
       data.category ?? null,
       status,
-      data.components ?? null,
-      tenantId
+      data.components ?? null
     ]
   );
 
   const saved = result.rows[0];
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "whatsapp_template_saved",
     entityType: "whatsapp_template",

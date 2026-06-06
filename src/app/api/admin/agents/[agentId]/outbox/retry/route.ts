@@ -1,23 +1,18 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedAgentEvents } from "@/server/agents/outbox";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
-import { runInBackground } from "@/server/async";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const integration = await getAgentIntegrationById(agentId, tenantId);
+  const integration = await getAgentIntegrationById(agentId, scope);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -42,13 +37,15 @@ export async function POST(
   try {
     const result = await retryFailedAgentEvents({
       integrationId: agentId,
-      tenantId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       limit,
       eventIds
     });
 
     await recordAuditLog({
-      tenantId,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_retry_triggered",
       entityType: "agent_integration",
@@ -63,8 +60,9 @@ export async function POST(
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry failed agent outbox events";
-    runInBackground(recordAuditLog({
-      tenantId,
+    await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_retry_failed",
       entityType: "agent_integration",
@@ -73,12 +71,7 @@ export async function POST(
         limit,
         detail
       }
-    }), "Failed to record agent outbox retry failure audit event", {
-      route: "/api/admin/agents/[agentId]/outbox/retry",
-      tenantId,
-      agentId,
-      limit
-    });
+    }).catch(() => {});
     return Response.json(
       { error: "Failed to retry failed agent outbox events", detail },
       { status: 500 }

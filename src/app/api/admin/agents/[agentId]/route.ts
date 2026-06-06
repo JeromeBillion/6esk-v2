@@ -1,21 +1,21 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   getAgentIntegrationById,
   updateAgentIntegration
 } from "@/server/agents/integrations";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { AGENT_POLICY_MODE_VALUES } from "@/server/agents/policy-modes";
 
 const updateSchema = z.object({
+  tenantKey: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   baseUrl: z.string().url().optional(),
   sharedSecret: z.string().min(8).optional(),
   provider: z.string().optional(),
   authType: z.string().optional(),
   status: z.enum(["active", "paused"]).optional(),
-  policyMode: z.enum(["draft_only", "auto_send"]).optional(),
+  policyMode: z.enum(AGENT_POLICY_MODE_VALUES).optional(),
   scopes: z.record(z.unknown()).optional(),
   capabilities: z.record(z.unknown()).optional(),
   policy: z.record(z.unknown()).optional()
@@ -25,14 +25,12 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const agent = await getAgentIntegrationById(agentId, tenantId);
+  const { scope } = access;
+  const agent = await getAgentIntegrationById(agentId, scope);
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -44,10 +42,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -62,14 +59,21 @@ export async function PATCH(
   }
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const agent = await updateAgentIntegration(agentId, parsed.data, tenantId);
+  const agent = await updateAgentIntegration(
+    agentId,
+    {
+      ...parsed.data,
+      tenantKey: scope.tenantKey
+    },
+    scope
+  );
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "agent_integration_updated",
     entityType: "agent_integration",

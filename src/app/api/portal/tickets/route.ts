@@ -13,13 +13,10 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import {
-  integrationError,
-  integrationSuccess,
-  validateIntegrationApiVersion
-} from "@/server/api-contract";
-import { runInBackground } from "@/server/async";
+  isTenantPublicIngressError,
+  tenantScopeFromPublicIngressRequest
+} from "@/server/tenant-public-ingress";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -39,70 +36,38 @@ function getSupportAddress() {
 }
 
 export async function POST(request: Request) {
-  const versionError = validateIntegrationApiVersion(request);
-  if (versionError) {
-    return versionError;
-  }
-
-  // Portal callers must provide a shared secret. Without this the endpoint
-  // is completely unauthenticated and attackable.
-  const portalSecret = process.env.PORTAL_SHARED_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-portal-secret") ?? request.headers.get("x-6esk-secret");
-  if (!portalSecret || provided !== portalSecret) {
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
+  let scope;
+  try {
+    scope = await tenantScopeFromPublicIngressRequest(request);
+  } catch (error) {
+    if (isTenantPublicIngressError(error)) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
   }
 
   let payload: unknown;
   try {
     payload = await request.json();
   } catch (error) {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_json",
-      message: "Invalid JSON body"
-    });
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const parsed = portalSchema.safeParse(payload);
   if (!parsed.success) {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_payload",
-      message: "Invalid payload",
-      details: parsed.error.flatten()
-    });
+    return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
   const data = parsed.data;
-  const tenantId = DEFAULT_TENANT_ID;
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
-    return integrationError(request, {
-      status: 500,
-      code: "support_address_not_configured",
-      message: "Support address not configured"
-    });
+    return Response.json({ error: "Support address not configured" }, { status: 500 });
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
-  if (mailbox.tenant_id !== tenantId) {
-    return integrationError(request, {
-      status: 500,
-      code: "support_mailbox_tenant_mismatch",
-      message: "Support mailbox belongs to another tenant"
-    });
-  }
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, scope);
   const fromEmail = normalizeAddressList(data.from)[0];
   if (!fromEmail) {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_sender_address",
-      message: "Invalid sender address"
-    });
+    return Response.json({ error: "Invalid sender address" }, { status: 400 });
   }
 
   const inferredTags = inferTagsFromText({ subject: data.subject, text: data.description });
@@ -113,12 +78,14 @@ export async function POST(request: Request) {
     ...(data.metadata ?? {})
   };
   const customerResolution = await resolveOrCreateCustomerForInbound({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     inboundEmail: fromEmail
   });
 
   const ticketId = await createTicket({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     mailboxId: mailbox.id,
     customerId: customerResolution?.customerId ?? null,
     requesterEmail: fromEmail,
@@ -127,14 +94,20 @@ export async function POST(request: Request) {
     metadata
   });
 
-  await recordTicketEvent({ tenantId, ticketId, eventType: "ticket_created" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "ticket_created",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   if (inferredTags.length) {
-    await addTagsToTicket(ticketId, inferredTags);
+    await addTagsToTicket(ticketId, inferredTags, scope);
     await recordTicketEvent({
-      tenantId,
       ticketId,
       eventType: "tags_assigned",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       data: { tags: inferredTags }
     });
   }
@@ -145,15 +118,16 @@ export async function POST(request: Request) {
 
   await db.query(
     `INSERT INTO messages (
-      tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, received_at, is_read
     ) VALUES (
-      $1, $2, $3, $4, 'inbound', $5, $6, $7,
-      $8, $9, $10, $11, false
+      $1, $2, $3, $4, $5, 'inbound', $6, $7, $8,
+      $9, $10, $11, $12, false
     )`,
     [
-      tenantId,
       messageId,
+      scope.tenantKey,
+      scope.workspaceKey,
       mailbox.id,
       ticketId,
       messageId,
@@ -166,7 +140,7 @@ export async function POST(request: Request) {
     ]
   );
 
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   const textKey = await putObject({
     key: `${keyPrefix}/body.txt`,
     body: data.description,
@@ -176,11 +150,17 @@ export async function POST(request: Request) {
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, size_bytes = $2
-     WHERE id = $3`,
-    [textKey, Buffer.byteLength(data.description), messageId]
+     WHERE id = $3
+       AND tenant_key = $4`,
+    [textKey, Buffer.byteLength(data.description), messageId, scope.tenantKey]
   );
 
-  await recordTicketEvent({ tenantId, ticketId, eventType: "message_received" });
+  await recordTicketEvent({
+    ticketId,
+    eventType: "message_received",
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
 
   const threadId = messageId;
   const messageEvent = buildAgentEvent({
@@ -188,7 +168,6 @@ export async function POST(request: Request) {
     ticketId,
     messageId,
     mailboxId: mailbox.id,
-    tenantId,
     excerpt: previewText,
     threadId
   });
@@ -196,18 +175,23 @@ export async function POST(request: Request) {
     eventType: "ticket.created",
     ticketId,
     mailboxId: mailbox.id,
-    tenantId,
     excerpt: previewText,
     threadId
   });
 
-  await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
-  runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
-    route: "/api/portal/tickets",
-    tenantId,
-    ticketId
+  await enqueueAgentEvent({
+    eventType: "ticket.message.created",
+    payload: messageEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
   });
+  await enqueueAgentEvent({
+    eventType: "ticket.created",
+    payload: ticketEvent,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey
+  });
+  void deliverPendingAgentEvents().catch(() => {});
 
-  return integrationSuccess(request, { status: "created", ticketId, messageId });
+  return Response.json({ status: "created", ticketId, messageId });
 }

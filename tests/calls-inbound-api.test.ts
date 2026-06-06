@@ -18,7 +18,14 @@ vi.mock("@/server/calls/service", () => ({
     "failed",
     "canceled"
   ] as const,
-  createOrUpdateInboundCall: mocks.createOrUpdateInboundCall
+  createOrUpdateInboundCall: mocks.createOrUpdateInboundCall,
+  isInboundCallProviderRoutingError: (error: unknown) =>
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        "code" in error &&
+        String((error as { code?: unknown }).code).endsWith("_call_provider_route")
+    )
 }));
 
 vi.mock("@/server/audit", () => ({
@@ -140,5 +147,36 @@ describe("POST /api/calls/inbound", () => {
     expect(response.status).toBe(401);
     expect(payload).toMatchObject({ error: "Unauthorized" });
     expect(mocks.createOrUpdateInboundCall).not.toHaveBeenCalled();
+  });
+
+  it("returns routing errors without writing inbound call state", async () => {
+    const bodyObject = inboundPayload();
+    const body = JSON.stringify(bodyObject);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    mocks.createOrUpdateInboundCall.mockRejectedValueOnce(
+      Object.assign(new Error("No tenant route matched inbound call."), {
+        code: "unresolved_call_provider_route",
+        status: 404
+      })
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/calls/inbound", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-signature": sign(body, timestamp),
+          "x-6esk-timestamp": timestamp
+        },
+        body
+      })
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(payload).toMatchObject({
+      error: "Unresolved call provider route",
+      code: "unresolved_call_provider_route"
+    });
   });
 });

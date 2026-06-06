@@ -8,6 +8,7 @@ import {
   MergeReviewError,
   resolveMergeReviewTask
 } from "@/server/merge-reviews";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const decisionSchema = z.object({
   decision: z.enum(["approve", "reject"]),
@@ -40,6 +41,7 @@ export async function PATCH(
   }
 
   const { reviewId } = await params;
+  const scope = tenantScopeFromUser(user);
   const task = await getMergeReviewTaskForUser(user, reviewId);
   if (!task) {
     return Response.json({ error: "Merge review task not found" }, { status: 404 });
@@ -47,6 +49,8 @@ export async function PATCH(
 
   try {
     const result = await resolveMergeReviewTask({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       reviewId,
       decision: parsed.data.decision,
       actorUserId: user.id,
@@ -59,6 +63,8 @@ export async function PATCH(
         : "merge_review_rejected";
 
     await recordAuditLog({
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
       actorUserId: user.id,
       action: actionName,
       entityType: "merge_review_task",
@@ -74,6 +80,8 @@ export async function PATCH(
 
     if (task.ticket_id) {
       await recordTicketEvent({
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         ticketId: task.ticket_id,
         eventType:
           parsed.data.decision === "approve"

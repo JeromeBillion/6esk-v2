@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const payloadSchema = z.object({
   provider: z.string().min(1),
@@ -16,19 +14,17 @@ const payloadSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess();
+  if (!auth.ok) return auth.response;
+  const { scope } = auth;
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT id, provider, phone_number, waba_id, access_token, verify_token, status, created_at, updated_at
      FROM whatsapp_accounts
-     WHERE tenant_id = $1
+     WHERE tenant_key = $1
      ORDER BY created_at DESC
      LIMIT 1`,
-    [tenantId]
+    [scope.tenantKey]
   );
 
   const account = result.rows[0] ?? null;
@@ -52,10 +48,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let body: unknown;
   try {
@@ -70,10 +65,13 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await db.query(
-    `SELECT id FROM whatsapp_accounts WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1`,
-    [tenantId]
+    `SELECT id
+     FROM whatsapp_accounts
+     WHERE tenant_key = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [scope.tenantKey]
   );
   const existingId = existing.rows[0]?.id ?? null;
   const status = data.status ?? "inactive";
@@ -90,7 +88,8 @@ export async function POST(request: Request) {
            verify_token = $5,
            status = $6,
            updated_at = now()
-       WHERE id = $7 AND tenant_id = $8`,
+       WHERE id = $7
+         AND tenant_key = $8`,
       [
         data.provider,
         data.phoneNumber,
@@ -99,30 +98,34 @@ export async function POST(request: Request) {
         data.verifyToken ?? null,
         status,
         existingId,
-        tenantId
+        scope.tenantKey
       ]
     );
   } else {
     const insert = await db.query<{ id: string }>(
-      `INSERT INTO whatsapp_accounts (provider, phone_number, waba_id, access_token, verify_token, status, tenant_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO whatsapp_accounts (
+         tenant_key, workspace_key, provider, phone_number, waba_id, access_token, verify_token, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
       [
+        scope.tenantKey,
+        scope.workspaceKey,
         data.provider,
         data.phoneNumber,
         data.wabaId ?? null,
         storedToken,
         data.verifyToken ?? null,
-        status,
-        tenantId
+        status
       ]
     );
     accountId = insert.rows[0].id;
   }
 
   await recordAuditLog({
-    tenantId,
     actorUserId: user?.id ?? null,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     action: existingId ? "whatsapp_account_updated" : "whatsapp_account_created",
     entityType: "whatsapp_account",
     entityId: accountId ?? undefined

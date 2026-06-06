@@ -1,4 +1,5 @@
 const { INBOUND_SHARED_SECRET, APP_URL } = process.env;
+const { tenantIngressHeaders } = require("./tenant-ingress-headers");
 
 if (!INBOUND_SHARED_SECRET || !APP_URL) {
   console.error("INBOUND_SHARED_SECRET and APP_URL are required");
@@ -10,9 +11,11 @@ async function main() {
   const url = `${baseUrl}/api/admin/inbound/alerts`;
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "x-6esk-secret": INBOUND_SHARED_SECRET
-    }
+    headers: tenantIngressHeaders({
+      url,
+      method: "POST",
+      headers: { "x-6esk-secret": INBOUND_SHARED_SECRET }
+    })
   });
 
   if (!response.ok) {

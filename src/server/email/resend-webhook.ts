@@ -19,13 +19,15 @@ export function getResendClient() {
 
 export function verifyResendWebhookPayload({
   payload,
-  headers
+  headers,
+  webhookSecret
 }: {
   payload: string;
   headers: globalThis.Headers;
+  webhookSecret?: string | null;
 }): WebhookEventPayload {
-  const webhookSecret = process.env.RESEND_WEBHOOK_SECRET ?? "";
-  if (!webhookSecret) {
+  const resolvedSecret = webhookSecret?.trim() || process.env.RESEND_WEBHOOK_SECRET || "";
+  if (!resolvedSecret) {
     throw new Error("RESEND_WEBHOOK_SECRET is not configured.");
   }
 
@@ -41,7 +43,7 @@ export function verifyResendWebhookPayload({
   return getResendClient().webhooks.verify({
     payload,
     headers: signatureHeaders,
-    webhookSecret
+    webhookSecret: resolvedSecret
   });
 }
 

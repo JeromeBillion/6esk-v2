@@ -1,5 +1,4 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 
 export type CallWebhookAuthResult = {
   authorized: boolean;
@@ -184,10 +183,6 @@ export function authorizeCallWebhook({
       return { authorized: false, mode: "shared_secret", reason: "invalid_shared_secret" };
     }
     return { authorized: true, mode: "shared_secret", reason: "ok" };
-  }
-
-  if (!canAcceptUnsignedWebhookTraffic(process.env.CALLS_WEBHOOK_ALLOW_UNAUTHENTICATED)) {
-    return { authorized: false, mode: "open", reason: "unsecured_mode" };
   }
 
   return { authorized: true, mode: "open", reason: "unsecured_mode" };

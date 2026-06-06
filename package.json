@@ -1,16 +1,27 @@
 {
-  "name": "6esk-v2",
-  "version": "2.0.0-alpha.0",
+  "name": "6esk",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/check-main-sync.js",
     "dev": "next dev",
     "build": "next build",
     "sanity": "npm run build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "audit:security": "npm audit --audit-level=high",
-    "audit:full": "npm audit",
+    "typecheck": "tsc --noEmit",
+    "test:tenant-isolation": "vitest run tests/tenant-context.test.ts tests/tenant-context-persisted-secrets.test.ts tests/tenant-query-guard.test.ts tests/tenant-ingress-headers-script.test.ts tests/tenant-ingress-signature-drill.test.ts tests/tenant-public-ingress.test.ts tests/admin-public-ingress-origins-api.test.ts tests/portal-tickets-route.test.ts tests/agent-auth-ingress.test.ts tests/admin-tenant-ingress-secrets-api.test.ts tests/provider-webhook-secrets.test.ts tests/admin-provider-webhook-secrets-api.test.ts tests/tenant-secret-usage-tenant-scope.test.ts tests/tenant-isolation-core.test.ts tests/auth-session-tenant-scope.test.ts tests/auth-login-mfa-api.test.ts tests/auth-mfa-api.test.ts tests/auth-logout-api.test.ts tests/sensitive-session.test.ts tests/admin-guard.test.ts tests/tenant-security-policy.test.ts tests/admin-security-policy-api.test.ts tests/privileged-access.test.ts tests/privileged-access-alerts.test.ts tests/privileged-access-authorization.test.ts tests/admin-privileged-access-api.test.ts tests/email-inbound-tenant-routing.test.ts tests/email-inbound-events-tenant-scope.test.ts tests/email-spam-tenant-scope.test.ts tests/email-resend-webhook-api.test.ts tests/whatsapp-inbound-tenant-routing.test.ts tests/whatsapp-templates-api.test.ts tests/calls-provider-routing.test.ts tests/calls-twilio-status-webhook.test.ts tests/calls-twilio-recording-webhook.test.ts tests/calls-twilio-voice-webhook-api.test.ts tests/calls-twilio-voice-queue-webhook-api.test.ts tests/calls-transcript-api.test.ts tests/calls-stt-deepgram-api.test.ts tests/call-transcript-worker.test.ts tests/call-operators-tenant-scope.test.ts tests/call-consent-tenant-scope.test.ts tests/call-policy-tenant-scope.test.ts tests/call-outbox-tenant-scope.test.ts tests/call-transcript-jobs-tenant-scope.test.ts tests/call-transcript-ai-jobs-tenant-scope.test.ts tests/admin-calls-provider-numbers-api.test.ts tests/admin-calls-dead-letter-tenant-scope.test.ts tests/admin-calls-rejections-api.test.ts tests/tickets-create-external-profile.test.ts tests/admin-inbound-metrics-api.test.ts tests/admin-audit-logs-api.test.ts tests/admin-security-api.test.ts tests/admin-spam-rules-api.test.ts tests/billing-lifecycle.test.ts tests/admin-workspace-billing-api.test.ts tests/spam-rules-tenant-scope.test.ts tests/admin-whatsapp-templates-api.test.ts tests/whatsapp-templates-tenant-scope.test.ts tests/admin-users-api.test.ts tests/auth-password-reset-tenant-scope.test.ts tests/admin-users-tenant-scope.test.ts tests/tenant-isolation-audit.test.ts tests/admin-tenant-isolation-audit-api.test.ts tests/tenant-isolation-audit-script.test.ts tests/tenant-scope-backfill-plan.test.ts tests/tenant-scope-backfill-bundle.test.ts tests/provider-routing-rehearsal.test.ts tests/tenant-offboarding-rehearsal.test.ts tests/tenant-query-scope-sweep.test.ts tests/reconcile-ticket-customers-script.test.ts tests/agent-drafts-tenant-scope.test.ts tests/agent-outbox-tenant-scope.test.ts tests/agent-run-ledger-tenant-scope.test.ts tests/agent-actions-tenant-scope.test.ts tests/workspace-modules-entitlements.test.ts tests/module-metering-fail-closed.test.ts tests/admin-workspace-usage-export-api.test.ts tests/tenant-export.test.ts tests/admin-tenant-export-api.test.ts",
+    "audit:tenant-isolation": "node scripts/tenant-isolation-audit.js",
+    "drill:tenant-ingress": "node scripts/tenant-ingress-signature-drill.js",
+    "drill:tenant-ingress:evidence": "node scripts/tenant-ingress-signature-drill.js --evidence-dir .launch-evidence/tenant-ingress",
+    "plan:tenant-backfill": "node scripts/tenant-scope-backfill-plan.js --evidence-dir .launch-evidence/tenant-backfill",
+    "bundle:tenant-backfill": "node scripts/tenant-scope-backfill-bundle.js --bundle-dir .launch-evidence/tenant-backfill-bundles",
+    "rehearse:provider-routing": "node scripts/provider-routing-rehearsal.js --evidence-dir .launch-evidence/provider-routing",
+    "rehearse:tenant-offboarding": "node scripts/tenant-offboarding-rehearsal.js --evidence-dir .launch-evidence/tenant-offboarding",
+    "audit:tenant-query-scope": "node scripts/tenant-query-scope-sweep.js --evidence-dir .launch-evidence/tenant-query-scope",
+    "test:ai-red-team": "vitest run tests/ai-red-team-regressions.test.ts tests/ai-guard.test.ts tests/agent-tool-policy.test.ts tests/agent-output-validator.test.ts tests/agent-customer-context.test.ts tests/ai-knowledge-base.test.ts tests/agent-prompt-sandbox.test.ts",
+    "test:ai-safety": "npm run typecheck && npm run test:ai-red-team",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed-admin.js",
     "retry:inbound": "node scripts/retry-inbound.js",
@@ -22,7 +33,6 @@
     "calls:outbox": "node scripts/call-outbox.js",
     "calls:transcripts": "node scripts/call-transcript-outbox.js",
     "calls:transcripts:ai": "node scripts/call-transcript-ai-outbox.js",
-    "ai:knowledge:ingest": "node scripts/knowledge-ingestion.js",
     "calls:replay-drill": "node scripts/call-webhook-replay-drill.js",
     "calls:load-drill": "node scripts/call-outbox-load-drill.js",
     "calls:crm-e2e": "node scripts/calls-crm-e2e.js"
@@ -30,7 +40,6 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.521.0",
     "@aws-sdk/lib-storage": "^3.521.0",
-    "@elizaos/core": "^2.0.0-alpha.77",
     "@radix-ui/react-checkbox": "^1.1.4",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-dropdown-menu": "^2.1.6",
@@ -42,10 +51,13 @@
     "@twilio/voice-sdk": "^2.18.1",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.37.0",
+    "better-auth": "1.6.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "kysely": "0.28.17",
     "lucide-react": "^0.487.0",
     "next": "^15.1.0",
+    "otpauth": "9.5.1",
     "pg": "^8.11.5",
     "postal-mime": "^2.7.4",
     "react": "^19.0.0",
@@ -67,6 +79,9 @@
     "eslint-config-next": "^15.1.0",
     "tailwindcss": "^4.1.12",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
   }
 }

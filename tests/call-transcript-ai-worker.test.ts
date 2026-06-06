@@ -50,7 +50,8 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-1",
-        tenant_id: "33333333-3333-3333-3333-333333333333",
+        tenant_key: "primary",
+        workspace_key: "primary",
         call_session_id: "11111111-1111-1111-1111-111111111111",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -94,7 +95,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.lockPendingTranscriptAiJobs).toHaveBeenCalledWith(1, 300);
+    expect(mocks.lockPendingTranscriptAiJobs).toHaveBeenCalledWith(1, 300, undefined);
     expect(mocks.submitTranscriptAiJob).toHaveBeenCalledWith(
       "managed_http",
       expect.objectContaining({
@@ -102,15 +103,13 @@ describe("deliverPendingTranscriptAiJobs", () => {
         callSessionId: "11111111-1111-1111-1111-111111111111",
         transcriptR2Key: "messages/msg/transcript.txt",
         transcriptText: "Customer asked for a refund and escalation.",
-        metadata: {
-          ticketId: "ticket-1",
-          tenantId: "33333333-3333-3333-3333-333333333333"
-        }
+        metadata: { ticketId: "ticket-1" }
       })
     );
     expect(mocks.markTranscriptAiJobCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: "job-1",
+        scope: { tenantKey: "primary", workspaceKey: "primary" },
         qaStatus: "review",
         summary: "Customer asked for a refund and escalation."
       })
@@ -122,7 +121,8 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-2",
-        tenant_id: "33333333-3333-3333-3333-333333333333",
+        tenant_key: "primary",
+        workspace_key: "primary",
         call_session_id: "22222222-2222-2222-2222-222222222222",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -145,12 +145,12 @@ describe("deliverPendingTranscriptAiJobs", () => {
     });
     expect(mocks.markTranscriptAiJobFailed).toHaveBeenCalledWith({
       jobId: "job-2",
+      scope: { tenantKey: "primary", workspaceKey: "primary" },
       attemptCount: 3,
       errorMessage: "provider unavailable"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: "33333333-3333-3333-3333-333333333333",
         action: "call_transcript_ai_job_failed",
         entityId: "job-2"
       })

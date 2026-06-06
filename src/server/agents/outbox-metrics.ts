@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { parseMaxEventsPerRun, resolveDeliveryLimit } from "@/server/agents/throughput";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type OutboxSummaryRow = {
   pending: number | string | null;
@@ -30,9 +31,10 @@ function toIso(value: Date | null | undefined) {
 export async function getAgentOutboxMetrics(
   agentId: string,
   requestedLimit?: number | null,
-  tenantId?: string | null
+  scopeInput?: TenantScopeInput
 ) {
-  const integration = await getAgentIntegrationById(agentId, tenantId);
+  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+  const integration = await getAgentIntegrationById(agentId, scope);
   if (!integration) {
     return null;
   }
@@ -53,20 +55,20 @@ export async function getAgentOutboxMetrics(
        MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
      FROM agent_outbox
      WHERE integration_id = $1
-       AND tenant_id = $2`,
-    [integration.id, integration.tenant_id]
+       ${scope ? "AND tenant_key = $2" : ""}`,
+    scope ? [integration.id, scope.tenantKey] : [integration.id]
   );
 
   const errorResult = await db.query<OutboxErrorRow>(
     `SELECT last_error
      FROM agent_outbox
      WHERE integration_id = $1
-       AND tenant_id = $2
+       ${scope ? "AND tenant_key = $2" : ""}
        AND status = 'failed'
        AND last_error IS NOT NULL
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [integration.id, integration.tenant_id]
+    scope ? [integration.id, scope.tenantKey] : [integration.id]
   );
 
   const summary = summaryResult.rows[0] ?? {

@@ -1,23 +1,26 @@
 import { randomBytes, createHash } from "crypto";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
 import { getEnv } from "@/server/env";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   const { userId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
-  const result = await db.query("SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2", [userId, tenantId]);
+  const result = await db.query(
+    `SELECT id, email, tenant_key, workspace_key
+     FROM users
+     WHERE id = $1
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [userId, scope.tenantKey, scope.workspaceKey]
+  );
   const target = result.rows[0];
   if (!target) {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -28,13 +31,14 @@ export async function POST(
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
   await db.query(
-    `INSERT INTO password_resets (user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3)`,
-    [target.id, tokenHash, expiresAt]
+    `INSERT INTO password_resets (tenant_key, workspace_key, user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [scope.tenantKey, scope.workspaceKey, target.id, tokenHash, expiresAt]
   );
 
   await recordAuditLog({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: "password_reset_requested",
     entityType: "user",

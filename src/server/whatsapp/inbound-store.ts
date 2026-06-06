@@ -10,16 +10,17 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  buildExternalProfileMetadataPatch,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
   resolveOrCreateCustomerForInbound,
   type CustomerResolutionConflict
 } from "@/server/customers";
-import { logger } from "@/server/logger";
-import { runInBackground } from "@/server/async";
+import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 export type NormalizedWhatsAppAttachment = {
   mediaId?: string | null;
@@ -39,16 +40,8 @@ export type NormalizedWhatsAppMessage = {
   text?: string | null;
   timestamp?: string | number | null;
   contactName?: string | null;
+  metadata?: Record<string, unknown> | null;
   attachments?: NormalizedWhatsAppAttachment[] | null;
-};
-
-type WhatsAppInboundAccount = {
-  id: string;
-  tenant_id: string;
-  provider: string;
-  phone_number: string;
-  waba_id: string | null;
-  access_token: string | null;
 };
 
 function getSupportAddress() {
@@ -84,10 +77,6 @@ function normalizeContact(value: string) {
   return value.replace(/\s+/g, "").trim();
 }
 
-function normalizeDigits(value: string | null | undefined) {
-  return (value ?? "").replace(/\D/g, "");
-}
-
 function formatRequester(contact: string) {
   if (!contact) return "whatsapp:unknown";
   return contact.startsWith("whatsapp:") ? contact : `whatsapp:${contact}`;
@@ -109,58 +98,19 @@ function parseTimestamp(value?: string | number | null) {
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION ?? "v19.0";
 
-async function listActiveWhatsAppAccounts(provider?: string | null) {
-  const result = await db.query<WhatsAppInboundAccount>(
-    `SELECT id, tenant_id, provider, phone_number, waba_id, access_token
+async function getActiveAccessToken(scopeInput?: TenantScopeInput) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
+  const result = await db.query<{ access_token: string | null; provider: string }>(
+    `SELECT access_token, provider
      FROM whatsapp_accounts
      WHERE status = 'active'
-       AND ($1::text IS NULL OR provider = $1)
+       AND tenant_key = $1
      ORDER BY created_at DESC
-     LIMIT 20`,
-    [provider || null]
+     LIMIT 1`,
+    [tenantKey]
   );
-  return result.rows;
-}
-
-export async function resolveWhatsAppAccountForInbound(
-  message?: Pick<NormalizedWhatsAppMessage, "provider" | "to"> | null
-) {
-  const provider = message?.provider || null;
-  const accounts = await listActiveWhatsAppAccounts(provider);
-  if (accounts.length === 0) {
-    return null;
-  }
-
-  const rawRecipient = message?.to?.trim() ?? "";
-  const recipientDigits = normalizeDigits(rawRecipient);
-  if (rawRecipient) {
-    const matches = accounts.filter((account) => {
-      const accountDigits = normalizeDigits(account.phone_number);
-      return (
-        account.phone_number === rawRecipient ||
-        (recipientDigits.length > 0 && accountDigits === recipientDigits) ||
-        account.waba_id === rawRecipient
-      );
-    });
-    if (matches.length === 1) {
-      return matches[0];
-    }
-    if (matches.length > 1) {
-      throw new Error("Ambiguous WhatsApp recipient account.");
-    }
-    if (accounts.length > 1) {
-      throw new Error("No active WhatsApp account matches the webhook recipient.");
-    }
-  }
-
-  if (accounts.length === 1) {
-    return accounts[0];
-  }
-
-  throw new Error("Unable to resolve WhatsApp tenant for inbound webhook.");
-}
-
-function getAccountAccessToken(record: WhatsAppInboundAccount) {
+  const record = result.rows[0];
+  if (!record) return null;
   if (record.provider !== "meta") return null;
   const token = record.access_token ? decryptSecret(record.access_token) : "";
   return token || null;
@@ -201,22 +151,27 @@ async function fetchMetaMedia(accessToken: string, mediaId: string) {
   };
 }
 
-async function resolveWhatsAppTicketId(conversationId: string, tenantId: string) {
+async function resolveWhatsAppTicketId(conversationId: string, scopeInput?: TenantScopeInput) {
+  const { tenantKey } = resolveTenantScope(scopeInput);
   const result = await db.query<{ ticket_id: string }>(
     `SELECT ticket_id
      FROM messages
      WHERE channel = 'whatsapp'
        AND conversation_id = $1
-       AND tenant_id = $2
+       AND tenant_key = $2
        AND ticket_id IS NOT NULL
      ORDER BY created_at DESC
      LIMIT 1`,
-    [conversationId, tenantId]
+    [conversationId, tenantKey]
   );
   return result.rows[0]?.ticket_id ?? null;
 }
 
-export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
+export async function storeInboundWhatsApp(
+  message: NormalizedWhatsAppMessage,
+  scopeInput?: TenantScopeInput
+) {
+  const requestedScope = resolveTenantScope(scopeInput);
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
     throw new Error("Support address not configured");
@@ -227,22 +182,16 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     throw new Error("Missing WhatsApp sender");
   }
 
-  const account = await resolveWhatsAppAccountForInbound(message);
-  if (!account) {
-    throw new Error("No active WhatsApp account configured for inbound webhook.");
-  }
-  const tenantId = account.tenant_id;
-
   // ── Idempotency check (outside transaction, read-only) ──
   if (message.messageId) {
     const existing = await db.query(
       `SELECT id, ticket_id
        FROM messages
        WHERE channel = 'whatsapp'
-         AND external_message_id = $1
-         AND tenant_id = $2
+         AND tenant_key = $1
+         AND external_message_id = $2
        LIMIT 1`,
-      [message.messageId, tenantId]
+      [requestedScope.tenantKey, message.messageId]
     );
     if ((existing.rowCount ?? 0) > 0) {
       return {
@@ -253,29 +202,40 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     }
   }
 
-  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  const requesterProfile = await lookupPredictionProfile({ phone: from });
+  // ── Phase 1: Resolve deterministic data BEFORE the transaction ──
+  const inboundMetadata = message.metadata ?? {};
+  const requesterProfile = readExternalProfileFromMetadata(inboundMetadata);
+  const profileSource = readExternalProfileSource(inboundMetadata);
+  const profileMatchedBy = readExternalProfileMatchedBy(inboundMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
-    tenantId,
-    profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+    tenantKey: requestedScope.tenantKey,
+    workspaceKey: requestedScope.workspaceKey,
+    externalSystem: profileSource,
+    profile: requesterProfile,
     inboundPhone: from,
     displayName: message.contactName ?? null
   });
   const profileMetadataPatch =
-    requesterProfile.status === "matched" && customerResolution?.conflict
-      ? applyIdentityConflictMetadata(
-          buildProfileMetadataPatch(requesterProfile),
-          customerResolution.conflict
-        )
-      : buildProfileMetadataPatch(requesterProfile);
+    requesterProfile
+      ? buildExternalProfileMetadataPatch({
+          profile: requesterProfile,
+          source: profileSource,
+          matchedBy: profileMatchedBy
+        })
+      : {};
+  const resolvedProfileMetadataPatch =
+    requesterProfile && customerResolution?.conflict
+      ? applyIdentityConflictMetadata(profileMetadataPatch, customerResolution.conflict)
+      : profileMetadataPatch;
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
-  if (mailbox.tenant_id !== tenantId) {
-    throw new Error("WhatsApp support mailbox belongs to another tenant.");
-  }
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, requestedScope);
+  const scope = resolveTenantScope({
+    tenantKey: mailbox.tenant_key ?? requestedScope.tenantKey,
+    workspaceKey: mailbox.workspace_key ?? requestedScope.workspaceKey
+  });
   const conversationId = message.conversationId ?? from;
 
-  const existingTicketId: string | null = await resolveWhatsAppTicketId(conversationId, tenantId);
+  const existingTicketId: string | null = await resolveWhatsAppTicketId(conversationId, scope);
 
   const attachments = (message.attachments ?? []).filter(Boolean);
   const fallbackCaption =
@@ -311,7 +271,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   const resolvedAttachments: ResolvedAttachment[] = [];
 
   if (attachments.length) {
-    const accessToken = getAccountAccessToken(account);
+    const accessToken = await getActiveAccessToken(scope);
     for (const attachment of attachments) {
       const attachmentId = randomUUID();
       const safeFilename = sanitizeFilename(
@@ -366,19 +326,23 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     if (!ticketId) {
       const category = inferredTags[0]?.toLowerCase() ?? null;
       const metadata = {
+        ...inboundMetadata,
         channel: "whatsapp",
         wa_contact: from,
-        provider: message.provider ?? account.provider,
+        provider: message.provider ?? "meta",
         contact_name: message.contactName ?? null,
-        ...profileMetadataPatch
+        ...resolvedProfileMetadataPatch
       };
 
       const ticketResult = await client.query<{ id: string }>(
-        `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO tickets (
+           tenant_key, workspace_key, mailbox_id, customer_id, requester_email, subject, category, metadata
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id`,
         [
-          tenantId,
+          scope.tenantKey,
+          scope.workspaceKey,
           mailbox.id,
           customerResolution?.customerId ?? null,
           formatRequester(from),
@@ -391,9 +355,9 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       createdNewTicket = true;
 
       await client.query(
-        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [tenantId, ticketId, "ticket_created", null, null]
+        `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [scope.tenantKey, scope.workspaceKey, ticketId, "ticket_created", null, null]
       );
 
       if (inferredTags.length) {
@@ -401,122 +365,125 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         const cleanTags = Array.from(new Set(inferredTags.map((t) => t.toLowerCase().trim()).filter(Boolean)));
         for (const tag of cleanTags) {
           const tagResult = await client.query<{ id: string }>(
-            `INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-            [tag]
+            `INSERT INTO tags (tenant_key, workspace_key, name)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (tenant_key, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [scope.tenantKey, scope.workspaceKey, tag]
           );
           await client.query(
-            `INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2) ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-            [ticketId, tagResult.rows[0].id]
+            `INSERT INTO ticket_tags (tenant_key, workspace_key, ticket_id, tag_id)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+            [scope.tenantKey, scope.workspaceKey, ticketId, tagResult.rows[0].id]
           );
         }
         await client.query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, ticketId, "tags_assigned", null, { tags: inferredTags }]
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scope.tenantKey, scope.workspaceKey, ticketId, "tags_assigned", null, { tags: inferredTags }]
         );
       }
     } else {
-      // Reopen ticket if it was resolved/closed
-      const statusResult = await client.query<{ status: string }>(
-        "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
-        [ticketId, tenantId]
-      );
+	      // Reopen ticket if it was resolved/closed
+	      const statusResult = await client.query<{ status: string }>(
+	        "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	        [ticketId, scope.tenantKey, scope.workspaceKey]
+	      );
       const currentStatus = statusResult.rows[0]?.status;
       if (currentStatus === "solved" || currentStatus === "closed") {
+	        await client.query(
+	          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	          [ticketId, scope.tenantKey, scope.workspaceKey]
+	        );
         await client.query(
-          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
-          [ticketId, tenantId]
-        );
-        await client.query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scope.tenantKey, scope.workspaceKey, ticketId, "ticket_reopened", null, { previousStatus: currentStatus }]
         );
       }
 
-      if (requesterProfile.status === "matched") {
+      if (requesterProfile) {
         await client.query(
-        `UPDATE tickets
+          `UPDATE tickets
            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                updated_at = now()
-           WHERE id = $1
-             AND tenant_id = $3`,
-          [ticketId, JSON.stringify(profileMetadataPatch), tenantId]
-        );
+	           WHERE id = $1
+	             AND tenant_key = $3
+	             AND workspace_key = $4`,
+	          [ticketId, JSON.stringify(resolvedProfileMetadataPatch), scope.tenantKey, scope.workspaceKey]
+	        );
       }
     }
 
     if (ticketId && customerResolution?.customerId) {
       const customerAttachResult = await client.query(
-        `UPDATE tickets SET customer_id = $2, updated_at = now()
-         WHERE id = $1
-           AND tenant_id = $3
-           AND (customer_id IS NULL OR customer_id != $2)
-           AND EXISTS (
-             SELECT 1
-             FROM customers c
-             WHERE c.id = $2
-               AND c.tenant_id = $3
-           )`,
-        [ticketId, customerResolution.customerId, tenantId]
-      );
+	        `UPDATE tickets SET customer_id = $2, updated_at = now()
+	         WHERE id = $1
+	           AND tenant_key = $3
+	           AND workspace_key = $4
+	           AND (customer_id IS NULL OR customer_id != $2)`,
+	        [ticketId, customerResolution.customerId, scope.tenantKey, scope.workspaceKey]
+	      );
       attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
     }
 
-    if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
+    if (requesterProfile && ticketId && !customerResolution?.conflict) {
       await upsertExternalUserLink({
-        externalSystem: "prediction-market-mvp",
-        profile: requesterProfile.profile,
-        matchedBy: requesterProfile.matchedBy,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
+        externalSystem: profileSource,
+        profile: requesterProfile,
+        matchedBy: profileMatchedBy,
         inboundPhone: from,
         ticketId,
-        channel: "whatsapp",
-        queryExecutor: client
+        channel: "whatsapp"
       });
     }
 
-    if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
+    if (createdNewTicket && requesterProfile && !customerResolution?.conflict) {
       await client.query(
-        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [tenantId, ticketId, "profile_enriched", null, {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
-          externalUserId: requesterProfile.profile.id
+        `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [scope.tenantKey, scope.workspaceKey, ticketId, "profile_enriched", null, {
+          source: profileSource,
+          matchedBy: profileMatchedBy,
+          externalUserId: requesterProfile.id
         }]
       );
-    } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
+    } else if (ticketId && requesterProfile && customerResolution?.conflict) {
       await client.query(
-        `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [tenantId, ticketId, "customer_identity_conflict", null, {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
+        `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [scope.tenantKey, scope.workspaceKey, ticketId, "customer_identity_conflict", null, {
+          source: profileSource,
+          matchedBy: profileMatchedBy,
           conflict: customerResolution.conflict
         }]
       );
     }
 
     await client.query(
-      `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [tenantId, ticketId, "message_received", null, null]
+      `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [scope.tenantKey, scope.workspaceKey, ticketId, "message_received", null, null]
     );
 
     // Insert the message row
     await client.query(
       `INSERT INTO messages (
-        tenant_id, id, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
+        id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, channel, message_id, thread_id,
         external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,
         from_email, to_emails, subject, preview_text, received_at, is_read
       ) VALUES (
-        $1, $2, $3, $4, 'inbound', 'whatsapp', $5, $6,
-        $7, $8, $9, $10, $11, $12,
-        $13, $14, $15, $16, $17, false
+        $1, $2, $3, $4, $5, 'inbound', 'whatsapp', $6, $7,
+        $8, $9, $10, $11, $12, $13,
+        $14, $15, $16, $17, $18, false
       )`,
       [
-        tenantId,
         messageId,
+        scope.tenantKey,
+        scope.workspaceKey,
         mailbox.id,
         ticketId,
         message.messageId ?? null,
@@ -526,7 +493,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         from,
         "received",
         receivedAt,
-        message.provider ?? account.provider,
+        message.provider ?? "meta",
         from,
         [supportAddress],
         previewText
@@ -540,10 +507,13 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     );
 
     await client.query(
-      `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO whatsapp_status_events (
+         tenant_key, workspace_key, message_id, external_message_id, status, occurred_at, payload
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
-        tenantId,
+        scope.tenantKey,
+        scope.workspaceKey,
         messageId,
         message.messageId ?? null,
         "received",
@@ -554,13 +524,14 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
 
     // Insert attachment metadata rows (media buffers already downloaded)
     for (const resolved of resolvedAttachments) {
-      const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+      const r2Key = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
       await client.query(
-        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO attachments (id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          tenantId,
           resolved.attachmentId,
+          scope.tenantKey,
+          scope.workspaceKey,
           messageId,
           resolved.originalFilename ?? resolved.safeFilename,
           resolved.contentType ?? null,
@@ -589,7 +560,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     try {
       const bodyText = message.text ?? fallbackCaption ?? "";
       textKey = await putObject({
-        key: `messages/${messageId}/body.txt`,
+        key: `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}/body.txt`,
         body: bodyText,
         contentType: "text/plain; charset=utf-8"
       });
@@ -597,14 +568,14 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     } catch (error) {
       failedStorageItems.push({
         kind: "text",
-        target: `messages/${messageId}/body.txt`,
+        target: `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}/body.txt`,
         detail: error instanceof Error ? error.message : "unknown upload error"
       });
     }
   }
 
   for (const resolved of resolvedAttachments) {
-    const r2Key = `messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
+    const r2Key = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}/attachments/${resolved.attachmentId}-${resolved.safeFilename}`;
     try {
       await putObject({
         key: r2Key,
@@ -618,20 +589,10 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         target: resolved.originalFilename ?? resolved.safeFilename,
         detail: error instanceof Error ? error.message : "unknown upload error"
       });
-      await db
-        .query(`DELETE FROM attachments WHERE id = $1 AND tenant_id = $2`, [
-          resolved.attachmentId,
-          tenantId
-        ])
-        .catch((cleanupError) => {
-          logger.warn("Failed to delete WhatsApp attachment row after R2 upload failure", {
-            error: cleanupError,
-            fn: "storeInboundWhatsApp",
-            tenantId,
-            messageId,
-            attachmentId: resolved.attachmentId
-          });
-        });
+      await db.query(`DELETE FROM attachments WHERE id = $1 AND tenant_key = $2`, [
+        resolved.attachmentId,
+        scope.tenantKey
+      ]).catch(() => {});
     }
   }
 
@@ -640,8 +601,8 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       `UPDATE messages
        SET r2_key_text = $1, size_bytes = $2
        WHERE id = $3
-         AND tenant_id = $4`,
-      [textKey, sizeBytes || null, messageId, tenantId]
+         AND tenant_key = $4`,
+      [textKey, sizeBytes || null, messageId, scope.tenantKey]
     );
   }
 
@@ -651,22 +612,30 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
       ticketId,
       messageId,
       mailboxId: mailbox.id,
-      tenantId,
       excerpt: previewText,
       threadId: conversationId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
+    await enqueueAgentEvent({
+      eventType: "ticket.message.created",
+      payload: messageEvent,
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey
+    });
 
     if (createdNewTicket) {
       const ticketEvent = buildAgentEvent({
         eventType: "ticket.created",
         ticketId,
         mailboxId: mailbox.id,
-        tenantId,
         excerpt: previewText,
         threadId: conversationId
       });
-      await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+      await enqueueAgentEvent({
+        eventType: "ticket.created",
+        payload: ticketEvent,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey
+      });
     }
 
     if (ticketId && customerResolution?.customerId && (createdNewTicket || attachedCustomerToTicket)) {
@@ -674,13 +643,13 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         eventType: "customer.identity.resolved",
         ticketId,
         mailboxId: mailbox.id,
-        tenantId,
         excerpt: `Resolved customer ${customerResolution.customerId}`,
         threadId: conversationId
       });
       await enqueueAgentEvent({
         eventType: "customer.identity.resolved",
-        tenantId,
+        tenantKey: scope.tenantKey,
+        workspaceKey: scope.workspaceKey,
         payload: {
           ...identityEvent,
           customer: {
@@ -691,7 +660,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
             email: null,
             phone: from
           },
-          matchedByProfile: requesterProfile.status === "matched",
+          matchedByProfile: Boolean(requesterProfile),
           ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
         }
       });
@@ -700,10 +669,11 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
     if (failedStorageItems.length > 0) {
       await db
         .query(
-          `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
-            tenantId,
+            scope.tenantKey,
+            scope.workspaceKey,
             ticketId,
             "message_storage_partial",
             null,
@@ -713,23 +683,10 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
             }
           ]
         )
-        .catch((eventError) => {
-          logger.warn("Failed to record partial WhatsApp storage event", {
-            error: eventError,
-            fn: "storeInboundWhatsApp",
-            tenantId,
-            ticketId,
-            messageId
-          });
-        });
+        .catch(() => {});
     }
 
-    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
-      fn: "storeInboundWhatsApp",
-      tenantId,
-      ticketId,
-      messageId
-    });
+    void deliverPendingAgentEvents().catch(() => {});
   }
 
   return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };

@@ -1,70 +1,65 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   createKnowledgeFolder,
-  KnowledgeBaseError
+  KnowledgeUploadError,
+  listKnowledgeFolders
 } from "@/server/ai/knowledge-base";
 
-const createFolderSchema = z
-  .object({
-    name: z.string().trim().min(1).max(160),
-    parentFolderId: z.string().uuid().nullable().optional(),
-    description: z.string().trim().max(500).nullable().optional(),
-    visibility: z.enum(["ai_visible", "admin_only"]).optional()
-  })
-  .strict();
+const folderSchema = z.object({
+  name: z.string().min(1).max(120),
+  parentId: z.string().uuid().optional().nullable()
+});
+
+export async function GET() {
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+
+  const folders = await listKnowledgeFolders(access.scope);
+  return Response.json({ folders });
+}
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
     payload = await request.json();
-  } catch (error) {
+  } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const parsed = createFolderSchema.safeParse(payload);
+  const parsed = folderSchema.safeParse(payload);
   if (!parsed.success) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
   try {
     const folder = await createKnowledgeFolder({
-      tenantId: user.tenant_id,
-      actorUserId: user.id,
-      name: parsed.data.name,
-      parentFolderId: parsed.data.parentFolderId ?? null,
-      description: parsed.data.description ?? null,
-      visibility: parsed.data.visibility ?? "ai_visible"
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
+      ...parsed.data
     });
-
     await recordAuditLog({
-      tenantId: user.tenant_id,
-      actorUserId: user.id,
-      action: "knowledge_folder_created",
-      entityType: "knowledge_folder",
+      tenantKey: scope.tenantKey,
+      workspaceKey: scope.workspaceKey,
+      actorUserId: user?.id ?? null,
+      action: "ai_knowledge_folder_created",
+      entityType: "ai_knowledge_folder",
       entityId: folder.id,
       data: {
         name: folder.name,
-        parentFolderId: folder.parent_folder_id ?? null,
-        visibility: folder.visibility
+        parentId: folder.parent_id
       }
     });
-
-    return Response.json({ folder }, { status: 201 });
+    return Response.json({ status: "created", folder });
   } catch (error) {
-    if (error instanceof KnowledgeBaseError && error.code === "FOLDER_NOT_FOUND") {
-      return Response.json({ error: error.message }, { status: 404 });
+    if (error instanceof KnowledgeUploadError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
     }
-    if (error instanceof KnowledgeBaseError) {
-      return Response.json({ error: error.message }, { status: 400 });
-    }
-    return Response.json({ error: "Failed to create knowledge folder" }, { status: 500 });
+    throw error;
   }
 }

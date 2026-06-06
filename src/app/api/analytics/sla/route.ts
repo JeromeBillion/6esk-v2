@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -10,13 +11,16 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
+  const scope = tenantScopeFromUser(user);
 
   const slaResult = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
      FROM sla_configs
-     WHERE is_active = true
+     WHERE tenant_key = $1
+       AND is_active = true
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [scope.tenantKey]
   );
 
   const sla = slaResult.rows[0] ?? {
@@ -35,12 +39,14 @@ export async function GET(request: Request) {
        SELECT MIN(sent_at) AS first_response
        FROM messages m
        WHERE m.ticket_id = t.id
+         AND m.tenant_key = t.tenant_key
          AND m.direction = 'outbound'
          AND m.sent_at IS NOT NULL
      ) r ON true
-     WHERE t.created_at >= $1 AND t.created_at < $2
+     WHERE t.tenant_key = $4
+       AND t.created_at >= $1 AND t.created_at < $2
        AND r.first_response IS NOT NULL`,
-    [start, end, sla.first_response_target_minutes]
+    [start, end, sla.first_response_target_minutes, scope.tenantKey]
   );
 
   const resolutionResult = await db.query(
@@ -50,9 +56,10 @@ export async function GET(request: Request) {
           WHERE EXTRACT(EPOCH FROM (t.solved_at - t.created_at)) <= ($3 * 60)
         )::int AS compliant
      FROM tickets t
-     WHERE t.solved_at IS NOT NULL
+     WHERE t.tenant_key = $4
+       AND t.solved_at IS NOT NULL
        AND t.solved_at >= $1 AND t.solved_at < $2`,
-    [start, end, sla.resolution_target_minutes]
+    [start, end, sla.resolution_target_minutes, scope.tenantKey]
   );
 
   const firstResponseTotal = firstResponseResult.rows[0]?.total ?? 0;

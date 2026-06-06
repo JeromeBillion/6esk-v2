@@ -61,7 +61,9 @@ describe("call outbox hardening", () => {
 
     expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "mock" });
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("SET status = 'sent'"), [
-      "evt-1"
+      "evt-1",
+      "primary",
+      "primary"
     ]);
     expect(mocks.updateCallSessionStatus).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -89,22 +91,6 @@ describe("call outbox hardening", () => {
       2,
       expect.stringContaining("make_interval(secs => $2::int)"),
       [2, 90]
-    );
-  });
-
-  it("applies tenant-scoped locking when tenantId is provided", async () => {
-    process.env.CALLS_PROVIDER = "mock";
-    const lock = mockLockedEvents([]);
-
-    await deliverPendingCallEvents({
-      limit: 1,
-      tenantId: "33333333-3333-3333-3333-333333333333"
-    });
-
-    expect(lock.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("AND e.tenant_id = $3"),
-      [1, 300, "33333333-3333-3333-3333-333333333333"]
     );
   });
 

@@ -5,9 +5,9 @@ import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
-import { checkModuleEntitlement } from "@/server/tenant/module-guard";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function normalizeContact(value: string | null | undefined) {
   if (!value) return "";
@@ -29,11 +29,11 @@ export async function POST(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("whatsapp", tenantId))) {
+  const scope = tenantScopeFromUser(user);
+  if (!(await isWorkspaceModuleEnabled("whatsapp", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "WhatsApp module is not enabled for this workspace.",
@@ -45,7 +45,7 @@ export async function POST(
   }
 
   const { messageId } = await params;
-  const message = await getMessageById(messageId, tenantId);
+  const message = await getMessageById(messageId, scope);
   if (!message) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -53,12 +53,12 @@ export async function POST(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (message.ticket_id) {
-      const assignedUserId = await getTicketAssignment(message.ticket_id, tenantId);
+      const assignedUserId = await getTicketAssignment(message.ticket_id, scope);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, tenantId);
+      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, scope);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -72,11 +72,11 @@ export async function POST(
   const statusResult = await db.query<{ status: string | null }>(
     `SELECT status
      FROM whatsapp_status_events
-     WHERE tenant_id = $3
-       AND (message_id = $1 OR external_message_id = $2)
+     WHERE tenant_key = $1
+       AND (message_id = $2 OR external_message_id = $3)
      ORDER BY occurred_at DESC
      LIMIT 1`,
-    [message.id, message.external_message_id ?? null, tenantId]
+    [scope.tenantKey, message.id, message.external_message_id ?? null]
   );
   const latestStatus = (statusResult.rows[0]?.status ?? message.wa_status ?? "").toLowerCase();
   if (latestStatus !== "failed") {
@@ -87,11 +87,11 @@ export async function POST(
     `SELECT payload
      FROM whatsapp_events
      WHERE direction = 'outbound'
-       AND tenant_id = $2
-       AND (payload->>'messageRecordId') = $1
+       AND tenant_key = $1
+       AND (payload->>'messageRecordId') = $2
      ORDER BY created_at DESC
      LIMIT 1`,
-    [message.id, tenantId]
+    [scope.tenantKey, message.id]
   );
   const priorPayload = eventResult.rows[0]?.payload ?? null;
 
@@ -111,10 +111,10 @@ export async function POST(
   }>(
     `SELECT filename, content_type, size_bytes, r2_key
      FROM attachments
-     WHERE message_id = $1
-       AND tenant_id = $2
+     WHERE tenant_key = $1
+       AND message_id = $2
      ORDER BY created_at`,
-    [message.id, tenantId]
+    [scope.tenantKey, message.id]
   );
   const attachments = attachmentsResult.rows.map((row) => ({
     filename: row.filename,
@@ -140,7 +140,7 @@ export async function POST(
   }
 
   if (message.ticket_id) {
-    const windowStatus = await getWhatsAppWindowStatus(message.ticket_id, tenantId);
+    const windowStatus = await getWhatsAppWindowStatus(message.ticket_id, scope);
     if (!windowStatus.isOpen && !template) {
       return Response.json(
         { error: "WhatsApp 24h window closed. Template required." },
@@ -163,16 +163,26 @@ export async function POST(
   };
 
   await db.query(
-    `INSERT INTO whatsapp_events (tenant_id, direction, payload, status)
-     VALUES ($1, $2, $3, $4)`,
-    [tenantId, "outbound", payload, "queued"]
+    `INSERT INTO whatsapp_events (tenant_key, workspace_key, direction, payload, status)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [scope.tenantKey, scope.workspaceKey, "outbound", payload, "queued"]
   );
 
   const now = new Date();
   await db.query(
-    `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [tenantId, message.id, message.external_message_id ?? null, "queued", now, { source: "resend", status: "queued" }]
+    `INSERT INTO whatsapp_status_events (
+       tenant_key, workspace_key, message_id, external_message_id, status, occurred_at, payload
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      scope.tenantKey,
+      scope.workspaceKey,
+      message.id,
+      message.external_message_id ?? null,
+      "queued",
+      now,
+      { source: "resend", status: "queued" }
+    ]
   );
 
   await db.query(
@@ -181,20 +191,22 @@ export async function POST(
          wa_timestamp = $1,
          sent_at = $1
      WHERE id = $2
-       AND tenant_id = $3`,
-    [now, message.id, tenantId]
+       AND tenant_key = $3`,
+    [now, message.id, scope.tenantKey]
   );
 
   await recordAuditLog({
-    tenantId,
     actorUserId: user.id,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     action: "whatsapp_resend_queued",
     entityType: "message",
     entityId: message.id,
     data: { ticketId: message.ticket_id ?? null, to }
   });
   await recordModuleUsageEvent({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     moduleKey: "whatsapp",
     usageKind: "resend_queued",
     actorType: "human",

@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { resolveTenantScope } from "@/server/tenant-context";
 
 type SpamRule = {
   id: string;
@@ -43,16 +44,24 @@ function matchesRule(
 export async function evaluateSpam({
   fromEmail,
   subject,
-  text
+  text,
+  tenantKey,
+  workspaceKey
 }: {
   fromEmail: string;
   subject?: string | null;
   text?: string | null;
+  tenantKey?: string | null;
+  workspaceKey?: string | null;
 }) {
+  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const result = await db.query<SpamRule>(
     `SELECT id, rule_type, scope, pattern
      FROM spam_rules
-     WHERE is_active = true`
+     WHERE tenant_key = $1
+       AND workspace_key = $2
+       AND is_active = true`,
+    [scope.tenantKey, scope.workspaceKey]
   );
   const rules = result.rows;
 

@@ -9,9 +9,9 @@ import { putObject } from "@/server/storage/r2";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getMessageById, hasMailboxAccess } from "@/server/messages";
-import { checkModuleEntitlement } from "@/server/tenant/module-guard";
+import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function buildOutboundMessageId(fromEmail: string) {
   const domain = fromEmail.split("@")[1]?.trim().toLowerCase() || "6esk.local";
@@ -45,11 +45,11 @@ export async function POST(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!(await checkModuleEntitlement("email", tenantId))) {
+  const scope = tenantScopeFromUser(user);
+  if (!(await isWorkspaceModuleEnabled("email", scope.workspaceKey, scope.tenantKey))) {
     return Response.json(
       {
         error: "Email module is not enabled for this workspace.",
@@ -86,26 +86,21 @@ export async function POST(request: Request) {
   }
 
   const supportAddress = getSupportAddress();
-  let mailbox = await findMailbox(fromEmail);
+  let mailbox = await findMailbox(fromEmail, scope);
   if (!mailbox) {
     if (!isLeadAdmin(user)) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    mailbox = await getOrCreateMailbox(fromEmail, supportAddress, tenantId);
-    if (mailbox.tenant_id !== tenantId) {
-      return Response.json({ error: "Mailbox belongs to another tenant" }, { status: 403 });
-    }
-  } else if (mailbox.tenant_id !== tenantId) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
+    mailbox = await getOrCreateMailbox(fromEmail, supportAddress, scope);
   } else if (!isLeadAdmin(user)) {
-    const allowed = await hasMailboxAccess(user.id, mailbox.id, tenantId);
+    const allowed = await hasMailboxAccess(user.id, mailbox.id, scope);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
   }
 
   if (data.draftId) {
-    const draft = await getMessageById(data.draftId, tenantId);
+    const draft = await getMessageById(data.draftId, scope);
     if (!draft || draft.mailbox_id !== mailbox.id || !isMailDraftRecord(draft)) {
       return Response.json({ error: "Draft not found" }, { status: 404 });
     }
@@ -148,7 +143,7 @@ export async function POST(request: Request) {
              'last_send_error', NULL
            )
        WHERE id = $11
-         AND tenant_id = $12`,
+         AND tenant_key = $12`,
       [
         outboundMessageId,
         threadId,
@@ -161,22 +156,23 @@ export async function POST(request: Request) {
         data.subject,
         previewText,
         messageId,
-        tenantId
+        scope.tenantKey
       ]
     );
   } else {
     await db.query(
       `INSERT INTO messages (
-        tenant_id, id, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
+        id, tenant_key, workspace_key, mailbox_id, direction, message_id, thread_id, in_reply_to, reference_ids, external_message_id, provider, from_email,
         to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read, metadata
       ) VALUES (
-        $1, $2, $3, 'outbound', $4, $5, $6, $7, NULL, 'resend', $8,
-        $9, $10, $11, $12, $13, NULL, true,
+        $1, $2, $3, $4, 'outbound', $5, $6, $7, $8, NULL, 'resend', $9,
+        $10, $11, $12, $13, $14, NULL, true,
         jsonb_build_object('mail_state', 'queued', 'queued_at', now()::text)
       )`,
       [
-        tenantId,
         messageId,
+        scope.tenantKey,
+        scope.workspaceKey,
         mailbox.id,
         outboundMessageId,
         threadId,
@@ -192,7 +188,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const keyPrefix = `messages/${messageId}`;
+  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -229,11 +225,14 @@ export async function POST(request: Request) {
       });
 
       await db.query(
-        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO attachments (
+           id, tenant_key, workspace_key, message_id, filename, content_type, size_bytes, r2_key
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          tenantId,
           attachmentId,
+          scope.tenantKey,
+          scope.workspaceKey,
           messageId,
           attachment.filename,
           attachment.contentType ?? null,
@@ -248,22 +247,26 @@ export async function POST(request: Request) {
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
      WHERE id = $4
-       AND tenant_id = $5`,
-    [textKey, htmlKey, sizeBytes || null, messageId, tenantId]
+       AND tenant_key = $5`,
+    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey]
   );
 
-  await enqueueEmailOutboxEvent({
-    messageRecordId: messageId,
-    from: fromEmail,
-    to: toList,
-    cc: ccList,
-    bcc: bccList,
-    subject: data.subject,
-    replyTo: data.replyTo ?? null
-  }, tenantId);
+  await enqueueEmailOutboxEvent(
+    {
+      messageRecordId: messageId,
+      from: fromEmail,
+      to: toList,
+      cc: ccList,
+      bcc: bccList,
+      subject: data.subject,
+      replyTo: data.replyTo ?? null
+    },
+    scope
+  );
 
   await recordModuleUsageEvent({
-    tenantId,
+    tenantKey: scope.tenantKey,
+    workspaceKey: scope.workspaceKey,
     moduleKey: "email",
     usageKind: "direct_send",
     actorType: "human",
