@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => {
     dbQuery: vi.fn(),
     sendTicketReply: vi.fn(),
     addTagsToTicket: vi.fn(),
+    getCustomerById: vi.fn(),
     getTicketById: vi.fn(),
     recordTicketEvent: vi.fn(),
     mergeCustomers: vi.fn(),
@@ -43,11 +45,6 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/server/agents/auth", () => ({
-  agentIngressErrorResponse: () => null,
-  agentScopeFromIntegration: (integration: { tenant_key?: string | null; workspace_key?: string | null }) => ({
-    tenantKey: integration.tenant_key ?? "primary",
-    workspaceKey: integration.workspace_key ?? "primary"
-  }),
   getAgentFromRequest: mocks.getAgentFromRequest
 }));
 vi.mock("@/server/agents/drafts", () => ({
@@ -82,6 +79,9 @@ vi.mock("@/server/tickets", () => ({
   getTicketById: mocks.getTicketById,
   recordTicketEvent: mocks.recordTicketEvent
 }));
+vi.mock("@/server/customers", () => ({
+  getCustomerById: mocks.getCustomerById
+}));
 vi.mock("@/server/merges", () => ({
   mergeCustomers: mocks.mergeCustomers,
   mergeTickets: mocks.mergeTickets,
@@ -107,6 +107,8 @@ const TICKET_A = "11111111-1111-1111-1111-111111111111";
 const TICKET_B = "22222222-2222-2222-2222-222222222222";
 const CUSTOMER_A = "33333333-3333-3333-3333-333333333333";
 const CUSTOMER_B = "44444444-4444-4444-4444-444444444444";
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+const FOREIGN_TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 function makeTicket(id: string, mailboxId = "mailbox-1") {
   return {
@@ -128,12 +130,40 @@ async function postAction(action: Record<string, unknown>) {
   return { response, body };
 }
 
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForStableJson(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => [key, normalizeForStableJson(entryValue)])
+  );
+}
+
+function actionRequestHash(action: Record<string, unknown>) {
+  return createHash("sha256")
+    .update(JSON.stringify(normalizeForStableJson({ ...action, idempotencyKey: undefined })))
+    .digest("hex");
+}
+
+function mockActionIdempotencyClaim(id = "idem-1") {
+  mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+  mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id }] });
+}
+
 describe("agent merge actions route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dbQuery.mockReset();
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "manual",
       scopes: {},
@@ -146,12 +176,13 @@ describe("agent merge actions route", () => {
       if (ticketId === TICKET_A || ticketId === TICKET_B) return makeTicket(ticketId);
       return null;
     });
-    mocks.createMergeReviewTask.mockResolvedValue({ id: "review-1" });
-    mocks.createDraft.mockResolvedValue({
-      id: "draft-1",
-      tenant_key: "primary",
-      workspace_key: "primary"
+    mocks.getCustomerById.mockImplementation(async (customerId: string) => {
+      if (customerId === CUSTOMER_A || customerId === CUSTOMER_B) {
+        return { id: customerId, tenant_id: TENANT_ID };
+      }
+      return null;
     });
+    mocks.createMergeReviewTask.mockResolvedValue({ id: "review-1" });
     mocks.buildAgentEvent.mockReturnValue({
       id: "evt-1",
       eventType: "merge.review.required",
@@ -207,6 +238,511 @@ describe("agent merge actions route", () => {
     expect(mocks.mergeTickets).not.toHaveBeenCalled();
   });
 
+  it("rate limits agent action bursts before ticket side effects", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { max_actions_per_minute: 1 }
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 1 }] });
+
+    const { response, body } = await postAction({
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Draft response"
+    });
+
+    expect(response.status).toBe(429);
+    expect(body).toMatchObject({
+      code: "agent_action_rate_limited",
+      limit: 1,
+      windowSeconds: 60
+    });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_rate_limited",
+        entityType: "agent_integration",
+        entityId: "agent-1"
+      })
+    );
+  });
+
+  it("records non-call action idempotency before creating draft side effects", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "idem-1" }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    const action = {
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Draft response",
+      idempotencyKey: "draft-1"
+    };
+
+    const { response, body } = await postAction(action);
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "ok"
+    });
+    expect(mocks.createDraft).toHaveBeenCalledTimes(1);
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_action_idempotency"),
+      expect.arrayContaining([TENANT_ID, "agent-1", "draft-1", "draft_reply", TICKET_A])
+    );
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("response = $6::jsonb"),
+      expect.arrayContaining([TENANT_ID, "agent-1", "draft-1"])
+    );
+  });
+
+  it("deduplicates replayed non-call action side effects from the ledger", async () => {
+    const action = {
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Draft response",
+      idempotencyKey: "draft-replay-1"
+    };
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          request_hash: actionRequestHash(action),
+          status: "completed",
+          response: { type: "draft_reply", status: "ok" }
+        }
+      ]
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { response, body } = await postAction(action);
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "ok",
+      data: {
+        idempotencyKey: "draft-replay-1",
+        deduplicated: true
+      }
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects reused idempotency keys with different action payloads", async () => {
+    const action = {
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Changed draft response",
+      idempotencyKey: "draft-conflict-1"
+    };
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          request_hash: actionRequestHash({ ...action, text: "Original draft response" }),
+          status: "completed",
+          response: { type: "draft_reply", status: "ok" }
+        }
+      ]
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { response, body } = await postAction(action);
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "failed",
+      detail: "idempotencyKey was already used for a different action payload.",
+      data: {
+        idempotencyKey: "draft-conflict-1",
+        errorCode: "idempotency_conflict"
+      }
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_idempotency_conflict",
+        entityType: "ticket",
+        entityId: TICKET_A
+      })
+    );
+  });
+
+  it("dry-runs agent actions without executing ticket side effects", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: { actionRolloutMode: "dry_run" }
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Draft response"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "dry_run",
+      detail: "Dry-run mode; no side effects executed.",
+      data: {
+        rolloutMode: "dry_run",
+        wouldExecute: "draft_reply"
+      }
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_dry_run",
+        entityType: "ticket",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          rolloutMode: "dry_run",
+          actionType: "draft_reply"
+        })
+      })
+    );
+  });
+
+  it("blocks direct mutations in explicit draft-only rollout mode", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: { actionRolloutMode: "draft_only" }
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "set_priority",
+      ticketId: TICKET_A,
+      priority: "urgent"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "set_priority",
+      status: "blocked",
+      detail: "Action blocked by draft-only AI rollout mode.",
+      data: {
+        rolloutMode: "draft_only",
+        errorCode: "action_rollout_blocked"
+      }
+    });
+    expect(mocks.dbQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE tickets SET priority"),
+      expect.anything()
+    );
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_rollout_blocked",
+        entityId: TICKET_A
+      })
+    );
+  });
+
+  it("blocks customer contact in limited auto mode unless explicitly allowlisted", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: { actionRolloutMode: "limited_auto" }
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "send_reply",
+      ticketId: TICKET_A,
+      subject: "Update",
+      text: "Customer-facing response"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "send_reply",
+      status: "blocked",
+      detail: "Action blocked by limited auto-action rollout mode.",
+      data: {
+        rolloutMode: "limited_auto",
+        errorCode: "action_rollout_blocked"
+      }
+    });
+    expect(mocks.isAutoSendAllowed).not.toHaveBeenCalled();
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+  });
+
+  it("allows explicitly allowlisted customer contact in limited auto mode", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {},
+      policy: {
+        actionRolloutMode: "limited_auto",
+        allowedAutoActions: ["send_reply"]
+      }
+    });
+    mocks.isAutoSendAllowed.mockReturnValue(true);
+    mockActionIdempotencyClaim("send-allowlisted-1");
+
+    const { response, body } = await postAction({
+      type: "send_reply",
+      ticketId: TICKET_A,
+      subject: "Update",
+      text: "Customer-facing response",
+      idempotencyKey: "send-allowlisted-1"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "send_reply",
+      status: "ok"
+    });
+    expect(mocks.sendTicketReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        ticketId: TICKET_A,
+        origin: "ai"
+      })
+    );
+  });
+
+  it("requires idempotencyKey before auto-sending a reply", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "auto_send",
+      scopes: {},
+      capabilities: {}
+    });
+    mocks.isAutoSendAllowed.mockReturnValue(true);
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "send_reply",
+      ticketId: TICKET_A,
+      subject: "Update",
+      text: "Customer-facing response"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "send_reply",
+      status: "failed",
+      detail: "idempotencyKey is required for this AI action.",
+      data: {
+        errorCode: "idempotency_required"
+      }
+    });
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_idempotency_required",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          actionType: "send_reply"
+        })
+      })
+    );
+  });
+
+  it("does not use unscoped ticket lookup for primary action tickets", async () => {
+    mocks.getTicketById.mockImplementation(async (ticketId: string, tenantId?: string) => {
+      if (!tenantId && ticketId === TICKET_A) {
+        return makeTicket(TICKET_A, "foreign-mailbox");
+      }
+      return null;
+    });
+    mocks.dbQuery.mockResolvedValue({ rows: [{ used: 0 }], rowCount: 1 });
+
+    const cases = [
+      {
+        action: {
+          type: "draft_reply",
+          ticketId: TICKET_A,
+          text: "Draft response"
+        },
+        sideEffect: mocks.createDraft
+      },
+      {
+        action: {
+          type: "set_tags",
+          ticketId: TICKET_A,
+          tags: ["urgent"],
+          idempotencyKey: "tenant-tags-1"
+        },
+        sideEffect: mocks.addTagsToTicket
+      },
+      {
+        action: {
+          type: "set_priority",
+          ticketId: TICKET_A,
+          priority: "urgent",
+          idempotencyKey: "tenant-priority-1"
+        },
+        sideEffect: mocks.recordTicketEvent
+      },
+      {
+        action: {
+          type: "assign_to",
+          ticketId: TICKET_A,
+          assignedUserId: null,
+          idempotencyKey: "tenant-assign-1"
+        },
+        sideEffect: mocks.recordTicketEvent
+      },
+      {
+        action: {
+          type: "request_human_review",
+          ticketId: TICKET_A,
+          idempotencyKey: "tenant-review-1",
+          metadata: { reason: "Needs human confirmation" }
+        },
+        sideEffect: mocks.recordTicketEvent
+      }
+    ];
+
+    for (const { action, sideEffect } of cases) {
+      vi.clearAllMocks();
+      mocks.getAgentFromRequest.mockResolvedValue({
+        id: "agent-1",
+        tenant_id: TENANT_ID,
+        status: "active",
+        policy_mode: "manual",
+        scopes: {},
+        capabilities: {}
+      });
+      mocks.hasMailboxScope.mockReturnValue(true);
+      mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
+      mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+      mocks.recordAuditLog.mockResolvedValue(undefined);
+      mocks.dbQuery.mockResolvedValue({ rows: [{ used: 0 }], rowCount: 1 });
+      mocks.getTicketById.mockImplementation(async (ticketId: string, tenantId?: string) => {
+        if (!tenantId && ticketId === TICKET_A) {
+          return makeTicket(TICKET_A, "foreign-mailbox");
+        }
+        return null;
+      });
+
+      const { response, body } = await postAction(action);
+
+      expect(response.status).toBe(200);
+      expect(body.results[0]).toMatchObject({
+        type: action.type,
+        status: "not_found"
+      });
+      expect(mocks.getTicketById).toHaveBeenCalledWith(TICKET_A, TENANT_ID);
+      expect(sideEffect).not.toHaveBeenCalled();
+      expect(mocks.recordAuditLog).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "ai_action_idempotency_required"
+        })
+      );
+    }
+  });
+
+  it("rejects cross-tenant merge targets before direct merge execution", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { allow_merge_actions: true }
+    });
+    mocks.getTicketById.mockImplementation(async (ticketId: string, tenantId?: string) => {
+      if (tenantId === TENANT_ID && ticketId === TICKET_A) return makeTicket(TICKET_A);
+      if (!tenantId && ticketId === TICKET_B) return makeTicket(TICKET_B, "foreign-mailbox");
+      return null;
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "merge_tickets",
+      ticketId: TICKET_A,
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      reason: "Duplicate case",
+      confidence: 0.97
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "merge_tickets",
+      status: "not_found",
+      detail: "Target ticket not found"
+    });
+    expect(mocks.getTicketById).toHaveBeenCalledWith(TICKET_B, TENANT_ID);
+    expect(mocks.mergeTickets).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-tenant customer merge ids before direct customer merge execution", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { allow_merge_actions: true }
+    });
+    mocks.getCustomerById.mockImplementation(async (customerId: string, tenantId?: string) => {
+      if (tenantId === TENANT_ID && customerId === CUSTOMER_A) {
+        return { id: CUSTOMER_A, tenant_id: TENANT_ID };
+      }
+      if (!tenantId && customerId === CUSTOMER_B) {
+        return { id: CUSTOMER_B, tenant_id: FOREIGN_TENANT_ID };
+      }
+      return null;
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "merge_customers",
+      ticketId: TICKET_A,
+      sourceCustomerId: CUSTOMER_A,
+      targetCustomerId: CUSTOMER_B,
+      reason: "Same customer",
+      confidence: 0.98
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "merge_customers",
+      status: "not_found",
+      detail: "Source or target customer not found for customer merge."
+    });
+    expect(mocks.getCustomerById).toHaveBeenCalledWith(CUSTOMER_B, TENANT_ID);
+    expect(mocks.mergeCustomers).not.toHaveBeenCalled();
+  });
+
   it("rejects propose_merge payload that mixes ticket and customer merge fields", async () => {
     const { response, body } = await postAction({
       type: "propose_merge",
@@ -229,6 +765,8 @@ describe("agent merge actions route", () => {
   });
 
   it("accepts mixed merge hints when metadata explicitly requests customer merge", async () => {
+    mockActionIdempotencyClaim("propose-customer-1");
+
     const { response, body } = await postAction({
       type: "propose_merge",
       ticketId: TICKET_A,
@@ -238,6 +776,7 @@ describe("agent merge actions route", () => {
       targetCustomerId: CUSTOMER_B,
       reason: "Same customer issue moved across channels",
       confidence: 0.95,
+      idempotencyKey: "propose-customer-1",
       metadata: {
         proposalType: "customer_merge",
         linkedTicketIds: {
@@ -290,6 +829,8 @@ describe("agent merge actions route", () => {
   });
 
   it("creates review task and emits merge.review.required event for valid propose_merge", async () => {
+    mockActionIdempotencyClaim("propose-ticket-1");
+
     const { response, body } = await postAction({
       type: "propose_merge",
       ticketId: TICKET_A,
@@ -297,6 +838,7 @@ describe("agent merge actions route", () => {
       targetTicketId: TICKET_B,
       reason: "Customer opened duplicate escalation thread",
       confidence: 0.98,
+      idempotencyKey: "propose-ticket-1",
       metadata: { channel: "email" }
     });
 
@@ -319,6 +861,8 @@ describe("agent merge actions route", () => {
   });
 
   it("creates linked_case merge reviews when metadata explicitly requests ticket linkage", async () => {
+    mockActionIdempotencyClaim("propose-link-1");
+
     const { response, body } = await postAction({
       type: "propose_merge",
       ticketId: TICKET_A,
@@ -328,6 +872,7 @@ describe("agent merge actions route", () => {
       targetCustomerId: CUSTOMER_B,
       reason: "Same customer moved from email into WhatsApp follow-up",
       confidence: 0.96,
+      idempotencyKey: "propose-link-1",
       metadata: {
         proposalType: "linked_case"
       }
@@ -350,6 +895,7 @@ describe("agent merge actions route", () => {
   it("enforces confidence threshold before merge_tickets execution", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "manual",
       scopes: {},
@@ -376,11 +922,47 @@ describe("agent merge actions route", () => {
   it("executes merge_tickets when capability and safety checks pass", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "manual",
       scopes: {},
       capabilities: { allow_merge_actions: true }
     });
+    mockActionIdempotencyClaim("merge-ticket-1");
+
+    const { response, body } = await postAction({
+      type: "merge_tickets",
+      ticketId: TICKET_A,
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      reason: "Same issue duplicated by customer follow-up",
+      confidence: 0.97,
+      idempotencyKey: "merge-ticket-1"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "merge_tickets",
+      status: "ok"
+    });
+    expect(mocks.mergeTickets).toHaveBeenCalledWith({
+      sourceTicketId: TICKET_A,
+      targetTicketId: TICKET_B,
+      actorUserId: null,
+      reason: "Same issue duplicated by customer follow-up"
+    });
+  });
+
+  it("requires idempotencyKey before direct ticket merge execution", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { allow_merge_actions: true }
+    });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
 
     const { response, body } = await postAction({
       type: "merge_tickets",
@@ -394,21 +976,28 @@ describe("agent merge actions route", () => {
     expect(response.status).toBe(200);
     expect(body.results[0]).toMatchObject({
       type: "merge_tickets",
-      status: "ok"
+      status: "failed",
+      detail: "idempotencyKey is required for this AI action.",
+      data: {
+        errorCode: "idempotency_required"
+      }
     });
-    expect(mocks.mergeTickets).toHaveBeenCalledWith({
-      sourceTicketId: TICKET_A,
-      targetTicketId: TICKET_B,
-      actorUserId: null,
-      reason: "Same issue duplicated by customer follow-up",
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.mergeTickets).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_idempotency_required",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          actionType: "merge_tickets"
+        })
+      })
+    );
   });
 
   it("requires safety fields for merge_customers too", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "manual",
       scopes: {},
@@ -435,11 +1024,13 @@ describe("agent merge actions route", () => {
   it("executes link_tickets when capability and safety checks pass", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "manual",
       scopes: {},
       capabilities: { allow_merge_actions: true }
     });
+    mockActionIdempotencyClaim("link-ticket-1");
 
     const { response, body } = await postAction({
       type: "link_tickets",
@@ -448,6 +1039,7 @@ describe("agent merge actions route", () => {
       targetTicketId: TICKET_B,
       reason: "Same issue continued on WhatsApp",
       confidence: 0.93,
+      idempotencyKey: "link-ticket-1",
       metadata: { proposalType: "linked_case" }
     });
 
@@ -461,15 +1053,14 @@ describe("agent merge actions route", () => {
       targetTicketId: TICKET_B,
       actorUserId: null,
       reason: "Same issue continued on WhatsApp",
-      metadata: { proposalType: "linked_case" },
-      tenantKey: "primary",
-      workspaceKey: "primary"
+      metadata: { proposalType: "linked_case" }
     });
   });
 
   it("escalates send_reply outside working hours to draft + tag when policy is draft_only", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "auto_send",
       scopes: {},
@@ -482,12 +1073,14 @@ describe("agent merge actions route", () => {
       }
     });
     mocks.isAutoSendAllowed.mockReturnValue(false);
+    mockActionIdempotencyClaim("send-escalation-1");
 
     const { response, body } = await postAction({
       type: "send_reply",
       ticketId: TICKET_A,
       subject: "Update",
-      text: "Follow-up response"
+      text: "Follow-up response",
+      idempotencyKey: "send-escalation-1"
     });
 
     expect(response.status).toBe(200);
@@ -501,16 +1094,11 @@ describe("agent merge actions route", () => {
       expect.objectContaining({
         integrationId: "agent-1",
         ticketId: TICKET_A,
-        tenantKey: "primary",
-        workspaceKey: "primary",
         subject: "Update",
         bodyText: "Follow-up response"
       })
     );
-    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"], {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"]);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "ai_reply_escalated_out_of_hours",
@@ -519,9 +1107,43 @@ describe("agent merge actions route", () => {
     );
   });
 
+  it("requires idempotencyKey before mutating ticket priority", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "set_priority",
+      ticketId: TICKET_A,
+      priority: "urgent"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "set_priority",
+      status: "failed",
+      detail: "idempotencyKey is required for this AI action.",
+      data: {
+        errorCode: "idempotency_required"
+      }
+    });
+    expect(mocks.dbQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE tickets SET priority"),
+      expect.anything()
+    );
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_idempotency_required",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          actionType: "set_priority"
+        })
+      })
+    );
+  });
+
   it("blocks send_reply outside working hours without draft when escalation mode is block", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
+      tenant_id: TENANT_ID,
       status: "active",
       policy_mode: "auto_send",
       scopes: {},
@@ -571,32 +1193,8 @@ describe("agent merge actions route", () => {
     expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects request_human_review writebacks for call sessions outside the ticket scope", async () => {
-    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
-    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
-
-    const { response, body } = await postAction({
-      type: "request_human_review",
-      ticketId: TICKET_A,
-      idempotencyKey: "summary-cross-tenant",
-      metadata: {
-        callSessionId: "55555555-5555-4555-8555-555555555555",
-        summary: "Should not attach to this ticket."
-      }
-    });
-
-    expect(response.status).toBe(200);
-    expect(body.results[0]).toMatchObject({
-      type: "request_human_review",
-      status: "failed",
-      detail: "Call session not found for this ticket and tenant scope."
-    });
-    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
-  });
-
   it("deduplicates repeated request_human_review writebacks by callSessionId + idempotencyKey", async () => {
     mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
-    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "66666666-6666-4666-8666-666666666666" }] });
     mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
     mocks.dbQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
 
@@ -632,10 +1230,8 @@ describe("agent merge actions route", () => {
   });
 
   it("records first-time request_human_review writeback and returns deterministic metadata", async () => {
-    mocks.dbQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: "77777777-7777-4777-8777-777777777777" }] })
-      .mockResolvedValueOnce({ rows: [{ id: "writeback-1" }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "writeback-1" }] });
 
     const { response, body } = await postAction({
       type: "request_human_review",

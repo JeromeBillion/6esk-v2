@@ -25,10 +25,11 @@ import { GET, POST } from "@/app/api/admin/workspace/modules/route";
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    email: `${roleName}@example.com`,
+    email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: "00000000-0000-0000-0000-000000000001"
   };
 }
 
@@ -40,6 +41,7 @@ const CONFIG = {
     whatsapp: true,
     voice: false,
     aiAutomation: true,
+    dexterOrchestration: false,
     vanillaWebchat: true
   }
 };
@@ -86,7 +88,11 @@ describe("workspace modules admin API", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "updated", config: CONFIG });
-    expect(mocks.saveWorkspaceModules).toHaveBeenCalledWith(CONFIG.modules, "primary", "primary");
+    expect(mocks.saveWorkspaceModules).toHaveBeenCalledWith(
+      CONFIG.modules,
+      "primary",
+      "00000000-0000-0000-0000-000000000001"
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "workspace_modules_updated",

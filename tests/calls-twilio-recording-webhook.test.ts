@@ -2,34 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   attachCallRecording: vi.fn(),
-  resolveCallSessionProviderScope: vi.fn(),
   recordAuditLog: vi.fn(),
-  listActiveProviderWebhookSecrets: vi.fn(),
-  markProviderWebhookSecretUsed: vi.fn(),
   twilioFactory: vi.fn(),
   twilioValidate: vi.fn()
 }));
 
 vi.mock("@/server/calls/service", () => ({
-  attachCallRecording: mocks.attachCallRecording,
-  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
+  attachCallRecording: mocks.attachCallRecording
 }));
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
-
-vi.mock("@/server/provider-webhook-secrets", () => {
-  class ProviderWebhookSecretConfigurationError extends Error {}
-  return {
-    ProviderWebhookSecretConfigurationError,
-    listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
-    markProviderWebhookSecretUsed: mocks.markProviderWebhookSecretUsed,
-    shouldRequireTenantProviderWebhookSecrets: () =>
-      process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
-      process.env.NODE_ENV === "production"
-  };
-});
 
 vi.mock("twilio", () => {
   const callable = ((...args: unknown[]) => mocks.twilioFactory(...args)) as ((
@@ -50,15 +34,8 @@ describe("GET /api/calls/webhooks/twilio/recording", () => {
       ...ORIGINAL_ENV,
       APP_URL: "https://app.6esk.test",
       CALLS_TWILIO_ACCOUNT_SID: "AC123",
-      CALLS_TWILIO_AUTH_TOKEN: "auth-token",
-      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
+      CALLS_TWILIO_AUTH_TOKEN: "auth-token"
     };
-    mocks.resolveCallSessionProviderScope.mockResolvedValue({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
-    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
-    mocks.markProviderWebhookSecretUsed.mockResolvedValue(undefined);
     mocks.attachCallRecording.mockResolvedValue({
       status: "attached",
       callSessionId: "call-session-1",
@@ -98,36 +75,11 @@ describe("GET /api/calls/webhooks/twilio/recording", () => {
         recordingUrl: "https://api.twilio.com/recordings/RE123"
       })
     );
-  });
-
-  it("uses the tenant-scoped Twilio auth token in strict mode", async () => {
-    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
-    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
-      { id: "secret-1", secret: "tenant-auth-token", source: "db" }
-    ]);
-    mocks.twilioValidate.mockImplementation((token) => token === "tenant-auth-token");
-
-    const response = await GET(
-      new Request(
-        "https://app.6esk.test/api/calls/webhooks/twilio/recording?CallSid=CA123&AccountSid=AC123&RecordingSid=RE123&RecordingUrl=https://api.twilio.com/recordings/RE123",
-        {
-          headers: {
-            "x-twilio-signature": "sig"
-          }
-        }
-      )
+    expect(mocks.twilioValidate).toHaveBeenCalledWith(
+      "auth-token",
+      "sig",
+      "https://app.6esk.test/api/calls/webhooks/twilio/recording?CallSid=CA123&RecordingSid=RE123&RecordingUrl=https://api.twilio.com/recordings/RE123&RecordingDuration=44&Timestamp=1710000000",
+      {}
     );
-
-    expect(response.status).toBe(200);
-    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
-      scope: { tenantKey: "tenant-a", workspaceKey: "workspace-a" },
-      provider: "twilio",
-      secretType: "auth_token",
-      providerAccountId: "AC123"
-    });
-    expect(mocks.markProviderWebhookSecretUsed).toHaveBeenCalledWith("secret-1", {
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
   });
 });

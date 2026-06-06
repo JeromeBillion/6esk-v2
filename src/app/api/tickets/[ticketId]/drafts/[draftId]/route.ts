@@ -4,7 +4,6 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftContent, updateDraftStatus } from "@/server/agents/drafts";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const updateSchema = z
   .object({
@@ -35,8 +34,8 @@ export async function PATCH(
   }
 
   const { ticketId, draftId } = await params;
-  const scope = tenantScopeFromUser(user);
-  const ticket = await getTicketById(ticketId, scope);
+  const tenantId = user.tenant_id ?? "";
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -66,12 +65,7 @@ export async function PATCH(
     parsed.data.bodyHtml !== undefined;
 
   if (hasContentUpdate) {
-    const existing = await getDraftById({
-      draftId,
-      ticketId,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
-    });
+    const existing = await getDraftById({ draftId, ticketId });
     if (!existing) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
@@ -81,9 +75,7 @@ export async function PATCH(
       ticketId,
       subject: parsed.data.subject !== undefined ? parsed.data.subject : existing.subject,
       bodyText: parsed.data.bodyText !== undefined ? parsed.data.bodyText : existing.body_text,
-      bodyHtml: parsed.data.bodyHtml !== undefined ? parsed.data.bodyHtml : existing.body_html,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
+      bodyHtml: parsed.data.bodyHtml !== undefined ? parsed.data.bodyHtml : existing.body_html
     });
 
     if (!updatedContent) {
@@ -95,14 +87,10 @@ export async function PATCH(
       ticketId,
       eventType: "ai_draft_updated",
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       data: { draftId }
     });
     await recordAuditLog({
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       action: "ai_draft_updated",
       entityType: "agent_draft",
       entityId: draftId,
@@ -114,9 +102,7 @@ export async function PATCH(
     const updatedStatus = await updateDraftStatus({
       draftId,
       ticketId,
-      status: parsed.data.status,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
+      status: parsed.data.status
     });
 
     if (!updatedStatus) {
@@ -128,14 +114,10 @@ export async function PATCH(
     await recordTicketEvent({
       ticketId,
       eventType,
-      actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
+      actorUserId: user.id
     });
     await recordAuditLog({
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       action: eventType,
       entityType: "agent_draft",
       entityId: draftId,

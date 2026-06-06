@@ -1,17 +1,24 @@
-import { requireLeadAdminOrMachineAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { runInBackground } from "@/server/async";
 import { retryFailedWhatsAppEvents } from "@/server/whatsapp/outbox";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminOrMachineAccess(request, {
-    secretEnvNames: ["WHATSAPP_OUTBOX_SECRET", "INBOUND_SHARED_SECRET"]
-  });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  const sharedSecret =
+    process.env.WHATSAPP_OUTBOX_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
+  const provided = request.headers.get("x-6esk-secret");
+
+  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 25) || 25, 1), 100);
+  const tenantId = user?.tenant_id ?? null;
   let eventIds: string[] = [];
   try {
     const payload = (await request.json()) as { eventIds?: unknown };
@@ -27,10 +34,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await retryFailedWhatsAppEvents({ limit, eventIds }, scope);
+    const result = await retryFailedWhatsAppEvents({ limit, eventIds, tenantId });
     await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_triggered",
       entityType: "whatsapp_events",
@@ -45,14 +51,17 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed WhatsApp outbox events";
-    await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+    runInBackground(recordAuditLog({
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "whatsapp_outbox_retry_failed",
       entityType: "whatsapp_events",
       data: { limit, detail }
-    }).catch(() => {});
+    }), "Failed to record WhatsApp outbox retry failure audit event", {
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
+      actorUserId: user?.id ?? null,
+      limit
+    });
     return Response.json(
       { error: "Failed to retry failed WhatsApp outbox events", detail },
       { status: 500 }

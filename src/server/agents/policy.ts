@@ -1,5 +1,3 @@
-import { isFullAutoPolicyMode } from "@/server/agents/policy-modes";
-
 type WorkingHours = {
   timezone?: string;
   days?: number[];
@@ -97,7 +95,7 @@ export function isAutoSendAllowed(integration: {
   policy_mode: string;
   policy?: Record<string, unknown> | null;
 }) {
-  if (!isFullAutoPolicyMode(integration.policy_mode)) {
+  if (integration.policy_mode !== "auto_send") {
     return false;
   }
   return isWithinWorkingHours(integration.policy as AgentPolicy);

@@ -40,40 +40,20 @@ export type WorkspaceModuleFlags = {
   whatsapp: boolean;
   voice: boolean;
   aiAutomation: boolean;
+  dexterOrchestration: boolean;
   vanillaWebchat: boolean;
 };
 
-export type WorkspaceModuleStatus = "active" | "disabled" | "suspended" | "downgrade_pending";
-
-export type WorkspaceModuleEntitlement = {
-  enabled: boolean;
-  status: WorkspaceModuleStatus;
-  planKey: string | null;
-  billingMode: "billable" | "included" | "trial" | "none" | null;
-  reason: string | null;
-  effectiveAt: string | null;
-};
-
 export type WorkspaceModulesConfig = {
-  tenantKey?: string;
   workspaceKey: string;
   updatedAt: string | null;
   modules: WorkspaceModuleFlags;
-  entitlements?: Record<keyof WorkspaceModuleFlags, WorkspaceModuleEntitlement>;
-  source?: "database" | "default" | "fail_closed";
-  failureReason?: "database_error" | "missing_configuration" | null;
 };
 
 export type WorkspaceModuleUsageSummary = {
   workspaceKey: string;
   windowDays: number;
   generatedAt: string;
-  daily: Array<{
-    date: string;
-    totalQuantity: number;
-    eventCount: number;
-    modules: Record<keyof WorkspaceModuleFlags, number>;
-  }>;
   modules: Array<{
     moduleKey: keyof WorkspaceModuleFlags;
     totalQuantity: number;
@@ -173,14 +153,13 @@ export type WhatsAppFailedEvent = {
 
 export type AgentIntegration = {
   id: string;
-  tenant_key: string;
   name: string;
   provider: string;
   base_url: string;
   auth_type: string;
   shared_secret: string;
   status: "active" | "paused";
-  policy_mode: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
+  policy_mode: "draft_only" | "auto_send";
   scopes?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   policy?: Record<string, unknown>;
@@ -207,409 +186,6 @@ export type AgentOutboxMetrics = {
     lastFailedAt: string | null;
     lastError: string | null;
   };
-};
-
-export type AgentRunSummary = {
-  id: string;
-  tenant_key: string;
-  integration_id: string | null;
-  mode: string;
-  status: string;
-  lane_key: string;
-  source_event_type: string | null;
-  resource: Record<string, unknown>;
-  error: string | null;
-  queued_at: string;
-  dispatched_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type AgentRunPolicyReplay = {
-  status: "complete" | "partial" | "blocked";
-  explanation: string;
-  missingEvidence: string[];
-  run: AgentRunSummary & {
-    command_envelope: Record<string, unknown>;
-    idempotency_key: string | null;
-  };
-  promptSandbox: Record<string, unknown> | null;
-  promptTemplate: {
-    id: string;
-    tenant_key: string;
-    workspace_key: string;
-    template_key: string;
-    template_version: string;
-    status: string;
-    template_hash: string;
-    activated_at: string | null;
-    retired_at: string | null;
-    metadata: Record<string, unknown>;
-    created_at: string;
-    updated_at: string;
-  } | null;
-  evidence: {
-    events: Array<{
-      id: string;
-      run_id: string;
-      event_type: string;
-      status: string | null;
-      data: Record<string, unknown>;
-      created_at: string;
-    }>;
-    steps: Array<{
-      id: string;
-      run_id: string;
-      step_type: string;
-      status: string;
-      input: Record<string, unknown>;
-      output: Record<string, unknown>;
-      error: string | null;
-      started_at: string;
-      completed_at: string | null;
-    }>;
-    toolCalls: Array<{
-      id: string;
-      run_id: string;
-      step_id: string | null;
-      tool_name: string;
-      status: string;
-      request: Record<string, unknown>;
-      response: Record<string, unknown>;
-      error: string | null;
-      requested_at: string;
-      completed_at: string | null;
-    }>;
-    guardEvents: AiGuardEventRecord[];
-    policyDecisions: AiPolicyDecisionRecord[];
-  };
-};
-
-export type KnowledgeFolder = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  parent_id: string | null;
-  name: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type KnowledgeDocument = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  folder_id: string | null;
-  filename: string;
-  title: string | null;
-  content_type: string;
-  checksum_sha256: string;
-  byte_size: number;
-  status: string;
-  extraction_status: string;
-  extraction_error: string | null;
-  metadata: Record<string, unknown>;
-  published_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type KnowledgeSearchResult = {
-  documentId: string;
-  chunkId: string;
-  title: string | null;
-  filename: string;
-  content: string;
-  score: number;
-  chunkIndex: number;
-};
-
-export type KnowledgeRetrievalEvent = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  query: string;
-  result_count: number;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
-
-export type KnowledgeQuarantineEvent = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  filename: string;
-  content_type: string;
-  checksum_sha256: string;
-  byte_size: number;
-  reason_code: string;
-  scanner_status: string;
-  scanner: string | null;
-  scanner_signature: string | null;
-  detail: string | null;
-  storage_provider: string | null;
-  storage_bucket: string | null;
-  storage_key: string | null;
-  stored_at: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
-
-export type KnowledgeRetentionDocument = {
-  id: string;
-  filename: string;
-  title: string | null;
-  status: string;
-  byteSize: number;
-  expiresAt: string;
-  legalHold: boolean;
-};
-
-export type KnowledgeRetentionSweepResult = {
-  dryRun: boolean;
-  cutoffAt: string;
-  matched: number;
-  deleted: number;
-  skippedLegalHold: number;
-  documents: KnowledgeRetentionDocument[];
-};
-
-export type KnowledgeExportBundle = {
-  formatVersion: "ai-knowledge-export.v1";
-  exportId: string;
-  tenantKey: string;
-  workspaceKey: string;
-  generatedAt: string;
-  includeDeleted: boolean;
-  includeBodyText: boolean;
-  documentCount: number;
-  chunkCount: number;
-  folders: KnowledgeFolder[];
-  documents: Array<{
-    id: string;
-    folderId: string | null;
-    filename: string;
-    title: string | null;
-    contentType: string;
-    checksumSha256: string;
-    byteSize: number;
-    status: string;
-    extractionStatus: string;
-    extractionError: string | null;
-    metadata: Record<string, unknown>;
-    publishedAt: string | null;
-    createdAt: string;
-    updatedAt: string;
-    bodyText?: string;
-    chunks: Array<{
-      id: string;
-      chunkIndex: number;
-      content: string;
-      tokenEstimate: number;
-      metadata: Record<string, unknown>;
-      createdAt: string;
-    }>;
-  }>;
-};
-
-export type KnowledgeIngestionReadiness = {
-  checkedAt: string;
-  ready: boolean;
-  blockers: string[];
-  warnings: string[];
-  scanner: {
-    status: "configured" | "required_unconfigured" | "optional_disabled";
-    required: boolean;
-    urlConfigured: boolean;
-    timeoutMs: number;
-  };
-  extractor: {
-    status: "configured" | "required_unconfigured";
-    urlConfigured: boolean;
-    timeoutMs: number;
-    supportedContentTypes: string[];
-  };
-  quarantineStorage: {
-    status: "configured" | "required_unconfigured" | "optional_disabled" | "enabled_unconfigured";
-    enabled: boolean;
-    required: boolean;
-    bucketConfigured: boolean;
-    missing: string[];
-    prefix: string;
-  };
-};
-
-export type TenantExportSection = {
-  key: string;
-  source: string;
-  rowCount: number;
-  exportedCount: number;
-  truncated: boolean;
-  redactedColumns: string[];
-  rows: Record<string, unknown>[];
-};
-
-export type TenantExportObjectRef = {
-  section: string;
-  rowId: string | null;
-  field: string;
-  key: string;
-  filename?: string | null;
-  contentType?: string | null;
-  sizeBytes?: number | null;
-};
-
-export type TenantExportObjectPayload = {
-  ref: TenantExportObjectRef;
-  encoding: "base64";
-  contentType: string | null;
-  sizeBytes: number;
-  sha256: string;
-  base64: string;
-};
-
-export type TenantExportObjectPayloadSkip = {
-  ref: TenantExportObjectRef;
-  reason: "unsafe_key" | "exceeds_limit" | "fetch_failed";
-  detail?: string;
-  sizeBytes?: number | null;
-};
-
-export type TenantExportBundle = {
-  formatVersion: "tenant-export.v1";
-  exportId: string;
-  tenantKey: string;
-  workspaceKey: string;
-  generatedAt: string;
-  limitPerSection: number;
-  sectionCount: number;
-  totalRows: number;
-  exportedRows: number;
-  redaction: {
-    secretsRedacted: true;
-    redactedColumnsBySection: Record<string, string[]>;
-  };
-  objectStorageManifest: TenantExportObjectRef[];
-  objectStoragePayloads: TenantExportObjectPayload[];
-  objectStoragePayloadSkips: TenantExportObjectPayloadSkip[];
-  objectStoragePayloadSummary: {
-    requested: boolean;
-    included: number;
-    skipped: number;
-    maxBytesPerObject: number;
-  };
-  sections: TenantExportSection[];
-};
-
-export type TenantOffboardingMode = "anonymize" | "delete";
-
-export type TenantOffboardingPlannedAction =
-  | "anonymize"
-  | "delete_ephemeral"
-  | "deactivate"
-  | "retain_audit_evidence"
-  | "retain_usage_evidence"
-  | "delete_requires_rehearsal";
-
-export type TenantOffboardingTablePlan = {
-  key: string;
-  source: string;
-  scope: "tenant" | "workspace";
-  rowCount: number;
-  plannedAction: TenantOffboardingPlannedAction;
-  note?: string;
-};
-
-export type TenantOffboardingMutationResult = {
-  key: string;
-  source: string;
-  affectedRows: number;
-  action: TenantOffboardingPlannedAction;
-};
-
-export type TenantOffboardingReport = {
-  formatVersion: "tenant-offboarding.v1";
-  operationId: string;
-  generatedAt: string;
-  tenantKey: string;
-  workspaceKey: string;
-  mode: TenantOffboardingMode;
-  dryRun: boolean;
-  confirmationRequired: string;
-  totalRows: number;
-  tableCount: number;
-  blockers: string[];
-  warnings: string[];
-  residualRisks: string[];
-  legalHold: {
-    knowledgeDocumentCount: number;
-  };
-  tables: TenantOffboardingTablePlan[];
-  mutations: TenantOffboardingMutationResult[];
-};
-
-export type AiGuardEventRecord = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  run_id: string | null;
-  integration_id: string | null;
-  source_kind: string;
-  source_id: string | null;
-  subject: string | null;
-  severity: string;
-  decision: string;
-  reason_codes: string[];
-  guard_version: string;
-  content_sample: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
-
-export type AiPolicyDecisionRecord = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  run_id: string | null;
-  integration_id: string | null;
-  policy_mode: string;
-  tool_name: string;
-  tool_class: string;
-  decision: string;
-  reason_codes: string[];
-  resource: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
-
-export type AiSafetyDiagnostics = {
-  summary: {
-    guardEvents: number;
-    maliciousGuardEvents: number;
-    suspiciousGuardEvents: number;
-    blockedPolicyDecisions: number;
-    reviewPolicyDecisions: number;
-    readOnlyPolicyDecisions: number;
-  };
-  guardEvents: AiGuardEventRecord[];
-  policyDecisions: AiPolicyDecisionRecord[];
-};
-
-export type AgentPromptTemplateRecord = {
-  id: string;
-  tenant_key: string;
-  workspace_key: string;
-  template_key: string;
-  template_version: string;
-  status: "draft" | "active" | "retired" | string;
-  template_body: Record<string, unknown>;
-  template_hash: string;
-  activated_at: string | null;
-  retired_at: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
 };
 
 export type AgentFailedEvent = {
@@ -680,132 +256,6 @@ export type SecuritySnapshot = {
     unencrypted: number;
     missing: number;
   };
-  mfaStats: {
-    activeFactors: number;
-    privilegedUsers: number;
-    privilegedUsersMissingMfa: number;
-  };
-  authIdentity: {
-    packageInstalled: boolean;
-    authProvider: string;
-    enabled: boolean;
-    routePath: string;
-    routeEnabled: boolean;
-    dbBridgeReady: boolean;
-    ready: boolean;
-    blockers: string[];
-    providers: Array<{
-      id: "google" | "microsoft" | "oidc" | string;
-      configured: boolean;
-      missing: string[];
-    }>;
-    cache: {
-      provider: string;
-      required: boolean;
-      configured: boolean;
-    };
-    policy: {
-      requireMfaForAdmins: boolean;
-      sessionDeviceTracking: boolean;
-      allowedEmailDomains: string[];
-    };
-  };
-};
-
-export type AuthSessionRecord = {
-  id: string;
-  auth_provider: string;
-  created_at: string;
-  last_seen_at: string | null;
-  expires_at: string;
-  revoked_at: string | null;
-  revoke_reason: string | null;
-  has_device_fingerprint: boolean;
-  current: boolean;
-};
-
-export type MfaFactorRecord = {
-  id: string;
-  factor_type: string;
-  label: string | null;
-  last_used_at: string | null;
-  created_at: string;
-  disabled_at: string | null;
-};
-
-export type MfaStatus = {
-  required: boolean;
-  factors: MfaFactorRecord[];
-};
-
-export type MfaEnrollmentResponse = {
-  enrollmentToken: string;
-  otpauthUrl: string;
-  secretBase32: string;
-  expiresAt: string;
-};
-
-export type TenantSecurityPolicyRecord = {
-  tenantKey: string;
-  workspaceKey: string;
-  allowedLoginDomains: string[];
-  enforceSso: boolean;
-  requireMfaForAdmins: boolean;
-  sessionTtlDays: number;
-  authProvider: "password" | "better_auth" | "oidc_broker" | string;
-  oidcIssuer: string | null;
-};
-
-export type TenantSecurityPolicyInput = {
-  allowedLoginDomains: string[];
-  enforceSso: boolean;
-  requireMfaForAdmins: boolean;
-  sessionTtlDays: number;
-  authProvider: "password" | "better_auth" | "oidc_broker";
-  oidcIssuer?: string | null;
-};
-
-export type PrivilegedAccessGrantRecord = {
-  id: string;
-  tenantKey: string;
-  workspaceKey: string;
-  accessType: "support" | "break_glass";
-  status: "pending" | "active" | "revoked" | "expired" | "denied";
-  subjectEmail: string;
-  subjectName: string | null;
-  requestedByUserId: string | null;
-  approvedByUserId: string | null;
-  revokedByUserId: string | null;
-  reason: string;
-  reference: string | null;
-  approvalNote: string | null;
-  revokeReason: string | null;
-  requestedDurationMinutes: number;
-  requestedAt: string;
-  approvedAt: string | null;
-  revokedAt: string | null;
-  expiresAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  metadata: Record<string, unknown>;
-};
-
-export type PrivilegedAccessStats = {
-  pending: number;
-  active: number;
-  activeBreakGlass: number;
-  expired: number;
-  revoked: number;
-  needsPostEventReview?: number;
-};
-
-export type PrivilegedAccessGrantInput = {
-  accessType: "support" | "break_glass";
-  subjectEmail: string;
-  subjectName?: string | null;
-  reason: string;
-  reference?: string | null;
-  requestedDurationMinutes: number;
 };
 
 export type InboundFailureReason = {
@@ -905,17 +355,6 @@ export type CallOutboxMetrics = {
     maxSkewSeconds: number;
     legacyBodySignature: boolean;
   };
-};
-
-export type CallProviderNumber = {
-  id: string;
-  provider: string;
-  phoneNumber: string;
-  accountSid: string | null;
-  status: "active" | "paused" | "inactive" | string;
-  metadata: Record<string, unknown>;
-  createdAt: string | null;
-  updatedAt: string | null;
 };
 
 export type CallFailedEvent = {
@@ -1140,14 +579,6 @@ export function getWorkspaceModuleUsage(days = 30) {
   );
 }
 
-export function getWorkspaceUsageExportUrl(days = 30, format: "csv" | "json" = "csv") {
-  const params = new URLSearchParams({
-    days: String(days),
-    format
-  });
-  return `/api/admin/workspace/usage/export?${params.toString()}`;
-}
-
 export async function listTags(signal?: AbortSignal) {
   const payload = await apiFetch<{ tags: TagRecord[] }>("/api/support/tags", { signal });
   return payload.tags ?? [];
@@ -1326,14 +757,13 @@ export async function listAgentIntegrations() {
 }
 
 export function createAgentIntegration(input: {
-  tenantKey?: string;
   name: string;
   provider?: string;
   baseUrl: string;
   authType?: string;
   sharedSecret: string;
   status?: "active" | "paused";
-  policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
+  policyMode?: "draft_only" | "auto_send";
   scopes?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   policy?: Record<string, unknown>;
@@ -1348,14 +778,13 @@ export function createAgentIntegration(input: {
 export function updateAgentIntegration(
   agentId: string,
   input: {
-    tenantKey?: string;
     name?: string;
     provider?: string;
     baseUrl?: string;
     authType?: string;
     sharedSecret?: string;
     status?: "active" | "paused";
-    policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
+    policyMode?: "draft_only" | "auto_send";
     scopes?: Record<string, unknown>;
     capabilities?: Record<string, unknown>;
     policy?: Record<string, unknown>;
@@ -1370,229 +799,6 @@ export function updateAgentIntegration(
 
 export function getAgentOutboxMetrics(agentId: string) {
   return apiFetch<AgentOutboxMetrics>(`/api/admin/agents/${agentId}/outbox`);
-}
-
-export async function listAgentRuns(agentId: string, limit = 50) {
-  const payload = await apiFetch<{ runs: AgentRunSummary[] }>(
-    `/api/admin/agents/${agentId}/runs?limit=${limit}`
-  );
-  return payload.runs ?? [];
-}
-
-export async function getAgentRunReplay(agentId: string, runId: string) {
-  const payload = await apiFetch<{ replay: AgentRunPolicyReplay }>(
-    `/api/admin/agents/${agentId}/runs/${runId}/replay`
-  );
-  return payload.replay;
-}
-
-export async function listKnowledgeFolders() {
-  const payload = await apiFetch<{ folders: KnowledgeFolder[] }>("/api/admin/ai/knowledge/folders");
-  return payload.folders ?? [];
-}
-
-export function createKnowledgeFolder(input: { name: string; parentId?: string | null }) {
-  return apiFetch<{ status: string; folder: KnowledgeFolder }>("/api/admin/ai/knowledge/folders", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-}
-
-export async function listKnowledgeDocuments() {
-  const payload = await apiFetch<{ documents: KnowledgeDocument[] }>(
-    "/api/admin/ai/knowledge/documents"
-  );
-  return payload.documents ?? [];
-}
-
-export function uploadKnowledgeDocument(input: {
-  file: File;
-  folderId?: string | null;
-  title?: string | null;
-  publish?: boolean;
-}) {
-  const form = new FormData();
-  form.set("file", input.file);
-  if (input.folderId) form.set("folderId", input.folderId);
-  if (input.title) form.set("title", input.title);
-  if (input.publish) form.set("publish", "true");
-  return apiFetch<{ status: string; document: KnowledgeDocument }>(
-    "/api/admin/ai/knowledge/documents",
-    {
-      method: "POST",
-      body: form
-    }
-  );
-}
-
-export function publishKnowledgeDocument(documentId: string) {
-  return apiFetch<{ status: string; document: KnowledgeDocument }>(
-    `/api/admin/ai/knowledge/documents/${documentId}/publish`,
-    { method: "POST" }
-  );
-}
-
-export function setKnowledgeDocumentLegalHold(input: {
-  documentId: string;
-  legalHold: boolean;
-  reason?: string | null;
-}) {
-  return apiFetch<{ status: string; document: KnowledgeDocument }>(
-    `/api/admin/ai/knowledge/documents/${input.documentId}/legal-hold`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        legalHold: input.legalHold,
-        reason: input.reason ?? null
-      })
-    }
-  );
-}
-
-export async function exportKnowledgeBundle(input?: {
-  includeDeleted?: boolean;
-  includeBodyText?: boolean;
-  limit?: number;
-}) {
-  const payload = await apiFetch<{ status: string; export: KnowledgeExportBundle }>(
-    "/api/admin/ai/knowledge/export",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input ?? {})
-    }
-  );
-  return payload.export;
-}
-
-export function searchKnowledge(input: { query: string; limit?: number }) {
-  return apiFetch<{ results: KnowledgeSearchResult[] }>("/api/admin/ai/knowledge/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-}
-
-export async function listKnowledgeRetrievalEvents(limit = 25) {
-  const payload = await apiFetch<{ events: KnowledgeRetrievalEvent[] }>(
-    `/api/admin/ai/knowledge/retrieval-events?limit=${limit}`
-  );
-  return payload.events ?? [];
-}
-
-export async function listKnowledgeQuarantineEvents(limit = 25) {
-  const payload = await apiFetch<{ events: KnowledgeQuarantineEvent[] }>(
-    `/api/admin/ai/knowledge/quarantine-events?limit=${limit}`
-  );
-  return payload.events ?? [];
-}
-
-export async function getKnowledgeIngestionReadiness() {
-  const payload = await apiFetch<{ readiness: KnowledgeIngestionReadiness }>(
-    "/api/admin/ai/knowledge/ingestion-readiness"
-  );
-  return payload.readiness;
-}
-
-export async function exportTenantDataBundle(input?: {
-  limitPerSection?: number;
-  includeObjectPayloads?: boolean;
-  objectPayloadMaxBytes?: number;
-}) {
-  const payload = await apiFetch<{ status: string; export: TenantExportBundle }>(
-    "/api/admin/tenant/export",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input ?? {})
-    }
-  );
-  return payload.export;
-}
-
-export async function runTenantOffboarding(input?: {
-  mode?: TenantOffboardingMode;
-  dryRun?: boolean;
-  confirmation?: string;
-  reason?: string;
-}) {
-  const payload = await apiFetch<{ status: string; offboarding: TenantOffboardingReport }>(
-    "/api/admin/tenant/offboarding",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input ?? {})
-    }
-  );
-  return payload.offboarding;
-}
-
-export async function previewKnowledgeRetention(limit = 100) {
-  const payload = await apiFetch<{ result: KnowledgeRetentionSweepResult }>(
-    `/api/admin/ai/knowledge/retention?limit=${limit}`
-  );
-  return payload.result;
-}
-
-export async function runKnowledgeRetention(limit = 100) {
-  const payload = await apiFetch<{ status: string; result: KnowledgeRetentionSweepResult }>(
-    "/api/admin/ai/knowledge/retention",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit })
-    }
-  );
-  return payload.result;
-}
-
-export function getAiSafetyDiagnostics(limit = 50) {
-  return apiFetch<AiSafetyDiagnostics>(`/api/admin/ai/safety?limit=${limit}`);
-}
-
-export async function listAgentPromptTemplates(limit = 50) {
-  const payload = await apiFetch<{ templates: AgentPromptTemplateRecord[] }>(
-    `/api/admin/ai/prompts?limit=${limit}`
-  );
-  return payload.templates ?? [];
-}
-
-export function createAgentPromptTemplate(input: {
-  templateKey?: string;
-  templateVersion: string;
-  templateBody: Record<string, unknown>;
-  activate?: boolean;
-  reason?: string | null;
-}) {
-  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>("/api/admin/ai/prompts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-}
-
-export function activateAgentPromptTemplate(templateId: string, reason?: string | null) {
-  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
-    `/api/admin/ai/prompts/${templateId}/activate`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: reason ?? null })
-    }
-  );
-}
-
-export function rollbackAgentPromptTemplate(input?: { templateKey?: string; reason?: string | null }) {
-  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
-    "/api/admin/ai/prompts/rollback",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input ?? {})
-    }
-  );
 }
 
 export function deliverAgentOutbox(agentId: string, limit = 25) {
@@ -1628,102 +834,6 @@ export function getSecuritySnapshot() {
   return apiFetch<SecuritySnapshot>("/api/admin/security");
 }
 
-export async function listAuthSessions() {
-  const payload = await apiFetch<{ sessions: AuthSessionRecord[] }>("/api/auth/sessions");
-  return payload.sessions ?? [];
-}
-
-export function revokeAuthSession(sessionId: string) {
-  return apiFetch<{ status: string; current: boolean }>("/api/auth/sessions", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId })
-  });
-}
-
-export function getMfaStatus() {
-  return apiFetch<MfaStatus>("/api/auth/mfa/enroll");
-}
-
-export async function getTenantSecurityPolicy() {
-  const payload = await apiFetch<{ policy: TenantSecurityPolicyRecord }>("/api/admin/security/policy");
-  return payload.policy;
-}
-
-export function updateTenantSecurityPolicy(input: TenantSecurityPolicyInput) {
-  return apiFetch<{ status: string; policy: TenantSecurityPolicyRecord }>("/api/admin/security/policy", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-}
-
-export async function listPrivilegedAccessGrants(limit = 25) {
-  return apiFetch<{ grants: PrivilegedAccessGrantRecord[]; stats: PrivilegedAccessStats }>(
-    `/api/admin/security/privileged-access?limit=${limit}`
-  );
-}
-
-export function requestPrivilegedAccessGrant(input: PrivilegedAccessGrantInput) {
-  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
-    "/api/admin/security/privileged-access",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input)
-    }
-  );
-}
-
-export function approvePrivilegedAccessGrant(grantId: string, approvalNote?: string | null) {
-  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
-    "/api/admin/security/privileged-access",
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "approve", grantId, approvalNote })
-    }
-  );
-}
-
-export function revokePrivilegedAccessGrant(grantId: string, revokeReason: string) {
-  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
-    "/api/admin/security/privileged-access",
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "revoke", grantId, revokeReason })
-    }
-  );
-}
-
-export function reviewPrivilegedAccessGrant(grantId: string, reviewNote: string) {
-  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
-    "/api/admin/security/privileged-access",
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "review", grantId, reviewNote })
-    }
-  );
-}
-
-export function startMfaEnrollment(label?: string) {
-  return apiFetch<MfaEnrollmentResponse>("/api/auth/mfa/enroll", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label })
-  });
-}
-
-export function verifyMfaEnrollment(input: { enrollmentToken: string; code: string }) {
-  return apiFetch<{ status: string; factorId: string | null }>("/api/auth/mfa/enroll/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-}
-
 export function getInboundMetrics(hours = 24) {
   return apiFetch<InboundMetrics>(`/api/admin/inbound/metrics?hours=${hours}`);
 }
@@ -1750,6 +860,30 @@ export function updateInboundSettings(input: {
   });
 }
 
+export type OAuthConnectionRecord = {
+  id: string;
+  tenant_id: string;
+  provider: "google" | "microsoft" | "resend" | "imap" | "zoho";
+  email_address: string;
+  token_expires_at: string | null;
+  provider_account_id: string | null;
+  provider_tenant_id: string | null;
+  scopes: Record<string, unknown> | null;
+  sync_cursor: string | null;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+  sync_status: "active" | "revoked" | "pending";
+  connected_by: string;
+  created_at: string;
+  updated_at: string;
+  revoked_at: string | null;
+};
+
+export async function listOAuthConnections() {
+  const payload = await apiFetch<{ connections: OAuthConnectionRecord[] }>("/api/admin/oauth-connections");
+  return payload.connections ?? [];
+}
+
 export function retryInboundEvents(limit = 10, eventIds?: string[]) {
   return apiFetch<{ status: string; requested: number; retried: number; failed: number; ids: string[] }>(
     `/api/admin/inbound/retry?limit=${limit}`,
@@ -1769,38 +903,6 @@ export function runInboundAlertCheck() {
 
 export function getCallOutboxMetrics() {
   return apiFetch<CallOutboxMetrics>("/api/admin/calls/outbox");
-}
-
-export async function listCallProviderNumbers() {
-  const payload = await apiFetch<{ numbers: CallProviderNumber[] }>(
-    "/api/admin/calls/provider-numbers"
-  );
-  return payload.numbers ?? [];
-}
-
-export function saveCallProviderNumber(input: {
-  id?: string | null;
-  provider: string;
-  phoneNumber: string;
-  accountSid?: string | null;
-  status?: "active" | "paused" | "inactive";
-  metadata?: Record<string, unknown> | null;
-}) {
-  return apiFetch<{ status: string; number: CallProviderNumber }>(
-    "/api/admin/calls/provider-numbers",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input)
-    }
-  );
-}
-
-export function deactivateCallProviderNumber(id: string) {
-  return apiFetch<{ status: string; number: CallProviderNumber }>(
-    `/api/admin/calls/provider-numbers?id=${encodeURIComponent(id)}`,
-    { method: "DELETE" }
-  );
 }
 
 export function runCallOutbox(limit = 25) {

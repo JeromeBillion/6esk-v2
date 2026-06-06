@@ -2,7 +2,6 @@ import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { linkTickets, MergeError, mergeCustomers, mergeTickets } from "@/server/merges";
-import { resolveTenantScope, tenantScopeFromUser } from "@/server/tenant-context";
 
 export type MergeReviewStatus =
   | "pending"
@@ -14,8 +13,6 @@ export type MergeReviewProposalType = "ticket" | "customer" | "linked_case";
 
 export type MergeReviewTask = {
   id: string;
-  tenant_key: string;
-  workspace_key: string;
   status: MergeReviewStatus;
   proposal_type: MergeReviewProposalType;
   ticket_id: string | null;
@@ -58,8 +55,6 @@ export type MergeReviewQueueItem = MergeReviewTask & {
 export type MergeReviewDecision = "approve" | "reject";
 
 type CreateMergeReviewTaskArgs = {
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
   proposalType: MergeReviewProposalType;
   ticketId?: string | null;
   sourceTicketId?: string | null;
@@ -81,8 +76,6 @@ type ListMergeReviewTasksFilters = {
 };
 
 type ResolveMergeReviewTaskArgs = {
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
   reviewId: string;
   decision: MergeReviewDecision;
   actorUserId: string;
@@ -114,13 +107,10 @@ function isLeadAdmin(user: SessionUser) {
   return user.role_name === LEAD_ADMIN_ROLE;
 }
 
-async function fetchTaskById(reviewId: string, scopeInput?: { tenantKey?: string | null; workspaceKey?: string | null }) {
-  const scope = resolveTenantScope(scopeInput);
+async function fetchTaskById(reviewId: string) {
   const result = await db.query<MergeReviewTask>(
     `SELECT
        id,
-       tenant_key,
-       workspace_key,
        status,
        proposal_type,
        ticket_id,
@@ -141,16 +131,13 @@ async function fetchTaskById(reviewId: string, scopeInput?: { tenantKey?: string
        updated_at
      FROM merge_review_tasks
      WHERE id = $1
-       AND tenant_key = $2
      LIMIT 1`,
-    [reviewId, scope.tenantKey]
+    [reviewId]
   );
   return result.rows[0] ?? null;
 }
 
 async function userCanAccessTask(user: SessionUser, task: MergeReviewTask) {
-  const { tenantKey } = tenantScopeFromUser(user);
-  if (task.tenant_key !== tenantKey) return false;
   if (isLeadAdmin(user)) return true;
   const candidateTicketIds = [
     task.ticket_id,
@@ -164,9 +151,8 @@ async function userCanAccessTask(user: SessionUser, task: MergeReviewTask) {
      FROM tickets
      WHERE id = ANY($1::uuid[])
        AND assigned_user_id = $2
-       AND tenant_key = $3
      LIMIT 1`,
-    [candidateTicketIds, user.id, tenantKey]
+    [candidateTicketIds, user.id]
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -175,8 +161,7 @@ export async function getMergeReviewTaskForUser(
   user: SessionUser,
   reviewId: string
 ) {
-  const scope = tenantScopeFromUser(user);
-  const task = await fetchTaskById(reviewId, scope);
+  const task = await fetchTaskById(reviewId);
   if (!task) return null;
   if (!(await userCanAccessTask(user, task))) {
     return null;
@@ -185,8 +170,6 @@ export async function getMergeReviewTaskForUser(
 }
 
 export async function createMergeReviewTask({
-  tenantKey,
-  workspaceKey,
   proposalType,
   ticketId,
   sourceTicketId,
@@ -199,7 +182,6 @@ export async function createMergeReviewTask({
   proposedByAgentId,
   proposedByUserId
 }: CreateMergeReviewTaskArgs) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   if (proposalType === "ticket" && (!sourceTicketId || !targetTicketId)) {
     throw new MergeReviewError(
       "invalid_input",
@@ -221,8 +203,6 @@ export async function createMergeReviewTask({
 
   const result = await db.query<MergeReviewTask>(
     `INSERT INTO merge_review_tasks (
-      tenant_key,
-      workspace_key,
       proposal_type,
       ticket_id,
       source_ticket_id,
@@ -235,12 +215,10 @@ export async function createMergeReviewTask({
       proposed_by_agent_id,
       proposed_by_user_id
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
     )
     RETURNING
       id,
-      tenant_key,
-      workspace_key,
       status,
       proposal_type,
       ticket_id,
@@ -260,8 +238,6 @@ export async function createMergeReviewTask({
       created_at,
       updated_at`,
     [
-      scope.tenantKey,
-      scope.workspaceKey,
       proposalType,
       ticketId ?? null,
       sourceTicketId ?? null,
@@ -283,9 +259,8 @@ export async function listMergeReviewTasksForUser(
   user: SessionUser,
   filters: ListMergeReviewTasksFilters = {}
 ) {
-  const scope = tenantScopeFromUser(user);
-  const values: Array<string | number> = [scope.tenantKey];
-  const conditions: string[] = ["mrt.tenant_key = $1"];
+  const values: Array<string | number> = [];
+  const conditions: string[] = [];
   const isAdmin = isLeadAdmin(user);
 
   if (!isAdmin) {
@@ -294,8 +269,7 @@ export async function listMergeReviewTasksForUser(
       `EXISTS (
         SELECT 1
         FROM tickets access_t
-        WHERE access_t.tenant_key = $1
-          AND access_t.assigned_user_id = $${values.length}
+        WHERE access_t.assigned_user_id = $${values.length}
           AND access_t.id = ANY(
             array_remove(ARRAY[mrt.ticket_id, mrt.source_ticket_id, mrt.target_ticket_id], NULL)::uuid[]
           )
@@ -307,8 +281,7 @@ export async function listMergeReviewTasksForUser(
       `EXISTS (
         SELECT 1
         FROM tickets access_t
-        WHERE access_t.tenant_key = $1
-          AND access_t.assigned_user_id = $${values.length}
+        WHERE access_t.assigned_user_id = $${values.length}
           AND access_t.id = ANY(
             array_remove(ARRAY[mrt.ticket_id, mrt.source_ticket_id, mrt.target_ticket_id], NULL)::uuid[]
           )
@@ -350,8 +323,6 @@ export async function listMergeReviewTasksForUser(
   const result = await db.query<MergeReviewQueueItem>(
     `SELECT
        mrt.id,
-       mrt.tenant_key,
-       mrt.workspace_key,
        mrt.status,
        mrt.proposal_type,
        mrt.ticket_id,
@@ -377,13 +348,11 @@ export async function listMergeReviewTasksForUser(
        EXISTS (
          SELECT 1 FROM messages source_msg
          WHERE source_msg.ticket_id = source_ticket.id
-           AND source_msg.tenant_key = mrt.tenant_key
            AND source_msg.channel = 'whatsapp'
        ) OR COALESCE(source_ticket.requester_email ILIKE 'whatsapp:%', FALSE) AS source_ticket_has_whatsapp,
        EXISTS (
          SELECT 1 FROM messages source_msg
          WHERE source_msg.ticket_id = source_ticket.id
-           AND source_msg.tenant_key = mrt.tenant_key
            AND source_msg.channel = 'voice'
        ) OR COALESCE(source_ticket.requester_email ILIKE 'voice:%', FALSE) AS source_ticket_has_voice,
        target_ticket.subject AS target_ticket_subject,
@@ -391,13 +360,11 @@ export async function listMergeReviewTasksForUser(
        EXISTS (
          SELECT 1 FROM messages target_msg
          WHERE target_msg.ticket_id = target_ticket.id
-           AND target_msg.tenant_key = mrt.tenant_key
            AND target_msg.channel = 'whatsapp'
        ) OR COALESCE(target_ticket.requester_email ILIKE 'whatsapp:%', FALSE) AS target_ticket_has_whatsapp,
        EXISTS (
          SELECT 1 FROM messages target_msg
          WHERE target_msg.ticket_id = target_ticket.id
-           AND target_msg.tenant_key = mrt.tenant_key
            AND target_msg.channel = 'voice'
        ) OR COALESCE(target_ticket.requester_email ILIKE 'voice:%', FALSE) AS target_ticket_has_voice,
        source_customer.display_name AS source_customer_display_name,
@@ -407,11 +374,11 @@ export async function listMergeReviewTasksForUser(
        target_customer.primary_email AS target_customer_primary_email,
        target_customer.primary_phone AS target_customer_primary_phone
      FROM merge_review_tasks mrt
-     LEFT JOIN tickets context_ticket ON context_ticket.id = mrt.ticket_id AND context_ticket.tenant_key = mrt.tenant_key
-     LEFT JOIN tickets source_ticket ON source_ticket.id = mrt.source_ticket_id AND source_ticket.tenant_key = mrt.tenant_key
-     LEFT JOIN tickets target_ticket ON target_ticket.id = mrt.target_ticket_id AND target_ticket.tenant_key = mrt.tenant_key
-     LEFT JOIN customers source_customer ON source_customer.id = mrt.source_customer_id AND source_customer.tenant_key = mrt.tenant_key
-     LEFT JOIN customers target_customer ON target_customer.id = mrt.target_customer_id AND target_customer.tenant_key = mrt.tenant_key
+     LEFT JOIN tickets context_ticket ON context_ticket.id = mrt.ticket_id
+     LEFT JOIN tickets source_ticket ON source_ticket.id = mrt.source_ticket_id
+     LEFT JOIN tickets target_ticket ON target_ticket.id = mrt.target_ticket_id
+     LEFT JOIN customers source_customer ON source_customer.id = mrt.source_customer_id
+     LEFT JOIN customers target_customer ON target_customer.id = mrt.target_customer_id
      ${whereClause}
      ORDER BY
        CASE mrt.status
@@ -430,15 +397,12 @@ export async function listMergeReviewTasksForUser(
 }
 
 export async function resolveMergeReviewTask({
-  tenantKey,
-  workspaceKey,
   reviewId,
   decision,
   actorUserId,
   note
 }: ResolveMergeReviewTaskArgs): Promise<MergeReviewOperationResult> {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
-  const existing = await fetchTaskById(reviewId, scope);
+  const existing = await fetchTaskById(reviewId);
   if (!existing) {
     throw new MergeReviewError("not_found", "Merge review task not found.");
   }
@@ -455,12 +419,9 @@ export async function resolveMergeReviewTask({
            failure_reason = $3,
            updated_at = now()
        WHERE id = $1
-         AND tenant_key = $4
          AND status = 'pending'
        RETURNING
          id,
-         tenant_key,
-         workspace_key,
          status,
          proposal_type,
          ticket_id,
@@ -479,7 +440,7 @@ export async function resolveMergeReviewTask({
          applied_at,
          created_at,
          updated_at`,
-      [reviewId, actorUserId, note ?? null, scope.tenantKey]
+      [reviewId, actorUserId, note ?? null]
     );
 
     const task = rejected.rows[0];
@@ -496,12 +457,9 @@ export async function resolveMergeReviewTask({
          reviewed_at = now(),
          updated_at = now()
      WHERE id = $1
-       AND tenant_key = $3
        AND status = 'pending'
      RETURNING
        id,
-       tenant_key,
-       workspace_key,
        status,
        proposal_type,
        ticket_id,
@@ -520,7 +478,7 @@ export async function resolveMergeReviewTask({
        applied_at,
        created_at,
        updated_at`,
-    [reviewId, actorUserId, scope.tenantKey]
+    [reviewId, actorUserId]
   );
 
   const approvedTask = approved.rows[0];
@@ -538,9 +496,7 @@ export async function resolveMergeReviewTask({
         sourceTicketId: approvedTask.source_ticket_id,
         targetTicketId: approvedTask.target_ticket_id,
         actorUserId,
-        reason: note ?? approvedTask.reason ?? null,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey
+        reason: note ?? approvedTask.reason ?? null
       });
     } else if (approvedTask.proposal_type === "customer") {
       if (!approvedTask.source_customer_id || !approvedTask.target_customer_id) {
@@ -550,9 +506,7 @@ export async function resolveMergeReviewTask({
         sourceCustomerId: approvedTask.source_customer_id,
         targetCustomerId: approvedTask.target_customer_id,
         actorUserId,
-        reason: note ?? approvedTask.reason ?? null,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey
+        reason: note ?? approvedTask.reason ?? null
       });
     } else {
       if (!approvedTask.source_ticket_id || !approvedTask.target_ticket_id) {
@@ -563,9 +517,7 @@ export async function resolveMergeReviewTask({
         targetTicketId: approvedTask.target_ticket_id,
         actorUserId,
         reason: note ?? approvedTask.reason ?? null,
-        metadata: approvedTask.metadata ?? null,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey
+        metadata: approvedTask.metadata ?? null
       });
     }
 
@@ -576,11 +528,8 @@ export async function resolveMergeReviewTask({
            updated_at = now(),
            failure_reason = NULL
        WHERE id = $1
-         AND tenant_key = $2
        RETURNING
          id,
-         tenant_key,
-         workspace_key,
          status,
          proposal_type,
          ticket_id,
@@ -599,7 +548,7 @@ export async function resolveMergeReviewTask({
          applied_at,
          created_at,
          updated_at`,
-      [reviewId, scope.tenantKey]
+      [reviewId]
     );
     return { task: applied.rows[0] ?? approvedTask, mergeResult };
   } catch (error) {
@@ -616,9 +565,8 @@ export async function resolveMergeReviewTask({
        SET status = 'failed',
            failure_reason = $2,
            updated_at = now()
-       WHERE id = $1
-         AND tenant_key = $3`,
-      [reviewId, detail, scope.tenantKey]
+       WHERE id = $1`,
+      [reviewId, detail]
     );
     throw new MergeReviewError("merge_failed", detail);
   }

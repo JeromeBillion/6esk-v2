@@ -1,13 +1,6 @@
 import twilio from "twilio";
 import { normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import type { CallStatus } from "@/server/calls/service";
-import {
-  listActiveProviderWebhookSecrets,
-  markProviderWebhookSecretUsed,
-  shouldRequireTenantProviderWebhookSecrets,
-  type ActiveProviderWebhookSecret
-} from "@/server/provider-webhook-secrets";
-import type { TenantScope } from "@/server/tenant-context";
 
 export type TwilioDialTarget =
   | {
@@ -27,6 +20,14 @@ function readString(value: string | null | undefined) {
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
+}
+
+function appendRequestSearch(path: string, requestUrl?: string) {
+  if (!requestUrl) {
+    return path;
+  }
+  const url = new URL(requestUrl);
+  return `${path}${url.search}`;
 }
 
 export function buildTwilioPublicUrl(path: string, requestUrl?: string) {
@@ -185,84 +186,42 @@ export function validateTwilioWebhook({
   pathname,
   requestUrl,
   signature,
-  params,
-  authToken
+  params
 }: {
   pathname: string;
   requestUrl: string;
   signature: string | null | undefined;
   params: Record<string, string>;
-  authToken?: string | null;
 }) {
-  const token = readString(authToken) ?? getTwilioCredentials().authToken;
+  const authToken = readString(process.env.CALLS_TWILIO_AUTH_TOKEN);
+  if (!authToken) {
+    return false;
+  }
   const providedSignature = readString(signature);
   if (!providedSignature) {
     return false;
   }
-  const validationUrl = buildTwilioPublicUrl(pathname, requestUrl);
-  return twilio.validateRequest(token, providedSignature, validationUrl, params);
-}
-
-export async function validateTwilioWebhookForTenant({
-  scope,
-  providerAccountId,
-  pathname,
-  requestUrl,
-  signature,
-  params
-}: {
-  scope?: TenantScope | null;
-  providerAccountId?: string | null;
-  pathname: string;
-  requestUrl: string;
-  signature: string | null | undefined;
-  params: Record<string, string>;
-}): Promise<{ valid: boolean; missingSecret: boolean; matchedSecretId: string | null }> {
-  const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
-  const secrets: ActiveProviderWebhookSecret[] = scope
-    ? await listActiveProviderWebhookSecrets({
-        scope,
-        provider: "twilio",
-        secretType: "auth_token",
-        providerAccountId
-      })
-    : [];
-  const globalAuthToken = process.env.CALLS_TWILIO_AUTH_TOKEN?.trim();
-  if (globalAuthToken && !requireTenantSecrets) {
-    secrets.push({
-      id: "env:CALLS_TWILIO_AUTH_TOKEN",
-      secret: globalAuthToken,
-      source: "env"
-    });
-  }
-
-  if (!secrets.length) {
-    return { valid: false, missingSecret: requireTenantSecrets, matchedSecretId: null };
-  }
-
-  for (const secret of secrets) {
-    if (
-      validateTwilioWebhook({
-        pathname,
-        requestUrl,
-        signature,
-        params,
-        authToken: secret.secret
-      })
-    ) {
-      if (scope) {
-        await markProviderWebhookSecretUsed(secret.id, scope).catch(() => {});
-      }
-      return { valid: true, missingSecret: false, matchedSecretId: secret.id };
-    }
-  }
-
-  return { valid: false, missingSecret: false, matchedSecretId: null };
+  const validationPath = appendRequestSearch(pathname, requestUrl);
+  const validationUrl = buildTwilioPublicUrl(validationPath, requestUrl);
+  return twilio.validateRequest(authToken, providedSignature, validationUrl, params);
 }
 
 export function buildTwilioMediaFetchConfig(recordingUrl: string) {
   const { accountSid, authToken } = getTwilioCredentials();
+  const allowedHosts = new Set(
+    (process.env.CALLS_TWILIO_MEDIA_ALLOWED_HOSTS ?? "api.twilio.com")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+  );
   const upstreamUrl = /\.(mp3|wav)$/i.test(recordingUrl) ? recordingUrl : `${recordingUrl}.mp3`;
+  const parsed = new URL(upstreamUrl);
+  if (parsed.protocol !== "https:") {
+    throw new Error("Twilio recording URL must use HTTPS.");
+  }
+  if (!allowedHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error("Twilio recording URL host is not allowed.");
+  }
   return {
     url: upstreamUrl,
     headers: {

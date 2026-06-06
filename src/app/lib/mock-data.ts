@@ -3,7 +3,6 @@ import type {
   AdminUserRecord,
   AgentIntegration,
   AgentOutboxMetrics,
-  AuthSessionRecord,
   AuditLogRecord,
   CallFailedEvent,
   CallOutboxMetrics,
@@ -15,10 +14,6 @@ import type {
   InboundAlertConfig,
   InboundFailedEvent,
   InboundMetrics,
-  MfaEnrollmentResponse,
-  MfaStatus,
-  PrivilegedAccessGrantRecord,
-  PrivilegedAccessStats,
   ProfileLookupMetrics,
   RoleRecord,
   SecuritySnapshot,
@@ -26,7 +21,6 @@ import type {
   SpamMessageRecord,
   SpamRuleRecord,
   TagRecord,
-  TenantSecurityPolicyRecord,
   WorkspaceModulesConfig,
   WorkspaceModuleUsageSummary,
   WhatsAppAccount,
@@ -119,12 +113,6 @@ type DemoState = {
   workspaceModules: WorkspaceModulesConfig;
   workspaceUsage: WorkspaceModuleUsageSummary;
   security: SecuritySnapshot;
-  authSessions: AuthSessionRecord[];
-  mfaStatus: MfaStatus;
-  activeMfaEnrollment: MfaEnrollmentResponse | null;
-  tenantSecurityPolicy: TenantSecurityPolicyRecord;
-  privilegedAccessGrants: PrivilegedAccessGrantRecord[];
-  privilegedAccessStats: PrivilegedAccessStats;
   tags: TagRecord[];
   supportMacros: SupportMacro[];
   supportSavedViews: SupportSavedView[];
@@ -1843,8 +1831,20 @@ function buildInitialState(): DemoState {
   ];
 
   const mailboxes: ApiMailbox[] = [
-    { id: DEFAULT_MAILBOX_ID, address: DEFAULT_MAILBOX_ADDRESS, type: "shared" },
-    { id: "mailbox-escalations", address: "escalations@6esk.com", type: "shared" }
+    {
+      id: DEFAULT_MAILBOX_ID,
+      address: DEFAULT_MAILBOX_ADDRESS,
+      type: "shared",
+      provider: "resend",
+      delivery_mode: "managed"
+    },
+    {
+      id: "mailbox-escalations",
+      address: "escalations@6esk.com",
+      type: "shared",
+      provider: "resend",
+      delivery_mode: "managed"
+    }
   ];
 
   const supportMacros: SupportMacro[] = [
@@ -1921,14 +1921,13 @@ function buildInitialState(): DemoState {
   const agents: AgentIntegration[] = [
     {
       id: "agent-1",
-      tenant_key: "primary",
       name: "6esk AI Copilot",
       provider: "elizaos",
       base_url: "https://agents.internal/6esk-copilot",
       auth_type: "hmac",
       shared_secret: "agent_secret_demo",
       status: "active",
-      policy_mode: "hybrid_review",
+      policy_mode: "draft_only",
       scopes: { tickets: true, analytics: true, admin: false },
       capabilities: { max_events_per_run: 50, allow_merge_actions: true, allow_voice_actions: true },
       policy: { escalation_required_for: ["urgent", "gdpr"] },
@@ -1937,14 +1936,13 @@ function buildInitialState(): DemoState {
     },
     {
       id: "agent-2",
-      tenant_key: "primary",
       name: "Ops Recovery Worker",
       provider: "openai",
       base_url: "https://agents.internal/ops-recovery",
       auth_type: "shared_secret",
       shared_secret: "ops_recovery_secret_demo",
       status: "paused",
-      policy_mode: "full_auto",
+      policy_mode: "auto_send",
       scopes: { dead_letters: true, inbound: true },
       capabilities: { max_events_per_run: 25, allow_merge_actions: false, allow_voice_actions: false },
       policy: { throttle_window_minutes: 15 },
@@ -2436,7 +2434,6 @@ function buildInitialState(): DemoState {
     users,
     sla: { firstResponseMinutes: 120, resolutionMinutes: 1440 },
     workspaceModules: {
-      tenantKey: "primary",
       workspaceKey: "primary",
       updatedAt: DEMO_NOW,
       modules: {
@@ -2444,47 +2441,14 @@ function buildInitialState(): DemoState {
         whatsapp: true,
         voice: true,
         aiAutomation: true,
+        dexterOrchestration: true,
         vanillaWebchat: true
-      },
-      source: "database",
-      failureReason: null
+      }
     },
     workspaceUsage: {
       workspaceKey: "primary",
       windowDays: 30,
       generatedAt: DEMO_NOW,
-      daily: [
-        {
-          date: "2026-06-01",
-          totalQuantity: 37,
-          eventCount: 37,
-          modules: { email: 17, whatsapp: 10, voice: 2, aiAutomation: 8, vanillaWebchat: 0 }
-        },
-        {
-          date: "2026-06-02",
-          totalQuantity: 43,
-          eventCount: 43,
-          modules: { email: 20, whatsapp: 12, voice: 3, aiAutomation: 8, vanillaWebchat: 0 }
-        },
-        {
-          date: "2026-06-03",
-          totalQuantity: 48,
-          eventCount: 48,
-          modules: { email: 22, whatsapp: 14, voice: 4, aiAutomation: 8, vanillaWebchat: 0 }
-        },
-        {
-          date: "2026-06-04",
-          totalQuantity: 52,
-          eventCount: 52,
-          modules: { email: 25, whatsapp: 15, voice: 4, aiAutomation: 8, vanillaWebchat: 0 }
-        },
-        {
-          date: "2026-06-05",
-          totalQuantity: 36,
-          eventCount: 36,
-          modules: { email: 16, whatsapp: 11, voice: 3, aiAutomation: 6, vanillaWebchat: 0 }
-        }
-      ],
       modules: [
         {
           moduleKey: "email",
@@ -2534,6 +2498,14 @@ function buildInitialState(): DemoState {
           ]
         },
         {
+          moduleKey: "dexterOrchestration",
+          totalQuantity: 0,
+          eventCount: 0,
+          actorBreakdown: { human: 0, ai: 0, system: 0 },
+          lastSeenAt: null,
+          usageKinds: []
+        },
+        {
           moduleKey: "vanillaWebchat",
           totalQuantity: 0,
           eventCount: 0,
@@ -2550,113 +2522,8 @@ function buildInitialState(): DemoState {
       inboundSecretConfigured: true,
       clientIp: "127.0.0.1",
       agentIntegrationStats: { total: agents.length, encrypted: agents.length, unencrypted: 0 },
-      whatsappTokenStats: { total: 1, encrypted: 1, unencrypted: 0, missing: 0 },
-      mfaStats: { activeFactors: 1, privilegedUsers: 1, privilegedUsersMissingMfa: 0 },
-      authIdentity: {
-        packageInstalled: true,
-        authProvider: "password",
-        enabled: false,
-        routePath: "/api/auth/better",
-        routeEnabled: false,
-        dbBridgeReady: false,
-        ready: false,
-        blockers: [],
-        providers: [
-          { id: "google", configured: false, missing: ["AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET"] },
-          {
-            id: "microsoft",
-            configured: false,
-            missing: [
-              "AUTH_MICROSOFT_CLIENT_ID",
-              "AUTH_MICROSOFT_CLIENT_SECRET",
-              "AUTH_MICROSOFT_TENANT_ID"
-            ]
-          },
-          {
-            id: "oidc",
-            configured: false,
-            missing: ["AUTH_OIDC_ISSUER", "AUTH_OIDC_CLIENT_ID", "AUTH_OIDC_CLIENT_SECRET"]
-          }
-        ],
-        cache: { provider: "none", required: false, configured: true },
-        policy: {
-          requireMfaForAdmins: true,
-          sessionDeviceTracking: true,
-          allowedEmailDomains: ["example.com"]
-        }
-      }
+      whatsappTokenStats: { total: 1, encrypted: 1, unencrypted: 0, missing: 0 }
     },
-    mfaStatus: {
-      required: true,
-      factors: [
-        {
-          id: "22222222-2222-4222-8222-222222222222",
-          factor_type: "totp",
-          label: "6esk admin",
-          created_at: DEMO_NOW,
-          last_used_at: null,
-          disabled_at: null
-        }
-      ]
-    },
-    activeMfaEnrollment: null,
-    tenantSecurityPolicy: {
-      tenantKey: "primary",
-      workspaceKey: "primary",
-      allowedLoginDomains: ["example.com"],
-      enforceSso: false,
-      requireMfaForAdmins: true,
-      sessionTtlDays: 14,
-      authProvider: "password",
-      oidcIssuer: null
-    },
-    privilegedAccessGrants: [
-      {
-        id: "33333333-3333-4333-8333-333333333333",
-        tenantKey: "primary",
-        workspaceKey: "primary",
-        accessType: "support",
-        status: "pending",
-        subjectEmail: "support@6esk.com",
-        subjectName: "6esk Support",
-        requestedByUserId: "user-admin",
-        approvedByUserId: null,
-        revokedByUserId: null,
-        reason: "Investigate a tenant-visible support issue with audit trail.",
-        reference: "INC-1001",
-        approvalNote: null,
-        revokeReason: null,
-        requestedDurationMinutes: 60,
-        requestedAt: DEMO_NOW,
-        approvedAt: null,
-        revokedAt: null,
-        expiresAt: null,
-        createdAt: DEMO_NOW,
-        updatedAt: DEMO_NOW,
-        metadata: {}
-      }
-    ],
-    privilegedAccessStats: {
-      pending: 1,
-      active: 0,
-      activeBreakGlass: 0,
-      expired: 0,
-      revoked: 0,
-      needsPostEventReview: 0
-    },
-    authSessions: [
-      {
-        id: "11111111-1111-4111-8111-111111111111",
-        auth_provider: "password",
-        created_at: DEMO_NOW,
-        last_seen_at: null,
-        expires_at: "2026-06-16T10:00:00.000Z",
-        revoked_at: null,
-        revoke_reason: null,
-        has_device_fingerprint: true,
-        current: true
-      }
-    ],
     tags,
     supportMacros,
     supportSavedViews,
@@ -3405,66 +3272,17 @@ function resolveMailboxes() {
   return getState().mailboxes;
 }
 
-function refreshPrivilegedAccessStats(state: DemoState) {
-  state.privilegedAccessStats = {
-    pending: state.privilegedAccessGrants.filter((grant) => grant.status === "pending").length,
-    active: state.privilegedAccessGrants.filter((grant) => grant.status === "active").length,
-    activeBreakGlass: state.privilegedAccessGrants.filter(
-      (grant) => grant.status === "active" && grant.accessType === "break_glass"
-    ).length,
-    expired: state.privilegedAccessGrants.filter((grant) => grant.status === "expired").length,
-    revoked: state.privilegedAccessGrants.filter((grant) => grant.status === "revoked").length,
-    needsPostEventReview: state.privilegedAccessGrants.filter(
-      (grant) =>
-        (grant.status === "expired" || grant.status === "revoked") &&
-        !(grant.metadata?.postEventReview && typeof grant.metadata.postEventReview === "object")
-    ).length
-  };
-}
-
-function appendPrivilegedAccessDemoAlert(
-  grant: PrivilegedAccessGrantRecord,
-  event: "requested" | "approved" | "revoked"
-) {
-  const metadata = grant.metadata ?? {};
-  const alerts = Array.isArray(metadata.securityAlerts) ? metadata.securityAlerts : [];
-  grant.metadata = {
-    ...metadata,
-    securityAlerts: [
-      ...alerts,
-      {
-        event,
-        status: "delivered",
-        delivered: true,
-        severity: grant.accessType === "break_glass" ? "critical" : "high",
-        destination: "security_webhook",
-        attemptedAt: DEMO_NOW
-      }
-    ]
-  };
-}
-
 function handleGet(url: URL) {
   const parts = parsePathname(url.pathname);
   const state = getState();
 
   if (url.pathname === "/api/auth/me") return { user: state.currentUser };
-  if (url.pathname === "/api/auth/sessions") return { sessions: state.authSessions };
-  if (url.pathname === "/api/auth/mfa/enroll") return state.mfaStatus;
   if (url.pathname === "/api/admin/roles") return { roles: state.roles };
   if (url.pathname === "/api/admin/users") return { users: state.users };
   if (url.pathname === "/api/admin/sla") return state.sla;
   if (url.pathname === "/api/admin/workspace/modules") return { config: state.workspaceModules };
   if (url.pathname === "/api/admin/workspace/usage") return { summary: state.workspaceUsage };
   if (url.pathname === "/api/admin/security") return state.security;
-  if (url.pathname === "/api/admin/security/policy") return { policy: state.tenantSecurityPolicy };
-  if (url.pathname === "/api/admin/security/privileged-access") {
-    refreshPrivilegedAccessStats(state);
-    return {
-      grants: state.privilegedAccessGrants.slice(0, Number(url.searchParams.get("limit") ?? 25)),
-      stats: state.privilegedAccessStats
-    };
-  }
   if (url.pathname === "/api/support/tags") return { tags: state.tags };
   if (url.pathname === "/api/admin/spam-rules") return { rules: state.spamRules };
   if (url.pathname === "/api/admin/spam-messages") {
@@ -3615,132 +3433,6 @@ function handlePost(url: URL, init?: RequestInit) {
   const state = getState();
   const parts = parsePathname(url.pathname);
 
-  if (url.pathname === "/api/auth/mfa/enroll") {
-    const body = parseJsonBody<{ label?: string | null }>(init);
-    const enrollment: MfaEnrollmentResponse = {
-      enrollmentToken: "demo-mfa-enrollment-token",
-      secretBase32: "JBSWY3DPEHPK3PXP",
-      otpauthUrl:
-        "otpauth://totp/6esk:sarah%406esk.com?issuer=6esk&secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30",
-      expiresAt: "2026-03-19T08:40:00.000Z"
-    };
-    state.activeMfaEnrollment = enrollment;
-    state.mfaStatus.required = true;
-    appendAuditLog({
-      action: "auth_mfa_enrollment_started",
-      entity_type: "auth_mfa_factor",
-      entity_id: null,
-      data: { label: body.label ?? "6esk admin" },
-      actor_name: state.currentUser.display_name,
-      actor_email: state.currentUser.email
-    });
-    return enrollment;
-  }
-  if (url.pathname === "/api/auth/mfa/enroll/verify") {
-    const body = parseJsonBody<{ enrollmentToken?: string; code?: string }>(init);
-    if (!state.activeMfaEnrollment || body.enrollmentToken !== state.activeMfaEnrollment.enrollmentToken) {
-      throw new Error("MFA enrollment not found");
-    }
-    const factor = {
-      id: `mfa-factor-${state.mfaStatus.factors.length + 1}`,
-      factor_type: "totp",
-      label: "6esk admin",
-      created_at: DEMO_NOW,
-      last_used_at: null,
-      disabled_at: null
-    };
-    state.mfaStatus.factors.unshift(factor);
-    state.security.mfaStats.activeFactors = state.mfaStatus.factors.filter((entry) => !entry.disabled_at).length;
-    state.security.mfaStats.privilegedUsersMissingMfa = 0;
-    state.activeMfaEnrollment = null;
-    appendAuditLog({
-      action: "auth_mfa_enrollment_verified",
-      entity_type: "auth_mfa_factor",
-      entity_id: factor.id,
-      data: { codeLength: body.code?.length ?? 0 },
-      actor_name: state.currentUser.display_name,
-      actor_email: state.currentUser.email
-    });
-    return { status: "ok", factorId: factor.id };
-  }
-
-  if (url.pathname === "/api/admin/security/policy") {
-    const body = parseJsonBody<{
-      allowedLoginDomains: string[];
-      enforceSso: boolean;
-      requireMfaForAdmins: boolean;
-      sessionTtlDays: number;
-      authProvider: TenantSecurityPolicyRecord["authProvider"];
-      oidcIssuer?: string | null;
-    }>(init);
-    state.tenantSecurityPolicy = {
-      ...state.tenantSecurityPolicy,
-      allowedLoginDomains: body.allowedLoginDomains,
-      enforceSso: body.enforceSso,
-      requireMfaForAdmins: body.requireMfaForAdmins,
-      sessionTtlDays: body.sessionTtlDays,
-      authProvider: body.authProvider,
-      oidcIssuer: body.oidcIssuer ?? null
-    };
-    state.mfaStatus.required = body.requireMfaForAdmins;
-    appendAuditLog({
-      action: "tenant_security_policy_updated",
-      entity_type: "tenant_security_policy",
-      entity_id: `${state.tenantSecurityPolicy.tenantKey}:${state.tenantSecurityPolicy.workspaceKey}`,
-      data: { authProvider: body.authProvider, enforceSso: body.enforceSso },
-      actor_name: state.currentUser.display_name,
-      actor_email: state.currentUser.email
-    });
-    return { status: "ok", policy: state.tenantSecurityPolicy };
-  }
-
-  if (url.pathname === "/api/admin/security/privileged-access") {
-    const body = parseJsonBody<{
-      accessType: "support" | "break_glass";
-      subjectEmail: string;
-      subjectName?: string | null;
-      reason: string;
-      reference?: string | null;
-      requestedDurationMinutes: number;
-    }>(init);
-    const grant: PrivilegedAccessGrantRecord = {
-      id: `privileged-${state.privilegedAccessGrants.length + 1}`,
-      tenantKey: "primary",
-      workspaceKey: "primary",
-      accessType: body.accessType,
-      status: "pending",
-      subjectEmail: body.subjectEmail.toLowerCase(),
-      subjectName: body.subjectName ?? null,
-      requestedByUserId: state.currentUser.id,
-      approvedByUserId: null,
-      revokedByUserId: null,
-      reason: body.reason,
-      reference: body.reference ?? null,
-      approvalNote: null,
-      revokeReason: null,
-      requestedDurationMinutes: body.requestedDurationMinutes,
-      requestedAt: DEMO_NOW,
-      approvedAt: null,
-      revokedAt: null,
-      expiresAt: null,
-      createdAt: DEMO_NOW,
-      updatedAt: DEMO_NOW,
-      metadata: {}
-    };
-    appendPrivilegedAccessDemoAlert(grant, "requested");
-    state.privilegedAccessGrants.unshift(grant);
-    refreshPrivilegedAccessStats(state);
-    appendAuditLog({
-      action: "privileged_access_requested",
-      entity_type: "privileged_access_grant",
-      entity_id: grant.id,
-      data: { accessType: grant.accessType, subjectEmail: grant.subjectEmail },
-      actor_name: state.currentUser.display_name,
-      actor_email: state.currentUser.email
-    });
-    return { status: "pending", grant };
-  }
-
   if (url.pathname === "/api/admin/users") {
     const body = parseJsonBody<{ email: string; displayName: string; password: string; roleId: string }>(init);
     const role = state.roles.find((entry) => entry.id === body.roleId) ?? state.roles[1];
@@ -3783,7 +3475,6 @@ function handlePost(url: URL, init?: RequestInit) {
   if (url.pathname === "/api/admin/workspace/modules") {
     const body = parseJsonBody<WorkspaceModulesConfig["modules"]>(init);
     state.workspaceModules = {
-      tenantKey: state.workspaceModules.tenantKey ?? "primary",
       workspaceKey: state.workspaceModules.workspaceKey,
       updatedAt: DEMO_NOW,
       modules: {
@@ -3791,10 +3482,9 @@ function handlePost(url: URL, init?: RequestInit) {
         whatsapp: body.whatsapp === true,
         voice: body.voice === true,
         aiAutomation: body.aiAutomation === true,
+        dexterOrchestration: body.dexterOrchestration === true,
         vanillaWebchat: body.vanillaWebchat === true
-      },
-      source: "database",
-      failureReason: null
+      }
     };
     appendAuditLog({
       action: "workspace_modules_updated",
@@ -3900,22 +3590,20 @@ function handlePost(url: URL, init?: RequestInit) {
       authType?: string;
       sharedSecret: string;
       status?: "active" | "paused";
-      policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
-      tenantKey?: string;
+      policyMode?: "draft_only" | "auto_send";
       scopes?: Record<string, unknown>;
       capabilities?: Record<string, unknown>;
       policy?: Record<string, unknown>;
     }>(init);
     const agent: AgentIntegration = {
       id: `agent-${state.agents.length + 1}`,
-      tenant_key: body.tenantKey ?? "primary",
       name: body.name,
       provider: body.provider ?? "openai",
       base_url: body.baseUrl,
       auth_type: body.authType ?? "hmac",
       shared_secret: body.sharedSecret,
       status: body.status ?? "active",
-      policy_mode: body.policyMode ?? "hybrid_review",
+      policy_mode: body.policyMode ?? "draft_only",
       scopes: body.scopes ?? {},
       capabilities: body.capabilities ?? {},
       policy: body.policy ?? {},
@@ -4445,73 +4133,6 @@ function handlePatch(url: URL, init?: RequestInit) {
       expiresAt: "2026-03-20T08:30:00Z"
     };
   }
-  if (url.pathname === "/api/admin/security/privileged-access") {
-    const body = parseJsonBody<{
-      action: "approve" | "revoke" | "review";
-      grantId: string;
-      approvalNote?: string | null;
-      revokeReason?: string | null;
-      reviewNote?: string | null;
-    }>(init);
-    const grant = state.privilegedAccessGrants.find((entry) => entry.id === body.grantId);
-    if (!grant) throw new Error("Privileged access grant not found");
-    if (body.action === "approve") {
-      grant.status = "active";
-      grant.approvedByUserId = state.currentUser.id;
-      grant.approvalNote = body.approvalNote ?? null;
-      grant.approvedAt = DEMO_NOW;
-      grant.expiresAt = new Date(Date.parse(DEMO_NOW) + grant.requestedDurationMinutes * 60_000).toISOString();
-      grant.updatedAt = DEMO_NOW;
-      appendPrivilegedAccessDemoAlert(grant, "approved");
-      appendAuditLog({
-        action: "privileged_access_approved",
-        entity_type: "privileged_access_grant",
-        entity_id: grant.id,
-        data: { accessType: grant.accessType, subjectEmail: grant.subjectEmail },
-        actor_name: state.currentUser.display_name,
-        actor_email: state.currentUser.email
-      });
-      refreshPrivilegedAccessStats(state);
-      return { status: "active", grant };
-    }
-    if (body.action === "review") {
-      grant.metadata = {
-        ...grant.metadata,
-        postEventReview: {
-          reviewedByUserId: state.currentUser.id,
-          reviewedAt: DEMO_NOW,
-          reviewNote: body.reviewNote ?? "Reviewed privileged access evidence."
-        }
-      };
-      grant.updatedAt = DEMO_NOW;
-      appendAuditLog({
-        action: "privileged_access_reviewed",
-        entity_type: "privileged_access_grant",
-        entity_id: grant.id,
-        data: { accessType: grant.accessType, subjectEmail: grant.subjectEmail },
-        actor_name: state.currentUser.display_name,
-        actor_email: state.currentUser.email
-      });
-      refreshPrivilegedAccessStats(state);
-      return { status: "reviewed", grant };
-    }
-    grant.status = "revoked";
-    grant.revokedByUserId = state.currentUser.id;
-    grant.revokeReason = body.revokeReason ?? "Access revoked";
-    grant.revokedAt = DEMO_NOW;
-    grant.updatedAt = DEMO_NOW;
-    appendPrivilegedAccessDemoAlert(grant, "revoked");
-    appendAuditLog({
-      action: "privileged_access_revoked",
-      entity_type: "privileged_access_grant",
-      entity_id: grant.id,
-      data: { accessType: grant.accessType, subjectEmail: grant.subjectEmail },
-      actor_name: state.currentUser.display_name,
-      actor_email: state.currentUser.email
-    });
-    refreshPrivilegedAccessStats(state);
-    return { status: "revoked", grant };
-  }
   if (parts[0] === "api" && parts[1] === "support" && parts[2] === "tags" && parts.length === 4) {
     const body = parseJsonBody<{ name?: string; description?: string | null }>(init);
     const tag = state.tags.find((entry) => entry.id === parts[3]);
@@ -4565,8 +4186,7 @@ function handlePatch(url: URL, init?: RequestInit) {
       authType?: string;
       sharedSecret?: string;
       status?: "active" | "paused";
-      policyMode?: "draft_only" | "auto_send" | "hybrid_review" | "full_auto";
-      tenantKey?: string;
+      policyMode?: "draft_only" | "auto_send";
       scopes?: Record<string, unknown>;
       capabilities?: Record<string, unknown>;
       policy?: Record<string, unknown>;
@@ -4580,7 +4200,6 @@ function handlePatch(url: URL, init?: RequestInit) {
     if (body.sharedSecret) agent.shared_secret = body.sharedSecret;
     if (body.status) agent.status = body.status;
     if (body.policyMode) agent.policy_mode = body.policyMode;
-    if (body.tenantKey) agent.tenant_key = body.tenantKey;
     if (body.scopes) agent.scopes = body.scopes;
     if (body.capabilities) agent.capabilities = body.capabilities;
     if (body.policy) agent.policy = body.policy;
@@ -4772,18 +4391,9 @@ function handlePatch(url: URL, init?: RequestInit) {
   throw new Error(`No demo mock route for PATCH ${url.pathname}`);
 }
 
-function handleDelete(url: URL, init?: RequestInit) {
+function handleDelete(url: URL) {
   const state = getState();
   const parts = parsePathname(url.pathname);
-
-  if (url.pathname === "/api/auth/sessions") {
-    const body = parseJsonBody<{ sessionId?: string }>(init);
-    const session = state.authSessions.find((entry) => entry.id === body.sessionId);
-    if (!session) throw new Error("Session not found");
-    session.revoked_at = DEMO_NOW;
-    session.revoke_reason = "user_revoked";
-    return { status: "ok", current: session.current };
-  }
 
   if (parts[0] === "api" && parts[1] === "support" && parts[2] === "tags" && parts.length === 4) {
     state.tags = state.tags.filter((tag) => tag.id !== parts[3]);
@@ -4818,7 +4428,7 @@ export async function mockApiFetch<T>(url: string, init?: RequestInit) {
   } else if (method === "PATCH") {
     payload = handlePatch(parsedUrl, init);
   } else if (method === "DELETE") {
-    payload = handleDelete(parsedUrl, init);
+    payload = handleDelete(parsedUrl);
   } else {
     throw new Error(`No demo mock route for ${method} ${parsedUrl.pathname}`);
   }

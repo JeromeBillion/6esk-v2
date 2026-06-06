@@ -7,7 +7,6 @@ import {
   resolveTwilioCallerId
 } from "@/server/calls/twilio";
 import { resolveVoiceDeskTargetsForOutbound } from "@/server/calls/operators";
-import type { TenantScopeInput } from "@/server/tenant-context";
 
 type OutboundCallPayload = {
   callSessionId?: unknown;
@@ -125,8 +124,7 @@ async function sendViaHttpBridge(
 
 async function sendViaTwilio(
   eventId: string,
-  payload: OutboundCallPayload,
-  scopeInput?: TenantScopeInput
+  payload: OutboundCallPayload
 ): Promise<{ providerCallId: string | null }> {
   const callSessionId = readString(payload.callSessionId);
   const ticketId = readString(payload.ticketId);
@@ -144,7 +142,7 @@ async function sendViaTwilio(
   const client = twilio(accountSid, authToken);
   const statusCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/status");
   const recordingCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/recording");
-  const deskTargets = await resolveVoiceDeskTargetsForOutbound(actorUserId, scopeInput);
+  const deskTargets = await resolveVoiceDeskTargetsForOutbound(actorUserId);
   if (!deskTargets.length) {
     throw new Error("No online desk operator is available to accept the call.");
   }
@@ -187,8 +185,7 @@ async function sendViaTwilio(
 export async function sendOutboundCall(
   provider: string,
   eventId: string,
-  payload: OutboundCallPayload,
-  scopeInput?: TenantScopeInput
+  payload: OutboundCallPayload
 ): Promise<{ providerCallId: string | null }> {
   if (provider === "mock") {
     return { providerCallId: `mock-${eventId}` };
@@ -199,7 +196,7 @@ export async function sendOutboundCall(
   }
 
   if (provider === "twilio") {
-    return sendViaTwilio(eventId, payload, scopeInput);
+    return sendViaTwilio(eventId, payload);
   }
 
   throw new Error(`Call provider '${provider}' is not configured.`);

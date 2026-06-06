@@ -39,14 +39,14 @@ vi.mock("@/server/agents/outbox", () => ({
 import { attachCallRecording } from "@/server/calls/service";
 
 const ORIGINAL_FETCH = global.fetch;
-const RECORDING_R2_KEY = "tenants/primary/workspaces/primary/messages/message-1/recording.mp3";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 describe("attachCallRecording", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CALLS_TWILIO_ACCOUNT_SID = "AC123";
     process.env.CALLS_TWILIO_AUTH_TOKEN = "auth-token";
-    mocks.putObject.mockResolvedValue(RECORDING_R2_KEY);
+    mocks.putObject.mockResolvedValue("messages/message-1/recording.mp3");
     mocks.recordTicketEvent.mockResolvedValue(undefined);
     mocks.buildAgentEvent.mockReturnValue({
       eventType: "ticket.call.recording.ready",
@@ -78,6 +78,7 @@ describe("attachCallRecording", () => {
         rows: [
           {
             id: "call-session-1",
+            tenant_id: TENANT_ID,
             ticket_id: "ticket-1",
             mailbox_id: "mailbox-1",
             message_id: "message-1",
@@ -116,14 +117,19 @@ describe("attachCallRecording", () => {
       recordingUrl: expect.stringMatching(
         /^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/
       ),
-      recordingR2Key: RECORDING_R2_KEY
+      recordingR2Key: "messages/message-1/recording.mp3"
     });
 
     expect(mocks.putObject).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: RECORDING_R2_KEY,
+        key: "messages/message-1/recording.mp3",
         contentType: "audio/mpeg"
       })
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO attachments (tenant_id"),
+      expect.arrayContaining([TENANT_ID, "message-1", "Call Recording.mp3"])
     );
 
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
@@ -132,9 +138,8 @@ describe("attachCallRecording", () => {
       [
         "call-session-1",
         expect.stringMatching(/^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/),
-        RECORDING_R2_KEY,
-        42,
-        "primary"
+        "messages/message-1/recording.mp3",
+        42
       ]
     );
 
@@ -144,7 +149,7 @@ describe("attachCallRecording", () => {
         eventType: "call_recording_ready",
         data: expect.objectContaining({
           recordingUrl: expect.stringMatching(/^\/api\/attachments\/[0-9a-f-]+\?disposition=inline$/),
-          recordingR2Key: RECORDING_R2_KEY
+          recordingR2Key: "messages/message-1/recording.mp3"
         })
       })
     );
@@ -152,11 +157,10 @@ describe("attachCallRecording", () => {
     expect(mocks.dbQuery).toHaveBeenLastCalledWith(
       expect.stringContaining("INSERT INTO call_transcript_jobs"),
       [
-        "primary",
-        "primary",
+        TENANT_ID,
         "call-session-1",
         "managed_http",
-        RECORDING_R2_KEY,
+        "messages/message-1/recording.mp3",
         expect.any(String)
       ]
     );
@@ -168,6 +172,7 @@ describe("attachCallRecording", () => {
         rows: [
           {
             id: "call-session-1",
+            tenant_id: TENANT_ID,
             ticket_id: "ticket-1",
             mailbox_id: "mailbox-1",
             message_id: "message-1",

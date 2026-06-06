@@ -4,6 +4,8 @@ export type ApiMailbox = {
   id: string;
   address: string;
   type: string;
+  provider: string;
+  delivery_mode: "managed" | "connected";
 };
 
 export type ApiMailState = "received" | "sent" | "queued" | "processing" | "failed" | "draft";

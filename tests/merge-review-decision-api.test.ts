@@ -146,8 +146,6 @@ describe("PATCH /api/merge-reviews/[reviewId]", () => {
       reviewId: REVIEW_ID,
       decision: "approve",
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-      tenantKey: "primary",
-      workspaceKey: "primary",
       note: "Confirmed duplicate escalation"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
@@ -178,3 +176,4 @@ describe("PATCH /api/merge-reviews/[reviewId]", () => {
     });
   });
 });
+

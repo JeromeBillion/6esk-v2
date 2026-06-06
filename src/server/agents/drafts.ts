@@ -1,12 +1,11 @@
 import { db } from "@/server/db";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
-import { resolveTenantScope, tenantScopeFromUser, type TenantScopeInput } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type AgentDraft = {
   id: string;
-  tenant_key: string;
-  workspace_key: string;
+  tenant_id?: string;
   integration_id: string | null;
   ticket_id: string;
   subject: string | null;
@@ -34,51 +33,38 @@ export type DraftQueueItem = AgentDraft & {
 export async function getDraftById({
   draftId,
   ticketId,
-  tenantKey,
-  workspaceKey
+  tenantId
 }: {
   draftId: string;
   ticketId: string;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
+  tenantId?: string | null;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
+  const values = tenantId ? [draftId, ticketId, tenantId] : [draftId, ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $3" : "";
   const result = await db.query<AgentDraft>(
-    `SELECT d.id, d.tenant_key, d.workspace_key, d.integration_id, d.ticket_id,
-            d.subject, d.body_text, d.body_html, d.confidence,
-            d.metadata, d.status, d.created_at, d.updated_at
-     FROM agent_drafts d
-     JOIN tickets t
-       ON t.id = d.ticket_id
-      AND t.tenant_key = d.tenant_key
-      AND t.workspace_key = d.workspace_key
-     WHERE d.id = $1
-       AND d.ticket_id = $2
-       AND d.tenant_key = $3
-       AND d.workspace_key = $4
+    `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
+            metadata, status, created_at, updated_at
+     FROM agent_drafts
+     WHERE id = $1 AND ticket_id = $2
+       ${tenantClause}
      LIMIT 1`,
-    [draftId, ticketId, scope.tenantKey, scope.workspaceKey]
+    values
   );
   return result.rows[0] ?? null;
 }
 
-export async function listDraftsForTicket(ticketId: string, scopeInput?: TenantScopeInput) {
-  const scope = resolveTenantScope(scopeInput);
+export async function listDraftsForTicket(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<AgentDraft>(
-    `SELECT d.id, d.tenant_key, d.workspace_key, d.integration_id, d.ticket_id,
-            d.subject, d.body_text, d.body_html, d.confidence,
-            d.metadata, d.status, d.created_at, d.updated_at
-     FROM agent_drafts d
-     JOIN tickets t
-       ON t.id = d.ticket_id
-      AND t.tenant_key = d.tenant_key
-      AND t.workspace_key = d.workspace_key
-     WHERE d.ticket_id = $1
-       AND d.status = 'pending'
-       AND d.tenant_key = $2
-       AND d.workspace_key = $3
-     ORDER BY d.created_at DESC`,
-    [ticketId, scope.tenantKey, scope.workspaceKey]
+    `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
+            metadata, status, created_at, updated_at
+     FROM agent_drafts
+     WHERE ticket_id = $1
+       ${tenantClause}
+       AND status = 'pending'
+     ORDER BY created_at DESC`,
+    values
   );
   return result.rows;
 }
@@ -91,13 +77,8 @@ export async function listPendingDraftsForUser(
     assignedUserId?: string | null;
   }
 ) {
-  const scope = tenantScopeFromUser(user);
-  const values: Array<string> = [scope.tenantKey, scope.workspaceKey];
-  const conditions: string[] = [
-    "d.status = 'pending'",
-    "d.tenant_key = $1",
-    "d.workspace_key = $2"
-  ];
+  const values: Array<string> = [];
+  const conditions: string[] = ["d.status = 'pending'"];
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
@@ -127,10 +108,7 @@ export async function listPendingDraftsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id
-              AND channel_msg.tenant_key = t.tenant_key
-              AND channel_msg.workspace_key = t.workspace_key
-              AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -146,10 +124,7 @@ export async function listPendingDraftsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id
-              AND channel_msg.tenant_key = t.tenant_key
-              AND channel_msg.workspace_key = t.workspace_key
-              AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -168,20 +143,14 @@ export async function listPendingDraftsForUser(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id
-            AND channel_msg.tenant_key = t.tenant_key
-            AND channel_msg.workspace_key = t.workspace_key
-            AND channel_msg.channel = ${whatsappPlaceholder}
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${whatsappPlaceholder}
         )`
       );
       conditions.push(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id
-            AND channel_msg.tenant_key = t.tenant_key
-            AND channel_msg.workspace_key = t.workspace_key
-            AND channel_msg.channel = ${voicePlaceholder}
+          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${voicePlaceholder}
         )`
       );
       conditions.push(`t.requester_email NOT ILIKE ${whatsappRequesterPlaceholder}`);
@@ -192,8 +161,7 @@ export async function listPendingDraftsForUser(
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await db.query<DraftQueueItem>(
-    `SELECT d.id, d.tenant_key, d.workspace_key, d.integration_id, d.ticket_id,
-            d.subject, d.body_text, d.body_html, d.confidence,
+    `SELECT d.id, d.integration_id, d.ticket_id, d.subject, d.body_text, d.body_html, d.confidence,
             d.metadata, d.status, d.created_at, d.updated_at,
             t.subject AS ticket_subject,
             t.requester_email,
@@ -202,23 +170,14 @@ export async function listPendingDraftsForUser(
             t.assigned_user_id,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id
-                AND msg.tenant_key = t.tenant_key
-                AND msg.workspace_key = t.workspace_key
-                AND msg.channel = 'whatsapp'
+              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
             ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id
-                AND msg.tenant_key = t.tenant_key
-                AND msg.workspace_key = t.workspace_key
-                AND msg.channel = 'voice'
+              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM agent_drafts d
-     JOIN tickets t
-       ON t.id = d.ticket_id
-      AND t.tenant_key = d.tenant_key
-      AND t.workspace_key = d.workspace_key
+     JOIN tickets t ON t.id = d.ticket_id
      ${whereClause}
      ORDER BY d.created_at DESC
      LIMIT 200`,
@@ -229,87 +188,65 @@ export async function listPendingDraftsForUser(
 }
 
 export async function createDraft({
+  tenantId = DEFAULT_TENANT_ID,
   integrationId,
   ticketId,
-  tenantKey,
-  workspaceKey,
   subject,
   bodyText,
   bodyHtml,
   confidence,
   metadata
 }: {
+  tenantId?: string;
   integrationId: string;
   ticketId: string;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
   subject?: string | null;
   bodyText?: string | null;
   bodyHtml?: string | null;
   confidence?: number | null;
   metadata?: Record<string, unknown> | null;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const result = await db.query<AgentDraft>(
-    `INSERT INTO agent_drafts (
-       tenant_key, workspace_key, integration_id, ticket_id, subject, body_text, body_html, confidence, metadata
-     )
-     SELECT ticket.tenant_key, ticket.workspace_key, integration.id, ticket.id, $3, $4, $5, $6, $7
-     FROM tickets ticket
-     JOIN agent_integrations integration
-       ON integration.id = $1
-      AND integration.tenant_key = ticket.tenant_key
-     WHERE ticket.id = $2
-       AND ticket.tenant_key = $8
-       AND ticket.workspace_key = $9
-     RETURNING id, tenant_key, workspace_key, integration_id, ticket_id, subject, body_text, body_html,
+    `INSERT INTO agent_drafts (tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
     [
+      tenantId,
       integrationId,
       ticketId,
       subject ?? null,
       bodyText ?? null,
       bodyHtml ?? null,
       confidence ?? null,
-      metadata ?? null,
-      scope.tenantKey,
-      scope.workspaceKey
+      metadata ?? null
     ]
   );
-  return result.rows[0] ?? null;
+  return result.rows[0];
 }
 
 export async function updateDraftStatus({
   draftId,
   ticketId,
   status,
-  tenantKey,
-  workspaceKey
+  tenantId
 }: {
   draftId: string;
   ticketId: string;
   status: DraftStatus;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
+  tenantId?: string | null;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
+  const values = tenantId ? [status, draftId, ticketId, tenantId] : [status, draftId, ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $4" : "";
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET status = $1, updated_at = now()
-     WHERE id = $2
-       AND ticket_id = $3
+     WHERE id = $2 AND ticket_id = $3
+       ${tenantClause}
        AND status = 'pending'
-       AND tenant_key = $4
-       AND workspace_key = $5
-       AND EXISTS (
-         SELECT 1 FROM tickets t
-         WHERE t.id = agent_drafts.ticket_id
-           AND t.tenant_key = agent_drafts.tenant_key
-           AND t.workspace_key = agent_drafts.workspace_key
-       )
-     RETURNING id, tenant_key, workspace_key, integration_id, ticket_id, subject, body_text, body_html,
+     RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
-    [status, draftId, ticketId, scope.tenantKey, scope.workspaceKey]
+    values
   );
   return result.rows[0] ?? null;
 }
@@ -319,39 +256,24 @@ export async function updateDraftContent({
   ticketId,
   subject,
   bodyText,
-  bodyHtml,
-  tenantKey,
-  workspaceKey
+  bodyHtml
 }: {
   draftId: string;
   ticketId: string;
   subject: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET subject = $1,
          body_text = $2,
          body_html = $3,
          updated_at = now()
-     WHERE id = $4
-       AND ticket_id = $5
-       AND status = 'pending'
-       AND tenant_key = $6
-       AND workspace_key = $7
-       AND EXISTS (
-         SELECT 1 FROM tickets t
-         WHERE t.id = agent_drafts.ticket_id
-           AND t.tenant_key = agent_drafts.tenant_key
-           AND t.workspace_key = agent_drafts.workspace_key
-       )
-     RETURNING id, tenant_key, workspace_key, integration_id, ticket_id, subject, body_text, body_html,
+     WHERE id = $4 AND ticket_id = $5 AND status = 'pending'
+     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
-    [subject, bodyText, bodyHtml, draftId, ticketId, scope.tenantKey, scope.workspaceKey]
+    [subject, bodyText, bodyHtml, draftId, ticketId]
   );
   return result.rows[0] ?? null;
 }

@@ -1,5 +1,4 @@
 import { db } from "@/server/db";
-import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 export type InboundAlertConfig = {
   source: "db" | "env";
@@ -27,16 +26,13 @@ function normalizeWebhook(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-export async function getInboundAlertConfig(scopeInput?: TenantScopeInput): Promise<InboundAlertConfig> {
-  const scope = resolveTenantScope(scopeInput);
+export async function getInboundAlertConfig(): Promise<InboundAlertConfig> {
   const result = await db.query<InboundAlertConfigRow>(
     `SELECT webhook_url, threshold, window_minutes, cooldown_minutes, updated_at
      FROM inbound_alert_configs
-     WHERE tenant_key = $1
-       AND is_active = true
+     WHERE is_active = true
      ORDER BY created_at DESC
-     LIMIT 1`,
-    [scope.tenantKey]
+     LIMIT 1`
   );
 
   const row = result.rows[0];
@@ -66,30 +62,19 @@ export async function saveInboundAlertConfig(input: {
   threshold: number;
   windowMinutes: number;
   cooldownMinutes: number;
-}, scopeInput?: TenantScopeInput) {
-  const scope = resolveTenantScope(scopeInput);
+}) {
   const webhookUrl = normalizeWebhook(input.webhookUrl);
   const threshold = parsePositive(input.threshold, 5);
   const windowMinutes = parsePositive(input.windowMinutes, 30);
   const cooldownMinutes = parsePositive(input.cooldownMinutes, 60);
 
-  await db.query(
-    "UPDATE inbound_alert_configs SET is_active = false WHERE tenant_key = $1 AND is_active = true",
-    [scope.tenantKey]
-  );
+  await db.query("UPDATE inbound_alert_configs SET is_active = false WHERE is_active = true");
   await db.query(
     `INSERT INTO inbound_alert_configs (
-      tenant_key,
-      workspace_key,
-      webhook_url,
-      threshold,
-      window_minutes,
-      cooldown_minutes,
-      is_active,
-      updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, true, now())`,
-    [scope.tenantKey, scope.workspaceKey, webhookUrl || null, threshold, windowMinutes, cooldownMinutes]
+      webhook_url, threshold, window_minutes, cooldown_minutes, is_active, updated_at
+    ) VALUES ($1, $2, $3, $4, true, now())`,
+    [webhookUrl || null, threshold, windowMinutes, cooldownMinutes]
   );
 
-  return getInboundAlertConfig(scope);
+  return getInboundAlertConfig();
 }

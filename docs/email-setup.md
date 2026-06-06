@@ -9,8 +9,8 @@ Set these in your deployment:
 APP_URL=https://<your-6esk-domain>
 RESEND_API_KEY=<resend_api_key>
 RESEND_WEBHOOK_SECRET=<resend_webhook_secret>
-RESEND_FROM_DOMAIN=example.com
-SUPPORT_ADDRESS=support@example.com
+RESEND_FROM_DOMAIN=6ex.co.za
+SUPPORT_ADDRESS=support@6ex.co.za
 INBOUND_SHARED_SECRET=<random_long_secret>
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=<r2_access_key>
@@ -41,7 +41,7 @@ Example:
 ```json
 {
   "from": "Customer <customer@example.com>",
-  "to": ["support@example.com"],
+  "to": ["support@6ex.co.za"],
   "subject": "Billing issue",
   "text": "Hello, I need help with my invoice.",
   "messageId": "<abc123@example.com>"
@@ -90,11 +90,11 @@ Required worker secrets:
 Note: this repo currently includes worker code only. Add your own Wrangler project files (`wrangler.toml`, package manager config) before `wrangler deploy`.
 
 ## DNS Setup
-1. Verify the tenant support domain in Resend (SPF + DKIM).
+1. Verify `6ex.co.za` in Resend (SPF + DKIM).
 2. Add DMARC, for example:
    - `Host: _dmarc`
    - `Type: TXT`
-   - `Value: v=DMARC1; p=none; rua=mailto:dmarc@example.com`
+   - `Value: v=DMARC1; p=none; rua=mailto:dmarc@6ex.co.za`
 3. Enable Cloudflare Email Routing catch-all and route to the worker.
 
 ## Validation
@@ -103,7 +103,7 @@ Inbound test:
 ```powershell
 $body = @{
   from = "test@example.com"
-  to = "support@example.com"
+  to = "support@6ex.co.za"
   subject = "Inbound test"
   text = "Hello"
   messageId = "<test-message-id-1>"

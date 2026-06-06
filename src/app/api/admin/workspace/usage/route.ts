@@ -1,4 +1,4 @@
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
 import { getWorkspaceModuleUsageSummary } from "@/server/module-metering";
 
 function clampWindowDays(value: string | null) {
@@ -8,17 +8,17 @@ function clampWindowDays(value: string | null) {
 }
 
 export async function GET(request: Request) {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (user.role_name !== "lead_admin") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const days = clampWindowDays(url.searchParams.get("days"));
-  const { scope } = access;
-  const summary = await getWorkspaceModuleUsageSummary({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
-    windowDays: days
-  });
+  const summary = await getWorkspaceModuleUsageSummary({ windowDays: days });
 
   return Response.json({ summary });
 }

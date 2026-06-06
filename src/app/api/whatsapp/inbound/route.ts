@@ -1,23 +1,18 @@
 import { db } from "@/server/db";
 import {
+  resolveWhatsAppAccountForInbound,
   storeInboundWhatsApp,
   type NormalizedWhatsAppAttachment,
   type NormalizedWhatsAppMessage
 } from "@/server/whatsapp/inbound-store";
 import { verifyWhatsAppSignature } from "@/server/whatsapp/signature";
+import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 import {
-  resolveTenantScope,
-  shouldRequireTenantIngressScope,
-  type TenantScope,
-  type TenantScopeInput
-} from "@/server/tenant-context";
-import {
-  listActiveProviderWebhookSecrets,
-  markProviderWebhookSecretUsed,
-  ProviderWebhookSecretConfigurationError,
-  shouldRequireTenantProviderWebhookSecrets,
-  type ActiveProviderWebhookSecret
-} from "@/server/provider-webhook-secrets";
+  integrationError,
+  integrationSuccess,
+  validateIntegrationApiVersion
+} from "@/server/api-contract";
+import { logger } from "@/server/logger";
 
 type WhatsAppStatusUpdate = {
   messageId: string;
@@ -26,152 +21,46 @@ type WhatsAppStatusUpdate = {
   payload: Record<string, unknown>;
 };
 
-async function getVerifyToken(scopeInput?: TenantScopeInput) {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+async function getVerifyTokens() {
   const result = await db.query(
     `SELECT verify_token
      FROM whatsapp_accounts
-     WHERE tenant_key = $1
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [tenantKey]
+     WHERE status = 'active'
+       AND verify_token IS NOT NULL
+     ORDER BY created_at DESC`
   );
-  const stored = result.rows[0]?.verify_token ?? "";
-  return stored || process.env.WHATSAPP_VERIFY_TOKEN || "";
-}
-
-function readString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function normalizePhoneHint(value: unknown) {
-  const text = readString(value);
-  if (!text) return null;
-  return text.replace(/\s+/g, "").trim();
-}
-
-function collectRoutingHints(payload: Record<string, unknown>) {
-  const wabaIds = new Set<string>();
-  const phoneNumbers = new Set<string>();
-
-  const entries = Array.isArray(payload.entry) ? payload.entry : [];
-  for (const entry of entries) {
-    if (!entry || typeof entry !== "object") continue;
-    const entryRecord = entry as Record<string, unknown>;
-    const entryId = readString(entryRecord.id);
-    if (entryId) {
-      wabaIds.add(entryId);
-    }
-
-    const changes = Array.isArray(entryRecord.changes) ? entryRecord.changes : [];
-    for (const change of changes) {
-      if (!change || typeof change !== "object") continue;
-      const value = ((change as Record<string, unknown>).value ?? {}) as Record<string, unknown>;
-      const metadata = (value.metadata ?? {}) as Record<string, unknown>;
-      const displayPhoneNumber = normalizePhoneHint(metadata.display_phone_number);
-      if (displayPhoneNumber) {
-        phoneNumbers.add(displayPhoneNumber);
-      }
-    }
+  const tokens = result.rows
+    .map((row) => (typeof row.verify_token === "string" ? row.verify_token : ""))
+    .filter(Boolean);
+  if (process.env.WHATSAPP_VERIFY_TOKEN) {
+    tokens.push(process.env.WHATSAPP_VERIFY_TOKEN);
   }
-
-  const normalizedMessages = Array.isArray(payload.messages) ? payload.messages : [];
-  for (const message of normalizedMessages) {
-    if (!message || typeof message !== "object") continue;
-    const to = normalizePhoneHint((message as Record<string, unknown>).to);
-    if (to) {
-      phoneNumbers.add(to);
-    }
-  }
-
-  return {
-    wabaIds: [...wabaIds],
-    phoneNumbers: [...phoneNumbers]
-  };
-}
-
-function distinctScopes(rows: TenantScope[]) {
-  const seen = new Set<string>();
-  const scopes: TenantScope[] = [];
-  for (const row of rows) {
-    const scope = resolveTenantScope(row);
-    const key = `${scope.tenantKey}:${scope.workspaceKey}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    scopes.push(scope);
-  }
-  return scopes;
-}
-
-async function resolveWhatsAppScopeForPayload(payload: Record<string, unknown>) {
-  const { wabaIds, phoneNumbers } = collectRoutingHints(payload);
-  if (!wabaIds.length && !phoneNumbers.length) {
-    return null;
-  }
-
-  const result = await db.query<{ tenant_key: string; workspace_key: string }>(
-    `SELECT tenant_key, workspace_key
-     FROM whatsapp_accounts
-     WHERE (cardinality($1::text[]) > 0 AND waba_id = ANY($1::text[]))
-        OR (
-          cardinality($2::text[]) > 0
-          AND regexp_replace(phone_number, '\\s+', '', 'g') = ANY($2::text[])
-        )
-     ORDER BY status = 'active' DESC, created_at DESC`,
-    [wabaIds, phoneNumbers]
-  );
-  const scopes = distinctScopes(
-    result.rows.map((row) => ({
-      tenantKey: row.tenant_key,
-      workspaceKey: row.workspace_key
-    }))
-  );
-  if (scopes.length > 1) {
-    throw new Error("Ambiguous WhatsApp tenant route.");
-  }
-  return scopes[0] ?? null;
-}
-
-async function resolveWhatsAppScopeForVerifyToken(token: string) {
-  const result = await db.query<{ tenant_key: string; workspace_key: string }>(
-    `SELECT tenant_key, workspace_key
-     FROM whatsapp_accounts
-     WHERE verify_token = $1
-     ORDER BY status = 'active' DESC, created_at DESC`,
-    [token]
-  );
-  const scopes = distinctScopes(
-    result.rows.map((row) => ({
-      tenantKey: row.tenant_key,
-      workspaceKey: row.workspace_key
-    }))
-  );
-  if (scopes.length > 1) {
-    throw new Error("Ambiguous WhatsApp verify token route.");
-  }
-  return scopes[0] ?? null;
+  return tokens;
 }
 
 export async function GET(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
   if (mode === "subscribe" && token) {
-    let scope: TenantScope | null = null;
-    try {
-      scope = await resolveWhatsAppScopeForVerifyToken(token);
-    } catch {
-      return Response.json({ error: "Ambiguous verify token" }, { status: 409 });
-    }
-    const verifyToken = await getVerifyToken(scope ?? undefined);
-    if (verifyToken && token === verifyToken) {
+    const verifyTokens = await getVerifyTokens();
+    if (verifyTokens.includes(token)) {
       return new Response(challenge ?? "", { status: 200 });
     }
   }
 
-  return Response.json({ error: "Forbidden" }, { status: 403 });
+  return integrationError(request, {
+    status: 403,
+    code: "forbidden",
+    message: "Forbidden"
+  });
 }
 
 function extractNormalizedMessages(payload: Record<string, unknown>) {
@@ -279,12 +168,20 @@ function extractMetaMessages(payload: Record<string, unknown>) {
       if (!change || typeof change !== "object") continue;
       const changeRecord = change as Record<string, unknown>;
       const value = (changeRecord.value ?? {}) as Record<string, unknown>;
+      const metadata =
+        value.metadata && typeof value.metadata === "object"
+          ? (value.metadata as Record<string, unknown>)
+          : {};
+      const recipientPhone =
+        typeof metadata.display_phone_number === "string"
+          ? metadata.display_phone_number
+          : typeof metadata.phone_number_id === "string"
+            ? metadata.phone_number_id
+            : null;
 
       const contacts = Array.isArray(value.contacts) ? value.contacts : [];
       const messagesList = Array.isArray(value.messages) ? value.messages : [];
       const statusList = Array.isArray(value.statuses) ? value.statuses : [];
-      const metadata = (value.metadata ?? {}) as Record<string, unknown>;
-      const displayPhoneNumber = normalizePhoneHint(metadata.display_phone_number);
 
       for (const message of messagesList) {
         if (!message || typeof message !== "object") continue;
@@ -331,7 +228,7 @@ function extractMetaMessages(payload: Record<string, unknown>) {
           messageId,
           conversationId: from,
           from,
-          to: displayPhoneNumber,
+          to: recipientPhone,
           text: text ?? attachments[0]?.caption ?? null,
           timestamp,
           contactName,
@@ -349,6 +246,9 @@ function extractMetaMessages(payload: Record<string, unknown>) {
           source: "webhook",
           provider: "meta"
         };
+        if (recipientPhone) {
+          eventPayload.recipientPhone = recipientPhone;
+        }
         if (typeof record.recipient_id === "string") {
           eventPayload.recipientId = record.recipient_id;
         }
@@ -392,180 +292,210 @@ function parseStatusTimestamp(value: string | number | null | undefined) {
 }
 
 async function applyStatusUpdates(
-  statuses: WhatsAppStatusUpdate[],
-  scopeInput?: TenantScopeInput
+  statuses: WhatsAppStatusUpdate[]
 ) {
-  const scope = resolveTenantScope(scopeInput);
-  for (const status of statuses) {
-    if (!status.messageId) continue;
-    const timestamp = parseStatusTimestamp(status.timestamp ?? null);
-    const messageResult = await db.query<{ id: string }>(
-      `SELECT id
+  const validStatuses = statuses.filter((s) => s.messageId);
+  if (!validStatuses.length) return;
+
+  // Batch lookup: resolve all external message IDs in a single query
+  const externalIds = [...new Set(validStatuses.map((s) => s.messageId!))];
+  const lookupResult = await db.query<{ id: string; tenant_id: string; external_message_id: string }>(
+    `SELECT id, tenant_id, external_message_id
+     FROM messages
+     WHERE channel = 'whatsapp' AND external_message_id = ANY($1::text[])`,
+    [externalIds]
+  );
+  const messageIdMap = new Map(
+    lookupResult.rows.map((row) => [
+      row.external_message_id,
+      { id: row.id, tenantId: row.tenant_id }
+    ])
+  );
+  let fallbackTenantId: string | null = null;
+  if (lookupResult.rows.length < externalIds.length) {
+    try {
+      fallbackTenantId = (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
+    } catch (error) {
+      logger.warn("WhatsApp status fallback tenant resolution failed", {
+        error,
+        route: "/api/whatsapp/inbound"
+      });
+      fallbackTenantId = null;
+    }
+  }
+
+  // Process each status update with parallelized INSERT + UPDATE
+  await Promise.all(
+    validStatuses.map(async (status) => {
+      const timestamp = parseStatusTimestamp(status.timestamp ?? null);
+      const match = messageIdMap.get(status.messageId!) ?? null;
+      const tenantId = match?.tenantId ?? fallbackTenantId;
+      if (!tenantId) {
+        return;
+      }
+      const eventPayload = {
+        status: status.status ?? null,
+        ...status.payload
+      };
+
+      await Promise.all([
+        db.query(
+          `INSERT INTO whatsapp_status_events (tenant_id, message_id, external_message_id, status, occurred_at, payload)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            tenantId,
+            match?.id ?? null,
+            status.messageId,
+            status.status ?? "unknown",
+            timestamp ?? new Date(),
+            eventPayload
+          ]
+        ),
+        db.query(
+          `UPDATE messages
+           SET wa_status = $1,
+               wa_timestamp = COALESCE($2, wa_timestamp)
+           WHERE channel = 'whatsapp'
+             AND external_message_id = $3
+             AND tenant_id = $4`,
+          [status.status ?? null, timestamp, status.messageId, tenantId]
+        )
+      ]);
+    })
+  );
+}
+
+async function resolveWebhookTenantId(
+  messages: NormalizedWhatsAppMessage[],
+  statuses: WhatsAppStatusUpdate[]
+) {
+  const tenants = new Set<string>();
+
+  for (const message of messages) {
+    try {
+      const account = await resolveWhatsAppAccountForInbound(message);
+      if (account?.tenant_id) {
+        tenants.add(account.tenant_id);
+      }
+    } catch (error) {
+      logger.warn("WhatsApp tenant resolution failed for inbound message", {
+        error,
+        route: "/api/whatsapp/inbound",
+        from: message.from,
+        messageId: message.messageId
+      });
+      return null;
+    }
+  }
+
+  const statusIds = [...new Set(statuses.map((status) => status.messageId).filter(Boolean))];
+  if (statusIds.length) {
+    const result = await db.query<{ tenant_id: string }>(
+      `SELECT DISTINCT tenant_id
        FROM messages
-       WHERE tenant_key = $1
-         AND channel = 'whatsapp'
-         AND external_message_id = $2
-       LIMIT 1`,
-      [scope.tenantKey, status.messageId]
+       WHERE channel = 'whatsapp'
+         AND external_message_id = ANY($1::text[])`,
+      [statusIds]
     );
-    const messageId = messageResult.rows[0]?.id ?? null;
-    const eventPayload = {
-      status: status.status ?? null,
-      ...status.payload
-    };
-    await db.query(
-      `INSERT INTO whatsapp_status_events (
-         tenant_key, workspace_key, message_id, external_message_id, status, occurred_at, payload
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        scope.tenantKey,
-        scope.workspaceKey,
-        messageId,
-        status.messageId,
-        status.status ?? "unknown",
-        timestamp ?? new Date(),
-        eventPayload
-      ]
-    );
-    await db.query(
-      `UPDATE messages
-       SET wa_status = $1,
-           wa_timestamp = COALESCE($2, wa_timestamp)
-       WHERE tenant_key = $3
-         AND channel = 'whatsapp'
-         AND external_message_id = $4`,
-      [status.status ?? null, timestamp, scope.tenantKey, status.messageId]
-    );
+    for (const row of result.rows) {
+      tenants.add(row.tenant_id);
+    }
+  }
+
+  if (tenants.size === 1) {
+    return [...tenants][0];
+  }
+  if (tenants.size > 1) {
+    return null;
+  }
+
+  try {
+    return (await resolveWhatsAppAccountForInbound(null))?.tenant_id ?? null;
+  } catch (error) {
+    logger.warn("WhatsApp default tenant resolution failed", {
+      error,
+      route: "/api/whatsapp/inbound"
+    });
+    return null;
   }
 }
 
 export async function POST(request: Request) {
+  const versionError = validateIntegrationApiVersion(request);
+  if (versionError) {
+    return versionError;
+  }
+
   let payload: unknown;
   const rawBody = await request.text();
+  const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
   const providedSignature = request.headers.get("x-hub-signature-256");
+
+  const signatureValid = verifyWhatsAppSignature({
+    body: rawBody,
+    providedSignature,
+    appSecret,
+    requireSignature: !canAcceptUnsignedWebhookTraffic(process.env.WHATSAPP_ALLOW_UNSIGNED_WEBHOOKS)
+  });
+
+  if (!signatureValid) {
+    return integrationError(request, {
+      status: 401,
+      code: "invalid_signature",
+      message: "Invalid signature"
+    });
+  }
 
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch (error) {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  let resolvedScope: TenantScope | null;
-  try {
-    resolvedScope = await resolveWhatsAppScopeForPayload(normalizedPayload);
-  } catch {
-    return Response.json({ error: "Ambiguous WhatsApp tenant route" }, { status: 409 });
-  }
-  if (!resolvedScope && shouldRequireTenantIngressScope()) {
-    return Response.json(
-      {
-        error: "Unresolved WhatsApp tenant route",
-        code: "unresolved_whatsapp_tenant_route"
-      },
-      { status: 404 }
-    );
-  }
-  if (!resolvedScope && shouldRequireTenantProviderWebhookSecrets()) {
-    return Response.json(
-      {
-        error: "Unresolved WhatsApp tenant route",
-        code: "unresolved_whatsapp_tenant_route"
-      },
-      { status: 404 }
-    );
-  }
-  const scope = resolvedScope ?? resolveTenantScope();
-
-  let providerSecrets: ActiveProviderWebhookSecret[] = [];
-  try {
-    providerSecrets = resolvedScope
-      ? await listActiveProviderWebhookSecrets({
-          scope,
-          provider: "whatsapp",
-          secretType: "app_secret"
-        })
-      : [];
-  } catch (error) {
-    if (error instanceof ProviderWebhookSecretConfigurationError) {
-      return Response.json(
-        {
-          error: error.message,
-          code: "provider_webhook_secret_configuration_missing"
-        },
-        { status: 503 }
-      );
-    }
-    throw error;
-  }
-
-  const globalAppSecret = process.env.WHATSAPP_APP_SECRET?.trim();
-  if (globalAppSecret && !shouldRequireTenantProviderWebhookSecrets()) {
-    providerSecrets.push({
-      id: "env:WHATSAPP_APP_SECRET",
-      secret: globalAppSecret,
-      source: "env"
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_json",
+      message: "Invalid JSON body"
     });
   }
 
-  let matchedSecret: ActiveProviderWebhookSecret | null = null;
-  if (providerSecrets.length) {
-    matchedSecret =
-      providerSecrets.find((secret) =>
-        verifyWhatsAppSignature({
-          body: rawBody,
-          providedSignature,
-          appSecret: secret.secret
-        })
-      ) ?? null;
-    if (!matchedSecret) {
-      return Response.json({ error: "Invalid signature" }, { status: 401 });
-    }
-    await markProviderWebhookSecretUsed(matchedSecret.id, scope).catch(() => {});
-  } else if (shouldRequireTenantProviderWebhookSecrets()) {
-    return Response.json(
-      {
-        error: "Provider webhook secret is not configured for this tenant.",
-        code: "provider_webhook_secret_missing"
-      },
-      { status: 503 }
-    );
-  } else if (
-    !verifyWhatsAppSignature({
-      body: rawBody,
-      providedSignature,
-      appSecret: ""
-    })
-  ) {
-    return Response.json({ error: "Invalid signature" }, { status: 401 });
-  }
-
-  await db.query(
-    `INSERT INTO whatsapp_events (tenant_key, workspace_key, direction, payload, status)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [scope.tenantKey, scope.workspaceKey, "inbound", payload, "received"]
-  );
+  const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const { messages: normalizedMessages, statuses: normalizedStatuses } =
     extractNormalizedMessages(normalizedPayload);
   const { messages: metaMessages, statuses: metaStatuses } = extractMetaMessages(normalizedPayload);
 
   const messages = normalizedMessages.length ? normalizedMessages : metaMessages;
   const statuses = normalizedStatuses.length ? normalizedStatuses : metaStatuses;
+  const eventTenantId = await resolveWebhookTenantId(messages, statuses);
+  if (eventTenantId) {
+    await db.query(
+      `INSERT INTO whatsapp_events (tenant_id, direction, payload, status)
+       VALUES ($1, $2, $3, $4)`,
+      [eventTenantId, "inbound", payload, "received"]
+    );
+  } else {
+    logger.warn("Skipped WhatsApp raw event persistence without tenant resolution", {
+      route: "/api/whatsapp/inbound"
+    });
+  }
 
   let processed = 0;
   for (const message of messages) {
     try {
-      await storeInboundWhatsApp(message, scope);
+      await storeInboundWhatsApp(message);
       processed += 1;
     } catch (error) {
+      logger.error("Failed to store inbound WhatsApp message", {
+        error,
+        route: "/api/whatsapp/inbound",
+        from: message.from,
+        messageId: message.messageId
+      });
+      // The raw payload is already persisted in whatsapp_events for retry
       continue;
     }
   }
 
   if (statuses.length) {
-    await applyStatusUpdates(statuses, scope);
+    await applyStatusUpdates(statuses);
   }
 
-  return Response.json({ status: "received", processed, statusUpdates: statuses.length });
+  return integrationSuccess(request, { status: "received", processed, statusUpdates: statuses.length });
 }

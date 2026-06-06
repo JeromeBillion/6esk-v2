@@ -72,4 +72,29 @@ describe("tickets API client", () => {
       expect(thrown.payload).toMatchObject({ status: "blocked" });
     }
   });
+
+  it("prefers actionable detail over generic envelope error", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "consent_required",
+          error: "Outbound call blocked by voice policy.",
+          detail: "Voice consent not granted",
+          status: "blocked",
+          errorCode: "consent_required"
+        }),
+        {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        }
+      )
+    );
+
+    await expect(createTicket(CREATE_INPUT)).rejects.toMatchObject({
+      status: 403,
+      message: "Voice consent not granted"
+    });
+  });
 });

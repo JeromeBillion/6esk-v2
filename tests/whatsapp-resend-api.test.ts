@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const MESSAGE_ID = "11111111-1111-1111-1111-111111111111";
 const TICKET_ID = "22222222-2222-2222-2222-222222222222";
 const MAILBOX_ID = "33333333-3333-3333-3333-333333333333";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const OTHER_AGENT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
@@ -14,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   dbQuery: vi.fn(),
   getObjectBuffer: vi.fn(),
   getWhatsAppWindowStatus: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  checkModuleEntitlement: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -45,6 +47,10 @@ vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
 
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
+}));
+
 import { POST } from "@/app/api/messages/[messageId]/whatsapp-resend/route";
 
 function buildUser(roleName: "lead_admin" | "agent" | "viewer", userId = AGENT_ID) {
@@ -53,7 +59,8 @@ function buildUser(roleName: "lead_admin" | "agent" | "viewer", userId = AGENT_I
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -108,6 +115,7 @@ describe("POST /api/messages/[messageId]/whatsapp-resend", () => {
     mocks.getObjectBuffer.mockResolvedValue({ buffer: Buffer.from("Recovered message body") });
     mocks.getWhatsAppWindowStatus.mockResolvedValue({ isOpen: true, minutesRemaining: 120 });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
   });
 
   it("returns 401 when session is missing", async () => {
@@ -127,6 +135,7 @@ describe("POST /api/messages/[messageId]/whatsapp-resend", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getMessageById).not.toHaveBeenCalled();
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -137,6 +146,7 @@ describe("POST /api/messages/[messageId]/whatsapp-resend", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketAssignment).toHaveBeenCalledWith(TICKET_ID, TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -150,6 +160,7 @@ describe("POST /api/messages/[messageId]/whatsapp-resend", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.hasMailboxAccess).toHaveBeenCalledWith(AGENT_ID, MAILBOX_ID, TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -278,15 +289,16 @@ describe("POST /api/messages/[messageId]/whatsapp-resend", () => {
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       4,
       expect.stringContaining("INSERT INTO whatsapp_events"),
-      expect.any(Array)
+      expect.arrayContaining([TENANT_ID, "outbound"])
     );
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       5,
       expect.stringContaining("INSERT INTO whatsapp_status_events"),
-      expect.any(Array)
+      expect.arrayContaining([TENANT_ID, MESSAGE_ID])
     );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         actorUserId: AGENT_ID,
         action: "whatsapp_resend_queued",
         entityType: "message",

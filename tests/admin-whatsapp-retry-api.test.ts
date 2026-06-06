@@ -21,6 +21,7 @@ vi.mock("@/server/audit", () => ({
 import { POST } from "@/app/api/admin/whatsapp/retry/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
@@ -28,7 +29,8 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -48,14 +50,14 @@ describe("POST /api/admin/whatsapp/retry", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("returns 403 for logged-in non-admin users", async () => {
+  it("returns 401 for non-admin users without secret", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await POST(new Request("http://localhost/api/admin/whatsapp/retry", { method: "POST" }));
     const body = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(response.status).toBe(401);
+    expect(body).toMatchObject({ error: "Unauthorized" });
   });
 
   it("retries failed WhatsApp outbox events for admins", async () => {
@@ -66,13 +68,11 @@ describe("POST /api/admin/whatsapp/retry", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "ok", retried: 3 });
-    expect(mocks.retryFailedWhatsAppEvents).toHaveBeenCalledWith(
-      {
-        limit: 10,
-        eventIds: []
-      },
-      { tenantKey: "primary", workspaceKey: "primary" }
-    );
+    expect(mocks.retryFailedWhatsAppEvents).toHaveBeenCalledWith({
+      limit: 10,
+      eventIds: [],
+      tenantId: TENANT_ID
+    });
   });
 
   it("returns 500 and records failure audit when retry execution throws", async () => {

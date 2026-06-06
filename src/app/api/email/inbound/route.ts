@@ -1,4 +1,5 @@
 import { processInboundEmailPayload } from "@/server/email/process-inbound";
+import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 
 function getSharedSecret() {
   return process.env.INBOUND_SHARED_SECRET ?? "";
@@ -11,6 +12,8 @@ export async function POST(request: Request) {
     if (provided !== sharedSecret) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+  } else if (!canAcceptUnsignedWebhookTraffic(process.env.INBOUND_ALLOW_UNAUTHENTICATED)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: unknown;

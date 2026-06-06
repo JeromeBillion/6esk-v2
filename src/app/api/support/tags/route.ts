@@ -1,9 +1,8 @@
 import { z } from "zod";
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const tagSchema = z.object({
   name: z.string().min(1),
@@ -15,23 +14,21 @@ export async function GET() {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const scope = tenantScopeFromUser(user);
 
   const result = await db.query(
     `SELECT id, name, description
      FROM tags
-     WHERE tenant_key = $1
-     ORDER BY name`,
-    [scope.tenantKey]
+     ORDER BY name`
   );
 
   return Response.json({ tags: result.rows });
 }
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -46,24 +43,21 @@ export async function POST(request: Request) {
   }
 
   const { name, description } = parsed.data;
-  const existing = await db.query(
-    "SELECT id FROM tags WHERE tenant_key = $1 AND name = $2 LIMIT 1",
-    [scope.tenantKey, name.toLowerCase()]
-  );
+  const existing = await db.query("SELECT id FROM tags WHERE name = $1 LIMIT 1", [
+    name.toLowerCase()
+  ]);
   const existed = existing.rowCount && existing.rowCount > 0;
 
   const result = await db.query(
-    `INSERT INTO tags (tenant_key, workspace_key, name, description)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (tenant_key, name) DO UPDATE SET description = EXCLUDED.description
+    `INSERT INTO tags (name, description)
+     VALUES ($1, $2)
+     ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
      RETURNING id, name, description`,
-    [scope.tenantKey, scope.workspaceKey, name.toLowerCase(), description ?? null]
+    [name.toLowerCase(), description ?? null]
   );
 
   const created = result.rows[0];
   await recordAuditLog({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     actorUserId: user?.id ?? null,
     action: existed ? "tag_updated" : "tag_created",
     entityType: "tag",

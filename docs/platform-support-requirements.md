@@ -1,6 +1,6 @@
-# White-Label Platform Support Integration
+# Platform Support Integration (6ex -> 6esk)
 
-This is the minimal contract needed by a tenant-owned product, webchat, or profile plug to open support tickets in 6esk.
+This is the minimal contract needed by the platform to open support tickets in 6esk.
 
 ## Goal
 - Platform support submissions become 6esk tickets
@@ -43,8 +43,8 @@ Example:
 ```
 
 ## Fallback Integration
-If API is unavailable temporarily, send email to the tenant's configured support address.
-Inbound email ingestion will still create tickets when the mailbox is configured.
+If API is unavailable temporarily, send email to `support@6ex.co.za`.
+Inbound email ingestion will still create tickets.
 
 ## Platform UX Requirements
 - Provide a clear "Contact Support" action from Help and key error states

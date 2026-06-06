@@ -4,9 +4,9 @@ import { canManageTickets } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const payloadSchema = z.object({
   ticketId: z.string().uuid().optional().nullable(),
@@ -40,8 +40,8 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const scope = tenantScopeFromUser(user);
-  if (!(await isWorkspaceModuleEnabled("whatsapp", scope.workspaceKey, scope.tenantKey))) {
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  if (!(await checkModuleEntitlement("whatsapp", tenantId))) {
     return Response.json(
       {
         error: "WhatsApp module is not enabled for this workspace.",
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
   }
 
   if (parsed.data.ticketId) {
-    const windowStatus = await getWhatsAppWindowStatus(parsed.data.ticketId, scope);
+    const windowStatus = await getWhatsAppWindowStatus(parsed.data.ticketId, tenantId);
     if (!windowStatus.isOpen && !parsed.data.template) {
       return Response.json(
         { error: "WhatsApp 24h window closed. Template required." },
@@ -80,8 +80,7 @@ export async function POST(request: Request) {
 
   try {
     await queueWhatsAppSend({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId,
       ticketId: parsed.data.ticketId ?? null,
       to: parsed.data.to,
       text: parsed.data.text ?? "[template message queued]",
@@ -96,16 +95,14 @@ export async function POST(request: Request) {
   }
 
   await recordAuditLog({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
+    tenantId,
     actorUserId: user.id,
     action: "whatsapp_send_queued",
     entityType: "whatsapp",
     data: { to: parsed.data.to, ticketId: parsed.data.ticketId ?? null }
   });
   await recordModuleUsageEvent({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
+    tenantId,
     moduleKey: "whatsapp",
     usageKind: "direct_send",
     actorType: "human",

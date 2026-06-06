@@ -4,7 +4,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const schema = z.object({
   isSpam: z.boolean(),
@@ -22,10 +22,10 @@ export async function PATCH(
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
 
   const { messageId } = await params;
-  const scope = tenantScopeFromUser(user);
-  const message = await getMessageById(messageId, scope);
+  const message = await getMessageById(messageId, tenantId);
   if (!message) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -33,12 +33,12 @@ export async function PATCH(
   const isAdmin = isLeadAdmin(user);
   if (!isAdmin) {
     if (message.ticket_id) {
-      const assignedUserId = await getTicketAssignment(message.ticket_id, scope);
+      const assignedUserId = await getTicketAssignment(message.ticket_id, tenantId);
       if (!assignedUserId || assignedUserId !== user.id) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
     } else {
-      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, scope);
+      const allowed = await hasMailboxAccess(user.id, message.mailbox_id, tenantId);
       if (!allowed) {
         return Response.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -61,15 +61,14 @@ export async function PATCH(
     `UPDATE messages
      SET is_spam = $1, spam_reason = $2
      WHERE id = $3
-       AND tenant_key = $4
+       AND tenant_id = $4
      RETURNING id, is_spam, spam_reason`,
-    [parsed.data.isSpam, parsed.data.reason ?? null, messageId, scope.tenantKey]
+    [parsed.data.isSpam, parsed.data.reason ?? null, messageId, tenantId]
   );
 
   await recordAuditLog({
+    tenantId,
     actorUserId: user.id,
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     action: parsed.data.isSpam ? "message_marked_spam" : "message_unmarked_spam",
     entityType: "message",
     entityId: messageId,

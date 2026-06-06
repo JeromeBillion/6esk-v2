@@ -5,11 +5,10 @@ import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { getCustomerById } from "@/server/customers";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
-import { resolveTenantScope } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type SendReplyArgs = {
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
+  tenantId?: string | null;
   ticketId: string;
   text?: string | null;
   html?: string | null;
@@ -54,8 +53,7 @@ type ResendResponse = {
 };
 
 export async function sendTicketReply({
-  tenantKey,
-  workspaceKey,
+  tenantId,
   ticketId,
   text,
   html,
@@ -67,13 +65,14 @@ export async function sendTicketReply({
   aiMeta,
   recipient
 }: SendReplyArgs) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
-  const ticket = await getTicketById(ticketId, scope);
+  const lookupTenantId = tenantId ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, lookupTenantId);
   if (!ticket) {
     throw new Error("Ticket not found");
   }
+  const effectiveTenantId = ticket.tenant_id;
 
-  const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id, scope) : null;
+  const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id, effectiveTenantId) : null;
   const requestedEmailRecipient = normalizeEmailRecipient(recipient);
   const requestedPhoneRecipient = normalizePhoneRecipient(recipient);
 
@@ -110,7 +109,7 @@ export async function sendTicketReply({
     if (!cleanBody && !template && attachmentList.length === 0) {
       throw new Error("Reply body required");
     }
-    const windowStatus = await getWhatsAppWindowStatus(ticketId);
+    const windowStatus = await getWhatsAppWindowStatus(ticketId, effectiveTenantId);
     if (!windowStatus.isOpen && !template) {
       throw new Error("WhatsApp 24h window closed. Template required.");
     }
@@ -131,8 +130,7 @@ export async function sendTicketReply({
     };
 
     const result = await queueWhatsAppSend({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId: effectiveTenantId,
       ticketId,
       to: resolvedPhone,
       text: cleanBody,
@@ -184,48 +182,86 @@ export async function sendTicketReply({
 
   const finalSubject = subject ?? (ticket.subject ? `Re: ${ticket.subject}` : "Re: Support request");
 
-  const resendPayload = {
-    from,
-    to: [resolvedEmail],
-    subject: finalSubject,
-    html: html ?? undefined,
-    text: text ?? undefined
-  };
+  const connection = await import("@/server/oauth/connections").then(m => m.getActiveConnectionForMailbox(from));
 
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(resendPayload)
-  });
+  let providerMessageId: string | null = null;
 
-  if (!resendResponse.ok) {
-    const errorBody = await resendResponse.text();
-    throw new Error(errorBody || "Resend request failed");
+  if (connection?.provider === "google" || connection?.provider === "microsoft" || connection?.provider === "zoho") {
+    const { getConnectionTokens } = await import("@/server/oauth/connections");
+    const { decryptToken } = await import("@/server/oauth/crypto");
+
+    const tokens = await getConnectionTokens(connection.id);
+    if (!tokens) throw new Error("Connection tokens missing");
+
+    const combinedStr = decryptToken(tokens.accessTokenEnc, tokens.tokenIv);
+    const { accessToken } = JSON.parse(combinedStr);
+
+    const emailPayload = {
+      to: [resolvedEmail],
+      subject: finalSubject,
+      html: html ?? undefined,
+      text: text ?? undefined
+    };
+
+    if (connection.provider === "google") {
+      const { sendGmailMessage } = await import("@/server/oauth/providers/google");
+      const result = await sendGmailMessage(accessToken, emailPayload);
+      providerMessageId = result.messageId;
+    } else if (connection.provider === "microsoft") {
+      const { sendOutlookMessage } = await import("@/server/oauth/providers/microsoft");
+      const result = await sendOutlookMessage(accessToken, emailPayload);
+      providerMessageId = result.messageId;
+    } else if (connection.provider === "zoho") {
+      const { sendZohoMessage } = await import("@/server/oauth/providers/zoho");
+      const result = await sendZohoMessage(accessToken, connection.provider_account_id!, emailPayload);
+      providerMessageId = result.messageId;
+    }
+  } else {
+    // Fallback to Resend
+    const resendPayload = {
+      from,
+      to: [resolvedEmail],
+      subject: finalSubject,
+      html: html ?? undefined,
+      text: text ?? undefined
+    };
+
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(resendPayload)
+    });
+
+    if (!resendResponse.ok) {
+      const errorBody = await resendResponse.text();
+      throw new Error(errorBody || "Resend request failed");
+    }
+
+    const resendData = (await resendResponse.json()) as ResendResponse;
+    providerMessageId = resendData.messageId ?? resendData.id ?? null;
   }
 
-  const resendData = (await resendResponse.json()) as ResendResponse;
   const messageId = randomUUID();
   const sentAt = new Date();
 
   await db.query(
     `INSERT INTO messages (
-      id, tenant_key, workspace_key, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
+      tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
       to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
     ) VALUES (
-      $1, $2, $3, $4, $5, 'outbound', $6, $7, $8,
-      $9, $10, $11, $12, true, $13, $14, $15
+      $1, $2, $3, $4, 'outbound', $5, $6, $7,
+      $8, $9, $10, $11, true, $12, $13, $14
     )`,
     [
+      effectiveTenantId,
       messageId,
-      scope.tenantKey,
-      scope.workspaceKey,
       ticket.mailbox_id,
       ticketId,
-      resendData.messageId ?? resendData.id ?? null,
-      resendData.messageId ?? resendData.id ?? messageId,
+      providerMessageId,
+      providerMessageId ?? messageId,
       from,
       [resolvedEmail],
       finalSubject,
@@ -237,7 +273,7 @@ export async function sendTicketReply({
     ]
   );
 
-  const keyPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/messages/${messageId}`;
+  const keyPrefix = `messages/${messageId}`;
   let textKey: string | null = null;
   let htmlKey: string | null = null;
   let sizeBytes = 0;
@@ -263,32 +299,28 @@ export async function sendTicketReply({
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
-     WHERE id = $4
-       AND tenant_key = $5
-       AND workspace_key = $6`,
-    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey, scope.workspaceKey]
+     WHERE id = $4`,
+    [textKey, htmlKey, sizeBytes || null, messageId]
   );
 
   await recordTicketEvent({
+    tenantId: effectiveTenantId,
     ticketId,
     eventType: origin === "ai" ? "ai_reply_sent" : "reply_sent",
     actorUserId: actorUserId ?? null,
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     data: origin === "ai" ? { ai: true } : null
   });
 
   if (ticket.status === "new" || ticket.status === "pending") {
     await db.query(
-      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
-      [ticketId, scope.tenantKey, scope.workspaceKey]
+      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_id = $2",
+      [ticketId, effectiveTenantId]
     );
     await recordTicketEvent({
+      tenantId: effectiveTenantId,
       ticketId,
       eventType: "status_updated",
       actorUserId: actorUserId ?? null,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       data: { from: ticket.status, to: "open" }
     });
   }

@@ -7,10 +7,7 @@ const mocks = vi.hoisted(() => ({
   normalizeVoiceConsentPhone: vi.fn(),
   recordVoiceConsentEvent: vi.fn(),
   resolveExistingCustomerIdForVoiceConsent: vi.fn(),
-  getLatestVoiceConsentState: vi.fn(),
-  tenantScopeFromMachineRequestAsync: vi.fn(),
-  tenantScopeFromPublicIngressRequest: vi.fn(),
-  tenantScopeFromUser: vi.fn()
+  getLatestVoiceConsentState: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -29,19 +26,6 @@ vi.mock("@/server/calls/consent", () => ({
   getLatestVoiceConsentState: mocks.getLatestVoiceConsentState
 }));
 
-vi.mock("@/server/tenant-context", () => ({
-  isTenantIngressScopeError: (error: unknown) =>
-    Boolean(error && typeof error === "object" && "code" in error && "status" in error),
-  tenantScopeFromMachineRequestAsync: mocks.tenantScopeFromMachineRequestAsync,
-  tenantScopeFromUser: mocks.tenantScopeFromUser
-}));
-
-vi.mock("@/server/tenant-public-ingress", () => ({
-  isTenantPublicIngressError: (error: unknown) =>
-    Boolean(error && typeof error === "object" && "code" in error && "status" in error),
-  tenantScopeFromPublicIngressRequest: mocks.tenantScopeFromPublicIngressRequest
-}));
-
 import { POST } from "@/app/api/support/voice-consent/route";
 
 describe("POST /api/support/voice-consent", () => {
@@ -53,18 +37,6 @@ describe("POST /api/support/voice-consent", () => {
     mocks.normalizeVoiceConsentPhone.mockImplementation((value: string | null) => value);
     mocks.resolveExistingCustomerIdForVoiceConsent.mockResolvedValue("customer-1");
     mocks.recordVoiceConsentEvent.mockResolvedValue(undefined);
-    mocks.tenantScopeFromMachineRequestAsync.mockResolvedValue({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
-    mocks.tenantScopeFromPublicIngressRequest.mockResolvedValue({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
-    mocks.tenantScopeFromUser.mockReturnValue({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
     mocks.getLatestVoiceConsentState.mockResolvedValue({
       state: "revoked",
       callbackPhone: "+15551234567",
@@ -100,8 +72,6 @@ describe("POST /api/support/voice-consent", () => {
     });
     expect(mocks.recordVoiceConsentEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantKey: "tenant-a",
-        workspaceKey: "workspace-a",
         decision: "revoked",
         customerId: "customer-1"
       })

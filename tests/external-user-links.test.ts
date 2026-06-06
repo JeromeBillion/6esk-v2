@@ -14,7 +14,8 @@ import {
   deriveMatchConfidence,
   findExternalUserLinkByIdentity,
   normalizeLinkEmail,
-  normalizeLinkPhone
+  normalizeLinkPhone,
+  upsertExternalUserLink
 } from "@/server/integrations/external-user-links";
 
 describe("external user link helpers", () => {
@@ -44,7 +45,7 @@ describe("external user link helpers", () => {
 
   test("returns null without querying when no normalized identity is provided", async () => {
     const result = await findExternalUserLinkByIdentity({
-      externalSystem: "external-profile",
+      externalSystem: "prediction-market-mvp",
       email: " ",
       phone: " "
     });
@@ -55,7 +56,7 @@ describe("external user link helpers", () => {
 
   test("queries by normalized identity and returns best match row", async () => {
     const row = {
-      external_system: "external-profile",
+      external_system: "prediction-market-mvp",
       external_user_id: "user-123",
       email: "user@example.com",
       phone: "+27710000001",
@@ -68,7 +69,7 @@ describe("external user link helpers", () => {
     mocks.dbQuery.mockResolvedValue({ rows: [row] });
 
     const result = await findExternalUserLinkByIdentity({
-      externalSystem: "external-profile",
+      externalSystem: "prediction-market-mvp",
       email: "  USER@example.com ",
       phone: " +27 71 000 0001 "
     });
@@ -76,10 +77,34 @@ describe("external user link helpers", () => {
     expect(result).toEqual(row);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.any(String), [
-      "primary",
-      "external-profile",
+      "prediction-market-mvp",
       "user@example.com",
       "+27710000001"
     ]);
+  });
+
+  test("can write through a transaction client instead of the global pool", async () => {
+    const queryExecutor = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+
+    await upsertExternalUserLink({
+      externalSystem: "prediction-market-mvp",
+      profile: {
+        id: "user-123",
+        email: "User@Example.com",
+        secondaryEmail: null,
+        fullName: null,
+        phoneNumber: null,
+        kycStatus: null,
+        accountStatus: null
+      },
+      matchedBy: "email",
+      inboundEmail: "user@example.com",
+      ticketId: "ticket-1",
+      channel: "email",
+      queryExecutor
+    });
+
+    expect(queryExecutor.query).toHaveBeenCalledTimes(1);
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

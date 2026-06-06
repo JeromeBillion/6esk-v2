@@ -1,7 +1,6 @@
 import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { getVoiceOperatorPresence, listVoiceOperatorRoster, type VoiceOperatorStatus } from "@/server/calls/operators";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 type DeskNotificationChannel = "support_email" | "whatsapp" | "inbox_email";
 
@@ -44,8 +43,6 @@ function buildNotificationItem(channel: DeskNotificationChannel, row: DeskNotifi
 }
 
 export async function getDeskLiveSnapshot(user: SessionUser) {
-  const scope = tenantScopeFromUser(user);
-  const { tenantKey } = scope;
   const [
     presence,
     supportVersionResult,
@@ -55,25 +52,21 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
     latestInboxEmailResult,
     roster
   ] = await Promise.all([
-    getVoiceOperatorPresence(user.id, scope),
+    getVoiceOperatorPresence(user.id),
     db.query<TimestampRow>(
       `SELECT MAX(t.updated_at) AS value
        FROM tickets t
-       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id AND mb.tenant_key = t.tenant_key
+       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE t.merged_into_ticket_id IS NULL
-         AND t.tenant_key = $1
          AND (t.mailbox_id IS NULL OR mb.type = 'platform')`
-      ,
-      [tenantKey]
     ),
     db.query<TimestampRow>(
       `SELECT MAX(COALESCE(m.received_at, m.sent_at, m.created_at)) AS value
        FROM messages m
-       JOIN mailboxes mb ON mb.id = m.mailbox_id AND mb.tenant_key = m.tenant_key
+       JOIN mailboxes mb ON mb.id = m.mailbox_id
        WHERE mb.type = 'personal'
-         AND mb.owner_user_id = $1
-         AND m.tenant_key = $2`,
-      [user.id, tenantKey]
+         AND mb.owner_user_id = $1`,
+      [user.id]
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -85,16 +78,14 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
          m.from_email,
          COALESCE(m.received_at, m.created_at) AS occurred_at
        FROM messages m
-       JOIN tickets t ON t.id = m.ticket_id AND t.tenant_key = m.tenant_key
-       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id AND mb.tenant_key = t.tenant_key
+       JOIN tickets t ON t.id = m.ticket_id
+       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE m.direction = 'inbound'
-         AND m.tenant_key = $1
          AND m.channel = 'email'
          AND t.merged_into_ticket_id IS NULL
          AND (t.mailbox_id IS NULL OR mb.type = 'platform')
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
-       LIMIT 1`,
-      [tenantKey]
+       LIMIT 1`
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -106,16 +97,14 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
          m.from_email,
          COALESCE(m.received_at, m.created_at) AS occurred_at
        FROM messages m
-       JOIN tickets t ON t.id = m.ticket_id AND t.tenant_key = m.tenant_key
-       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id AND mb.tenant_key = t.tenant_key
+       JOIN tickets t ON t.id = m.ticket_id
+       LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE m.direction = 'inbound'
-         AND m.tenant_key = $1
          AND m.channel = 'whatsapp'
          AND t.merged_into_ticket_id IS NULL
          AND (t.mailbox_id IS NULL OR mb.type = 'platform')
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
-       LIMIT 1`,
-      [tenantKey]
+       LIMIT 1`
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -127,18 +116,17 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
          m.from_email,
          COALESCE(m.received_at, m.created_at) AS occurred_at
        FROM messages m
-       JOIN mailboxes mb ON mb.id = m.mailbox_id AND mb.tenant_key = m.tenant_key
-       LEFT JOIN tickets t ON t.id = m.ticket_id AND t.tenant_key = m.tenant_key
+       JOIN mailboxes mb ON mb.id = m.mailbox_id
+       LEFT JOIN tickets t ON t.id = m.ticket_id
        WHERE m.direction = 'inbound'
          AND m.channel = 'email'
          AND mb.type = 'personal'
          AND mb.owner_user_id = $1
-         AND m.tenant_key = $2
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
        LIMIT 1`,
-      [user.id, tenantKey]
+      [user.id]
     ),
-    listVoiceOperatorRoster(12, scope)
+    listVoiceOperatorRoster(12)
   ]);
 
   const operatorSummary = roster.reduce(

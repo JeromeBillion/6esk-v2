@@ -5,38 +5,30 @@ import {
   getActiveAgentIntegration,
   getAgentIntegrationById
 } from "@/server/agents/integrations";
+import {
+  appendAgentRunEvent,
+  createAgentRunForOutbox,
+  markAgentRunCompleted,
+  markAgentRunFailed,
+  markAgentRunRunning
+} from "@/server/agents/run-ledger";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
-import {
-  buildAgentCommandEnvelope,
-  buildLaneKey,
-  extractEnvelopeResource,
-  mapEventTypeToCommandType,
-  readEnvelopeRunId,
-  type AgentCommandEnvelope
-} from "@/server/agents/command-envelope";
-import {
-  inspectAiInput,
-  isAiGuardUnsafe,
-  recordAiGuardEvent,
-  serializeAiGuardValue
-} from "@/server/ai/guard";
-import { buildAgentKnowledgeContext } from "@/server/agents/rag-context";
-import { buildAgentPromptSandboxForRuntime } from "@/server/agents/prompt-templates";
-import { buildAgentCustomerContext } from "@/server/agents/customer-context";
-import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
+import { processInternalDexterMessage } from "@/server/dexter-runtime";
+import { logger } from "@/server/logger";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 type EnqueueArgs = {
   eventType: string;
   payload: Record<string, unknown>;
   integrationId?: string | null;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
-  laneKey?: string | null;
-  idempotencyKey?: string | null;
+  tenantId?: string | null;
 };
 
 type DeliverArgs = {
   integrationId?: string | null;
+  tenantId?: string | null;
   limit?: number;
 };
 
@@ -51,13 +43,11 @@ export type FailedAgentOutboxEvent = {
   created_at: Date;
   updated_at: Date;
   payload: Record<string, unknown>;
-  tenant_key?: string;
-  workspace_key?: string;
-  lane_key?: string | null;
-  command_envelope?: AgentCommandEnvelope | null;
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+const MAX_AGENT_OUTBOX_ATTEMPTS = 5;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getProcessingRecoverySeconds() {
   const configured = Number(process.env.AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
@@ -82,272 +72,90 @@ function signPayload(secret: string, timestamp: string, body: string) {
   return `sha256=${signature}`;
 }
 
-function scopeFromCommandEnvelope(commandEnvelope?: AgentCommandEnvelope | null) {
-  return resolveTenantScope({
-    tenantKey: commandEnvelope?.tenant_key,
-    workspaceKey: commandEnvelope?.workspace_key
-  });
+function readTenantId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return UUID_RE.test(trimmed) ? trimmed : null;
 }
 
-async function recordSafetyBlockedRun(input: {
-  commandEnvelope: AgentCommandEnvelope;
-  eventType: string;
-  payload: Record<string, unknown>;
-  reasonCodes: string[];
-}) {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query(
-      `INSERT INTO agent_runs (
-         id,
-         tenant_key,
-         workspace_key,
-         integration_id,
-         mode,
-         status,
-         lane_key,
-         source_event_type,
-         resource,
-         command_envelope,
-         idempotency_key,
-         error,
-         completed_at
-       ) VALUES (
-         $1, $2, $3, $4, $5, 'blocked', $6, $7, $8, $9, $10, $11, now()
-       )
-       ON CONFLICT (id) DO NOTHING`,
-      [
-        input.commandEnvelope.run_id,
-        input.commandEnvelope.tenant_key,
-        input.commandEnvelope.workspace_key,
-        input.commandEnvelope.integration_id,
-        input.commandEnvelope.mode,
-        input.commandEnvelope.lane_key,
-        input.eventType,
-        input.commandEnvelope.resource,
-        input.commandEnvelope,
-        input.commandEnvelope.idempotency_key,
-        `Blocked by AI guard: ${input.reasonCodes.join(", ")}`
-      ]
-    );
-    await client.query(
-      `INSERT INTO agent_run_events (tenant_key, workspace_key, run_id, event_type, status, data)
-       VALUES ($1, $2, $3, 'agent.safety.blocked', 'blocked', $4)`,
-      [
-        input.commandEnvelope.tenant_key,
-        input.commandEnvelope.workspace_key,
-        input.commandEnvelope.run_id,
-        {
-          eventType: input.eventType,
-          reasonCodes: input.reasonCodes,
-          payload: input.payload
-        }
-      ]
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function enqueueAgentEvent({
-  eventType,
-  payload,
-  integrationId,
-  tenantKey: requestedTenantKey,
-  workspaceKey,
-  laneKey: requestedLaneKey,
-  idempotencyKey
-}: EnqueueArgs) {
-  const requestedScope = requestedTenantKey
-    ? resolveTenantScope({ tenantKey: requestedTenantKey, workspaceKey })
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
+}
+
+function resolveEventTenantId(tenantId: unknown, payload: Record<string, unknown>) {
+  const resource = readRecord(payload.resource);
+  return (
+    readTenantId(tenantId) ??
+    readTenantId(payload.tenantId) ??
+    readTenantId(payload.tenant_id) ??
+    readTenantId(resource?.tenantId) ??
+    readTenantId(resource?.tenant_id)
+  );
+}
+
+function tenantScopedPayload(payload: Record<string, unknown>, tenantId: string) {
+  const resource = readRecord(payload.resource);
+  return {
+    ...payload,
+    tenant_id: tenantId,
+    resource: {
+      ...(resource ?? {}),
+      tenant_id: tenantId
+    }
+  };
+}
+
+export async function enqueueAgentEvent({ eventType, payload, integrationId, tenantId }: EnqueueArgs) {
+  const effectiveTenantId = resolveEventTenantId(tenantId, payload);
+  if (!effectiveTenantId) {
+    logger.warn("Skipping tenantless agent outbox event", { eventType });
+    return null;
+  }
+
   const integration = integrationId
-    ? await getAgentIntegrationById(integrationId, requestedScope)
-    : await getActiveAgentIntegration(requestedScope);
+    ? await getAgentIntegrationById(integrationId, effectiveTenantId)
+    : await getActiveAgentIntegration(effectiveTenantId);
 
   if (!integration || integration.status !== "active") {
     return null;
   }
 
-  const tenantKey = requestedScope?.tenantKey || integration.tenant_key || "primary";
-  const resolvedWorkspaceKey = requestedScope?.workspaceKey || workspaceKey || "primary";
-  const laneKey =
-    requestedLaneKey?.trim() ||
-    buildLaneKey({
-      tenantKey,
-      eventType,
-      payload
-  });
-  const knowledgeContext = await buildAgentKnowledgeContext({
-    tenantKey,
-    workspaceKey: resolvedWorkspaceKey,
-    eventType,
-    payload
-  });
-  const customerContext = await buildAgentCustomerContext({
-    tenantKey,
-    workspaceKey: resolvedWorkspaceKey,
-    eventType,
-    payload
-  });
-  const commandPayload = {
-    ...payload,
-    ...(knowledgeContext ? { knowledge_context: knowledgeContext } : {}),
-    customer_context: customerContext
-  };
-  const commandEnvelope = buildAgentCommandEnvelope({
-    commandType: mapEventTypeToCommandType(eventType),
-    tenantKey,
-    workspaceKey: resolvedWorkspaceKey,
-    integrationId: integration.id,
-    laneKey,
-    policyMode: integration.policy_mode,
-    idempotencyKey: idempotencyKey ?? null,
-    resource: extractEnvelopeResource(payload),
-    payload: commandPayload,
-    policy: integration.policy
-  });
-  const commandSafety = inspectAiInput({
-    text: serializeAiGuardValue(commandPayload),
-    policyMode: commandEnvelope.mode
-  });
-  const safeCommandPayload = isAiGuardUnsafe(commandSafety)
-    ? {
-        ...commandPayload,
-        safety_context: {
-          guard_version: commandSafety.guardVersion,
-          severity: commandSafety.severity,
-          decision: commandSafety.decision,
-          reason_codes: commandSafety.reasonCodes
-        }
-      }
-    : commandPayload;
-  commandEnvelope.payload = safeCommandPayload;
-  commandEnvelope.prompt_sandbox = await buildAgentPromptSandboxForRuntime({
-    tenantKey,
-    workspaceKey: resolvedWorkspaceKey,
-    mode: commandEnvelope.mode,
-    eventType,
-    payload: safeCommandPayload,
-    policy: integration.policy,
-    customerContext
-  });
-
-  if (isAiGuardUnsafe(commandSafety)) {
-    await recordAiGuardEvent({
-      tenantKey,
-      workspaceKey: resolvedWorkspaceKey,
-      runId: commandEnvelope.run_id,
-      integrationId: integration.id,
-      sourceKind: "agent_command_payload",
-      sourceId: requestedLaneKey ?? laneKey,
-      subject: eventType,
-      inspection: commandSafety,
-      metadata: {
-        eventType,
-        laneKey,
-        policyMode: commandEnvelope.mode
-      }
-    });
-
-    if (commandEnvelope.mode === "full_auto") {
-      await recordSafetyBlockedRun({
-        commandEnvelope,
-        eventType,
-        payload: payload,
-        reasonCodes: commandSafety.reasonCodes
-      });
-      return null;
-    }
-  }
-
+  const scopedPayload = tenantScopedPayload(payload, effectiveTenantId);
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      `INSERT INTO agent_runs (
-         id,
-         tenant_key,
-         workspace_key,
-         integration_id,
-         mode,
-         status,
-         lane_key,
-         source_event_type,
-         resource,
-         command_envelope,
-         idempotency_key
-       ) VALUES (
-         $1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10
-       )
-       ON CONFLICT (id) DO NOTHING`,
-      [
-        commandEnvelope.run_id,
-        commandEnvelope.tenant_key,
-        commandEnvelope.workspace_key,
-        integration.id,
-        commandEnvelope.mode,
-        laneKey,
-        eventType,
-        commandEnvelope.resource,
-        commandEnvelope,
-        commandEnvelope.idempotency_key
-      ]
-    );
-    await client.query(
-      `INSERT INTO agent_run_events (tenant_key, workspace_key, run_id, event_type, status, data)
-       VALUES ($1, $2, $3, $4, 'queued', $5)`,
-      [
-        commandEnvelope.tenant_key,
-        commandEnvelope.workspace_key,
-        commandEnvelope.run_id,
-        commandEnvelope.command_type,
-        {
-          eventType,
-          outboxEvent: payload
-        }
-      ]
-    );
     const result = await client.query(
-      `INSERT INTO agent_outbox (
-         integration_id,
-         event_type,
-         payload,
-         tenant_key,
-         workspace_key,
-         lane_key,
-         idempotency_key,
-         command_envelope
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (integration_id, idempotency_key)
-         WHERE idempotency_key IS NOT NULL
-         DO UPDATE SET
-          payload = EXCLUDED.payload,
-          workspace_key = EXCLUDED.workspace_key,
-          command_envelope = EXCLUDED.command_envelope,
-          updated_at = now()
+      `INSERT INTO agent_outbox (integration_id, tenant_id, event_type, payload)
+       VALUES ($1, $2, $3, $4)
        RETURNING id`,
-      [
-        integration.id,
-        eventType,
-        safeCommandPayload,
-        tenantKey,
-        resolvedWorkspaceKey,
-        laneKey,
-        commandEnvelope.idempotency_key,
-        commandEnvelope
-      ]
+      [integration.id, effectiveTenantId, eventType, scopedPayload]
     );
+    const outboxId = result.rows[0]?.id ?? null;
+    if (outboxId) {
+      await createAgentRunForOutbox({
+        client,
+        tenantId: effectiveTenantId,
+        integrationId: integration.id,
+        outboxEventId: outboxId,
+        eventType,
+        payload: scopedPayload
+      });
+    }
     await client.query("COMMIT");
-    return result.rows[0]?.id ?? null;
+    return outboxId;
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      logger.warn("Failed to roll back agent outbox enqueue transaction", {
+        error: rollbackError,
+        tenantId: effectiveTenantId,
+        integrationId: integration.id,
+        eventType
+      });
+    }
     throw error;
   } finally {
     client.release();
@@ -356,69 +164,42 @@ export async function enqueueAgentEvent({
 
 async function lockPendingEvents(
   integrationId: string,
+  tenantId: string,
   limit: number,
-  processingRecoverySeconds: number,
-  scopeInput?: TenantScopeInput
-): Promise<
-  Array<{
-    id: string;
-    payload: Record<string, unknown>;
-    attempt_count: number;
-    command_envelope: AgentCommandEnvelope | null;
-  }>
-> {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+  processingRecoverySeconds: number
+): Promise<Array<{
+  id: string;
+  tenant_id: string;
+  integration_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  attempt_count: number;
+  run_id: string | null;
+}>> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
     const result = await client.query(
-      `WITH eligible AS (
-         SELECT DISTINCT ON (COALESCE(lane_key, id::text))
-           id,
-           created_at
-         FROM agent_outbox ao
-         WHERE ao.integration_id = $1
-           ${scope ? "AND ao.tenant_key = $4" : ""}
-           ${scope ? "AND ao.workspace_key = $5" : ""}
-           AND (
-             (ao.status = 'pending' AND ao.next_attempt_at <= now())
-             OR (
-               ao.status = 'processing'
-               AND ao.updated_at <= now() - make_interval(secs => $3::int)
-             )
-           )
-           AND (
-             ao.lane_key IS NULL
-             OR NOT EXISTS (
-               SELECT 1
-              FROM agent_outbox active
-              WHERE active.integration_id = ao.integration_id
-                AND active.tenant_key = ao.tenant_key
-                AND active.workspace_key = ao.workspace_key
-                AND active.lane_key = ao.lane_key
-                 AND active.status = 'processing'
-                 AND active.updated_at > now() - make_interval(secs => $3::int)
-             )
-           )
-           AND (
-             ao.lane_key IS NULL
-             OR pg_try_advisory_xact_lock(hashtext(ao.lane_key)::bigint)
-           )
-         ORDER BY COALESCE(ao.lane_key, ao.id::text), ao.created_at ASC
-       ),
-       selected AS (
-         SELECT id
-         FROM eligible
-         ORDER BY created_at ASC
-         LIMIT $2
-       )
-       UPDATE agent_outbox
+      `UPDATE agent_outbox
        SET status = 'processing', updated_at = now()
-       WHERE id IN (SELECT id FROM selected)
-      RETURNING id, payload, attempt_count, command_envelope`,
-      scope
-        ? [integrationId, limit, processingRecoverySeconds, scope.tenantKey, scope.workspaceKey]
-        : [integrationId, limit, processingRecoverySeconds]
+       WHERE id IN (
+         SELECT id
+         FROM agent_outbox
+         WHERE integration_id = $1
+           AND tenant_id = $2
+           AND (
+             (status = 'pending' AND next_attempt_at <= now())
+             OR (
+               status = 'processing'
+               AND updated_at <= now() - make_interval(secs => $4::int)
+             )
+           )
+         ORDER BY created_at ASC
+         LIMIT $3
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING id, tenant_id, integration_id, event_type, payload, attempt_count, run_id`,
+      [integrationId, tenantId, limit, processingRecoverySeconds]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -430,129 +211,42 @@ async function lockPendingEvents(
   }
 }
 
-async function markDelivered(id: string, commandEnvelope?: AgentCommandEnvelope | null) {
-  const runId = readEnvelopeRunId(commandEnvelope);
-  const scope = scopeFromCommandEnvelope(commandEnvelope);
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query(
-      `UPDATE agent_outbox
-       SET status = 'delivered', updated_at = now()
-       WHERE id = $1
-         AND tenant_key = $2
-         AND workspace_key = $3`,
-      [id, scope.tenantKey, scope.workspaceKey]
-    );
-    if (runId) {
-      await client.query(
-        `UPDATE agent_runs
-         SET status = 'dispatched',
-             dispatched_at = COALESCE(dispatched_at, now()),
-             updated_at = now()
-         WHERE id = $1
-           AND tenant_key = $2
-           AND workspace_key = $3
-           AND status IN ('queued', 'dispatch_failed')`,
-        [runId, scope.tenantKey, scope.workspaceKey]
-      );
-      await client.query(
-        `INSERT INTO agent_run_events (tenant_key, workspace_key, run_id, event_type, status, data)
-         VALUES ($1, $2, $3, 'agent.gateway.delivered', 'delivered', $4)`,
-        [scope.tenantKey, scope.workspaceKey, runId, { outboxId: id }]
-      );
-    }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function markFailed(
-  id: string,
-  attemptCount: number,
-  errorMessage: string,
-  commandEnvelope?: AgentCommandEnvelope | null
-) {
-  const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
-  const status = attemptCount >= 5 ? "failed" : "pending";
-  const runId = readEnvelopeRunId(commandEnvelope);
-  const scope = scopeFromCommandEnvelope(commandEnvelope);
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query(
-      `UPDATE agent_outbox
-       SET status = $1,
-           attempt_count = $2,
-           last_error = $3,
-           next_attempt_at = $4,
-           updated_at = now()
-       WHERE id = $5
-         AND tenant_key = $6
-         AND workspace_key = $7`,
-      [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, id, scope.tenantKey, scope.workspaceKey]
-    );
-    if (runId) {
-      await client.query(
-        `UPDATE agent_runs
-         SET status = $2,
-             error = $3,
-             updated_at = now()
-         WHERE id = $1
-           AND tenant_key = $4
-           AND workspace_key = $5`,
-        [
-          runId,
-          status === "failed" ? "dispatch_failed" : "queued",
-          errorMessage.slice(0, 500),
-          scope.tenantKey,
-          scope.workspaceKey
-        ]
-      );
-      await client.query(
-        `INSERT INTO agent_run_events (tenant_key, workspace_key, run_id, event_type, status, data)
-         VALUES ($1, $2, $3, 'agent.gateway.delivery_failed', $4, $5)`,
-        [
-          scope.tenantKey,
-          scope.workspaceKey,
-          runId,
-          status,
-          { outboxId: id, attemptCount, error: errorMessage.slice(0, 500) }
-        ]
-      );
-    }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function markCompletedRun(commandEnvelope?: AgentCommandEnvelope | null) {
-  const runId = readEnvelopeRunId(commandEnvelope);
-  if (!runId || commandEnvelope?.command_type !== "agent.run.completed") {
-    return;
-  }
-  const scope = scopeFromCommandEnvelope(commandEnvelope);
+async function markDelivered(id: string) {
   await db.query(
-    `UPDATE agent_runs
-     SET status = 'completed',
-         completed_at = COALESCE(completed_at, now()),
+    `UPDATE agent_outbox
+     SET status = 'delivered', updated_at = now()
+     WHERE id = $1`,
+    [id]
+  );
+}
+
+async function markFailed(id: string, attemptCount: number, errorMessage: string) {
+  const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
+  const status = attemptCount >= MAX_AGENT_OUTBOX_ATTEMPTS ? "failed" : "pending";
+  await db.query(
+    `UPDATE agent_outbox
+     SET status = $1,
+         attempt_count = $2,
+         last_error = $3,
+         next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $1
-       AND tenant_key = $2
-       AND workspace_key = $3`,
-    [runId, scope.tenantKey, scope.workspaceKey]
+     WHERE id = $5`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, id]
   );
 }
 
 async function postToAgent(integration: AgentIntegration, payload: Record<string, unknown>) {
+  if (
+    integration.base_url.startsWith("internal://") ||
+    integration.base_url.startsWith("native://")
+  ) {
+    const success = await processInternalDexterMessage(payload);
+    if (!success) {
+      throw new Error("Internal agent processing failed or not ready");
+    }
+    return;
+  }
+
   const body = JSON.stringify(payload);
   const timestamp = new Date().toISOString();
   const signature = signPayload(integration.shared_secret, timestamp, body);
@@ -575,14 +269,44 @@ async function postToAgent(integration: AgentIntegration, payload: Record<string
   }
 }
 
-export async function deliverPendingAgentEvents(
-  { integrationId, limit = 5 }: DeliverArgs = {},
-  scopeInput?: TenantScopeInput
-) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+async function recordAcceptedDeliveryBookkeepingFailure({
+  tenantId,
+  runId,
+  eventId,
+  errorMessage
+}: {
+  tenantId: string;
+  runId: string;
+  eventId: string;
+  errorMessage: string;
+}) {
+  try {
+    await appendAgentRunEvent({
+      tenantId,
+      runId,
+      eventType: "agent.run.delivery_bookkeeping_failed",
+      status: "running",
+      summary: "Agent accepted event but local delivery bookkeeping failed",
+      eventData: {
+        outboxEventId: eventId,
+        errorMessage: errorMessage.slice(0, 500)
+      }
+    });
+  } catch (ledgerError) {
+    logger.warn("Failed to append agent delivery bookkeeping failure event", {
+      error: ledgerError,
+      tenantId,
+      runId,
+      eventId
+    });
+  }
+}
+
+export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
+  const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
   const integration = integrationId
-    ? await getAgentIntegrationById(integrationId, scope)
-    : await getActiveAgentIntegration(scope);
+    ? await getAgentIntegrationById(integrationId, effectiveTenantId)
+    : await getActiveAgentIntegration(effectiveTenantId);
 
   if (!integration || integration.status !== "active") {
     return { delivered: 0, skipped: 0, limitUsed: 0 };
@@ -594,9 +318,9 @@ export async function deliverPendingAgentEvents(
   });
   const pending = await lockPendingEvents(
     integration.id,
+    integration.tenant_id,
     limitUsed,
-    getProcessingRecoverySeconds(),
-    scope
+    getProcessingRecoverySeconds()
   );
   if (!pending.length) {
     return { delivered: 0, skipped: 0, limitUsed };
@@ -604,31 +328,122 @@ export async function deliverPendingAgentEvents(
 
   let delivered = 0;
   for (const event of pending) {
+    let runId = event.run_id;
     try {
-      const payload = event.command_envelope
-        ? { ...event.payload, command_envelope: event.command_envelope }
-        : event.payload;
-      await postToAgent(integration, payload);
-      await markDelivered(event.id, event.command_envelope);
-      await markCompletedRun(event.command_envelope);
-      delivered += 1;
+      if (!runId) {
+        const run = await createAgentRunForOutbox({
+          tenantId: event.tenant_id,
+          integrationId: event.integration_id,
+          outboxEventId: event.id,
+          eventType: event.event_type,
+          payload: event.payload
+        });
+        runId = run.id;
+      }
+      await markAgentRunRunning({
+        tenantId: event.tenant_id,
+        runId,
+        attemptCount: event.attempt_count + 1
+      });
+      await postToAgent(integration, event.payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";
       const attempts = event.attempt_count + 1;
-      await markFailed(event.id, attempts, message, event.command_envelope);
+      await markFailed(event.id, attempts, message);
+      if (runId) {
+        await markAgentRunFailed({
+          tenantId: event.tenant_id,
+          runId,
+          errorMessage: message,
+          terminal: attempts >= MAX_AGENT_OUTBOX_ATTEMPTS,
+          attemptCount: attempts
+        });
+      }
+      continue;
+    }
+
+    delivered += 1;
+
+    try {
+      await markDelivered(event.id);
+      await markAgentRunCompleted({
+        tenantId: event.tenant_id,
+        runId
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Delivery bookkeeping failed";
+      logger.error("Agent accepted event but local delivery bookkeeping failed", {
+        tenantId: event.tenant_id,
+        integrationId: event.integration_id,
+        eventId: event.id,
+        runId,
+        errorMessage: message
+      });
+      if (runId) {
+        await recordAcceptedDeliveryBookkeepingFailure({
+          tenantId: event.tenant_id,
+          runId,
+          eventId: event.id,
+          errorMessage: message
+        });
+      }
+      continue;
+    }
+
+    try {
+      // Record usage for FinOps as an orchestration action.
+      await recordModuleUsageEvent({
+        tenantId: event.tenant_id,
+        moduleKey: "dexterOrchestration",
+        usageKind: "agent_event_delivered",
+        actorType: "system",
+        quantity: 1,
+        costCent: 0, // No external COGS for webhook delivery itself
+        metadata: { eventId: event.id, integrationId: integration.id }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Delivery failed";
+      logger.warn("Usage metering failed for delivered agent event", {
+        tenantId: event.tenant_id,
+        integrationId: integration.id,
+        eventId: event.id,
+        runId,
+        errorMessage: message
+      });
+      if (runId) {
+        try {
+          await appendAgentRunEvent({
+            tenantId: event.tenant_id,
+            runId,
+            eventType: "agent.run.usage_metering_failed",
+            status: "completed",
+            summary: "Usage metering failed after agent delivery completed",
+            eventData: { outboxEventId: event.id, errorMessage: message.slice(0, 500) }
+          });
+        } catch (ledgerError) {
+          logger.warn("Failed to append agent usage metering failure event", {
+            error: ledgerError,
+            tenantId: event.tenant_id,
+            integrationId: integration.id,
+            eventId: event.id,
+            runId
+          });
+        }
+      }
     }
   }
 
   return { delivered, skipped: pending.length - delivered, limitUsed };
 }
 
-export async function listFailedAgentEvents(
-  integrationId: string,
-  limit = 50,
-  scopeInput?: TenantScopeInput
-) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+export async function listFailedAgentEvents(integrationId: string, limit = 50, tenantId?: string | null) {
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
+  const values: Array<string | number> = [integrationId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
+  if (tenantId) {
+    values.push(tenantId);
+  }
+  values.push(normalizedLimit);
   const result = await db.query<FailedAgentOutboxEvent>(
     `SELECT
        id,
@@ -640,38 +455,26 @@ export async function listFailedAgentEvents(
        next_attempt_at,
        created_at,
        updated_at,
-       payload,
-       tenant_key,
-       workspace_key,
-       lane_key,
-       command_envelope
+       payload
      FROM agent_outbox
      WHERE integration_id = $1
-       ${scope ? "AND tenant_key = $3" : ""}
-       ${scope ? "AND workspace_key = $4" : ""}
+       ${tenantClause}
        AND status = 'failed'
      ORDER BY updated_at DESC
-     LIMIT $2`,
-    scope
-      ? [integrationId, normalizedLimit, scope.tenantKey, scope.workspaceKey]
-      : [integrationId, normalizedLimit]
+     LIMIT $${values.length}`,
+    values
   );
   return result.rows;
 }
 
 type RetryFailedAgentOutboxInput = {
   integrationId: string;
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
+  tenantId?: string | null;
   limit?: number;
   eventIds?: string[];
 };
 
 export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput) {
-  const scope =
-    input.tenantKey || input.workspaceKey
-      ? resolveTenantScope({ tenantKey: input.tenantKey, workspaceKey: input.workspaceKey })
-      : null;
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const eventIds = Array.from(
     new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -687,23 +490,19 @@ export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput)
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE integration_id = $1
+               ${input.tenantId ? "AND tenant_id = $3" : ""}
                AND status = 'failed'
-               ${scope ? "AND tenant_key = $3" : ""}
-               ${scope ? "AND workspace_key = $4" : ""}
                AND id::text = ANY($2::text[])
              RETURNING id`,
-            scope
-              ? [input.integrationId, eventIds, scope.tenantKey, scope.workspaceKey]
-              : [input.integrationId, eventIds]
+            input.tenantId ? [input.integrationId, eventIds, input.tenantId] : [input.integrationId, eventIds]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM agent_outbox
                WHERE integration_id = $1
+                 ${input.tenantId ? "AND tenant_id = $3" : ""}
                  AND status = 'failed'
-                 ${scope ? "AND tenant_key = $3" : ""}
-                 ${scope ? "AND workspace_key = $4" : ""}
                ORDER BY updated_at ASC
                LIMIT $2
                FOR UPDATE SKIP LOCKED
@@ -714,10 +513,8 @@ export async function retryFailedAgentEvents(input: RetryFailedAgentOutboxInput)
                  updated_at = now()
              FROM failed
              WHERE evt.id = failed.id
-            RETURNING evt.id`,
-            scope
-              ? [input.integrationId, normalizedLimit, scope.tenantKey, scope.workspaceKey]
-              : [input.integrationId, normalizedLimit]
+             RETURNING evt.id`,
+            input.tenantId ? [input.integrationId, normalizedLimit, input.tenantId] : [input.integrationId, normalizedLimit]
           );
     await client.query("COMMIT");
     return {

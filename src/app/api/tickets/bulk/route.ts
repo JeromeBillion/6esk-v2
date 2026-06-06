@@ -4,7 +4,6 @@ import { getSessionUser } from "@/server/auth/session";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { addTagsToTicket, recordTicketEvent, removeTagsFromTicket } from "@/server/tickets";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const bulkPatchSchema = z
   .object({
@@ -40,7 +39,6 @@ export async function PATCH(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -66,9 +64,8 @@ export async function PATCH(request: Request) {
     `SELECT id, status, priority, assigned_user_id
      FROM tickets
      WHERE id = ANY($1::uuid[])
-       AND tenant_key = $2
        AND merged_into_ticket_id IS NULL`,
-    [uniqueTicketIds, scope.tenantKey]
+    [uniqueTicketIds]
   );
   const rows = ticketsResult.rows;
 
@@ -126,9 +123,8 @@ export async function PATCH(request: Request) {
     await db.query(
       `UPDATE tickets
        SET ${updates.join(", ")}, updated_at = now()
-       WHERE id = ANY($${index}::uuid[])
-         AND tenant_key = $${index + 1}`,
-      [...values, scope.tenantKey]
+       WHERE id = ANY($${index}::uuid[])`,
+      values
     );
   }
 
@@ -141,8 +137,6 @@ export async function PATCH(request: Request) {
         ticketId,
         eventType: "status_updated",
         actorUserId: user.id,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey,
         data: { from: row.status, to: parsed.data.status }
       });
       auditChanges.status = { from: row.status, to: parsed.data.status ?? null };
@@ -153,8 +147,6 @@ export async function PATCH(request: Request) {
         ticketId,
         eventType: "priority_updated",
         actorUserId: user.id,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey,
         data: { from: row.priority, to: parsed.data.priority }
       });
       auditChanges.priority = { from: row.priority, to: parsed.data.priority ?? null };
@@ -168,8 +160,6 @@ export async function PATCH(request: Request) {
         ticketId,
         eventType: "assignment_updated",
         actorUserId: user.id,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey,
         data: { from: row.assigned_user_id, to: parsed.data.assignedUserId ?? null }
       });
       auditChanges.assignedUserId = {
@@ -180,25 +170,21 @@ export async function PATCH(request: Request) {
 
     if (addTags.length > 0 || removeTags.length > 0) {
       if (addTags.length > 0) {
-        await addTagsToTicket(ticketId, addTags, scope);
+        await addTagsToTicket(ticketId, addTags);
       }
       if (removeTags.length > 0) {
-        await removeTagsFromTicket(ticketId, removeTags, scope);
+        await removeTagsFromTicket(ticketId, removeTags);
       }
       await recordTicketEvent({
         ticketId,
         eventType: "tags_updated",
         actorUserId: user.id,
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey,
         data: { add: addTags, remove: removeTags }
       });
     }
 
     if (Object.keys(auditChanges).length > 0 || addTags.length > 0 || removeTags.length > 0) {
       await recordAuditLog({
-        tenantKey: scope.tenantKey,
-        workspaceKey: scope.workspaceKey,
         actorUserId: user.id,
         action: "ticket_bulk_updated",
         entityType: "ticket",

@@ -70,10 +70,7 @@ describe("/api/admin/calls/transcripts/ai", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.getTranscriptAiJobMetrics).toHaveBeenCalledWith(12, {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.getTranscriptAiJobMetrics).toHaveBeenCalledWith(12);
     expect(body).toMatchObject({
       provider: "managed_http",
       analysis: { analyzed24h: 5, flagged24h: 2 }
@@ -95,9 +92,6 @@ describe("/api/admin/calls/transcripts/ai", () => {
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.deliverPendingTranscriptAiJobs).toHaveBeenCalledWith(
-      { limit: 25 },
-      { tenantKey: "primary", workspaceKey: "primary" }
-    );
+    expect(mocks.deliverPendingTranscriptAiJobs).toHaveBeenCalledWith({ limit: 25 });
   });
 });

@@ -1,10 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   markVoiceOperatorQueueOutcome: vi.fn(),
   reserveNextVoiceDeskOperatorForCall: vi.fn(),
-  resolveCallSessionProviderScope: vi.fn(),
-  validateTwilioWebhookForTenant: vi.fn(),
+  validateTwilioWebhook: vi.fn(),
   normalizeTwilioParams: vi.fn(),
   buildTwilioPublicUrl: vi.fn(),
   buildDeskOperatorDialTwiML: vi.fn(),
@@ -20,12 +19,8 @@ vi.mock("@/server/calls/operators", () => ({
   reserveNextVoiceDeskOperatorForCall: mocks.reserveNextVoiceDeskOperatorForCall
 }));
 
-vi.mock("@/server/calls/service", () => ({
-  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
-}));
-
 vi.mock("@/server/calls/twilio", () => ({
-  validateTwilioWebhookForTenant: mocks.validateTwilioWebhookForTenant,
+  validateTwilioWebhook: mocks.validateTwilioWebhook,
   normalizeTwilioParams: mocks.normalizeTwilioParams,
   buildTwilioPublicUrl: mocks.buildTwilioPublicUrl
 }));
@@ -47,39 +42,15 @@ vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
 
-vi.mock("@/server/provider-webhook-secrets", () => {
-  class ProviderWebhookSecretConfigurationError extends Error {}
-  return {
-    ProviderWebhookSecretConfigurationError,
-    shouldRequireTenantProviderWebhookSecrets: () =>
-      process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
-      process.env.NODE_ENV === "production"
-  };
-});
-
 import { POST } from "@/app/api/calls/webhooks/twilio/voice/queue/route";
-
-const ORIGINAL_ENV = { ...process.env };
 
 describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env = {
-      ...ORIGINAL_ENV,
-      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
-    };
     mocks.normalizeTwilioParams.mockImplementation((params: URLSearchParams) =>
       Object.fromEntries(params.entries())
     );
-    mocks.resolveCallSessionProviderScope.mockResolvedValue({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
-    mocks.validateTwilioWebhookForTenant.mockResolvedValue({
-      valid: true,
-      missingSecret: false,
-      matchedSecretId: "secret-1"
-    });
+    mocks.validateTwilioWebhook.mockReturnValue(true);
     mocks.parseQueuedOperatorIds.mockReturnValue(["11111111-1111-1111-1111-111111111111"]);
     mocks.shouldContinueVoiceQueue.mockReturnValue(true);
     mocks.buildTwilioPublicUrl.mockReturnValue(
@@ -97,10 +68,6 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
     mocks.buildDeskOperatorDialTwiML.mockReturnValue(
       `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Client><Identity>desk_user_22222222-2222-2222-2222-222222222222</Identity></Client></Dial></Response>`
     );
-  });
-
-  afterEach(() => {
-    process.env = { ...ORIGINAL_ENV };
   });
 
   it("marks the previous operator outcome and rings the next operator in sequence", async () => {
@@ -129,16 +96,18 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
 
     expect(response.status).toBe(200);
     expect(text).toContain("desk_user_22222222-2222-2222-2222-222222222222");
+    expect(mocks.validateTwilioWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: "/api/calls/webhooks/twilio/voice/queue",
+        requestUrl: expect.stringContaining("callSessionId=call-session-1")
+      })
+    );
     expect(mocks.markVoiceOperatorQueueOutcome).toHaveBeenCalledWith({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a",
       userId: "11111111-1111-1111-1111-111111111111",
       callSessionId: "call-session-1",
       outcome: "missed"
     });
     expect(mocks.reserveNextVoiceDeskOperatorForCall).toHaveBeenCalledWith({
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a",
       callSessionId: "call-session-1",
       excludeUserIds: ["11111111-1111-1111-1111-111111111111"]
     });
@@ -154,40 +123,5 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
         })
       })
     );
-  });
-
-  it("fails closed in strict mode when the tenant has no Twilio auth token", async () => {
-    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
-    mocks.validateTwilioWebhookForTenant.mockResolvedValueOnce({
-      valid: false,
-      missingSecret: true,
-      matchedSecretId: null
-    });
-    const body = new URLSearchParams({
-      CallSid: "CA-parent-1",
-      AccountSid: "AC123",
-      From: "+27810000000",
-      To: "+16624398187",
-      DialCallStatus: "no-answer"
-    });
-
-    const response = await POST(
-      new Request(
-        "https://desk.example.com/api/calls/webhooks/twilio/voice/queue?callSessionId=call-session-1&operatorUserId=11111111-1111-1111-1111-111111111111&attempt=0",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/x-www-form-urlencoded",
-            "x-twilio-signature": "valid"
-          },
-          body
-        }
-      )
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(503);
-    expect(payload).toMatchObject({ code: "provider_webhook_secret_missing" });
-    expect(mocks.markVoiceOperatorQueueOutcome).not.toHaveBeenCalled();
   });
 });

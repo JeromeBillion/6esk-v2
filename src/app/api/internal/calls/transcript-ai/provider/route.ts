@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-import {
-  getGlobalAiProviderConfig,
-  getGlobalAiResponsesUrl
-} from "@/server/ai/global-provider";
+import { getTenantAiProviderConfig } from "@/server/tenant/ai-provider";
+import { getGlobalAiResponsesUrl } from "@/server/ai/global-provider";
+import { recordModuleUsageEvent } from "@/server/module-metering";
 
 export const runtime = "nodejs";
 
@@ -37,10 +36,18 @@ const jobSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable()
 });
 
+const tenantIdSchema = z.string().uuid();
+
 function readString(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function resolveTenantId(metadata: Record<string, unknown> | null | undefined) {
+  const candidate = readString(metadata?.tenantId) ?? readString(metadata?.tenant_id);
+  const parsed = tenantIdSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
 }
 
 function getInternalSecret() {
@@ -120,13 +127,28 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid transcript AI job payload." }, { status: 400 });
   }
 
+  const tenantId = resolveTenantId(parsedJob.metadata);
+  if (!tenantId) {
+    return Response.json(
+      { error: "Transcript AI job metadata must include a valid tenantId." },
+      { status: 400 }
+    );
+  }
+
   let config;
   try {
-    config = getGlobalAiProviderConfig();
+    config = await getTenantAiProviderConfig(tenantId);
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Global AI provider is not configured." },
+      { error: error instanceof Error ? error.message : "Tenant AI provider is not configured." },
       { status: 500 }
+    );
+  }
+
+  if (config.providerMode === "none") {
+    return Response.json(
+      { error: "Tenant AI provider is disabled for transcript analysis." },
+      { status: 403 }
     );
   }
 
@@ -233,6 +255,29 @@ export async function POST(request: Request) {
       { status: 502 }
     );
   }
+
+  const usage = body?.usage as any;
+  const inputTokens = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
+  const outputTokens = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
+
+  // Record usage for FinOps. 
+  // We record tokens. The billing system will apply the zero-markup pricing logic.
+  await recordModuleUsageEvent({
+    tenantId,
+    moduleKey: "aiAutomation",
+    usageKind: "transcript_analysis",
+    actorType: "ai",
+    providerMode: config.providerMode,
+    quantity: inputTokens + outputTokens,
+    unit: "tokens",
+    metadata: {
+      model: config.model,
+      inputTokens,
+      outputTokens,
+      jobId: parsedJob.jobId,
+      callSessionId: parsedJob.callSessionId
+    }
+  });
 
   return Response.json({
     status: "completed",

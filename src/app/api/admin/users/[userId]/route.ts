@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   roleId: z.string().uuid().optional(),
@@ -12,9 +14,10 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
-  const auth = await requireLeadAdminAccess({ requireMfa: true });
-  if (!auth.ok) return auth.response;
-  const { user, scope } = auth;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -29,13 +32,10 @@ export async function PATCH(
   }
 
   const { userId } = await params;
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await db.query(
-    `SELECT id, email, role_id, is_active
-     FROM users
-     WHERE id = $1
-       AND tenant_key = $2
-       AND workspace_key = $3`,
-    [userId, scope.tenantKey, scope.workspaceKey]
+    "SELECT id, email, role_id, is_active FROM users WHERE id = $1 AND tenant_id = $2",
+    [userId, tenantId]
   );
   const current = existing.rows[0];
   if (!current) {
@@ -61,27 +61,21 @@ export async function PATCH(
   }
 
   fields.push("updated_at = now()");
-  const userIdParamIndex = index;
-  values.push(userId, scope.tenantKey, scope.workspaceKey);
+  values.push(userId);
 
   const result = await db.query(
     `UPDATE users
      SET ${fields.join(", ")}
-     WHERE id = $${userIdParamIndex}
-       AND tenant_key = $${userIdParamIndex + 1}
-       AND workspace_key = $${userIdParamIndex + 2}
+     WHERE id = $${index}
+       AND tenant_id = $${index + 1}
      RETURNING id, email, display_name, role_id, is_active, created_at`,
-    values
+    [...values, tenantId]
   );
 
   const updated = result.rows[0];
-  if (!updated) {
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
 
   await recordAuditLog({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "user_updated",
     entityType: "user",

@@ -3,7 +3,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { getTicketById } from "@/server/tickets";
 import { linkTickets, MergeError } from "@/server/merges";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const linkSchema = z.object({
   sourceTicketId: z.string().uuid(),
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId, reason } = parsed.data;
-  const scope = tenantScopeFromUser(user);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   if (sourceTicketId === targetTicketId) {
     return Response.json(
       { error: "Source and target tickets must be different.", code: "invalid_input" },
@@ -43,8 +43,8 @@ export async function POST(request: Request) {
   }
 
   const [source, target] = await Promise.all([
-    getTicketById(sourceTicketId, scope),
-    getTicketById(targetTicketId, scope)
+    getTicketById(sourceTicketId, tenantId),
+    getTicketById(targetTicketId, tenantId)
   ]);
   if (!source || !target) {
     return Response.json({ error: "Source or target ticket not found" }, { status: 404 });
@@ -59,9 +59,7 @@ export async function POST(request: Request) {
       sourceTicketId,
       targetTicketId,
       actorUserId: user.id,
-      reason: reason ?? null,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
+      reason: reason ?? null
     });
     return Response.json({ status: "linked", result });
   } catch (error) {

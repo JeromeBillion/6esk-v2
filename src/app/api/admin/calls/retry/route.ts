@@ -1,17 +1,24 @@
-import { requireLeadAdminOrMachineAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { retryFailedCallOutboxEvents } from "@/server/calls/outbox";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminOrMachineAccess(request, {
-    secretEnvNames: ["CALLS_OUTBOX_SECRET", "INBOUND_SHARED_SECRET"]
-  });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  const sharedSecret =
+    process.env.CALLS_OUTBOX_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
+  const provided = request.headers.get("x-6esk-secret");
+
+  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = Math.min(Math.max(Number(limitParam ?? 25) || 25, 1), 100);
+  const tenantId = user?.tenant_id ?? null;
   let eventIds: string[] = [];
   try {
     const payload = (await request.json()) as { eventIds?: unknown };
@@ -27,10 +34,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await retryFailedCallOutboxEvents({ limit, eventIds }, scope);
+    const result = await retryFailedCallOutboxEvents({ limit, eventIds, tenantId });
     await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_triggered",
       entityType: "call_outbox_events",
@@ -45,9 +51,8 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "Failed to retry failed call outbox events";
-    await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+    runInBackground(recordAuditLog({
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "call_outbox_retry_failed",
       entityType: "call_outbox_events",
@@ -55,7 +60,11 @@ export async function POST(request: Request) {
         limit,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record call outbox retry failure audit event", {
+      route: "/api/admin/calls/retry",
+      tenantId: tenantId ?? DEFAULT_TENANT_ID,
+      limit
+    });
     return Response.json({ error: "Failed to retry failed call outbox events", detail }, { status: 500 });
   }
 }

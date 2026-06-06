@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   markTranscriptJobFailed: vi.fn(),
   markTranscriptJobSubmitted: vi.fn(),
   attachCallTranscript: vi.fn(),
-  listActiveProviderWebhookSecrets: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -28,13 +27,6 @@ vi.mock("@/server/calls/service", () => ({
   attachCallTranscript: mocks.attachCallTranscript
 }));
 
-vi.mock("@/server/provider-webhook-secrets", () => ({
-  listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
-  shouldRequireTenantProviderWebhookSecrets: () =>
-    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS === "true" ||
-    process.env.NODE_ENV === "production"
-}));
-
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
@@ -49,13 +41,11 @@ describe("deliverPendingTranscriptJobs", () => {
     process.env = {
       ...ORIGINAL_ENV,
       APP_URL: "https://app.6esk.test",
-      CALLS_TRANSCRIPT_SHARED_SECRET: "transcript-secret",
-      TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
+      CALLS_TRANSCRIPT_SHARED_SECRET: "transcript-secret"
     };
     mocks.getTranscriptProvider.mockReturnValue("managed_http");
     mocks.getProcessingRecoverySeconds.mockReturnValue(300);
     mocks.lockPendingTranscriptJobs.mockResolvedValue([]);
-    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.attachCallTranscript.mockResolvedValue({
       status: "attached",
@@ -93,7 +83,7 @@ describe("deliverPendingTranscriptJobs", () => {
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.lockPendingTranscriptJobs).toHaveBeenCalledWith(1, 300, undefined);
+    expect(mocks.lockPendingTranscriptJobs).toHaveBeenCalledWith(1, 300);
     expect(mocks.submitTranscriptJob).toHaveBeenCalledWith(
       "managed_http",
       expect.objectContaining({
@@ -146,55 +136,10 @@ describe("deliverPendingTranscriptJobs", () => {
     });
     expect(mocks.markTranscriptJobSubmitted).toHaveBeenCalledWith({
       jobId: "job-2",
-      scope: {
-        tenantKey: "primary",
-        workspaceKey: "primary"
-      },
       attemptCount: 2,
       providerJobId: "provider-job-2"
     });
     expect(mocks.attachCallTranscript).not.toHaveBeenCalled();
     expect(mocks.markTranscriptJobFailed).not.toHaveBeenCalled();
-  });
-
-  it("passes tenant-scoped managed STT secrets to the provider in strict mode", async () => {
-    process.env.TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS = "true";
-    mocks.listActiveProviderWebhookSecrets.mockImplementation(
-      ({ provider, secretType }: { provider: string; secretType: string }) => {
-        if (provider === "deepgram" && secretType === "callback_token") {
-          return Promise.resolve([{ id: "callback-secret", secret: "tenant-dg-token", source: "db" }]);
-        }
-        if (provider === "managed_stt" && secretType === "http_secret") {
-          return Promise.resolve([{ id: "http-secret", secret: "tenant-http-secret", source: "db" }]);
-        }
-        return Promise.resolve([]);
-      }
-    );
-    mocks.lockPendingTranscriptJobs.mockResolvedValue([
-      {
-        id: "job-3",
-        tenant_key: "tenant-a",
-        workspace_key: "workspace-a",
-        call_session_id: "44444444-4444-4444-4444-444444444444",
-        provider: "managed_http",
-        recording_r2_key: "messages/msg/recording.mp3",
-        metadata: {},
-        attempt_count: 0
-      }
-    ]);
-    mocks.submitTranscriptJob.mockResolvedValue({
-      status: "accepted",
-      providerJobId: "provider-job-3"
-    });
-
-    await deliverPendingTranscriptJobs({ limit: 1 });
-
-    expect(mocks.submitTranscriptJob).toHaveBeenCalledWith(
-      "managed_http",
-      expect.objectContaining({
-        callbackSecret: "tenant-dg-token",
-        providerHttpSecret: "tenant-http-secret"
-      })
-    );
   });
 });

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const CUSTOMER_ID = "22222222-2222-2222-2222-222222222222";
 const TICKET_ID = "11111111-1111-1111-1111-111111111111";
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 const mocks = vi.hoisted(() => {
   class CustomerIdentityConflictError extends Error {
@@ -48,10 +49,12 @@ import { PATCH } from "@/app/api/customers/[customerId]/route";
 function buildUser(roleName: "lead_admin" | "agent" | "viewer") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    email: `${roleName}@example.com`,
+    email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID,
+    tenant_slug: "default"
   };
 }
 
@@ -59,7 +62,7 @@ function buildCustomer(overrides?: Partial<Record<string, unknown>>) {
   return {
     id: CUSTOMER_ID,
     kind: "registered",
-    external_system: "external-profile",
+    external_system: "prediction-market-mvp",
     external_user_id: "user-123",
     display_name: "John Davidson",
     primary_email: "john@techcorp.com",
@@ -171,15 +174,19 @@ describe("PATCH /api/customers/[customerId]", () => {
       { type: "email", value: "john.d@techcorp.com", isPrimary: true },
       { type: "phone", value: "+27710000009", isPrimary: true }
     ]);
-    expect(mocks.updateCustomerProfile).toHaveBeenCalledWith(CUSTOMER_ID, {
-      displayName: "John D.",
-      primaryEmail: "john.d@techcorp.com",
-      primaryPhone: "+27 710 000 009"
-    }, {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.getCustomerById).toHaveBeenCalledWith(CUSTOMER_ID, TENANT_ID);
+    expect(mocks.updateCustomerProfile).toHaveBeenCalledWith(
+      CUSTOMER_ID,
+      TENANT_ID,
+      {
+        displayName: "John D.",
+        primaryEmail: "john.d@techcorp.com",
+        primaryPhone: "+27 710 000 009"
+      }
+    );
+    expect(mocks.listCustomerIdentities).toHaveBeenCalledWith(CUSTOMER_ID, TENANT_ID);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       action: "customer_profile_updated",
       entityType: "customer",
@@ -220,11 +227,12 @@ describe("PATCH /api/customers/[customerId]", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
-    expect(mocks.updateCustomerProfile).toHaveBeenCalledWith(CUSTOMER_ID, {
-      displayName: "John D."
-    }, {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.updateCustomerProfile).toHaveBeenCalledWith(
+      CUSTOMER_ID,
+      TENANT_ID,
+      {
+        displayName: "John D."
+      }
+    );
   });
 });

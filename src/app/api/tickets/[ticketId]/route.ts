@@ -13,7 +13,8 @@ import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/ou
 import { listDraftsForTicket } from "@/server/agents/drafts";
 import { listAuditLogsForTicket } from "@/server/audit";
 import { listLinkedTickets } from "@/server/merges";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 const updateSchema = z.object({
   status: z.enum(["new", "open", "pending", "solved", "closed"]).optional(),
@@ -33,8 +34,8 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const scope = tenantScopeFromUser(user);
-  const ticket = await getTicketById(ticketId, scope);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -45,11 +46,11 @@ export async function GET(
   }
 
   const [messages, events, drafts, auditLogs, linkedTickets] = await Promise.all([
-    listTicketMessages(ticketId, scope),
-    listTicketEvents(ticketId, scope),
-    listDraftsForTicket(ticketId, scope),
-    listAuditLogsForTicket(ticketId, 50, scope),
-    listLinkedTickets(ticketId, scope)
+    listTicketMessages(ticketId, tenantId),
+    listTicketEvents(ticketId, tenantId),
+    listDraftsForTicket(ticketId, tenantId),
+    listAuditLogsForTicket(ticketId, tenantId, 50),
+    listLinkedTickets(ticketId, tenantId)
   ]);
   return Response.json({ ticket, messages, events, drafts, auditLogs, linkedTickets });
 }
@@ -67,8 +68,8 @@ export async function PATCH(
   }
 
   const { ticketId } = await params;
-  const scope = tenantScopeFromUser(user);
-  const ticket = await getTicketById(ticketId, scope);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -142,26 +143,26 @@ export async function PATCH(
   }
 
   fields.push("updated_at = now()");
-  values.push(ticketId);
+  const ticketIdParam = index++;
+  const tenantIdParam = index++;
+  values.push(ticketId, tenantId);
 
-	  await db.query(
-	    `UPDATE tickets
-	     SET ${fields.join(", ")}
-	     WHERE id = $${index}
-	       AND tenant_key = $${index + 1}
-	       AND workspace_key = $${index + 2}
-	     RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
-	    [...values, scope.tenantKey, scope.workspaceKey]
-	  );
-  const updated = await getTicketById(ticketId, scope);
+  await db.query(
+    `UPDATE tickets
+     SET ${fields.join(", ")}
+     WHERE id = $${ticketIdParam}
+       AND tenant_id = $${tenantIdParam}
+     RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
+    values
+  );
+  const updated = await getTicketById(ticketId, tenantId);
 
   if (parsed.data.status && parsed.data.status !== ticket.status) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "status_updated",
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       data: { from: ticket.status, to: parsed.data.status }
     });
 
@@ -169,36 +170,35 @@ export async function PATCH(
       eventType: "ticket.status.changed",
       ticketId,
       mailboxId: ticket.mailbox_id,
+      tenantId,
       actorUserId: user.id,
       excerpt: `Status changed from ${ticket.status} to ${parsed.data.status}`
     });
-    await enqueueAgentEvent({
-      eventType: "ticket.status.changed",
-      payload: statusEvent,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey
+    await enqueueAgentEvent({ eventType: "ticket.status.changed", payload: statusEvent, tenantId });
+    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+      route: "/api/tickets/[ticketId]",
+      tenantId,
+      ticketId,
+      eventType: "ticket.status.changed"
     });
-    void deliverPendingAgentEvents().catch(() => {});
   }
 
   if (parsed.data.priority && parsed.data.priority !== ticket.priority) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "priority_updated",
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       data: { from: ticket.priority, to: parsed.data.priority }
     });
   }
 
   if (assignProvided && parsed.data.assignedUserId !== ticket.assigned_user_id) {
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "assignment_updated",
       actorUserId: user.id,
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       data: { from: ticket.assigned_user_id, to: parsed.data.assignedUserId ?? null }
     });
   }

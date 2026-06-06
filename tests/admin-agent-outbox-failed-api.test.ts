@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   getAgentIntegrationById: vi.fn(),
@@ -26,9 +28,7 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName,
-    tenant_key: "tenant-a",
-    workspace_key: "workspace-a"
+    role_name: roleName
   };
 }
 
@@ -75,9 +75,6 @@ describe("GET /api/admin/agents/[agentId]/outbox/failed", () => {
       event_type: "customer.identity.resolved",
       last_error: "gateway timeout"
     });
-    expect(mocks.listFailedAgentEvents).toHaveBeenCalledWith("agent-1", 25, {
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
+    expect(mocks.listFailedAgentEvents).toHaveBeenCalledWith("agent-1", 25, DEFAULT_TENANT_ID);
   });
 });

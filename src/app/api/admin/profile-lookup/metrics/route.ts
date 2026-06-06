@@ -1,4 +1,5 @@
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 
 type LookupSummaryRow = {
@@ -33,15 +34,22 @@ function parseWindowDays(value: string | null) {
   return Math.min(Math.max(rounded, 1), 90);
 }
 
+function parseTimeoutMs(value: string | undefined) {
+  const parsed = Number.parseInt(value ?? "1500", 10);
+  if (!Number.isFinite(parsed)) return 1500;
+  return Math.min(Math.max(parsed, 200), 10000);
+}
+
 function toPercent(numerator: number, denominator: number) {
   if (!denominator) return 0;
   return Number(((numerator / denominator) * 100).toFixed(2));
 }
 
 export async function GET(request: Request) {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
-  const { scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const windowDays = parseWindowDays(url.searchParams.get("days"));
@@ -68,7 +76,6 @@ export async function GET(request: Request) {
         END AS duration_ms
       FROM tickets t
       WHERE t.metadata ? 'profile_lookup'
-        AND t.tenant_key = $2
     )`;
 
   const [summaryResult, seriesResult] = await Promise.all([
@@ -79,15 +86,15 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'white-label-webchat'
+             AND source = 'prediction-market-mvp'
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'external-profile-cache'
+             AND source = 'prediction-market-mvp-cache'
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ('white-label-webchat', 'external-profile-cache')
+             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
@@ -104,7 +111,7 @@ export async function GET(request: Request) {
          )::float8 AS p95_duration_ms
        FROM scoped
        WHERE lookup_at >= now() - make_interval(days => $1::int)`,
-      [windowDays, scope.tenantKey]
+      [windowDays]
     ),
     db.query<LookupSeriesRow>(
       `${scopedCte}
@@ -113,15 +120,15 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'white-label-webchat'
+             AND source = 'prediction-market-mvp'
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = 'external-profile-cache'
+             AND source = 'prediction-market-mvp-cache'
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ('white-label-webchat', 'external-profile-cache')
+             AND source NOT IN ('prediction-market-mvp', 'prediction-market-mvp-cache')
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
@@ -130,7 +137,7 @@ export async function GET(request: Request) {
        WHERE lookup_at >= now() - make_interval(days => $1::int)
        GROUP BY 1
        ORDER BY 1 ASC`,
-      [windowDays, scope.tenantKey]
+      [windowDays]
     )
   ]);
 
@@ -153,7 +160,7 @@ export async function GET(request: Request) {
   return Response.json({
     generatedAt: new Date().toISOString(),
     windowDays,
-    configuredTimeoutMs: 0,
+    configuredTimeoutMs: parseTimeoutMs(process.env.PREDICTION_PROFILE_LOOKUP_TIMEOUT_MS),
     summary: {
       total: summary.total,
       matched: summary.matched,

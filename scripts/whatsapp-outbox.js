@@ -1,5 +1,4 @@
 const { APP_URL, WHATSAPP_OUTBOX_SECRET, INBOUND_SHARED_SECRET } = process.env;
-const { tenantIngressHeaders } = require("./tenant-ingress-headers");
 
 const secret = WHATSAPP_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
 
@@ -13,11 +12,9 @@ async function main() {
   const url = `${baseUrl}/api/admin/whatsapp/outbox?limit=25`;
   const response = await fetch(url, {
     method: "POST",
-    headers: tenantIngressHeaders({
-      url,
-      method: "POST",
-      headers: { "x-6esk-secret": secret }
-    })
+    headers: {
+      "x-6esk-secret": secret
+    }
   });
 
   if (!response.ok) {

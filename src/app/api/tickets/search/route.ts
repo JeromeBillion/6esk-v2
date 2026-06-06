@@ -1,7 +1,6 @@
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -21,9 +20,8 @@ export async function GET(request: Request) {
     return Response.json({ tickets: [] });
   }
 
-  const scope = tenantScopeFromUser(user);
-  const values: Array<string | number> = [scope.tenantKey];
-  const conditions: string[] = ["t.tenant_key = $1", "t.merged_into_ticket_id IS NULL"];
+  const values: Array<string | number> = [];
+  const conditions: string[] = ["t.merged_into_ticket_id IS NULL"];
   const like = `%${query}%`;
   values.push(like);
   conditions.push(
@@ -59,19 +57,15 @@ export async function GET(request: Request) {
        t.assigned_user_id,
        EXISTS (
          SELECT 1 FROM messages wm
-         WHERE wm.ticket_id = t.id
-           AND wm.tenant_key = t.tenant_key
-           AND wm.channel = 'whatsapp'
+         WHERE wm.ticket_id = t.id AND wm.channel = 'whatsapp'
        ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
        EXISTS (
          SELECT 1 FROM messages vm
-         WHERE vm.ticket_id = t.id
-           AND vm.tenant_key = t.tenant_key
-           AND vm.channel = 'voice'
+         WHERE vm.ticket_id = t.id AND vm.channel = 'voice'
        ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
        COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at
      FROM tickets t
-     LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_key = t.tenant_key
+     LEFT JOIN messages m ON m.ticket_id = t.id
      WHERE ${conditions.join(" AND ")}
      GROUP BY t.id
      ORDER BY last_message_at DESC

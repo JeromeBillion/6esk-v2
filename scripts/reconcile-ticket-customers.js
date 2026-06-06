@@ -23,27 +23,6 @@ function parseInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function parseReconcileScope(env = process.env) {
-  const tenantKey = String(
-    env.CUSTOMER_RECONCILE_TENANT_KEY ||
-      env.CUSTOMER_RECONCILE_TENANT ||
-      (env.NODE_ENV === "production" ? "" : "primary")
-  ).trim();
-  const workspaceKey = String(
-    env.CUSTOMER_RECONCILE_WORKSPACE_KEY ||
-      env.CUSTOMER_RECONCILE_WORKSPACE ||
-      (env.NODE_ENV === "production" ? "" : "primary")
-  ).trim();
-
-  if (!tenantKey || !workspaceKey) {
-    throw new Error(
-      "CUSTOMER_RECONCILE_TENANT_KEY and CUSTOMER_RECONCILE_WORKSPACE_KEY are required in production"
-    );
-  }
-
-  return { tenantKey, workspaceKey };
-}
-
 function toObject(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -90,24 +69,23 @@ function deriveTicketIdentity(ticket) {
   };
 }
 
-async function findCustomerByExternal(client, scope, externalSystem, externalUserId) {
+async function findCustomerByExternal(client, externalSystem, externalUserId) {
   if (!externalSystem || !externalUserId) return null;
   const result = await client.query(
     `SELECT id
      FROM customers
-     WHERE tenant_key = $1
-       AND external_system = $2
-       AND external_user_id = $3
+     WHERE external_system = $1
+       AND external_user_id = $2
        AND merged_into_customer_id IS NULL
      LIMIT 1`,
-    [scope.tenantKey, externalSystem, externalUserId]
+    [externalSystem, externalUserId]
   );
   return result.rows[0]?.id ?? null;
 }
 
-async function findCustomerByIdentity(client, scope, email, phone) {
+async function findCustomerByIdentity(client, email, phone) {
   const conditions = [];
-  const values = [scope.tenantKey];
+  const values = [];
 
   if (email) {
     values.push("email", email);
@@ -128,9 +106,7 @@ async function findCustomerByIdentity(client, scope, email, phone) {
     `SELECT c.id
      FROM customer_identities ci
      JOIN customers c ON c.id = ci.customer_id
-     WHERE ci.tenant_key = $1
-       AND c.tenant_key = $1
-       AND c.merged_into_customer_id IS NULL
+     WHERE c.merged_into_customer_id IS NULL
        AND (${conditions.join(" OR ")})
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
      LIMIT 1`,
@@ -139,45 +115,42 @@ async function findCustomerByIdentity(client, scope, email, phone) {
   return result.rows[0]?.id ?? null;
 }
 
-async function createUnregisteredCustomer(client, scope, displayName, email, phone) {
+async function createUnregisteredCustomer(client, displayName, email, phone) {
   const result = await client.query(
-    `INSERT INTO customers (tenant_key, workspace_key, kind, display_name, primary_email, primary_phone)
-     VALUES ($1, $2, 'unregistered', $3, $4, $5)
+    `INSERT INTO customers (kind, display_name, primary_email, primary_phone)
+     VALUES ('unregistered', $1, $2, $3)
      RETURNING id`,
-    [scope.tenantKey, scope.workspaceKey, displayName ?? null, email ?? null, phone ?? null]
+    [displayName ?? null, email ?? null, phone ?? null]
   );
   return result.rows[0].id;
 }
 
-async function addIdentity(client, scope, customerId, type, value, isPrimary, source) {
+async function addIdentity(client, customerId, type, value, isPrimary, source) {
   if (!value) return;
   await client.query(
     `INSERT INTO customer_identities (
-      tenant_key,
-      workspace_key,
       customer_id,
       identity_type,
       identity_value,
       is_primary,
       source,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-    ON CONFLICT (tenant_key, identity_type, identity_value) DO NOTHING`,
-    [scope.tenantKey, scope.workspaceKey, customerId, type, value, isPrimary, source]
+    ) VALUES ($1, $2, $3, $4, $5, now())
+    ON CONFLICT (identity_type, identity_value) DO NOTHING`,
+    [customerId, type, value, isPrimary, source]
   );
 }
 
-async function reconcileTicket(client, ticket, dryRun, scope) {
+async function reconcileTicket(client, ticket, dryRun) {
   const identity = deriveTicketIdentity(ticket);
   let customerId =
-    (await findCustomerByExternal(client, scope, identity.externalSystem, identity.externalUserId)) ||
-    (await findCustomerByIdentity(client, scope, identity.email, identity.phone));
+    (await findCustomerByExternal(client, identity.externalSystem, identity.externalUserId)) ||
+    (await findCustomerByIdentity(client, identity.email, identity.phone));
 
   let createdCustomer = false;
   if (!customerId && !dryRun) {
     customerId = await createUnregisteredCustomer(
       client,
-      scope,
       identity.displayName,
       identity.email,
       identity.phone
@@ -202,18 +175,16 @@ async function reconcileTicket(client, ticket, dryRun, scope) {
   }
 
   const identitySource = identity.externalUserId ? "profile_lookup" : "backfill_reconcile";
-  await addIdentity(client, scope, customerId, "email", identity.email, true, identitySource);
-  await addIdentity(client, scope, customerId, "phone", identity.phone, true, identitySource);
+  await addIdentity(client, customerId, "email", identity.email, true, identitySource);
+  await addIdentity(client, customerId, "phone", identity.phone, true, identitySource);
 
   await client.query(
     `UPDATE tickets
      SET customer_id = $2,
          updated_at = now()
      WHERE id = $1
-       AND tenant_key = $3
-       AND workspace_key = $4
        AND customer_id IS NULL`,
-    [ticket.id, customerId, scope.tenantKey, scope.workspaceKey]
+    [ticket.id, customerId]
   );
 
   return {
@@ -232,7 +203,6 @@ async function main() {
 
   const limit = parseInteger(process.env.CUSTOMER_RECONCILE_LIMIT, 500);
   const dryRun = parseBoolean(process.env.CUSTOMER_RECONCILE_DRY_RUN, true);
-  const scope = parseReconcileScope();
 
   const pool = new Pool({ connectionString });
   const client = await pool.connect();
@@ -247,19 +217,17 @@ async function main() {
 
   try {
     const ticketsResult = await client.query(
-      `SELECT id, tenant_key, workspace_key, requester_email, metadata
+      `SELECT id, requester_email, metadata
        FROM tickets
-       WHERE tenant_key = $1
-         AND workspace_key = $2
-         AND customer_id IS NULL
+       WHERE customer_id IS NULL
          AND merged_into_ticket_id IS NULL
        ORDER BY created_at ASC
-       LIMIT $3`,
-      [scope.tenantKey, scope.workspaceKey, limit]
+       LIMIT $1`,
+      [limit]
     );
 
     console.log(
-      `[customer-reconcile] mode=${dryRun ? "dry-run" : "apply"} scope=${scope.tenantKey}:${scope.workspaceKey} tickets=${ticketsResult.rowCount}`
+      `[customer-reconcile] mode=${dryRun ? "dry-run" : "apply"} tickets=${ticketsResult.rowCount}`
     );
 
     for (const ticket of ticketsResult.rows) {
@@ -267,7 +235,7 @@ async function main() {
 
       try {
         if (!dryRun) await client.query("BEGIN");
-        const result = await reconcileTicket(client, ticket, dryRun, scope);
+        const result = await reconcileTicket(client, ticket, dryRun);
 
         if (result.linked) {
           counters.linked += 1;
@@ -295,19 +263,7 @@ async function main() {
   }
 }
 
-if (require.main === module) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
-}
-
-module.exports = {
-  addIdentity,
-  createUnregisteredCustomer,
-  deriveTicketIdentity,
-  findCustomerByExternal,
-  findCustomerByIdentity,
-  parseReconcileScope,
-  reconcileTicket
-};
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

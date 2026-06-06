@@ -14,10 +14,8 @@ vi.mock("@/server/email/inbound-metrics", () => ({
 }));
 
 import { GET } from "@/app/api/admin/inbound/metrics/route";
-import { buildTenantIngressSignature } from "@/server/tenant-context";
 
 const ORIGINAL_ENV = { ...process.env };
-const TENANT_INGRESS_SECRET = "tenant-ingress-secret";
 
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
@@ -26,25 +24,6 @@ function buildUser(roleName: "lead_admin" | "agent") {
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName
-  };
-}
-
-function signedTenantHeaders(path: string, timestamp = new Date().toISOString()) {
-  const tenantKey = "tenant-a";
-  const workspaceKey = "workspace-a";
-  return {
-    "x-6esk-secret": "inbound-secret",
-    "x-6esk-tenant": tenantKey,
-    "x-6esk-workspace": workspaceKey,
-    "x-6esk-tenant-timestamp": timestamp,
-    "x-6esk-tenant-signature": buildTenantIngressSignature({
-      tenantKey,
-      workspaceKey,
-      method: "GET",
-      path,
-      timestamp,
-      secret: TENANT_INGRESS_SECRET
-    })
   };
 }
 
@@ -107,14 +86,14 @@ describe("GET /api/admin/inbound/metrics", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("returns 403 when a logged-in caller is not an admin", async () => {
+  it("returns 401 when caller is not admin and secret is missing", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await GET(new Request("http://localhost/api/admin/inbound/metrics?hours=24"));
     const body = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(response.status).toBe(401);
+    expect(body).toMatchObject({ error: "Unauthorized" });
     expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
   });
 
@@ -135,10 +114,7 @@ describe("GET /api/admin/inbound/metrics", () => {
       status: "at_or_above_threshold",
       threshold: 5
     });
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(48, {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
+    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(48);
   });
 
   it("allows maintenance secret callers without session", async () => {
@@ -150,99 +126,6 @@ describe("GET /api/admin/inbound/metrics", () => {
       })
     );
     expect(response.status).toBe(200);
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(6, {
-      tenantKey: "primary",
-      workspaceKey: "primary"
-    });
-  });
-
-  it("fails closed for maintenance secret callers without tenant scope in strict mode", async () => {
-    process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
-    mocks.getSessionUser.mockResolvedValue(null);
-
-    const response = await GET(
-      new Request("http://localhost/api/admin/inbound/metrics?hours=6", {
-        headers: { "x-6esk-secret": "inbound-secret" }
-      })
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(body).toMatchObject({
-      error: "Tenant scope is required for machine ingress.",
-      code: "tenant_scope_required"
-    });
-    expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
-  });
-
-  it("uses explicit tenant scope for maintenance secret callers in strict mode", async () => {
-    process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
-    process.env.TENANT_INGRESS_REQUIRE_SIGNATURE = "false";
-    mocks.getSessionUser.mockResolvedValue(null);
-
-    const response = await GET(
-      new Request("http://localhost/api/admin/inbound/metrics?hours=6", {
-        headers: {
-          "x-6esk-secret": "inbound-secret",
-          "x-6esk-tenant": "tenant-a",
-          "x-6esk-workspace": "workspace-a"
-        }
-      })
-    );
-
-    expect(response.status).toBe(200);
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(6, {
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
-  });
-
-  it("rejects unsigned tenant envelopes for maintenance callers when signature strict mode is enabled", async () => {
-    process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
-    process.env.TENANT_INGRESS_REQUIRE_SIGNATURE = "true";
-    process.env.TENANT_INGRESS_SIGNING_SECRETS_JSON = JSON.stringify({
-      "tenant-a:workspace-a": TENANT_INGRESS_SECRET
-    });
-    mocks.getSessionUser.mockResolvedValue(null);
-
-    const response = await GET(
-      new Request("http://localhost/api/admin/inbound/metrics?hours=6", {
-        headers: {
-          "x-6esk-secret": "inbound-secret",
-          "x-6esk-tenant": "tenant-a",
-          "x-6esk-workspace": "workspace-a"
-        }
-      })
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(401);
-    expect(body).toMatchObject({
-      error: "Signed tenant envelope is required for machine ingress.",
-      code: "tenant_signature_required"
-    });
-    expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
-  });
-
-  it("accepts signed tenant envelopes for maintenance callers in signature strict mode", async () => {
-    const path = "/api/admin/inbound/metrics?hours=6";
-    process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
-    process.env.TENANT_INGRESS_REQUIRE_SIGNATURE = "true";
-    process.env.TENANT_INGRESS_SIGNING_SECRETS_JSON = JSON.stringify({
-      "tenant-a:workspace-a": TENANT_INGRESS_SECRET
-    });
-    mocks.getSessionUser.mockResolvedValue(null);
-
-    const response = await GET(
-      new Request(`http://localhost${path}`, {
-        headers: signedTenantHeaders(path)
-      })
-    );
-
-    expect(response.status).toBe(200);
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(6, {
-      tenantKey: "tenant-a",
-      workspaceKey: "workspace-a"
-    });
+    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(6);
   });
 });

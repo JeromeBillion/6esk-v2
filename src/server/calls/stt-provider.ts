@@ -8,7 +8,6 @@ export type SubmitTranscriptJobArgs = {
   recordingR2Key: string;
   callbackUrl: string;
   callbackSecret: string | null;
-  providerHttpSecret?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -51,7 +50,6 @@ async function submitViaManagedHttp({
   recordingR2Key,
   callbackUrl,
   callbackSecret,
-  providerHttpSecret,
   metadata
 }: SubmitTranscriptJobArgs): Promise<SubmitTranscriptJobResult> {
   const providerUrl = readString(process.env.CALLS_STT_PROVIDER_HTTP_URL);
@@ -59,7 +57,7 @@ async function submitViaManagedHttp({
     throw new Error("CALLS_STT_PROVIDER_HTTP_URL is not configured.");
   }
   if (!callbackSecret) {
-    throw new Error("STT callback token is required.");
+    throw new Error("CALLS_TRANSCRIPT_SHARED_SECRET or INBOUND_SHARED_SECRET is required.");
   }
 
   const { buffer, contentType } = await getObjectBuffer(recordingR2Key);
@@ -87,14 +85,13 @@ async function submitViaManagedHttp({
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getTranscriptProviderTimeoutMs());
 
-  const httpSecret =
-    readString(providerHttpSecret) ?? readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET);
-
   try {
     const response = await fetch(providerUrl, {
       method: "POST",
       headers: {
-        ...(httpSecret ? { "x-6esk-secret": httpSecret } : {})
+        ...(readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET)
+          ? { "x-6esk-secret": readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET)! }
+          : {})
       },
       body: form,
       signal: controller.signal

@@ -8,15 +8,6 @@ import {
   recordVoiceConsentEvent,
   resolveExistingCustomerIdForVoiceConsent
 } from "@/server/calls/consent";
-import {
-  isTenantIngressScopeError,
-  tenantScopeFromMachineRequestAsync,
-  tenantScopeFromUser
-} from "@/server/tenant-context";
-import {
-  isTenantPublicIngressError,
-  tenantScopeFromPublicIngressRequest
-} from "@/server/tenant-public-ingress";
 
 const voiceConsentSchema = z.object({
   action: z.enum(["grant", "revoke"]),
@@ -42,19 +33,6 @@ export async function POST(request: Request) {
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
   const providedSecret = request.headers.get("x-6esk-secret");
   const trustedSecret = Boolean(sharedSecret && providedSecret === sharedSecret);
-  let scope;
-  try {
-    scope = sessionUser
-      ? tenantScopeFromUser(sessionUser)
-      : trustedSecret
-        ? await tenantScopeFromMachineRequestAsync(request)
-        : await tenantScopeFromPublicIngressRequest(request);
-  } catch (error) {
-    if (isTenantIngressScopeError(error) || isTenantPublicIngressError(error)) {
-      return Response.json({ error: error.message, code: error.code }, { status: error.status });
-    }
-    throw error;
-  }
 
   let payload: unknown;
   try {
@@ -93,8 +71,6 @@ export async function POST(request: Request) {
   const customerId =
     data.customerId ??
     (await resolveExistingCustomerIdForVoiceConsent({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
       email,
       phone: callbackPhone ?? phone
     }));
@@ -106,8 +82,6 @@ export async function POST(request: Request) {
   const termsVersion = data.termsVersion ?? process.env.CALLS_CONSENT_TERMS_VERSION ?? null;
 
   await recordVoiceConsentEvent({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     decision: data.action === "grant" ? "granted" : "revoked",
     customerId,
     email,
@@ -125,8 +99,6 @@ export async function POST(request: Request) {
   });
 
   const consent = await getLatestVoiceConsentState({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     customerId,
     phone: callbackPhone ?? phone,
     email

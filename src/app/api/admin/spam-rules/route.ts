@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createSchema = z.object({
   ruleType: z.enum(["allow", "block"]),
@@ -10,25 +12,27 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
-  const { scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const result = await db.query(
     `SELECT id, rule_type, scope, pattern, is_active, created_at
      FROM spam_rules
-     WHERE tenant_key = $1
-       AND workspace_key = $2
+     WHERE tenant_id = $1
      ORDER BY created_at DESC`,
-    [scope.tenantKey, scope.workspaceKey]
+    [tenantId]
   );
   return Response.json({ rules: result.rows });
 }
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -43,21 +47,15 @@ export async function POST(request: Request) {
   }
 
   const result = await db.query(
-    `INSERT INTO spam_rules (tenant_key, workspace_key, rule_type, scope, pattern)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO spam_rules (rule_type, scope, pattern)
+     VALUES ($1, $2, $3)
      RETURNING id, rule_type, scope, pattern, is_active, created_at`,
-    [
-      scope.tenantKey,
-      scope.workspaceKey,
-      parsed.data.ruleType,
-      parsed.data.scope,
-      parsed.data.pattern.toLowerCase()
-    ]
+    [parsed.data.ruleType, parsed.data.scope, parsed.data.pattern.toLowerCase()]
   );
 
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   await recordAuditLog({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "spam_rule_created",
     entityType: "spam_rule",

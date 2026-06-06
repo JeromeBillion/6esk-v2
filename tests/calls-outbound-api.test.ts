@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const TICKET_ID = "11111111-1111-1111-1111-111111111111";
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -11,7 +12,10 @@ const mocks = vi.hoisted(() => ({
   getLatestVoiceConsentState: vi.fn(),
   evaluateVoiceCallPolicy: vi.fn(),
   queueOutboundCall: vi.fn(),
-  recordAuditLog: vi.fn()
+  deliverPendingCallEvents: vi.fn(),
+  recordAuditLog: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
+  recordModuleUsageEvent: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -41,6 +45,18 @@ vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
 
+vi.mock("@/server/calls/outbox", () => ({
+  deliverPendingCallEvents: mocks.deliverPendingCallEvents
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
+}));
+
+vi.mock("@/server/module-metering", () => ({
+  recordModuleUsageEvent: mocks.recordModuleUsageEvent
+}));
+
 import { POST } from "@/app/api/calls/outbound/route";
 
 async function postOutbound(body: Record<string, unknown>) {
@@ -63,12 +79,14 @@ describe("POST /api/calls/outbound", () => {
       email: "agent@6ex.co.za",
       display_name: "Agent",
       role_id: "role-1",
-      role_name: "agent"
+      role_name: "agent",
+      tenant_id: TENANT_ID
     });
     mocks.getTicketById.mockResolvedValue({
       id: TICKET_ID,
       assigned_user_id: AGENT_ID
     });
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.getTicketCallOptions.mockResolvedValue({
       ticketId: TICKET_ID,
       selectionRequired: false,
@@ -109,7 +127,9 @@ describe("POST /api/calls/outbound", () => {
       toPhone: "+15551234567",
       idempotent: false
     });
+    mocks.deliverPendingCallEvents.mockResolvedValue({ delivered: 0, skipped: 0, provider: "mock" });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
   });
 
   it("returns 401 when user is not authenticated", async () => {
@@ -223,6 +243,7 @@ describe("POST /api/calls/outbound", () => {
     expect(mocks.queueOutboundCall).toHaveBeenCalledWith(
       expect.objectContaining({
         ticketId: TICKET_ID,
+        tenantId: TENANT_ID,
         toPhone: "+15551234567",
         origin: "human",
         actorUserId: AGENT_ID
@@ -231,6 +252,7 @@ describe("POST /api/calls/outbound", () => {
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "call_queued",
+        tenantId: TENANT_ID,
         entityType: "call_session",
         entityId: "call-session-1",
         data: expect.objectContaining({
@@ -238,6 +260,13 @@ describe("POST /api/calls/outbound", () => {
           toPhone: "+1555******67",
           idempotent: false
         })
+      })
+    );
+    expect(mocks.recordModuleUsageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        moduleKey: "voice",
+        usageKind: "call_queued"
       })
     );
   });

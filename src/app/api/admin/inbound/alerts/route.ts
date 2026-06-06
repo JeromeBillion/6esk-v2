@@ -1,18 +1,19 @@
-import { requireLeadAdminOrMachineAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { sendInboundFailureAlert } from "@/server/email/inbound-alerts";
-import { type TenantScope } from "@/server/tenant-context";
+
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 async function safeRecordAuditLog(data: {
-  scope: TenantScope;
+  tenantId: string;
   actorUserId: string | null;
   action: string;
   payload: Record<string, unknown>;
 }) {
   try {
     await recordAuditLog({
-      tenantKey: data.scope.tenantKey,
-      workspaceKey: data.scope.workspaceKey,
+      tenantId: data.tenantId,
       actorUserId: data.actorUserId,
       action: data.action,
       entityType: "inbound_events",
@@ -24,17 +25,19 @@ async function safeRecordAuditLog(data: {
 }
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminOrMachineAccess(request, {
-    secretEnvNames: ["INBOUND_SHARED_SECRET"]
-  });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
+  const provided = request.headers.get("x-6esk-secret");
+
+  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   try {
-    const result = await sendInboundFailureAlert(scope);
+    const result = await sendInboundFailureAlert();
 
     await safeRecordAuditLog({
-      scope,
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "inbound_alert_checked",
       payload: result as Record<string, unknown>
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     await safeRecordAuditLog({
-      scope,
+      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
       actorUserId: user?.id ?? null,
       action: "inbound_alert_check_failed",
       payload: { error: detail }

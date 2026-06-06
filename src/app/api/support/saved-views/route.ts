@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const filtersSchema = z
   .object({
@@ -32,15 +31,13 @@ export async function GET() {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const scope = tenantScopeFromUser(user);
 
   const result = await db.query<SavedViewRow>(
     `SELECT id, name, filters, created_at, updated_at
      FROM support_saved_views
-     WHERE tenant_key = $1
-       AND user_id = $2
+     WHERE user_id = $1
      ORDER BY updated_at DESC, created_at DESC`,
-    [scope.tenantKey, user.id]
+    [user.id]
   );
 
   return Response.json({
@@ -59,7 +56,6 @@ export async function POST(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const scope = tenantScopeFromUser(user);
 
   let payload: unknown;
   try {
@@ -75,16 +71,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await db.query<SavedViewRow>(
-      `INSERT INTO support_saved_views (tenant_key, workspace_key, user_id, name, filters)
-       VALUES ($1, $2, $3, $4, $5::jsonb)
+      `INSERT INTO support_saved_views (user_id, name, filters)
+       VALUES ($1, $2, $3::jsonb)
        RETURNING id, name, filters, created_at, updated_at`,
-      [
-        scope.tenantKey,
-        scope.workspaceKey,
-        user.id,
-        parsed.data.name,
-        JSON.stringify(parsed.data.filters)
-      ]
+      [user.id, parsed.data.name, JSON.stringify(parsed.data.filters)]
     );
     const row = result.rows[0];
     return Response.json({

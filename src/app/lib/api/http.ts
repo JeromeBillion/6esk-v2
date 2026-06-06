@@ -27,13 +27,13 @@ async function parseJson(response: Response) {
 
 function errorMessageFromPayload(payload: unknown) {
   if (!payload || typeof payload !== "object") return null;
-  const error = (payload as { error?: unknown }).error;
-  if (typeof error === "string" && error.trim()) {
-    return error;
-  }
   const detail = (payload as { detail?: unknown }).detail;
   if (typeof detail === "string" && detail.trim()) {
     return detail;
+  }
+  const error = (payload as { error?: unknown }).error;
+  if (typeof error === "string" && error.trim()) {
+    return error;
   }
   const details = (payload as { details?: unknown }).details;
   if (typeof details === "string" && details.trim()) {

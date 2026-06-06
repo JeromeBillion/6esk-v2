@@ -1,7 +1,6 @@
 import { createHash } from "crypto";
 import { db } from "@/server/db";
 import { normalizeAddressList } from "@/server/email/normalize";
-import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type InboundPayload = {
   from: string;
@@ -35,23 +34,18 @@ export function computeIdempotencyKey(payload: InboundPayload) {
 }
 
 export async function createInboundEvent({
-  tenantKey,
-  workspaceKey,
   idempotencyKey,
   payload
 }: {
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
   idempotencyKey: string;
   payload: Record<string, unknown>;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   const result = await db.query<{ id: string }>(
-    `INSERT INTO inbound_events (tenant_key, workspace_key, idempotency_key, payload, status)
-     VALUES ($1, $2, $3, $4, 'processing')
-     ON CONFLICT (tenant_key, idempotency_key) DO NOTHING
+    `INSERT INTO inbound_events (idempotency_key, payload, status)
+     VALUES ($1, $2, 'processing')
+     ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING id`,
-    [scope.tenantKey, scope.workspaceKey, idempotencyKey, payload]
+    [idempotencyKey, payload]
   );
 
   if (result.rows[0]) {
@@ -66,9 +60,8 @@ export async function createInboundEvent({
   }>(
     `SELECT id, status, message_id, ticket_id
      FROM inbound_events
-     WHERE tenant_key = $1
-       AND idempotency_key = $2`,
-    [scope.tenantKey, idempotencyKey]
+     WHERE idempotency_key = $1`,
+    [idempotencyKey]
   );
 
   return {
@@ -83,42 +76,24 @@ export async function createInboundEvent({
 export async function markInboundProcessed({
   id,
   messageId,
-  ticketId,
-  tenantKey,
-  workspaceKey
+  ticketId
 }: {
   id: string;
   messageId: string | null;
   ticketId: string | null;
-  tenantKey: string;
-  workspaceKey: string;
 }) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
   await db.query(
     `UPDATE inbound_events
      SET status = 'processed',
          message_id = $2,
          ticket_id = $3,
          updated_at = now()
-     WHERE id = $1
-       AND tenant_key = $4
-       AND workspace_key = $5`,
-    [id, messageId, ticketId, scope.tenantKey, scope.workspaceKey]
+     WHERE id = $1`,
+    [id, messageId, ticketId]
   );
 }
 
-export async function markInboundFailed({
-  id,
-  error,
-  tenantKey,
-  workspaceKey
-}: {
-  id: string;
-  error: string;
-  tenantKey: string;
-  workspaceKey: string;
-}) {
-  const scope = resolveTenantScope({ tenantKey, workspaceKey });
+export async function markInboundFailed({ id, error }: { id: string; error: string }) {
   await db.query(
     `UPDATE inbound_events
      SET status = 'failed',
@@ -126,15 +101,12 @@ export async function markInboundFailed({
          last_error = $2,
          next_attempt_at = now() + (INTERVAL '5 minutes' * LEAST(attempt_count + 1, 10)),
          updated_at = now()
-     WHERE id = $1
-       AND tenant_key = $3
-       AND workspace_key = $4`,
-    [id, error.slice(0, 500), scope.tenantKey, scope.workspaceKey]
+     WHERE id = $1`,
+    [id, error.slice(0, 500)]
   );
 }
 
-export async function lockFailedInboundEvents(limit: number, scopeInput?: TenantScopeInput) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+export async function lockFailedInboundEvents(limit: number) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -145,24 +117,16 @@ export async function lockFailedInboundEvents(limit: number, scopeInput?: Tenant
          SELECT id
          FROM inbound_events
          WHERE status = 'failed'
-           ${scope ? "AND tenant_key = $2" : ""}
-           ${scope ? "AND workspace_key = $3" : ""}
            AND next_attempt_at <= now()
          ORDER BY next_attempt_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_key, workspace_key, payload, attempt_count`,
-      scope ? [limit, scope.tenantKey, scope.workspaceKey] : [limit]
+       RETURNING id, payload, attempt_count`,
+      [limit]
     );
     await client.query("COMMIT");
-    return result.rows as Array<{
-      id: string;
-      tenant_key: string;
-      workspace_key: string;
-      payload: Record<string, unknown>;
-      attempt_count: number;
-    }>;
+    return result.rows as Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

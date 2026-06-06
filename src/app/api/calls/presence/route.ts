@@ -6,8 +6,7 @@ import {
   upsertVoiceOperatorPresence,
   VOICE_OPERATOR_STATUSES
 } from "@/server/calls/operators";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 const updatePresenceSchema = z.object({
   status: z.enum(VOICE_OPERATOR_STATUSES).optional(),
@@ -23,10 +22,13 @@ export async function GET() {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user.tenant_id;
+  if (!tenantId) {
+    return Response.json({ error: "Tenant missing" }, { status: 403 });
+  }
 
-  const scope = tenantScopeFromUser(user);
-  const voiceEnabled = await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey);
-  const presence = await getVoiceOperatorPresence(user.id, scope);
+  const voiceEnabled = await checkModuleEntitlement("voice", tenantId);
+  const presence = await getVoiceOperatorPresence(user.id);
   return Response.json({
     voiceEnabled,
     presence
@@ -41,8 +43,11 @@ export async function PATCH(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const scope = tenantScopeFromUser(user);
-  if (!(await isWorkspaceModuleEnabled("voice", scope.workspaceKey, scope.tenantKey))) {
+  const tenantId = user.tenant_id;
+  if (!tenantId) {
+    return Response.json({ error: "Tenant missing" }, { status: 403 });
+  }
+  if (!(await checkModuleEntitlement("voice", tenantId))) {
     return Response.json(
       {
         error: "Voice module is not enabled for this workspace.",
@@ -59,10 +64,8 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const current = await getVoiceOperatorPresence(user.id, scope);
+  const current = await getVoiceOperatorPresence(user.id);
   const next = await upsertVoiceOperatorPresence({
-    tenantKey: scope.tenantKey,
-    workspaceKey: scope.workspaceKey,
     userId: user.id,
     status: parsed.data.status ?? current.status,
     activeCallSessionId:

@@ -18,6 +18,17 @@ describe("verifyWhatsAppSignature", () => {
     ).toBe(true);
   });
 
+  it("returns false when production requires a signature but app secret is missing", () => {
+    expect(
+      verifyWhatsAppSignature({
+        body,
+        providedSignature: null,
+        appSecret: "",
+        requireSignature: true
+      })
+    ).toBe(false);
+  });
+
   it("returns true when signature matches", () => {
     const signature = buildWhatsAppSignature(body, appSecret);
     expect(

@@ -1,7 +1,6 @@
 import { canManageTickets } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -22,7 +21,6 @@ export async function GET(request: Request) {
   }
 
   const like = `%${query}%`;
-  const scope = tenantScopeFromUser(user);
   const result = await db.query<{
     id: string;
     kind: "registered" | "unregistered";
@@ -54,30 +52,28 @@ export async function GET(request: Request) {
          '[]'
        ) AS identities
      FROM customers c
-     LEFT JOIN customer_identities ci ON ci.customer_id = c.id AND ci.tenant_key = c.tenant_key
-     LEFT JOIN tickets t ON t.customer_id = c.id AND t.tenant_key = c.tenant_key AND t.merged_into_ticket_id IS NULL
-     WHERE c.tenant_key = $1
-       AND c.merged_into_customer_id IS NULL
+     LEFT JOIN customer_identities ci ON ci.customer_id = c.id
+     LEFT JOIN tickets t ON t.customer_id = c.id AND t.merged_into_ticket_id IS NULL
+     WHERE c.merged_into_customer_id IS NULL
        AND (
-         c.id::text ILIKE $2 OR
-         c.display_name ILIKE $2 OR
-         c.primary_email ILIKE $2 OR
-         c.primary_phone ILIKE $2 OR
-         c.external_user_id ILIKE $2 OR
+         c.id::text ILIKE $1 OR
+         c.display_name ILIKE $1 OR
+         c.primary_email ILIKE $1 OR
+         c.primary_phone ILIKE $1 OR
+         c.external_user_id ILIKE $1 OR
          EXISTS (
            SELECT 1
            FROM customer_identities ciq
            WHERE ciq.customer_id = c.id
-             AND ciq.tenant_key = c.tenant_key
-             AND ciq.identity_value ILIKE $2
+             AND ciq.identity_value ILIKE $1
          )
        )
      GROUP BY c.id
      ORDER BY
        MAX(COALESCE(t.updated_at, t.created_at)) DESC NULLS LAST,
        c.updated_at DESC
-     LIMIT $3`,
-    [scope.tenantKey, like, limit]
+     LIMIT $2`,
+    [like, limit]
   );
 
   return Response.json({
@@ -94,3 +90,4 @@ export async function GET(request: Request) {
     }))
   });
 }
+

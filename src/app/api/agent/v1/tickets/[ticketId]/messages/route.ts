@@ -1,9 +1,5 @@
 import { db } from "@/server/db";
-import {
-  agentIngressErrorResponse,
-  agentScopeFromIntegration,
-  getAgentFromRequest
-} from "@/server/agents/auth";
+import { getAgentFromRequest } from "@/server/agents/auth";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { getTicketById } from "@/server/tickets";
 import { getObjectBuffer } from "@/server/storage/r2";
@@ -12,14 +8,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ ticketId: string }> }
 ) {
-  let integration;
-  try {
-    integration = await getAgentFromRequest(request);
-  } catch (error) {
-    const response = agentIngressErrorResponse(error);
-    if (response) return response;
-    throw error;
-  }
+  const integration = await getAgentFromRequest(request);
   if (!integration) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -29,8 +18,7 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const scope = agentScopeFromIntegration(integration);
-  const ticket = await getTicketById(ticketId, scope);
+  const ticket = await getTicketById(ticketId, integration.tenant_id);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -49,11 +37,9 @@ export async function GET(
             wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE ticket_id = $1
-       AND tenant_key = $3
-       AND workspace_key = $4
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC
      LIMIT $2`,
-    [ticketId, limit, scope.tenantKey, scope.workspaceKey]
+    [ticketId, limit]
   );
 
   const messages = await Promise.all(

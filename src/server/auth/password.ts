@@ -1,14 +1,16 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "crypto";
+import { promisify } from "util";
 
+const scryptAsync = promisify(scrypt);
 const KEY_LENGTH = 64;
 
-export function hashPassword(password: string) {
+export async function hashPassword(password: string) {
   const salt = randomBytes(16);
-  const derived = scryptSync(password, salt, KEY_LENGTH);
+  const derived = (await scryptAsync(password, salt, KEY_LENGTH)) as Buffer;
   return `scrypt$${salt.toString("base64")}$${derived.toString("base64")}`;
 }
 
-export function verifyPassword(password: string, stored: string) {
+export async function verifyPassword(password: string, stored: string) {
   const parts = stored.split("$");
   if (parts.length !== 3 || parts[0] !== "scrypt") {
     return false;
@@ -16,6 +18,6 @@ export function verifyPassword(password: string, stored: string) {
 
   const salt = Buffer.from(parts[1], "base64");
   const hash = Buffer.from(parts[2], "base64");
-  const derived = scryptSync(password, salt, hash.length);
+  const derived = (await scryptAsync(password, salt, hash.length)) as Buffer;
   return timingSafeEqual(hash, derived);
 }

@@ -12,8 +12,7 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 vi.mock("@/server/auth/roles", () => ({
-  isLeadAdmin: mocks.isLeadAdmin,
-  isPrivilegedRole: mocks.isLeadAdmin
+  isLeadAdmin: mocks.isLeadAdmin
 }));
 
 vi.mock("@/server/db", () => ({

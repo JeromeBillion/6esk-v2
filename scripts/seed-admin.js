@@ -3,7 +3,6 @@ const { randomBytes, scryptSync } = require("crypto");
 
 const ROLE_DEFS = [
   { name: "lead_admin", description: "Full access to admin panel and mailboxes." },
-  { name: "finance_admin", description: "Can manage billing, invoices, collections, and finance exports." },
   { name: "agent", description: "Handles support tickets and mailboxes." },
   { name: "viewer", description: "Read-only access to assigned mailboxes." }
 ];

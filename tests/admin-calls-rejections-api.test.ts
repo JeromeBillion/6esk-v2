@@ -23,9 +23,7 @@ function buildUser(roleName: "lead_admin" | "agent") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName,
-    tenant_key: "tenant-acme",
-    workspace_key: "workspace-main"
+    role_name: roleName
   };
 }
 
@@ -83,19 +81,9 @@ describe("GET /api/admin/calls/rejections", () => {
       }
     });
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("tenant_key = $1"),
-      ["tenant-acme", "workspace-main", 24]
-    );
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("workspace_key = $2"),
-      ["tenant-acme", "workspace-main", 24]
-    );
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("created_at >= now()"),
-      ["tenant-acme", "workspace-main", 24, 20]
+      [24, 20]
     );
   });
 });

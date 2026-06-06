@@ -1,5 +1,4 @@
 const { APP_URL, CALLS_OUTBOX_SECRET, INBOUND_SHARED_SECRET } = process.env;
-const { tenantIngressHeaders } = require("./tenant-ingress-headers");
 
 const secret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
 const loops = Math.max(1, Math.min(Number(process.env.CALLS_OUTBOX_DRILL_LOOPS || "20"), 500));
@@ -17,14 +16,11 @@ async function main() {
   let failures = 0;
 
   for (let i = 0; i < loops; i += 1) {
-    const url = `${baseUrl}/api/admin/calls/outbox?limit=${limit}`;
-    const response = await fetch(url, {
+    const response = await fetch(`${baseUrl}/api/admin/calls/outbox?limit=${limit}`, {
       method: "POST",
-      headers: tenantIngressHeaders({
-        url,
-        method: "POST",
-        headers: { "x-6esk-secret": secret }
-      })
+      headers: {
+        "x-6esk-secret": secret
+      }
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -36,13 +32,10 @@ async function main() {
     skippedTotal += Number(payload.skipped || 0);
   }
 
-  const failedUrl = `${baseUrl}/api/admin/calls/failed?limit=50`;
-  const failedResponse = await fetch(failedUrl, {
-    headers: tenantIngressHeaders({
-      url: failedUrl,
-      method: "GET",
-      headers: { "x-6esk-secret": secret }
-    })
+  const failedResponse = await fetch(`${baseUrl}/api/admin/calls/failed?limit=50`, {
+    headers: {
+      "x-6esk-secret": secret
+    }
   });
   const failedPayload = await failedResponse.json().catch(() => ({}));
   const failedCount = Array.isArray(failedPayload.events) ? failedPayload.events.length : null;

@@ -1,18 +1,23 @@
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { runInBackground } from "@/server/async";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { agentId } = await params;
-  const integration = await getAgentIntegrationById(agentId, scope);
+  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -26,12 +31,12 @@ export async function POST(
   try {
     const result = await deliverPendingAgentEvents({
       integrationId: agentId,
+      tenantId,
       limit
-    }, scope);
+    });
 
     await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_delivery_triggered",
       entityType: "agent_integration",
@@ -47,9 +52,8 @@ export async function POST(
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to deliver agent outbox";
-    await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+    runInBackground(recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "agent_outbox_delivery_failed",
       entityType: "agent_integration",
@@ -58,7 +62,12 @@ export async function POST(
         requestedLimit: limit ?? null,
         detail
       }
-    }).catch(() => {});
+    }), "Failed to record agent outbox delivery failure audit event", {
+      route: "/api/admin/agents/[agentId]/outbox/deliver",
+      tenantId,
+      agentId,
+      limit: limit ?? null
+    });
     return Response.json({ error: "Failed to deliver agent outbox", detail }, { status: 500 });
   }
 }

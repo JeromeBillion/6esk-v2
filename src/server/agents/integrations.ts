@@ -1,14 +1,13 @@
 import { db } from "@/server/db";
 import { getPlatformMailbox } from "@/server/mailboxes";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
-import type { AgentPolicyMode } from "@/server/agents/policy-modes";
-import { resolveTenantScope, type TenantScope, type TenantScopeInput } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+
+export type AgentPolicyMode = "draft_only" | "auto_send";
 
 export type AgentIntegration = {
   id: string;
-  tenant_key: string;
-  workspace_key?: string;
-  tenant_scope?: TenantScope;
+  tenant_id: string;
   name: string;
   provider: string;
   base_url: string;
@@ -24,7 +23,7 @@ export type AgentIntegration = {
 };
 
 type AgentIntegrationInput = {
-  tenantKey?: string;
+  tenantId?: string;
   name: string;
   provider?: string;
   baseUrl: string;
@@ -37,15 +36,14 @@ type AgentIntegrationInput = {
   policy?: Record<string, unknown>;
 };
 
-export async function listAgentIntegrations(scopeInput?: TenantScopeInput) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+export async function listAgentIntegrations(tenantId = DEFAULT_TENANT_ID) {
   const result = await db.query<AgentIntegration>(
-    `SELECT id, tenant_key, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
-     ${scope ? "WHERE tenant_key = $1" : ""}
+     WHERE tenant_id = $1
      ORDER BY created_at DESC`,
-    scope ? [scope.tenantKey] : []
+    [tenantId]
   );
   return result.rows.map((row) => ({
     ...row,
@@ -53,15 +51,16 @@ export async function listAgentIntegrations(scopeInput?: TenantScopeInput) {
   }));
 }
 
-export async function getAgentIntegrationById(id: string, scopeInput?: TenantScopeInput) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+export async function getAgentIntegrationById(id: string, tenantId?: string | null) {
+  const values = tenantId ? [id, tenantId] : [id];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<AgentIntegration>(
-    `SELECT id, tenant_key, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      WHERE id = $1
-       ${scope ? "AND tenant_key = $2" : ""}`,
-    scope ? [id, scope.tenantKey] : [id]
+       ${tenantClause}`,
+    values
   );
   const row = result.rows[0];
   if (!row) {
@@ -70,17 +69,16 @@ export async function getAgentIntegrationById(id: string, scopeInput?: TenantSco
   return { ...row, shared_secret: decryptSecret(row.shared_secret) };
 }
 
-export async function getActiveAgentIntegration(scopeInput?: TenantScopeInput) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
+export async function getActiveAgentIntegration(tenantId = DEFAULT_TENANT_ID) {
   const result = await db.query<AgentIntegration>(
-    `SELECT id, tenant_key, name, provider, base_url, auth_type, shared_secret, status,
+    `SELECT id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
             policy_mode, scopes, capabilities, policy, created_at, updated_at
      FROM agent_integrations
      WHERE status = 'active'
-       ${scope ? "AND tenant_key = $1" : ""}
+       AND tenant_id = $1
      ORDER BY created_at DESC
      LIMIT 1`,
-    scope ? [scope.tenantKey] : []
+    [tenantId]
   );
   const row = result.rows[0];
   if (!row) {
@@ -90,29 +88,28 @@ export async function getActiveAgentIntegration(scopeInput?: TenantScopeInput) {
 }
 
 export async function createAgentIntegration(input: AgentIntegrationInput) {
-  const tenantKey = input.tenantKey ?? "primary";
-  const platformMailbox = await getPlatformMailbox({ tenantKey });
+  const platformMailbox = await getPlatformMailbox();
   const fallbackScopes = platformMailbox ? { mailbox_ids: [platformMailbox.id] } : {};
   const storedSecret = encryptSecret(input.sharedSecret);
   const result = await db.query<AgentIntegration>(
     `INSERT INTO agent_integrations (
-      tenant_key, name, provider, base_url, auth_type, shared_secret,
+      tenant_id, name, provider, base_url, auth_type, shared_secret,
       status, policy_mode, scopes, capabilities, policy
     ) VALUES (
       $1, $2, $3, $4, $5, $6,
       $7, $8, $9, $10, $11
     )
-    RETURNING id, tenant_key, name, provider, base_url, auth_type, shared_secret, status,
+    RETURNING id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
               policy_mode, scopes, capabilities, policy, created_at, updated_at`,
     [
-      tenantKey,
+      input.tenantId ?? DEFAULT_TENANT_ID,
       input.name,
       input.provider ?? "elizaos",
       input.baseUrl,
       input.authType ?? "hmac",
       storedSecret,
       input.status ?? "active",
-      input.policyMode ?? "hybrid_review",
+      input.policyMode ?? "draft_only",
       input.scopes ?? fallbackScopes,
       input.capabilities ?? {},
       input.policy ?? {}
@@ -125,9 +122,8 @@ export async function createAgentIntegration(input: AgentIntegrationInput) {
 export async function updateAgentIntegration(
   id: string,
   updates: Partial<AgentIntegrationInput>,
-  scopeInput?: TenantScopeInput
+  tenantId?: string | null
 ) {
-  const scope = scopeInput ? resolveTenantScope(scopeInput) : null;
   const fields: string[] = [];
   const values: Array<string | Record<string, unknown>> = [];
   let index = 1;
@@ -135,11 +131,6 @@ export async function updateAgentIntegration(
   if (updates.name) {
     fields.push(`name = $${index++}`);
     values.push(updates.name);
-  }
-
-  if (updates.tenantKey) {
-    fields.push(`tenant_key = $${index++}`);
-    values.push(updates.tenantKey);
   }
 
   if (updates.baseUrl) {
@@ -188,20 +179,24 @@ export async function updateAgentIntegration(
   }
 
   if (fields.length === 0) {
-    return getAgentIntegrationById(id, scope);
+    return getAgentIntegrationById(id, tenantId);
   }
 
   fields.push("updated_at = now()");
   values.push(id);
+  const idParam = index++;
+  const tenantClause = tenantId ? `AND tenant_id = $${index}` : "";
+  if (tenantId) {
+    values.push(tenantId);
+  }
 
   const result = await db.query<AgentIntegration>(
     `UPDATE agent_integrations
      SET ${fields.join(", ")}
-     WHERE id = $${index}
-       ${scope ? `AND tenant_key = $${index + 1}` : ""}
-     RETURNING id, tenant_key, name, provider, base_url, auth_type, shared_secret, status,
+     WHERE id = $${idParam}
+       ${tenantClause}
+     RETURNING id, tenant_id, name, provider, base_url, auth_type, shared_secret, status,
                policy_mode, scopes, capabilities, policy, created_at, updated_at`,
-    scope ? [...values, scope.tenantKey] :
     values
   );
 

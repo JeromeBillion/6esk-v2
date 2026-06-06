@@ -1,6 +1,7 @@
 # Docs
 
 This directory is intentionally compact and only keeps implementation-critical docs.
+`docs/6esk-v2-commercialization-roadmap.md` is the canonical roadmap for the current productization work.
 
 ## Keep
 - `docs/figma-ai-crm-ui-target-state.md`
@@ -10,38 +11,37 @@ This directory is intentionally compact and only keeps implementation-critical d
 - `docs/email-setup.md`
   - Current email runbook and payload contracts (`/api/email/inbound`, `/api/email/send`, `/api/tickets/create`)
 - `docs/platform-support-requirements.md`
-  - White-label platform/webchat to `6esk` support ticket integration contract
+  - Platform (`6ex`) to `6esk` support ticket integration contract
 - `docs/merge-feature-roadmap.md`
   - Current customer identity, customer history, and merge behavior/spec
 - `docs/webagent-escalation-dependencies.md`
-  - White-label webchat/profile plug metadata and ingress contract
-- `docs/call-capabilities-plan.md`
-  - Inbound/outbound voice capability roadmap and implementation phases
-- `docs/call-capabilities-backlog.md`
-  - Ticketized execution backlog with dependencies, estimates, and sprint cut
+  - Cross-repo env/secret map for prediction backend, Venus runtime, and 6esk
 - `docs/call-ops-runbook.md`
   - Call operations runbook (replay drill, outbox load/retry drill, rollback)
-- `docs/tenant-ingress-signing-runbook.md`
-  - Machine ingress signing-secret rotation, distribution, drill, and rollback runbook
-- `docs/tenant-migration-backfill-runbook.md`
-  - Dry-run tenant/workspace backfill evidence, root-table handling, rollback, and post-migration audit runbook
-- `docs/provider-routing-rehearsal-runbook.md`
-  - Read-only provider route ownership and tenant-scoped webhook secret rehearsal evidence runbook
-- `docs/tenant-query-scope-sweep-runbook.md`
-  - Static API/server/worker SQL tenant-scope sweep evidence and triage runbook
 - `docs/call-crm-staging-e2e.md`
   - Staging E2E harness for CRM call orchestration checklist validation
 - `docs/privacy-retention-policy.md`
   - Voice consent source-of-truth and recording/transcript retention wording
 - `docs/voice-pilot-runbook.md`
   - Current pilot/rollout checklist for the voice feature
-- `docs/6esk-v1-completion-roadmap.md`
-  - Historical v1 roadmap, execution sequence, and hardening backlog
+- `docs/Venus-Voice.md`
+  - Venus-to-6esk AI voice integration contract and safety model
+- `docs/pricing-model.md`
+  - Working v2 modular pricing assumptions and usage-fee model
+- `docs/deploy-migrations.md`
+  - Migration deployment checklist
+- `docs/dependency-audit-baseline.md`
+  - Current npm audit baseline, release gate command, and remediation workflow
 - `docs/6esk-v2-commercialization-roadmap.md`
-  - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including South Africa readiness and BizOps
+  - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including security launch gates, AI readiness, usage/billing, South Africa readiness, and BizOps
+- `docs/6esk-v3-mobile-roadmap.md`
+  - Mobile follow-on roadmap after v2 SaaS foundations
 
 ## Culled
 Removed as stale/duplicative:
+- `docs/6esk-v1-completion-roadmap.md`
+- `docs/call-capabilities-plan.md`
+- `docs/call-capabilities-backlog.md`
 - `docs/email-payload.md`
 - `docs/merge-review-plan.md`
 - `docs/PRD.md`

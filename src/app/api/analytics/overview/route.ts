@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { getDateRange, getTodayRangeUtc } from "@/server/analytics/dateRange";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 type ChannelSummaryRow = {
   email_inbound: number | string | null;
@@ -66,38 +65,32 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
   const today = getTodayRangeUtc();
-  const scope = tenantScopeFromUser(user);
 
   const totalTicketsResult = await db.query(
     `SELECT COUNT(*)::int AS count
      FROM tickets
-     WHERE tenant_key = $3
-       AND created_at >= $1 AND created_at < $2`,
-    [start, end, scope.tenantKey]
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
   );
 
   const openTicketsResult = await db.query(
     `SELECT COUNT(*)::int AS count
      FROM tickets
-     WHERE tenant_key = $1
-       AND status NOT IN ('solved', 'closed')`,
-    [scope.tenantKey]
+     WHERE status NOT IN ('solved', 'closed')`
   );
 
   const createdTodayResult = await db.query(
     `SELECT COUNT(*)::int AS count
      FROM tickets
-     WHERE tenant_key = $3
-       AND created_at >= $1 AND created_at < $2`,
-    [today.start, today.end, scope.tenantKey]
+     WHERE created_at >= $1 AND created_at < $2`,
+    [today.start, today.end]
   );
 
   const solvedTodayResult = await db.query(
     `SELECT COUNT(*)::int AS count
      FROM tickets
-     WHERE tenant_key = $3
-       AND solved_at >= $1 AND solved_at < $2`,
-    [today.start, today.end, scope.tenantKey]
+     WHERE solved_at >= $1 AND solved_at < $2`,
+    [today.start, today.end]
   );
 
   const firstResponseResult = await db.query(
@@ -107,23 +100,20 @@ export async function GET(request: Request) {
        SELECT MIN(sent_at) AS first_response
        FROM messages m
        WHERE m.ticket_id = t.id
-         AND m.tenant_key = t.tenant_key
          AND m.direction = 'outbound'
          AND m.sent_at IS NOT NULL
      ) r ON true
-     WHERE t.tenant_key = $3
-       AND t.created_at >= $1 AND t.created_at < $2
+     WHERE t.created_at >= $1 AND t.created_at < $2
        AND r.first_response IS NOT NULL`,
-    [start, end, scope.tenantKey]
+    [start, end]
   );
 
   const resolutionResult = await db.query(
     `SELECT AVG(EXTRACT(EPOCH FROM (t.solved_at - t.created_at))) AS avg_seconds
      FROM tickets t
-     WHERE t.tenant_key = $3
-       AND t.solved_at IS NOT NULL
+     WHERE t.solved_at IS NOT NULL
        AND t.solved_at >= $1 AND t.solved_at < $2`,
-    [start, end, scope.tenantKey]
+    [start, end]
   );
 
   const channelSummaryResult = await db.query<ChannelSummaryRow>(
@@ -147,9 +137,8 @@ export async function GET(request: Request) {
          WHERE channel = 'whatsapp' AND direction = 'outbound' AND wa_status = 'failed'
        )::int AS whatsapp_failed
      FROM messages
-     WHERE tenant_key = $3
-       AND created_at >= $1 AND created_at < $2`,
-    [start, end, scope.tenantKey]
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
   );
 
   const voiceSummaryResult = await db.query<VoiceSummaryRow>(
@@ -161,9 +150,8 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled,
        AVG(duration_seconds)::numeric AS avg_duration_seconds
      FROM call_sessions
-     WHERE tenant_key = $3
-       AND queued_at >= $1 AND queued_at < $2`,
-    [start, end, scope.tenantKey]
+     WHERE queued_at >= $1 AND queued_at < $2`,
+    [start, end]
   );
 
   const voiceQaSummaryResult = await db.query<VoiceQaSummaryRow>(
@@ -203,9 +191,8 @@ export async function GET(request: Request) {
          WHERE status = 'completed'
            AND completed_at >= $1 AND completed_at < $2
        ), 0)::int AS total_action_items
-     FROM call_transcript_ai_jobs
-     WHERE tenant_key = $3`,
-    [start, end, scope.tenantKey]
+     FROM call_transcript_ai_jobs`,
+    [start, end]
   );
 
   const channelSummary = channelSummaryResult.rows[0] ?? {
@@ -244,9 +231,8 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE actor_user_id IS NULL)::int AS ai_initiated,
        COUNT(*) FILTER (WHERE actor_user_id IS NOT NULL)::int AS human_initiated
      FROM ticket_merges
-     WHERE tenant_key = $3
-       AND created_at >= $1 AND created_at < $2`,
-    [start, end, scope.tenantKey]
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
   );
 
   const customerMergeSummaryResult = await db.query<MergeCountRow>(
@@ -255,9 +241,8 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE actor_user_id IS NULL)::int AS ai_initiated,
        COUNT(*) FILTER (WHERE actor_user_id IS NOT NULL)::int AS human_initiated
      FROM customer_merges
-     WHERE tenant_key = $3
-       AND created_at >= $1 AND created_at < $2`,
-    [start, end, scope.tenantKey]
+     WHERE created_at >= $1 AND created_at < $2`,
+    [start, end]
   );
 
   const mergeReviewSummaryResult = await db.query<MergeReviewSummaryRow>(
@@ -271,9 +256,8 @@ export async function GET(request: Request) {
          WHERE status = 'failed'
            AND updated_at >= $1 AND updated_at < $2
        )::int AS failed_in_range
-     FROM merge_review_tasks
-     WHERE tenant_key = $3`,
-    [start, end, scope.tenantKey]
+     FROM merge_review_tasks`,
+    [start, end]
   );
 
   const mergeFailureReasonsResult = await db.query<MergeFailureRow>(
@@ -281,13 +265,12 @@ export async function GET(request: Request) {
        COALESCE(NULLIF(TRIM(failure_reason), ''), 'Unknown failure') AS reason,
        COUNT(*)::int AS count
      FROM merge_review_tasks
-     WHERE tenant_key = $3
-       AND status = 'failed'
+     WHERE status = 'failed'
        AND updated_at >= $1 AND updated_at < $2
      GROUP BY 1
      ORDER BY count DESC
      LIMIT 5`,
-    [start, end, scope.tenantKey]
+    [start, end]
   );
 
   const ticketMergeSummary = ticketMergeSummaryResult.rows[0] ?? {

@@ -2,7 +2,6 @@ import { createHash } from "crypto";
 import { z } from "zod";
 import { db } from "@/server/db";
 import { hashPassword } from "@/server/auth/password";
-import { revokeUserSessions } from "@/server/auth/session";
 import { recordAuditLog } from "@/server/audit";
 
 const resetSchema = z.object({
@@ -25,16 +24,10 @@ export async function POST(request: Request) {
 
   const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
   const resetResult = await db.query(
-    `SELECT pr.id, pr.user_id, pr.expires_at, pr.used_at,
-            COALESCE(pr.tenant_key, u.tenant_key, 'primary') AS tenant_key,
-            COALESCE(pr.workspace_key, u.workspace_key, 'primary') AS workspace_key
-     FROM password_resets pr
-     JOIN users u
-       ON u.id = pr.user_id
-      AND u.tenant_key = pr.tenant_key
-      AND u.workspace_key = pr.workspace_key
-     WHERE pr.token_hash = $1
-     ORDER BY pr.created_at DESC
+    `SELECT id, user_id, expires_at, used_at
+     FROM password_resets
+     WHERE token_hash = $1
+     ORDER BY created_at DESC
      LIMIT 1`,
     [tokenHash]
   );
@@ -52,52 +45,47 @@ export async function POST(request: Request) {
     return Response.json({ error: "Token expired" }, { status: 400 });
   }
 
-  const passwordHash = hashPassword(parsed.data.password);
-  await db.query(
-    `UPDATE users
-     SET password_hash = $1, updated_at = now()
-     WHERE id = $2
-       AND tenant_key = $3
-       AND workspace_key = $4`,
-    [passwordHash, reset.user_id, reset.tenant_key, reset.workspace_key]
-  );
-  await db.query(
-    `UPDATE password_resets
-     SET used_at = now()
-     WHERE id = $1
-       AND tenant_key = $2
-       AND workspace_key = $3`,
-    [reset.id, reset.tenant_key, reset.workspace_key]
-  );
-  const revokedSessionCount = await revokeUserSessions({
-    userId: reset.user_id,
-    tenantKey: reset.tenant_key,
-    workspaceKey: reset.workspace_key,
-    reason: "password_reset"
-  });
+  const passwordHash = await hashPassword(parsed.data.password);
+  const client = await db.connect();
+  let revokedSessionCount = 0;
+  try {
+    await client.query("BEGIN");
+    await client.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [
+      passwordHash,
+      reset.user_id
+    ]);
+    await client.query("UPDATE password_resets SET used_at = now() WHERE id = $1", [reset.id]);
+    const revoked = await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [
+      reset.user_id
+    ]);
+    revokedSessionCount = revoked.rowCount ?? 0;
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   await recordAuditLog({
-    tenantKey: reset.tenant_key,
-    workspaceKey: reset.workspace_key,
     action: "password_reset_completed",
     entityType: "user",
     entityId: reset.user_id,
-    data: { revokedSessionCount }
+    data: {
+      revokedSessionCount
+    }
   });
 
   if (revokedSessionCount > 0) {
     await recordAuditLog({
-      tenantKey: reset.tenant_key,
-      workspaceKey: reset.workspace_key,
-      action: "auth_sessions_revoked",
+      action: "password_reset_sessions_revoked",
       entityType: "user",
       entityId: reset.user_id,
-      data: { reason: "password_reset", revokedSessionCount }
+      data: {
+        revokedSessionCount
+      }
     });
   }
 
-  return Response.json({
-    status: "updated",
-    revokedSessionCount
-  });
+  return Response.json({ status: "updated" });
 }

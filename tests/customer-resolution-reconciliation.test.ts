@@ -14,6 +14,8 @@ vi.mock("@/server/db", () => ({
 
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
 
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 function buildClient() {
   return {
     query: mocks.dbQuery,
@@ -41,6 +43,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await resolveOrCreateCustomerForInbound({
+      tenantId: TENANT_ID,
       profile: {
         id: "user-123",
         email: "olivia.parker@brightpath.co",
@@ -60,11 +63,11 @@ describe("resolveOrCreateCustomerForInbound", () => {
     });
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM customers"),
-      ["primary", "external-profile", "user-123"]
+      [TENANT_ID, "prediction-market-mvp", "user-123"]
     );
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE customers"),
-      expect.arrayContaining(["customer-existing", "external-profile", "user-123"])
+      expect.arrayContaining(["customer-existing", "prediction-market-mvp", "user-123"])
     );
     expect(
       mocks.dbQuery.mock.calls.some(
@@ -88,7 +91,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
           {
             id: "customer-canonical",
             kind: "registered",
-            external_system: "external-profile",
+            external_system: "prediction-market-mvp",
             external_user_id: "user-999"
           }
         ]
@@ -97,6 +100,7 @@ describe("resolveOrCreateCustomerForInbound", () => {
       .mockResolvedValueOnce(undefined);
 
     const result = await resolveOrCreateCustomerForInbound({
+      tenantId: TENANT_ID,
       profile: {
         id: "user-123",
         email: "olivia.parker@brightpath.co",
@@ -115,10 +119,10 @@ describe("resolveOrCreateCustomerForInbound", () => {
       kind: "registered",
       conflict: {
         type: "external_identity_conflict",
-        externalSystem: "external-profile",
+        externalSystem: "prediction-market-mvp",
         incomingExternalUserId: "user-123",
         existingExternalUserId: "user-999",
-        existingExternalSystem: "external-profile",
+        existingExternalSystem: "prediction-market-mvp",
         existingCustomerId: "customer-canonical",
         matchedIdentity: "email"
       }

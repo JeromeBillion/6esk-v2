@@ -1,5 +1,6 @@
 import { processInboundEmailPayload } from "@/server/email/process-inbound";
 import { parseRawInboundEmail } from "@/server/email/raw-inbound";
+import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 
 type RawInboundRequest = {
   raw: string;
@@ -17,6 +18,8 @@ export async function POST(request: Request) {
     if (provided !== sharedSecret) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+  } else if (!canAcceptUnsignedWebhookTraffic(process.env.INBOUND_ALLOW_UNAUTHENTICATED)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: RawInboundRequest;

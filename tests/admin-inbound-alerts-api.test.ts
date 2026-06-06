@@ -53,14 +53,14 @@ describe("POST /api/admin/inbound/alerts", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("returns 403 for logged-in non-admin users", async () => {
+  it("returns 401 for non-admin users without valid secret", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await POST(new Request("http://localhost/api/admin/inbound/alerts", { method: "POST" }));
     const body = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(response.status).toBe(401);
+    expect(body).toMatchObject({ error: "Unauthorized" });
     expect(mocks.sendInboundFailureAlert).not.toHaveBeenCalled();
     expect(mocks.recordAuditLog).not.toHaveBeenCalled();
   });

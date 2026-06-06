@@ -1,6 +1,8 @@
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
+import { recordAuditLog } from "@/server/audit";
 
 export type DeadLetterEvent = {
   id: string;
@@ -40,9 +42,10 @@ export type DeadLetterSummary = {
  * Get dead-letter events (failed calls with exhausted retries or poison conditions)
  */
 export async function GET(request: Request) {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
-  const { scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const action = url.searchParams.get("action") ?? "list";
@@ -68,12 +71,10 @@ export async function GET(request: Request) {
       next_attempt_at,
       EXTRACT(EPOCH FROM (now() - created_at)) / 60.0 AS age_minutes
     FROM call_outbox_events
-    WHERE tenant_key = $1
-      AND workspace_key = $2
-      AND (status = 'failed' OR last_error IS NOT NULL)
+    WHERE (status = 'failed' OR last_error IS NOT NULL)
   `;
 
-  const params: (string | number)[] = [scope.tenantKey, scope.workspaceKey];
+  const params: (string | number)[] = [];
 
   if (statusFilter !== "all") {
     query += ` AND status = $${params.length + 1}`;
@@ -108,11 +109,8 @@ export async function GET(request: Request) {
     }>(
       `SELECT status, COUNT(*)::int AS count
        FROM call_outbox_events
-       WHERE tenant_key = $1
-         AND workspace_key = $2
-         AND (status = 'failed' OR last_error IS NOT NULL)
-       GROUP BY status`,
-      [scope.tenantKey, scope.workspaceKey]
+       WHERE (status = 'failed' OR last_error IS NOT NULL)
+       GROUP BY status`
     );
 
     // Count by error code
@@ -122,13 +120,10 @@ export async function GET(request: Request) {
     }>(
       `SELECT last_error_code AS code, COUNT(*)::int AS count
        FROM call_outbox_events
-       WHERE tenant_key = $1
-         AND workspace_key = $2
-         AND (status = 'failed' OR last_error IS NOT NULL)
+       WHERE (status = 'failed' OR last_error IS NOT NULL)
        GROUP BY last_error_code
        ORDER BY count DESC
-       LIMIT 10`,
-      [scope.tenantKey, scope.workspaceKey]
+       LIMIT 10`
     );
 
     // Find oldest event
@@ -140,12 +135,9 @@ export async function GET(request: Request) {
       `SELECT id, created_at,
               EXTRACT(EPOCH FROM (now() - created_at)) / 60.0 AS age_minutes
        FROM call_outbox_events
-       WHERE tenant_key = $1
-         AND workspace_key = $2
-         AND (status = 'failed' OR last_error IS NOT NULL)
+       WHERE (status = 'failed' OR last_error IS NOT NULL)
        ORDER BY created_at ASC
-       LIMIT 1`,
-      [scope.tenantKey, scope.workspaceKey]
+       LIMIT 1`
     );
 
     const summary: DeadLetterSummary = {
@@ -187,9 +179,10 @@ export async function GET(request: Request) {
  * Mark dead-letter event as recoverable and reset for retry
  */
 export async function PATCH(request: Request) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: unknown;
   try {
@@ -214,12 +207,8 @@ export async function PATCH(request: Request) {
 
     // Verify event exists
     const event = await client.query(
-      `SELECT id, call_session_id
-       FROM call_outbox_events
-       WHERE id = $1
-         AND tenant_key = $2
-         AND workspace_key = $3`,
-      [eventId, scope.tenantKey, scope.workspaceKey]
+      `SELECT id, call_session_id FROM call_outbox_events WHERE id = $1`,
+      [eventId]
     );
 
     if (event.rows.length === 0) {
@@ -239,18 +228,14 @@ export async function PATCH(request: Request) {
              last_error_code = NULL,
              next_attempt_at = now(),
              updated_at = now()
-         WHERE id = $1
-           AND tenant_key = $2
-           AND workspace_key = $3`,
-        [eventId, scope.tenantKey, scope.workspaceKey]
+         WHERE id = $1`,
+        [eventId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
         [
-          scope.tenantKey,
-          scope.workspaceKey,
           user?.id ?? null,
           "dead_letter_recovered",
           "call_outbox_events",
@@ -269,18 +254,14 @@ export async function PATCH(request: Request) {
          SET status = 'quarantined',
              reason = $1,
              updated_at = now()
-         WHERE id = $2
-           AND tenant_key = $3
-           AND workspace_key = $4`,
-        [notes || "Manual quarantine", eventId, scope.tenantKey, scope.workspaceKey]
+         WHERE id = $2`,
+        [notes || "Manual quarantine", eventId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
         [
-          scope.tenantKey,
-          scope.workspaceKey,
           user?.id ?? null,
           "dead_letter_quarantined",
           "call_outbox_events",
@@ -295,19 +276,14 @@ export async function PATCH(request: Request) {
     } else if (patchAction === "discard") {
       // Remove the event (irreversible, use with caution)
       await client.query(
-        `DELETE FROM call_outbox_events
-         WHERE id = $1
-           AND tenant_key = $2
-           AND workspace_key = $3`,
-        [eventId, scope.tenantKey, scope.workspaceKey]
+        `DELETE FROM call_outbox_events WHERE id = $1`,
+        [eventId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
         [
-          scope.tenantKey,
-          scope.workspaceKey,
           user?.id ?? null,
           "dead_letter_discarded",
           "call_outbox_events",
@@ -345,9 +321,10 @@ export async function PATCH(request: Request) {
  * Batch recover multiple dead-letter events
  */
 export async function POST(request: Request) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: unknown;
   try {
@@ -371,19 +348,19 @@ export async function POST(request: Request) {
   try {
     await client.query("BEGIN");
 
-    let filterClause = "AND (status = 'failed' OR last_error IS NOT NULL)";
-    const params: (string | number | string[])[] = [scope.tenantKey, scope.workspaceKey];
+    let whereClause = "(status = 'failed' OR last_error IS NOT NULL)";
+    const params: (string | number | string[])[] = [];
 
     if (eventIds && eventIds.length > 0) {
-      filterClause = `AND id = ANY($${params.length + 1})`;
+      whereClause = `id = ANY($${params.length + 1})`;
       params.push(eventIds);
     } else if (filter) {
       if (filter.status) {
-        filterClause += ` AND status = $${params.length + 1}`;
+        whereClause += ` AND status = $${params.length + 1}`;
         params.push(filter.status);
       }
       if (filter.maxAgeMinutes) {
-        filterClause += ` AND (now() - created_at) <= $${params.length + 1} * INTERVAL '1 minute'`;
+        whereClause += ` AND (now() - created_at) <= $${params.length + 1} * INTERVAL '1 minute'`;
         params.push(filter.maxAgeMinutes);
       }
     } else {
@@ -404,9 +381,7 @@ export async function POST(request: Request) {
              last_error_code = NULL,
              next_attempt_at = now(),
              updated_at = now()
-         WHERE tenant_key = $1
-           AND workspace_key = $2
-           ${filterClause}
+         WHERE ${whereClause}
          RETURNING id`,
         updateParams
       );
@@ -414,11 +389,9 @@ export async function POST(request: Request) {
       const recoveredCount = result.rows.length;
 
       await client.query(
-        `INSERT INTO audit_logs (tenant_key, workspace_key, actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5)`,
         [
-          scope.tenantKey,
-          scope.workspaceKey,
           user?.id ?? null,
           "dead_letter_batch_recovered",
           "call_outbox_events",

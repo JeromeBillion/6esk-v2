@@ -1,5 +1,4 @@
 import { db } from "@/server/db";
-import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -10,18 +9,19 @@ export type WhatsAppWindowStatus = {
   minutesRemaining: number | null;
 };
 
-export async function getWhatsAppWindowStatus(ticketId: string, scopeInput?: TenantScopeInput) {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+export async function getWhatsAppWindowStatus(ticketId: string, tenantId?: string | null) {
+  const values = tenantId ? [ticketId, tenantId] : [ticketId];
+  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
   const result = await db.query<{ received_at: Date | null; created_at: Date | null }>(
     `SELECT received_at, created_at
      FROM messages
      WHERE ticket_id = $1
-       AND tenant_key = $2
+       ${tenantClause}
        AND channel = 'whatsapp'
        AND direction = 'inbound'
      ORDER BY COALESCE(received_at, created_at) DESC
      LIMIT 1`,
-    [ticketId, tenantKey]
+    values
   );
 
   const row = result.rows[0];

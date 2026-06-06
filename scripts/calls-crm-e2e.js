@@ -12,10 +12,8 @@ const {
   CRM_CALLS_TO_PHONE,
   CRM_CALLS_CANDIDATE_ID,
   CRM_CALLS_FROM_PHONE,
-  CRM_CALLS_TENANT_KEY = "primary",
-  CRM_CALLS_WORKSPACE_KEY = "primary",
-  CRM_CALLS_AGENT_EVENTS_URL,
-  CRM_CALLS_AGENT_EVENTS_TOKEN,
+  CRM_CALLS_VENUS_EVENTS_URL,
+  CRM_CALLS_VENUS_EVENTS_TOKEN,
   DATABASE_URL
 } = process.env;
 
@@ -167,7 +165,7 @@ function formatCheckResult(name, passed, detail) {
   return `${prefix}: ${name}${detail ? ` -> ${detail}` : ""}`;
 }
 
-function normalizeObservedEvents(payload) {
+function normalizeVenusEvents(payload) {
   if (Array.isArray(payload)) return payload;
   if (payload && Array.isArray(payload.events)) return payload.events;
   if (payload && Array.isArray(payload.items)) return payload.items;
@@ -202,14 +200,7 @@ function readEventSequence(item) {
   return null;
 }
 
-function crmCallsScope() {
-  return {
-    tenantKey: String(CRM_CALLS_TENANT_KEY || "primary").trim() || "primary",
-    workspaceKey: String(CRM_CALLS_WORKSPACE_KEY || "primary").trim() || "primary"
-  };
-}
-
-async function verifyLocalAgentOutboxSequence(callSessionId, scope = crmCallsScope()) {
+async function verifyLocalAgentOutboxSequence(callSessionId) {
   if (!DATABASE_URL) {
     return {
       skipped: true,
@@ -223,12 +214,10 @@ async function verifyLocalAgentOutboxSequence(callSessionId, scope = crmCallsSco
     const result = await client.query(
       `SELECT event_type, payload, created_at
        FROM agent_outbox
-       WHERE tenant_key = $1
-         AND workspace_key = $2
-         AND event_type LIKE 'ticket.call.%'
-         AND payload->'call'->>'id' = $3
+       WHERE event_type LIKE 'ticket.call.%'
+         AND payload->'call'->>'id' = $1
        ORDER BY created_at ASC`,
-      [scope.tenantKey, scope.workspaceKey, callSessionId]
+      [callSessionId]
     );
     if (!result.rows.length) {
       return {
@@ -272,35 +261,35 @@ async function verifyLocalAgentOutboxSequence(callSessionId, scope = crmCallsSco
   }
 }
 
-async function verifyAgentEventObservation(callSessionId) {
-  if (!CRM_CALLS_AGENT_EVENTS_URL) {
+async function verifyVenusObservation(callSessionId) {
+  if (!CRM_CALLS_VENUS_EVENTS_URL) {
     return {
       skipped: true,
-      detail: "CRM_CALLS_AGENT_EVENTS_URL not set; skipped downstream event observation check."
+      detail: "CRM_CALLS_VENUS_EVENTS_URL not set; skipped Venus observation check."
     };
   }
 
-  const url = new URL(CRM_CALLS_AGENT_EVENTS_URL);
+  const url = new URL(CRM_CALLS_VENUS_EVENTS_URL);
   url.searchParams.set("callSessionId", callSessionId);
 
   const headers = {};
-  if (CRM_CALLS_AGENT_EVENTS_TOKEN) {
-    headers.Authorization = `Bearer ${CRM_CALLS_AGENT_EVENTS_TOKEN}`;
+  if (CRM_CALLS_VENUS_EVENTS_TOKEN) {
+    headers.Authorization = `Bearer ${CRM_CALLS_VENUS_EVENTS_TOKEN}`;
   }
 
   const response = await fetchJson(url.toString(), { headers });
   if (!response.ok || !response.json) {
     return {
       passed: false,
-      detail: `Downstream events endpoint returned ${response.status}.`
+      detail: `Venus events endpoint returned ${response.status}.`
     };
   }
 
-  const events = normalizeObservedEvents(response.json);
+  const events = normalizeVenusEvents(response.json);
   if (!events) {
     return {
       passed: false,
-      detail: "Downstream events payload did not contain an events array."
+      detail: "Venus events payload did not contain an events array."
     };
   }
 
@@ -308,7 +297,7 @@ async function verifyAgentEventObservation(callSessionId) {
   if (!callEvents.length) {
     return {
       passed: false,
-      detail: "No downstream events matched callSessionId."
+      detail: "No Venus events matched callSessionId."
     };
   }
 
@@ -323,7 +312,7 @@ async function verifyAgentEventObservation(callSessionId) {
     if (!seenTypes.has(required)) {
       return {
         passed: false,
-        detail: `Downstream observation missing required event type '${required}'.`
+        detail: `Venus missing required event type '${required}'.`
       };
     }
   }
@@ -337,7 +326,7 @@ async function verifyAgentEventObservation(callSessionId) {
     if (sequence <= lastSequence) {
       return {
         passed: false,
-        detail: `Downstream observation reported non-monotonic sequence (${sequence} after ${lastSequence}).`
+        detail: `Venus observed non-monotonic sequence (${sequence} after ${lastSequence}).`
       };
     }
     lastSequence = sequence;
@@ -345,7 +334,7 @@ async function verifyAgentEventObservation(callSessionId) {
 
   return {
     passed: true,
-    detail: `Downstream observation reported ${callEvents.length} events for call session.`
+    detail: `Venus observed ${callEvents.length} events for call session.`
   };
 }
 
@@ -501,13 +490,13 @@ async function main() {
     checks.push(formatCheckResult("Local sequence verification", false, localSequence.detail));
   }
 
-  const eventObservation = await verifyAgentEventObservation(callSessionId);
-  if (eventObservation.skipped) {
-    checks.push(formatCheckResult("Downstream event observation", true, eventObservation.detail));
-  } else if (eventObservation.passed) {
-    checks.push(formatCheckResult("Downstream event observation", true, eventObservation.detail));
+  const venusObservation = await verifyVenusObservation(callSessionId);
+  if (venusObservation.skipped) {
+    checks.push(formatCheckResult("Venus observation check", true, venusObservation.detail));
+  } else if (venusObservation.passed) {
+    checks.push(formatCheckResult("Venus observation check", true, venusObservation.detail));
   } else {
-    checks.push(formatCheckResult("Downstream event observation", false, eventObservation.detail));
+    checks.push(formatCheckResult("Venus observation check", false, venusObservation.detail));
   }
 
   console.log("CRM Calls staging E2E summary");
@@ -521,18 +510,7 @@ async function main() {
   }
 }
 
-if (require.main === module) {
-  main().catch((error) => {
-    console.error(error.message || error);
-    process.exit(1);
-  });
-}
-
-module.exports = {
-  crmCallsScope,
-  readEventCallSessionId,
-  readEventSequence,
-  readEventType,
-  verifyAgentEventObservation,
-  verifyLocalAgentOutboxSequence
-};
+main().catch((error) => {
+  console.error(error.message || error);
+  process.exit(1);
+});

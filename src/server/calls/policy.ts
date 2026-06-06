@@ -1,7 +1,6 @@
 import { db } from "@/server/db";
 import { isWithinWorkingHours } from "@/server/agents/policy";
 import type { VoiceConsentStateSnapshot } from "@/server/calls/consent";
-import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type VoiceWorkingHours = {
   timezone?: string;
@@ -131,17 +130,14 @@ function hasVoiceConsent(metadata: Record<string, unknown> | null | undefined) {
 }
 
 async function countRecentOutboundCalls({
-  scope: scopeInput,
   actor,
   actorUserId,
   actorIntegrationId
 }: {
-  scope?: TenantScopeInput;
   actor: "human" | "ai";
   actorUserId?: string | null;
   actorIntegrationId?: string | null;
 }) {
-  const scope = resolveTenantScope(scopeInput);
   if (actor === "human") {
     if (!actorUserId) return 0;
     const result = await db.query<{ count: number | string | null }>(
@@ -150,10 +146,8 @@ async function countRecentOutboundCalls({
        WHERE direction = 'outbound'
          AND created_by = 'human'
          AND created_by_user_id = $1
-         AND tenant_key = $2
-         AND workspace_key = $3
          AND queued_at >= now() - interval '1 hour'`,
-      [actorUserId, scope.tenantKey, scope.workspaceKey]
+      [actorUserId]
     );
     return Number(result.rows[0]?.count ?? 0);
   }
@@ -165,17 +159,13 @@ async function countRecentOutboundCalls({
      WHERE direction = 'outbound'
        AND created_by = 'ai'
        AND created_by_integration_id = $1
-       AND tenant_key = $2
-       AND workspace_key = $3
        AND queued_at >= now() - interval '1 hour'`,
-    [actorIntegrationId, scope.tenantKey, scope.workspaceKey]
+    [actorIntegrationId]
   );
   return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function evaluateVoiceCallPolicy({
-  tenantKey,
-  workspaceKey,
   actor,
   policy,
   ticketMetadata,
@@ -185,8 +175,6 @@ export async function evaluateVoiceCallPolicy({
   actorIntegrationId,
   defaultMaxCallsPerHour
 }: {
-  tenantKey?: string | null;
-  workspaceKey?: string | null;
   actor: "human" | "ai";
   policy?: Record<string, unknown> | null;
   ticketMetadata?: Record<string, unknown> | null;
@@ -260,7 +248,6 @@ export async function evaluateVoiceCallPolicy({
   const maxCallsPerHour = voicePolicy.max_calls_per_hour ?? (fallbackLimit > 0 ? fallbackLimit : null);
   if (maxCallsPerHour && maxCallsPerHour > 0) {
     const recentCount = await countRecentOutboundCalls({
-      scope: { tenantKey, workspaceKey },
       actor,
       actorUserId,
       actorIntegrationId

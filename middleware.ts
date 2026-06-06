@@ -96,6 +96,7 @@ type RateBucket = {
     | "admin"
     | "agent"
     | "auth"
+    | "auth_password_reset"
     | "portal"
     | "ticket_create"
     | "ticket_reply"
@@ -115,6 +116,9 @@ function getRateBucket(pathname: string): RateBucket | null {
   }
   if (pathname === "/api/auth/login") {
     return { key: "auth_login", limit: AUTH_LIMIT, type: "auth" };
+  }
+  if (pathname === "/api/auth/password-reset") {
+    return { key: "auth_password_reset", limit: AUTH_LIMIT, type: "auth_password_reset" };
   }
   if (pathname === "/api/portal/tickets") {
     return { key: "portal_ticket", limit: PORTAL_LIMIT, type: "portal" };
@@ -226,6 +230,7 @@ export const config = {
     "/api/admin/:path*",
     "/api/agent/:path*",
     "/api/auth/login",
+    "/api/auth/password-reset",
     "/api/portal/tickets",
     "/api/tickets/:path*",
     "/api/email/send",

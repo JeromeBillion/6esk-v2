@@ -1,77 +1,100 @@
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { z } from "zod";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import {
-  ingestKnowledgeDocument,
-  KnowledgeUploadError,
-  listKnowledgeDocuments
+  KnowledgeBaseError,
+  uploadKnowledgeDocument,
+  type KnowledgeDocumentKind
 } from "@/server/ai/knowledge-base";
 
-function readString(value: FormDataEntryValue | null) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
+const documentKindSchema = z
+  .enum([
+    "sop",
+    "policy",
+    "faq",
+    "product_manual",
+    "escalation_guide",
+    "compliance_note",
+    "playbook",
+    "other"
+  ])
+  .default("sop");
 
-export async function GET() {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
-
-  const documents = await listKnowledgeDocuments(access.scope);
-  return Response.json({ documents });
+function getOptionalString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 export async function POST(request: Request) {
-  const access = await requireLeadAdminAccess({ requireMfa: true });
-  if (!access.ok) return access.response;
-  const { user, scope } = access;
-
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return Response.json({ error: "Invalid multipart form body" }, { status: 400 });
+  const user = await getSessionUser();
+  if (!user || !isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const file = form.get("file");
-  if (!(file instanceof File)) {
-    return Response.json({ error: "file is required" }, { status: 400 });
-  }
-
-  const bytes = Buffer.from(await file.arrayBuffer());
+  let formData: FormData;
   try {
-    const document = await ingestKnowledgeDocument({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
-      filename: file.name,
-      contentType: file.type,
-      bytes,
-      folderId: readString(form.get("folderId")),
-      title: readString(form.get("title")),
-      publish: readString(form.get("publish")) === "true",
-      metadata: {
-        uploadedByUserId: user?.id ?? null,
-        route: "/api/admin/ai/knowledge/documents"
-      }
-    });
-    await recordAuditLog({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
-      actorUserId: user?.id ?? null,
-      action: "ai_knowledge_document_uploaded",
-      entityType: "ai_knowledge_document",
-      entityId: document.id,
-      data: {
-        filename: document.filename,
-        title: document.title,
-        folderId: document.folder_id,
-        status: document.status,
-        byteSize: document.byte_size,
-        checksumSha256: document.checksum_sha256
-      }
-    });
-    return Response.json({ status: "created", document });
+    formData = await request.formData();
   } catch (error) {
-    if (error instanceof KnowledgeUploadError) {
-      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    return Response.json({ error: "Invalid multipart form data" }, { status: 400 });
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    return Response.json({ error: "A file field is required" }, { status: 400 });
+  }
+
+  const folderId = getOptionalString(formData, "folderId");
+  const title = getOptionalString(formData, "title");
+  const documentKindResult = documentKindSchema.safeParse(
+    getOptionalString(formData, "documentKind") ?? "sop"
+  );
+  if (!documentKindResult.success) {
+    return Response.json({ error: "Invalid document kind" }, { status: 400 });
+  }
+
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const result = await uploadKnowledgeDocument({
+      tenantId: user.tenant_id,
+      actorUserId: user.id,
+      folderId,
+      title,
+      documentKind: documentKindResult.data as KnowledgeDocumentKind,
+      fileName: file.name,
+      contentType: file.type,
+      buffer
+    });
+
+    await recordAuditLog({
+      tenantId: user.tenant_id,
+      actorUserId: user.id,
+      action: "knowledge_document_uploaded",
+      entityType: "knowledge_document",
+      entityId: result.document.id,
+      data: {
+        documentVersionId: result.version.id,
+        folderId: result.document.folder_id ?? null,
+        fileName: result.version.original_filename,
+        contentType: result.version.content_type,
+        sizeBytes: result.version.size_bytes,
+        ingestionJobId: result.ingestionJob.id
+      }
+    });
+
+    return Response.json(result, { status: 201 });
+  } catch (error) {
+    if (error instanceof KnowledgeBaseError && error.code === "FOLDER_NOT_FOUND") {
+      return Response.json({ error: error.message }, { status: 404 });
     }
-    throw error;
+    if (error instanceof KnowledgeBaseError && error.code === "INVALID_FILE") {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof KnowledgeBaseError) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+    return Response.json({ error: "Failed to upload knowledge document" }, { status: 500 });
   }
 }

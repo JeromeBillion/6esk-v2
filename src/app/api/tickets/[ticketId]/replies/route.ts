@@ -3,9 +3,9 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
-import { isWorkspaceModuleEnabled } from "@/server/workspace-modules";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { tenantScopeFromUser } from "@/server/tenant-context";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const replySchema = z.object({
   text: z.string().optional().nullable(),
@@ -66,8 +66,8 @@ export async function POST(
   }
 
   const { ticketId } = await params;
-  const scope = tenantScopeFromUser(user);
-  const ticket = await getTicketById(ticketId, scope);
+  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -99,7 +99,7 @@ export async function POST(
     recipient,
     hasTemplate: Boolean(template)
   });
-  if (!(await isWorkspaceModuleEnabled(replyModule, scope.workspaceKey, scope.tenantKey))) {
+  if (!(await checkModuleEntitlement(replyModule, tenantId))) {
     const label = replyModule === "whatsapp" ? "WhatsApp" : "Email";
     return Response.json(
       {
@@ -113,8 +113,7 @@ export async function POST(
 
   try {
     const result = await sendTicketReply({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId,
       ticketId,
       text,
       html,
@@ -126,8 +125,7 @@ export async function POST(
       origin: "human"
     });
     await recordModuleUsageEvent({
-      tenantKey: scope.tenantKey,
-      workspaceKey: scope.workspaceKey,
+      tenantId,
       moduleKey: replyModule,
       usageKind: "reply_sent",
       actorType: "human",

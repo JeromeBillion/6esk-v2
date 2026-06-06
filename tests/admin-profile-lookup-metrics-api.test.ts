@@ -129,7 +129,7 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
     });
     expect(body.series).toHaveLength(2);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(1, expect.any(String), [90, "primary"]);
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [90, "primary"]);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(1, expect.any(String), [90]);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [90]);
   });
 });

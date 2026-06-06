@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import {
   getWorkspaceModules,
@@ -12,22 +13,27 @@ const modulesSchema = z.object({
   whatsapp: z.boolean(),
   voice: z.boolean(),
   aiAutomation: z.boolean(),
+  dexterOrchestration: z.boolean(),
   vanillaWebchat: z.boolean()
 });
 
 export async function GET() {
-  const auth = await requireLeadAdminAccess();
-  if (!auth.ok) return auth.response;
-  const { scope } = auth;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const config = await getWorkspaceModules(scope.workspaceKey, scope.tenantKey);
+  // v2: tenant-scoped workspace modules
+  const tenantId = user?.tenant_id;
+  const config = await getWorkspaceModules("primary", tenantId);
   return Response.json({ config });
 }
 
 export async function POST(request: Request) {
-  const auth = await requireLeadAdminAccess({ requireMfa: true });
-  if (!auth.ok) return auth.response;
-  const { user, scope } = auth;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: unknown;
   try {
@@ -41,12 +47,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const config = await saveWorkspaceModules(
-    parsed.data as WorkspaceModuleFlags,
-    scope.workspaceKey,
-    scope.tenantKey
-  );
+  // v2: tenant-scoped save
+  const tenantId = user?.tenant_id;
+  const config = await saveWorkspaceModules(parsed.data as WorkspaceModuleFlags, "primary", tenantId);
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "workspace_modules_updated",
     entityType: "workspace_modules",

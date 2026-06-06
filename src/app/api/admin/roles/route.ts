@@ -1,9 +1,12 @@
 import { db } from "@/server/db";
-import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getSessionUser } from "@/server/auth/session";
+import { isLeadAdmin } from "@/server/auth/roles";
 
 export async function GET() {
-  const access = await requireLeadAdminAccess();
-  if (!access.ok) return access.response;
+  const user = await getSessionUser();
+  if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const result = await db.query(
     `SELECT id, name, description
