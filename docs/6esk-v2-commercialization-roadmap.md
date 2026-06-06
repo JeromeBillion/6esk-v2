@@ -985,10 +985,11 @@ Retained and verified in the current recovery branch:
 - WhatsApp inbound webhook verification now uses tenant-scoped persisted Meta app secrets as a fallback when the global `WHATSAPP_APP_SECRET` does not validate
 - production env validation for tenant ingress and provider webhook secret encryption keys
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
+- v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
 
 Still outstanding before v2 main can be considered deploy-ready:
 - provider call-site adoption for persisted tenant ingress/provider webhook secrets beyond WhatsApp where provider verification currently reads only process env and supports tenant-specific secrets
-- Better Auth/Google/Microsoft OAuth provider adapter, final session-management UI, and privileged-access grant workflow adapted to v2 `tenant_id`
+- Better Auth/Google/Microsoft OAuth provider adapter and final session-management UI adapted to v2 `tenant_id`
 - AI prompt-safety/control-plane/tool-policy/RAG additions, preserving native Dexter and v2 runtime files
 - billing lifecycle persistence for subscription, proration, credits/refunds, collections/dunning, and invoices, integrated with v2 pricing/margin/catalog
 - tenant export/offboarding/query-scope audit slices

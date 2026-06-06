@@ -33,11 +33,15 @@ describe("getSecurityReadinessSnapshot", () => {
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
     const snapshot = await getSecurityReadinessSnapshot();
 
     expect(snapshot.healthy).toBe(true);
+    expect(snapshot.operations.activePrivilegedAccessGrants).toBe(0);
+    expect(snapshot.operations.privilegedAccessGrantsNeedingReview).toBe(0);
     expect(snapshot.operations.failedOutbox.total).toBe(0);
     expect(snapshot.checks.every((check) => check.ok)).toBe(true);
   });

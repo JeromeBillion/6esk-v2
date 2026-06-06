@@ -2,12 +2,17 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isInternalStaff } from "@/server/auth/roles";
+import {
+  getActivePrivilegedAccessGrantForSubject,
+  hasPrivilegedMfaSession
+} from "@/server/auth/privileged-access";
 import { recordAuditLog } from "@/server/audit";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
 const impersonateSchema = z.object({
   tenantId: z.string().uuid(),
+  grantId: z.string().uuid(),
   reason: z.string().trim().min(8).max(500),
   ticketRef: z.string().trim().min(3).max(128),
   durationMinutes: z.number().int().min(5).max(240).optional()
@@ -31,6 +36,9 @@ export async function POST(request: Request) {
   if (!isInternalStaff(user)) {
     return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
   }
+  if (!hasPrivilegedMfaSession(user)) {
+    return Response.json({ error: "MFA is required for privileged access." }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -45,6 +53,7 @@ export async function POST(request: Request) {
   }
 
   const targetTenantId = parsed.data.tenantId;
+  const grantId = parsed.data.grantId;
   const reason = parsed.data.reason;
   const ticketRef = parsed.data.ticketRef;
   const durationMinutes = parsed.data.durationMinutes ?? readDefaultImpersonationMinutes();
@@ -54,6 +63,35 @@ export async function POST(request: Request) {
   if (tenantResult.rows.length === 0) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
   }
+
+  const grant = await getActivePrivilegedAccessGrantForSubject({
+    grantId,
+    tenantId: targetTenantId,
+    subjectUserId: user!.id,
+    subjectEmail: user!.email
+  });
+  if (!grant) {
+    await recordAuditLog({
+      tenantId: targetTenantId,
+      actorUserId: user!.id,
+      action: "support_impersonation_denied",
+      entityType: "tenant",
+      entityId: targetTenantId,
+      data: {
+        reason: "active_privileged_access_grant_required",
+        grantId,
+        ticketRef
+      }
+    });
+    return Response.json({ error: "Active privileged access grant required." }, { status: 403 });
+  }
+
+  const grantExpiresAt = grant.expires_at ? new Date(grant.expires_at) : null;
+  if (!grantExpiresAt || Number.isNaN(grantExpiresAt.getTime()) || grantExpiresAt.getTime() <= Date.now()) {
+    return Response.json({ error: "Active privileged access grant required." }, { status: 403 });
+  }
+  const remainingGrantMinutes = Math.max(1, Math.floor((grantExpiresAt.getTime() - Date.now()) / 60_000));
+  const effectiveDurationMinutes = Math.min(durationMinutes, remainingGrantMinutes);
 
   // Get current session token
   const cookieName = process.env.SESSION_COOKIE_NAME ?? "sixesk_session";
@@ -72,9 +110,10 @@ export async function POST(request: Request) {
          impersonation_reason = $2,
          impersonation_ticket_ref = $3,
          impersonation_started_at = now(),
-         impersonation_expires_at = now() + make_interval(mins => $4::int)
-     WHERE token_hash = $5`,
-    [targetTenantId, reason, ticketRef, durationMinutes, tokenHash]
+         impersonation_expires_at = now() + make_interval(mins => $4::int),
+         privileged_access_grant_id = $5
+     WHERE token_hash = $6`,
+    [targetTenantId, reason, ticketRef, effectiveDurationMinutes, grant.id, tokenHash]
   );
 
   // Critical: Audit log the break-glass action
@@ -87,15 +126,18 @@ export async function POST(request: Request) {
     data: {
       reason,
       ticketRef,
-      durationMinutes,
-      expiresAtMinutesFromNow: durationMinutes
+      grantId: grant.id,
+      accessType: grant.access_type,
+      durationMinutes: effectiveDurationMinutes,
+      expiresAtMinutesFromNow: effectiveDurationMinutes
     }
   });
 
   return Response.json({
     status: "impersonating",
     tenantId: targetTenantId,
-    durationMinutes
+    grantId: grant.id,
+    durationMinutes: effectiveDurationMinutes
   });
 }
 
@@ -123,7 +165,8 @@ export async function DELETE(request: Request) {
          impersonation_reason = NULL,
          impersonation_ticket_ref = NULL,
          impersonation_started_at = NULL,
-         impersonation_expires_at = NULL
+         impersonation_expires_at = NULL,
+         privileged_access_grant_id = NULL
      WHERE token_hash = $1`,
     [tokenHash]
   );

@@ -46,13 +46,32 @@ export async function getSecurityReadinessSnapshot() {
     "CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE"
   ].filter((key) => isExplicitlyEnabled(process.env[key]));
 
-  const [impersonationResult, failedCallOutboxResult, failedWhatsAppOutboxResult, failedEmailOutboxResult] =
+  const [
+    impersonationResult,
+    activeGrantResult,
+    pendingReviewResult,
+    failedCallOutboxResult,
+    failedWhatsAppOutboxResult,
+    failedEmailOutboxResult
+  ] =
     await Promise.all([
       db.query<CountRow>(
         `SELECT COUNT(*)::bigint AS count
          FROM auth_sessions
          WHERE impersonated_tenant_id IS NOT NULL
            AND impersonation_expires_at > now()`
+      ),
+      db.query<CountRow>(
+        `SELECT COUNT(*)::bigint AS count
+         FROM privileged_access_grants
+         WHERE status = 'active'
+           AND expires_at > now()`
+      ),
+      db.query<CountRow>(
+        `SELECT COUNT(*)::bigint AS count
+         FROM privileged_access_grants
+         WHERE status IN ('expired', 'revoked')
+           AND metadata->'postEventReview' IS NULL`
       ),
       db.query<CountRow>(
         `SELECT COUNT(*)::bigint AS count
@@ -75,6 +94,8 @@ export async function getSecurityReadinessSnapshot() {
     ]);
 
   const activeImpersonations = numberFromCount(impersonationResult.rows[0]?.count ?? 0);
+  const activePrivilegedAccessGrants = numberFromCount(activeGrantResult.rows[0]?.count ?? 0);
+  const privilegedAccessGrantsNeedingReview = numberFromCount(pendingReviewResult.rows[0]?.count ?? 0);
   const failedCallOutbox = numberFromCount(failedCallOutboxResult.rows[0]?.count ?? 0);
   const failedWhatsAppOutbox = numberFromCount(failedWhatsAppOutboxResult.rows[0]?.count ?? 0);
   const failedEmailOutbox = numberFromCount(failedEmailOutboxResult.rows[0]?.count ?? 0);
@@ -108,6 +129,8 @@ export async function getSecurityReadinessSnapshot() {
     checks,
     operations: {
       activeImpersonations,
+      activePrivilegedAccessGrants,
+      privilegedAccessGrantsNeedingReview,
       failedOutbox: {
         total: failedOutboxTotal,
         calls: failedCallOutbox,
