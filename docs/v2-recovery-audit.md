@@ -35,6 +35,7 @@ Date: 2026-06-06
   - `src/server/provider-webhook-secrets.ts`
   - `src/app/api/admin/tenant/ingress-secrets/route.ts`
   - `src/app/api/admin/tenant/provider-webhook-secrets/route.ts`
+  - WhatsApp inbound webhook verification now falls back to tenant-scoped persisted Meta app secrets when the global `WHATSAPP_APP_SECRET` does not validate
   - production env validation for persisted secret encryption keys
   - focused tests for tenant-scoped metadata, rotation, env fallback, tenant-admin route access, one-time plaintext return, audit logging, and fail-closed encryption config
 
@@ -43,7 +44,7 @@ The wrong-folder tree at `491af65` was not cherry-picked because it would overwr
 
 Deferred for future semantic port, not lost:
 - Better Auth/MFA/privileged-access additions: keep the idea, but port only against v2 auth/session and tenant-id contracts.
-- Tenant ingress/provider webhook provider integration call-site adoption: persisted v2-native services and admin routes are now ported, but provider-specific webhook verification paths still need to consume the persisted secret lookup where applicable.
+- Tenant ingress/provider webhook adoption for providers beyond WhatsApp: persisted v2-native services, admin routes, and WhatsApp fallback verification are now ported; future provider-specific webhook paths should consume the persisted secret lookup where they support tenant-specific secrets.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing lifecycle modules: keep subscription/proration/credits/dunning/invoice lifecycle requirements, but merge against v2 pricing, margin, tenant lifecycle, and migration sequence.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
@@ -72,4 +73,5 @@ Before this recovery branch can replace `main`, run:
   - `tests/provider-webhook-secrets.test.ts`
   - `tests/admin-tenant-ingress-secrets-api.test.ts`
   - `tests/admin-provider-webhook-secrets-api.test.ts`
+  - `tests/whatsapp-provider-webhook-secrets-api.test.ts`
   - `tests/env-validation.test.ts`

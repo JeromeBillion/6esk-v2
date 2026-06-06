@@ -8,6 +8,11 @@ import {
 import { verifyWhatsAppSignature } from "@/server/whatsapp/signature";
 import { canAcceptUnsignedWebhookTraffic } from "@/server/security/webhooks";
 import {
+  listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
+import {
   integrationError,
   integrationSuccess,
   validateIntegrationApiVersion
@@ -277,6 +282,39 @@ function extractMetaMessages(payload: Record<string, unknown>) {
   return { messages, statuses };
 }
 
+function extractMetaProviderAccountId(payload: Record<string, unknown>) {
+  if (payload.object !== "whatsapp_business_account") {
+    return null;
+  }
+  const entries = Array.isArray(payload.entry) ? payload.entry : [];
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const id = (entry as Record<string, unknown>).id;
+    if (typeof id === "string" && id.trim()) {
+      ids.add(id.trim());
+    }
+  }
+  return ids.size === 1 ? [...ids][0] : null;
+}
+
+function parseWebhookPayload(rawBody: string) {
+  return rawBody ? JSON.parse(rawBody) : {};
+}
+
+function extractWebhookPayloadParts(payload: unknown) {
+  const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const { messages: normalizedMessages, statuses: normalizedStatuses } =
+    extractNormalizedMessages(normalizedPayload);
+  const { messages: metaMessages, statuses: metaStatuses } = extractMetaMessages(normalizedPayload);
+
+  return {
+    normalizedPayload,
+    messages: normalizedMessages.length ? normalizedMessages : metaMessages,
+    statuses: normalizedStatuses.length ? normalizedStatuses : metaStatuses
+  };
+}
+
 function parseStatusTimestamp(value: string | number | null | undefined) {
   if (!value) return null;
   if (typeof value === "number") {
@@ -420,6 +458,58 @@ async function resolveWebhookTenantId(
   }
 }
 
+async function verifyTenantProviderWebhookSignature({
+  rawBody,
+  providedSignature,
+  payload,
+  messages,
+  statuses
+}: {
+  rawBody: string;
+  providedSignature: string | null;
+  payload: Record<string, unknown>;
+  messages: NormalizedWhatsAppMessage[];
+  statuses: WhatsAppStatusUpdate[];
+}) {
+  const eventTenantId = await resolveWebhookTenantId(messages, statuses);
+  if (!eventTenantId) {
+    return { signatureValid: false, eventTenantId: null, missingRequiredSecrets: false };
+  }
+
+  const secrets = await listActiveProviderWebhookSecrets({
+    scope: { tenantId: eventTenantId },
+    provider: "whatsapp",
+    secretType: "app_secret",
+    providerAccountId: extractMetaProviderAccountId(payload)
+  });
+
+  if (!secrets.length && shouldRequireTenantProviderWebhookSecrets()) {
+    return { signatureValid: false, eventTenantId, missingRequiredSecrets: true };
+  }
+
+  for (const secret of secrets) {
+    const signatureValid = verifyWhatsAppSignature({
+      body: rawBody,
+      providedSignature,
+      appSecret: secret.secret,
+      requireSignature: true
+    });
+    if (signatureValid) {
+      markProviderWebhookSecretUsed(secret.id, { tenantId: eventTenantId }).catch((error) => {
+        logger.warn("Provider webhook secret usage marker failed", {
+          error,
+          route: "/api/whatsapp/inbound",
+          provider: "whatsapp",
+          secretId: secret.id
+        });
+      });
+      return { signatureValid: true, eventTenantId, missingRequiredSecrets: false };
+    }
+  }
+
+  return { signatureValid: false, eventTenantId, missingRequiredSecrets: false };
+}
+
 export async function POST(request: Request) {
   const versionError = validateIntegrationApiVersion(request);
   if (versionError) {
@@ -427,43 +517,76 @@ export async function POST(request: Request) {
   }
 
   let payload: unknown;
+  let webhookParts: ReturnType<typeof extractWebhookPayloadParts> | null = null;
+  let resolvedEventTenantId: string | null | undefined;
   const rawBody = await request.text();
   const appSecret = process.env.WHATSAPP_APP_SECRET ?? "";
   const providedSignature = request.headers.get("x-hub-signature-256");
+  const requireSignature = !canAcceptUnsignedWebhookTraffic(process.env.WHATSAPP_ALLOW_UNSIGNED_WEBHOOKS);
 
-  const signatureValid = verifyWhatsAppSignature({
+  let signatureValid = verifyWhatsAppSignature({
     body: rawBody,
     providedSignature,
     appSecret,
-    requireSignature: !canAcceptUnsignedWebhookTraffic(process.env.WHATSAPP_ALLOW_UNSIGNED_WEBHOOKS)
+    requireSignature
   });
 
   if (!signatureValid) {
-    return integrationError(request, {
-      status: 401,
-      code: "invalid_signature",
-      message: "Invalid signature"
+    try {
+      payload = parseWebhookPayload(rawBody);
+    } catch {
+      return integrationError(request, {
+        status: 401,
+        code: "invalid_signature",
+        message: "Invalid signature"
+      });
+    }
+
+    webhookParts = extractWebhookPayloadParts(payload);
+    const tenantSignature = await verifyTenantProviderWebhookSignature({
+      rawBody,
+      providedSignature,
+      payload: webhookParts.normalizedPayload,
+      messages: webhookParts.messages,
+      statuses: webhookParts.statuses
     });
+    resolvedEventTenantId = tenantSignature.eventTenantId;
+    if (tenantSignature.missingRequiredSecrets) {
+      return integrationError(request, {
+        status: 503,
+        code: "provider_webhook_secret_missing",
+        message: "Provider webhook secret is not configured for this tenant"
+      });
+    }
+    signatureValid = tenantSignature.signatureValid;
+
+    if (!signatureValid) {
+      return integrationError(request, {
+        status: 401,
+        code: "invalid_signature",
+        message: "Invalid signature"
+      });
+    }
   }
 
-  try {
-    payload = rawBody ? JSON.parse(rawBody) : {};
-  } catch (error) {
-    return integrationError(request, {
-      status: 400,
-      code: "invalid_json",
-      message: "Invalid JSON body"
-    });
+  if (payload === undefined) {
+    try {
+      payload = parseWebhookPayload(rawBody);
+    } catch (error) {
+      return integrationError(request, {
+        status: 400,
+        code: "invalid_json",
+        message: "Invalid JSON body"
+      });
+    }
   }
 
-  const normalizedPayload = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  const { messages: normalizedMessages, statuses: normalizedStatuses } =
-    extractNormalizedMessages(normalizedPayload);
-  const { messages: metaMessages, statuses: metaStatuses } = extractMetaMessages(normalizedPayload);
-
-  const messages = normalizedMessages.length ? normalizedMessages : metaMessages;
-  const statuses = normalizedStatuses.length ? normalizedStatuses : metaStatuses;
-  const eventTenantId = await resolveWebhookTenantId(messages, statuses);
+  webhookParts = webhookParts ?? extractWebhookPayloadParts(payload);
+  const { messages, statuses } = webhookParts;
+  const eventTenantId =
+    resolvedEventTenantId === undefined
+      ? await resolveWebhookTenantId(messages, statuses)
+      : resolvedEventTenantId;
   if (eventTenantId) {
     await db.query(
       `INSERT INTO whatsapp_events (tenant_id, direction, payload, status)
