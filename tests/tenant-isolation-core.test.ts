@@ -37,11 +37,12 @@ describe("core tenant isolation SQL", () => {
   });
 
   it("requires tenant scope when fetching tickets by id", async () => {
-    await getTicketById("ticket-1", { tenantKey: "tenant-a" });
+    await getTicketById("ticket-1", { tenantKey: "tenant-a", workspaceKey: "workspace-a" });
 
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("AND t.tenant_key = $2");
-    expect(values).toEqual(["ticket-1", "tenant-a"]);
+    expect(sql).toContain("AND t.workspace_key = $3");
+    expect(values).toEqual(["ticket-1", "tenant-a", "workspace-a"]);
   });
 
   it("uses tenant-scoped mailbox upserts", async () => {
@@ -74,7 +75,7 @@ describe("core tenant isolation SQL", () => {
     await upsertExternalUserLink({
       tenantKey: "tenant-a",
       workspaceKey: "workspace-a",
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "external-profile",
       profile: { id: "user-1", email: "user@example.com" },
       ticketId: "ticket-1",
       channel: "email"
@@ -85,7 +86,7 @@ describe("core tenant isolation SQL", () => {
     expect(values.slice(0, 4)).toEqual([
       "tenant-a",
       "workspace-a",
-      "prediction-market-mvp",
+      "external-profile",
       "user-1"
     ]);
   });

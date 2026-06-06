@@ -1,5 +1,8 @@
 import { db } from "@/server/db";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import {
+  DEFAULT_EXTERNAL_PROFILE_SYSTEM,
+  type ExternalProfile
+} from "@/server/integrations/external-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
 import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
@@ -246,7 +249,7 @@ async function upsertRegisteredCustomer({
   tenantKey: string;
   workspaceKey: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -302,7 +305,7 @@ async function promoteCustomerWithProfile({
   tenantKey: string;
   customerId: string;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   email: string | null;
   phone: string | null;
   displayName: string | null;
@@ -346,7 +349,7 @@ async function promoteCustomerWithProfile({
 export async function resolveOrCreateCustomerForInbound({
   tenantKey,
   workspaceKey,
-  externalSystem = "prediction-market-mvp",
+  externalSystem = DEFAULT_EXTERNAL_PROFILE_SYSTEM,
   profile,
   inboundEmail,
   inboundPhone,
@@ -355,7 +358,7 @@ export async function resolveOrCreateCustomerForInbound({
   tenantKey?: string | null;
   workspaceKey?: string | null;
   externalSystem?: string;
-  profile?: PredictionProfile | null;
+  profile?: ExternalProfile | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;
   displayName?: string | null;
@@ -559,33 +562,35 @@ export async function attachCustomerToTicket(
   scopeInput?: TenantScopeInput
 ) {
   if (!customerId) return false;
-  const { tenantKey } = resolveTenantScope(scopeInput);
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query(
     `UPDATE tickets
      SET customer_id = $2,
          updated_at = now()
      WHERE id = $1
        AND tenant_key = $3
+       AND workspace_key = $4
        AND customer_id IS NULL`,
-    [ticketId, customerId, tenantKey]
+    [ticketId, customerId, tenantKey, workspaceKey]
   );
   return (result.rowCount ?? 0) > 0;
 }
 
 export async function getCustomerByTicketId(ticketId: string, scopeInput?: TenantScopeInput) {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<{ customer_id: string | null }>(
     `SELECT customer_id
      FROM tickets
      WHERE id = $1
-       AND tenant_key = $2`,
-    [ticketId, tenantKey]
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [ticketId, tenantKey, workspaceKey]
   );
   return result.rows[0]?.customer_id ?? null;
 }
 
 export async function getCustomerById(customerId: string, scopeInput?: TenantScopeInput) {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<CustomerRecord>(
     `SELECT id, tenant_key, workspace_key,
             kind, external_system, external_user_id, display_name, primary_email, primary_phone,
@@ -594,8 +599,9 @@ export async function getCustomerById(customerId: string, scopeInput?: TenantSco
             merged_at
      FROM customers
      WHERE id = $1
-       AND tenant_key = $2`,
-    [customerId, tenantKey]
+       AND tenant_key = $2
+       AND workspace_key = $3`,
+    [customerId, tenantKey, workspaceKey]
   );
   return result.rows[0] ?? null;
 }
@@ -636,16 +642,17 @@ export async function updateCustomerProfile(
     await client.query("BEGIN");
 
     const customerResult = await client.query<CustomerRecord>(
-      `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
-              address,
-              merged_into_customer_id,
-              merged_at
-       FROM customers
-       WHERE id = $1
-         AND tenant_key = $2
-       FOR UPDATE`,
-      [customerId, tenantKey]
-    );
+	      `SELECT id, kind, external_system, external_user_id, display_name, primary_email, primary_phone,
+	              address,
+	              merged_into_customer_id,
+	              merged_at
+	       FROM customers
+	       WHERE id = $1
+	         AND tenant_key = $2
+	         AND workspace_key = $3
+	       FOR UPDATE`,
+	      [customerId, tenantKey, workspaceKey]
+	    );
     const customer = customerResult.rows[0];
     if (!customer) {
       await client.query("ROLLBACK");
@@ -657,15 +664,15 @@ export async function updateCustomerProfile(
     }
 
     if (emailProvided && normalizedEmail) {
-      const conflict = await client.query<{ customer_id: string }>(
-        `SELECT customer_id
-         FROM customer_identities
-         WHERE tenant_key = $1
-           AND identity_type = 'email'
-           AND identity_value = $2
-         LIMIT 1`,
-        [tenantKey, normalizedEmail]
-      );
+	      const conflict = await client.query<{ customer_id: string }>(
+	        `SELECT customer_id
+	         FROM customer_identities
+	         WHERE tenant_key = $1
+	           AND identity_type = 'email'
+	           AND identity_value = $2
+	         LIMIT 1`,
+	        [tenantKey, normalizedEmail]
+	      );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
         throw new CustomerIdentityConflictError("Email already belongs to a different customer.");
@@ -673,15 +680,15 @@ export async function updateCustomerProfile(
     }
 
     if (phoneProvided && normalizedPhone) {
-      const conflict = await client.query<{ customer_id: string }>(
-        `SELECT customer_id
-         FROM customer_identities
-         WHERE tenant_key = $1
-           AND identity_type = 'phone'
-           AND identity_value = $2
-         LIMIT 1`,
-        [tenantKey, normalizedPhone]
-      );
+	      const conflict = await client.query<{ customer_id: string }>(
+	        `SELECT customer_id
+	         FROM customer_identities
+	         WHERE tenant_key = $1
+	           AND identity_type = 'phone'
+	           AND identity_value = $2
+	         LIMIT 1`,
+	        [tenantKey, normalizedPhone]
+	      );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
         throw new CustomerIdentityConflictError("Phone number already belongs to a different customer.");
@@ -710,16 +717,18 @@ export async function updateCustomerProfile(
     }
 
     if (fields.length > 0) {
-      values.push(customerId);
-      values.push(tenantKey);
-      await client.query(
-        `UPDATE customers
-         SET ${fields.join(", ")},
-             updated_at = now()
-         WHERE id = $${index}
-           AND tenant_key = $${index + 1}`,
-        values
-      );
+	      values.push(customerId);
+	      values.push(tenantKey);
+	      values.push(workspaceKey);
+	      await client.query(
+	        `UPDATE customers
+	         SET ${fields.join(", ")},
+	             updated_at = now()
+	         WHERE id = $${index}
+	           AND tenant_key = $${index + 1}
+	           AND workspace_key = $${index + 2}`,
+	        values
+	      );
     }
 
     if (emailProvided) {
@@ -727,11 +736,12 @@ export async function updateCustomerProfile(
         `UPDATE customer_identities
          SET is_primary = false,
              updated_at = now()
-         WHERE customer_id = $1
-           AND tenant_key = $2
-           AND identity_type = 'email'`,
-        [customerId, tenantKey]
-      );
+	         WHERE customer_id = $1
+	           AND tenant_key = $2
+	           AND workspace_key = $3
+	           AND identity_type = 'email'`,
+	        [customerId, tenantKey, workspaceKey]
+	      );
       if (normalizedEmail) {
         await client.query(
           `INSERT INTO customer_identities (
@@ -760,11 +770,12 @@ export async function updateCustomerProfile(
         `UPDATE customer_identities
          SET is_primary = false,
              updated_at = now()
-         WHERE customer_id = $1
-           AND tenant_key = $2
-           AND identity_type = 'phone'`,
-        [customerId, tenantKey]
-      );
+	         WHERE customer_id = $1
+	           AND tenant_key = $2
+	           AND workspace_key = $3
+	           AND identity_type = 'phone'`,
+	        [customerId, tenantKey, workspaceKey]
+	      );
       if (normalizedPhone) {
         await client.query(
           `INSERT INTO customer_identities (
@@ -801,14 +812,15 @@ export async function updateCustomerProfile(
 }
 
 export async function listCustomerIdentities(customerId: string, scopeInput?: TenantScopeInput) {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const result = await db.query<CustomerIdentityRecord>(
     `SELECT identity_type, identity_value, is_primary
      FROM customer_identities
      WHERE customer_id = $1
        AND tenant_key = $2
+       AND workspace_key = $3
      ORDER BY is_primary DESC, identity_type ASC, identity_value ASC`,
-    [customerId, tenantKey]
+    [customerId, tenantKey, workspaceKey]
   );
   return result.rows;
 }
@@ -818,14 +830,14 @@ export async function listCustomerHistory(
   options?: { limit?: number; cursor?: string | null },
   scopeInput?: TenantScopeInput
 ): Promise<CustomerHistoryPage> {
-  const { tenantKey } = resolveTenantScope(scopeInput);
+  const { tenantKey, workspaceKey } = resolveTenantScope(scopeInput);
   const normalizedLimit = Math.min(Math.max(options?.limit ?? 40, 1), 200);
   const fetchLimit = normalizedLimit + 1;
   const cursorValue = options?.cursor ?? null;
   const cursorDate = cursorValue ? new Date(cursorValue) : null;
   const cursorIso =
     cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate.toISOString() : null;
-  const customer = await getCustomerById(customerId, { tenantKey });
+  const customer = await getCustomerById(customerId, { tenantKey, workspaceKey });
   if (!customer || customer.merged_into_customer_id) {
     return { items: [], nextCursor: null };
   }
@@ -835,11 +847,12 @@ export async function listCustomerHistory(
     identity_value: string;
   }>(
     `SELECT identity_type, identity_value
-     FROM customer_identities
-     WHERE customer_id = $1
-       AND tenant_key = $2`,
-    [customerId, tenantKey]
-  );
+	     FROM customer_identities
+	     WHERE customer_id = $1
+	       AND tenant_key = $2
+	       AND workspace_key = $3`,
+	    [customerId, tenantKey, workspaceKey]
+	  );
 
   const emails = identityResult.rows
     .filter((row) => row.identity_type === "email")
@@ -877,30 +890,31 @@ export async function listCustomerHistory(
          t.priority,
          t.requester_email,
          EXISTS (
-           SELECT 1 FROM messages wm
-           WHERE wm.ticket_id = t.id AND wm.tenant_key = $1 AND wm.channel = 'whatsapp'
-         ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
-         EXISTS (
-           SELECT 1 FROM messages vm
-           WHERE vm.ticket_id = t.id AND vm.tenant_key = $1 AND vm.channel = 'voice'
-         ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
+	           SELECT 1 FROM messages wm
+	           WHERE wm.ticket_id = t.id AND wm.tenant_key = $1 AND wm.workspace_key = $2 AND wm.channel = 'whatsapp'
+	         ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+	         EXISTS (
+	           SELECT 1 FROM messages vm
+	           WHERE vm.ticket_id = t.id AND vm.tenant_key = $1 AND vm.workspace_key = $2 AND vm.channel = 'voice'
+	         ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
          COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at,
          COALESCE(
            (
              SELECT im.preview_text
              FROM messages im
-             WHERE im.ticket_id = t.id
-               AND im.tenant_key = $1
-               AND im.direction = 'inbound'
-               AND (
-                 (cardinality($3::text[]) > 0 AND lower(im.from_email) = ANY($3::text[]))
-                 OR (
-                   cardinality($4::text[]) > 0
-                   AND (
-                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($4::text[])
-                     OR COALESCE(im.wa_contact, '') = ANY($4::text[])
-                   )
-                 )
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
+	               AND (
+	                 (cardinality($4::text[]) > 0 AND lower(im.from_email) = ANY($4::text[]))
+	                 OR (
+	                   cardinality($5::text[]) > 0
+	                   AND (
+	                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($5::text[])
+	                     OR COALESCE(im.wa_contact, '') = ANY($5::text[])
+	                   )
+	                 )
                )
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
@@ -908,9 +922,10 @@ export async function listCustomerHistory(
            (
              SELECT im.preview_text
              FROM messages im
-             WHERE im.ticket_id = t.id
-               AND im.tenant_key = $1
-               AND im.direction = 'inbound'
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            )
@@ -919,18 +934,19 @@ export async function listCustomerHistory(
            (
              SELECT COALESCE(im.received_at, im.sent_at, im.created_at)
              FROM messages im
-             WHERE im.ticket_id = t.id
-               AND im.tenant_key = $1
-               AND im.direction = 'inbound'
-               AND (
-                 (cardinality($3::text[]) > 0 AND lower(im.from_email) = ANY($3::text[]))
-                 OR (
-                   cardinality($4::text[]) > 0
-                   AND (
-                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($4::text[])
-                     OR COALESCE(im.wa_contact, '') = ANY($4::text[])
-                   )
-                 )
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
+	               AND (
+	                 (cardinality($4::text[]) > 0 AND lower(im.from_email) = ANY($4::text[]))
+	                 OR (
+	                   cardinality($5::text[]) > 0
+	                   AND (
+	                     regexp_replace(im.from_email, '[^0-9+]', '', 'g') = ANY($5::text[])
+	                     OR COALESCE(im.wa_contact, '') = ANY($5::text[])
+	                   )
+	                 )
                )
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
@@ -938,18 +954,20 @@ export async function listCustomerHistory(
            (
              SELECT COALESCE(im.received_at, im.sent_at, im.created_at)
              FROM messages im
-             WHERE im.ticket_id = t.id
-               AND im.tenant_key = $1
-               AND im.direction = 'inbound'
+	             WHERE im.ticket_id = t.id
+	               AND im.tenant_key = $1
+	               AND im.workspace_key = $2
+	               AND im.direction = 'inbound'
              ORDER BY COALESCE(im.received_at, im.sent_at, im.created_at) DESC
              LIMIT 1
            )
          ) AS last_customer_inbound_at
        FROM tickets t
-       LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_key = t.tenant_key
-       WHERE t.tenant_key = $1
-         AND t.customer_id = $2
-         AND t.merged_into_ticket_id IS NULL
+	       LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_key = t.tenant_key AND m.workspace_key = t.workspace_key
+	       WHERE t.tenant_key = $1
+	         AND t.workspace_key = $2
+	         AND t.customer_id = $3
+	         AND t.merged_into_ticket_id IS NULL
        GROUP BY t.id
      )
      SELECT
@@ -965,11 +983,11 @@ export async function listCustomerHistory(
        last_customer_inbound_preview,
        last_customer_inbound_at
      FROM ticket_history
-     WHERE ($5::timestamptz IS NULL OR last_message_at < $5::timestamptz)
-     ORDER BY last_message_at DESC NULLS LAST, id DESC
-     LIMIT $6`,
-    [tenantKey, customerId, emails, phones, cursorIso, fetchLimit]
-  );
+	     WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz)
+	     ORDER BY last_message_at DESC NULLS LAST, id DESC
+	     LIMIT $7`,
+	    [tenantKey, workspaceKey, customerId, emails, phones, cursorIso, fetchLimit]
+	  );
 
   const mapped = historyResult.rows.map((row) => ({
     ticketId: row.id,

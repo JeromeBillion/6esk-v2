@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { recordAuditLog } from "@/server/audit";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 import { normalizePublicIngressOriginKey } from "@/server/tenant-public-ingress";
 
 const originSchema = z.object({
@@ -47,12 +45,9 @@ function buildMetadata(input: z.infer<typeof originSchema>) {
 }
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess();
+  if (!auth.ok) return auth.response;
+  const { scope } = auth;
   const result = await db.query(
     `SELECT id, origin, status, metadata, created_at, updated_at
      FROM tenant_public_ingress_origins
@@ -66,10 +61,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let body: unknown;
   try {
@@ -91,7 +85,6 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  const scope = tenantScopeFromUser(user);
   const metadata = buildMetadata(data);
 
   try {
@@ -177,17 +170,15 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   const id = readOriginId(request);
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
   }
 
-  const scope = tenantScopeFromUser(user);
   const result = await db.query(
     `UPDATE tenant_public_ingress_origins
      SET status = 'inactive',

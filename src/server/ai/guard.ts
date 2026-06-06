@@ -38,6 +38,7 @@ const CONTROL_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{12,})\b/g;
+const PROMPT_CANARY_PATTERN = /\b6ESK_PROMPT_CANARY_[A-Z0-9_-]{6,}\b/gi;
 const PHONE_PATTERN = /\+?\d[\d\s().-]{7,}\d/g;
 
 const PROMPT_INJECTION_PATTERNS: AiGuardPattern[] = [
@@ -81,7 +82,13 @@ const PROMPT_INJECTION_PATTERNS: AiGuardPattern[] = [
     code: "multilingual_instruction_override",
     severity: "malicious",
     pattern:
-      /\b(ignora|ignorar|ignorez|ignorer|olvida|omite|desconsidera)\b.{0,120}\b(instrucciones|instructions|reglas|rules|sistema|systeme|system|desarrollador|developer)\b/i
+      /\b(ignora|ignorar|ignorez|ignorer|olvida|omite|desconsidera|ignoreer|vergeet|ziba|ungayinaki)\b.{0,120}\b(instrucciones|instructions|instruksies|imiyalelo|reglas|rules|reels|sistema|systeme|system|stelsel|desarrollador|developer)\b/i
+  },
+  {
+    code: "encoded_instruction_smuggling",
+    severity: "malicious",
+    pattern:
+      /\b(base64|rot13|hex|unicode|encoded|cipher)\b.{0,120}\b(decode|decrypt|translate|read)\b.{0,120}\b(follow|execute|obey|run|apply)\b.{0,80}\b(instruction|prompt|message|policy|rule)s?\b/i
   },
   {
     code: "role_impersonation",
@@ -170,6 +177,7 @@ export function serializeAiGuardValue(value: unknown, maxChars = DEFAULT_MAX_GUA
 
 export function redactAiGuardSample(value: string) {
   return value
+    .replace(PROMPT_CANARY_PATTERN, "[REDACTED_PROMPT_CANARY]")
     .replace(TOKEN_PATTERN, "[REDACTED_TOKEN]")
     .replace(EMAIL_PATTERN, "[REDACTED_EMAIL]")
     .replace(PHONE_PATTERN, "[REDACTED_PHONE]")
@@ -190,6 +198,12 @@ export function inspectAiInput(input: {
     severity = "malicious";
   }
   TOKEN_PATTERN.lastIndex = 0;
+
+  if (PROMPT_CANARY_PATTERN.test(normalized.sanitized)) {
+    reasonCodes.push("prompt_canary_leakage");
+    severity = "malicious";
+  }
+  PROMPT_CANARY_PATTERN.lastIndex = 0;
 
   for (const { code, pattern, severity: patternSeverity } of PROMPT_INJECTION_PATTERNS) {
     if (pattern.test(normalized.sanitized)) {

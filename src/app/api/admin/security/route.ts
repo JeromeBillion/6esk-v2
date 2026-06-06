@@ -1,7 +1,6 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
+import { getBetterAuthReadiness } from "@/server/auth/better-auth-readiness";
 import { db } from "@/server/db";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function parseAllowlist(value?: string | null) {
   if (!value) return [];
@@ -21,11 +20,9 @@ function getClientIp(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
   const adminAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
   const agentAllowlist = parseAllowlist(process.env.AGENT_IP_ALLOWLIST);
@@ -67,6 +64,44 @@ export async function GET(request: Request) {
   };
   const whatsappUnencrypted = Math.max(0, whatsappStats.total_tokens - whatsappStats.encrypted_tokens);
 
+  const mfaStatsRes = await db.query<{
+    active_factors: number;
+    privileged_users: number;
+    privileged_users_missing_mfa: number;
+  }>(
+    `WITH active_totp AS (
+       SELECT DISTINCT user_id
+       FROM auth_mfa_factors
+       WHERE tenant_key = $1
+         AND workspace_key = $2
+         AND factor_type = 'totp'
+         AND disabled_at IS NULL
+     )
+     SELECT
+       (
+         SELECT COUNT(*)::int
+         FROM auth_mfa_factors
+         WHERE tenant_key = $1
+           AND workspace_key = $2
+           AND disabled_at IS NULL
+       ) AS active_factors,
+       COUNT(*) FILTER (WHERE r.name = 'lead_admin')::int AS privileged_users,
+       COUNT(*) FILTER (WHERE r.name = 'lead_admin' AND active_totp.user_id IS NULL)::int
+         AS privileged_users_missing_mfa
+     FROM users u
+     LEFT JOIN roles r ON r.id = u.role_id
+     LEFT JOIN active_totp ON active_totp.user_id = u.id
+     WHERE u.tenant_key = $1
+       AND u.workspace_key = $2
+       AND u.is_active = true`,
+    [scope.tenantKey, scope.workspaceKey]
+  );
+  const mfaStats = mfaStatsRes.rows[0] ?? {
+    active_factors: 0,
+    privileged_users: 0,
+    privileged_users_missing_mfa: 0
+  };
+
   return Response.json({
     adminAllowlist,
     agentAllowlist,
@@ -83,6 +118,12 @@ export async function GET(request: Request) {
       encrypted: whatsappStats.encrypted_tokens,
       unencrypted: whatsappUnencrypted,
       missing: whatsappStats.missing_tokens
-    }
+    },
+    mfaStats: {
+      activeFactors: mfaStats.active_factors,
+      privilegedUsers: mfaStats.privileged_users,
+      privilegedUsersMissingMfa: mfaStats.privileged_users_missing_mfa
+    },
+    authIdentity: getBetterAuthReadiness()
   });
 }

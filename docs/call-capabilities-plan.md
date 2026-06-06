@@ -23,7 +23,7 @@ Strengths already in 6esk:
 - Existing message/ticket timeline model can absorb `voice` as another channel.
 - Existing inbound idempotency pattern (`inbound_events`) can be reused for call webhooks.
 - Existing outbox/retry approach can be reused for outbound call delivery.
-- Existing agent auth model supports machine-safe integrations for Venus.
+- Existing agent auth model supports machine-safe Dexter and tenant plug integrations.
 
 Gaps that needed tightening:
 - No explicit call state machine and terminal outcomes.
@@ -43,9 +43,9 @@ Gaps that needed tightening:
 
 ## Architecture Decisions
 - 6esk is the control plane for ticket-linked call records, policy checks, and audit trail.
-- Venus is the decisioning layer for AI workflows and uses 6esk APIs to execute calls.
-- AI/voice model keys, character config, and knowledge remain in `Venus-develop`.
-- Telephony provider integration can be in 6esk; do not pass AI provider keys into 6esk.
+- Dexter is the decisioning layer for AI workflows and uses 6esk APIs to execute calls.
+- AI/voice model keys, prompts, policy, and knowledge are managed through 6esk tenant settings.
+- Telephony provider integration lives in 6esk and must use tenant-scoped provider secrets.
 
 ## UX Flows
 

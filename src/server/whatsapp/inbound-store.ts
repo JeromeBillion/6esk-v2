@@ -10,9 +10,11 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  buildExternalProfileMetadataPatch,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
   resolveOrCreateCustomerForInbound,
@@ -38,6 +40,7 @@ export type NormalizedWhatsAppMessage = {
   text?: string | null;
   timestamp?: string | number | null;
   contactName?: string | null;
+  metadata?: Record<string, unknown> | null;
   attachments?: NormalizedWhatsAppAttachment[] | null;
 };
 
@@ -199,22 +202,31 @@ export async function storeInboundWhatsApp(
     }
   }
 
-  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  const requesterProfile = await lookupPredictionProfile({ phone: from });
+  // ── Phase 1: Resolve deterministic data BEFORE the transaction ──
+  const inboundMetadata = message.metadata ?? {};
+  const requesterProfile = readExternalProfileFromMetadata(inboundMetadata);
+  const profileSource = readExternalProfileSource(inboundMetadata);
+  const profileMatchedBy = readExternalProfileMatchedBy(inboundMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
     tenantKey: requestedScope.tenantKey,
     workspaceKey: requestedScope.workspaceKey,
-    profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+    externalSystem: profileSource,
+    profile: requesterProfile,
     inboundPhone: from,
     displayName: message.contactName ?? null
   });
   const profileMetadataPatch =
-    requesterProfile.status === "matched" && customerResolution?.conflict
-      ? applyIdentityConflictMetadata(
-          buildProfileMetadataPatch(requesterProfile),
-          customerResolution.conflict
-        )
-      : buildProfileMetadataPatch(requesterProfile);
+    requesterProfile
+      ? buildExternalProfileMetadataPatch({
+          profile: requesterProfile,
+          source: profileSource,
+          matchedBy: profileMatchedBy
+        })
+      : {};
+  const resolvedProfileMetadataPatch =
+    requesterProfile && customerResolution?.conflict
+      ? applyIdentityConflictMetadata(profileMetadataPatch, customerResolution.conflict)
+      : profileMetadataPatch;
 
   const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, requestedScope);
   const scope = resolveTenantScope({
@@ -314,11 +326,12 @@ export async function storeInboundWhatsApp(
     if (!ticketId) {
       const category = inferredTags[0]?.toLowerCase() ?? null;
       const metadata = {
+        ...inboundMetadata,
         channel: "whatsapp",
         wa_contact: from,
         provider: message.provider ?? "meta",
         contact_name: message.contactName ?? null,
-        ...profileMetadataPatch
+        ...resolvedProfileMetadataPatch
       };
 
       const ticketResult = await client.query<{ id: string }>(
@@ -372,17 +385,17 @@ export async function storeInboundWhatsApp(
         );
       }
     } else {
-      // Reopen ticket if it was resolved/closed
-      const statusResult = await client.query<{ status: string }>(
-        "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2",
-        [ticketId, scope.tenantKey]
-      );
+	      // Reopen ticket if it was resolved/closed
+	      const statusResult = await client.query<{ status: string }>(
+	        "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	        [ticketId, scope.tenantKey, scope.workspaceKey]
+	      );
       const currentStatus = statusResult.rows[0]?.status;
       if (currentStatus === "solved" || currentStatus === "closed") {
-        await client.query(
-          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2",
-          [ticketId, scope.tenantKey]
-        );
+	        await client.query(
+	          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	          [ticketId, scope.tenantKey, scope.workspaceKey]
+	        );
         await client.query(
           `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
            VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -390,59 +403,61 @@ export async function storeInboundWhatsApp(
         );
       }
 
-      if (requesterProfile.status === "matched") {
+      if (requesterProfile) {
         await client.query(
           `UPDATE tickets
            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                updated_at = now()
-           WHERE id = $1
-             AND tenant_key = $3`,
-          [ticketId, JSON.stringify(profileMetadataPatch), scope.tenantKey]
-        );
+	           WHERE id = $1
+	             AND tenant_key = $3
+	             AND workspace_key = $4`,
+	          [ticketId, JSON.stringify(resolvedProfileMetadataPatch), scope.tenantKey, scope.workspaceKey]
+	        );
       }
     }
 
     if (ticketId && customerResolution?.customerId) {
       const customerAttachResult = await client.query(
-        `UPDATE tickets SET customer_id = $2, updated_at = now()
-         WHERE id = $1
-           AND tenant_key = $3
-           AND (customer_id IS NULL OR customer_id != $2)`,
-        [ticketId, customerResolution.customerId, scope.tenantKey]
-      );
+	        `UPDATE tickets SET customer_id = $2, updated_at = now()
+	         WHERE id = $1
+	           AND tenant_key = $3
+	           AND workspace_key = $4
+	           AND (customer_id IS NULL OR customer_id != $2)`,
+	        [ticketId, customerResolution.customerId, scope.tenantKey, scope.workspaceKey]
+	      );
       attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
     }
 
-    if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
+    if (requesterProfile && ticketId && !customerResolution?.conflict) {
       await upsertExternalUserLink({
         tenantKey: scope.tenantKey,
         workspaceKey: scope.workspaceKey,
-        externalSystem: "prediction-market-mvp",
-        profile: requesterProfile.profile,
-        matchedBy: requesterProfile.matchedBy,
+        externalSystem: profileSource,
+        profile: requesterProfile,
+        matchedBy: profileMatchedBy,
         inboundPhone: from,
         ticketId,
         channel: "whatsapp"
       });
     }
 
-    if (createdNewTicket && requesterProfile.status === "matched" && !customerResolution?.conflict) {
+    if (createdNewTicket && requesterProfile && !customerResolution?.conflict) {
       await client.query(
         `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [scope.tenantKey, scope.workspaceKey, ticketId, "profile_enriched", null, {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
-          externalUserId: requesterProfile.profile.id
+          source: profileSource,
+          matchedBy: profileMatchedBy,
+          externalUserId: requesterProfile.id
         }]
       );
-    } else if (ticketId && requesterProfile.status === "matched" && customerResolution?.conflict) {
+    } else if (ticketId && requesterProfile && customerResolution?.conflict) {
       await client.query(
         `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [scope.tenantKey, scope.workspaceKey, ticketId, "customer_identity_conflict", null, {
-          source: "prediction-market-mvp",
-          matchedBy: requesterProfile.matchedBy,
+          source: profileSource,
+          matchedBy: profileMatchedBy,
           conflict: customerResolution.conflict
         }]
       );
@@ -645,7 +660,7 @@ export async function storeInboundWhatsApp(
             email: null,
             phone: from
           },
-          matchedByProfile: requesterProfile.status === "matched",
+          matchedByProfile: Boolean(requesterProfile),
           ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
         }
       });

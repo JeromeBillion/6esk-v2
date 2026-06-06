@@ -36,6 +36,20 @@ describe("GET /api/admin/security", () => {
     delete process.env.AGENT_IP_ALLOWLIST;
     delete process.env.AGENT_SECRET_KEY;
     delete process.env.INBOUND_SHARED_SECRET;
+    delete process.env.AUTH_PROVIDER;
+    delete process.env.AUTH_OAUTH_ENABLED;
+    delete process.env.AUTH_REQUIRE_MFA_ADMIN;
+    delete process.env.AUTH_SESSION_DEVICE_TRACKING;
+    delete process.env.AUTH_BETTER_AUTH_ROUTE_ENABLED;
+    delete process.env.AUTH_BETTER_AUTH_DB_BRIDGE_READY;
+    delete process.env.AUTH_CACHE_PROVIDER;
+    delete process.env.BETTER_AUTH_SECRET;
+    delete process.env.AUTH_GOOGLE_CLIENT_ID;
+    delete process.env.AUTH_GOOGLE_CLIENT_SECRET;
+    delete process.env.AUTH_MICROSOFT_CLIENT_ID;
+    delete process.env.AUTH_MICROSOFT_CLIENT_SECRET;
+    delete process.env.AUTH_MICROSOFT_TENANT_ID;
+    delete process.env.AUTH_OIDC_ISSUER;
   });
 
   it("returns 403 for non-admin users", async () => {
@@ -55,6 +69,9 @@ describe("GET /api/admin/security", () => {
       .mockResolvedValueOnce({ rows: [{ total: 3, encrypted: 2 }] })
       .mockResolvedValueOnce({
         rows: [{ total_tokens: 4, encrypted_tokens: 3, missing_tokens: 1 }]
+      })
+      .mockResolvedValueOnce({
+        rows: [{ active_factors: 2, privileged_users: 3, privileged_users_missing_mfa: 1 }]
       });
 
     const response = await GET(
@@ -68,7 +85,15 @@ describe("GET /api/admin/security", () => {
     expect(body).toMatchObject({
       clientIp: "203.0.113.10",
       agentIntegrationStats: { total: 3, encrypted: 2, unencrypted: 1 },
-      whatsappTokenStats: { total: 4, encrypted: 3, unencrypted: 1, missing: 1 }
+      whatsappTokenStats: { total: 4, encrypted: 3, unencrypted: 1, missing: 1 },
+      mfaStats: { activeFactors: 2, privilegedUsers: 3, privilegedUsersMissingMfa: 1 },
+      authIdentity: {
+        packageInstalled: true,
+        authProvider: "password",
+        enabled: false,
+        routeEnabled: false,
+        ready: false
+      }
     });
 
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
@@ -89,6 +114,16 @@ describe("GET /api/admin/security", () => {
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("AND workspace_key = $2"),
+      ["tenant-sec", "workspace-sec"]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("FROM auth_mfa_factors"),
+      ["tenant-sec", "workspace-sec"]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("AND u.workspace_key = $2"),
       ["tenant-sec", "workspace-sec"]
     );
   });

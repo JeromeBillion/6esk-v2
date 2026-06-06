@@ -1,12 +1,10 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   getInboundAlertConfig,
   saveInboundAlertConfig
 } from "@/server/email/inbound-alert-config";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const settingsSchema = z.object({
   webhookUrl: z.union([z.string().url(), z.literal("")]),
@@ -16,22 +14,18 @@ const settingsSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const scope = tenantScopeFromUser(user);
+  const { scope } = access;
   const config = await getInboundAlertConfig(scope);
   return Response.json({ config });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let body: unknown;
   try {

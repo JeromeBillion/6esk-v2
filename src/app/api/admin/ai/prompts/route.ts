@@ -1,13 +1,11 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   activateAgentPromptTemplate,
   createAgentPromptTemplateVersion,
   listAgentPromptTemplates
 } from "@/server/agents/prompt-templates";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const templateBodySchema = z
   .object({
@@ -31,13 +29,11 @@ function parseLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
   const url = new URL(request.url);
-  const templates = await listAgentPromptTemplates(tenantScopeFromUser(user), {
+  const templates = await listAgentPromptTemplates(access.scope, {
     templateKey: url.searchParams.get("templateKey") ?? undefined,
     limit: parseLimit(request)
   });
@@ -45,10 +41,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -62,7 +57,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const scope = tenantScopeFromUser(user);
   const created = await createAgentPromptTemplateVersion({
     tenantKey: scope.tenantKey,
     workspaceKey: scope.workspaceKey,

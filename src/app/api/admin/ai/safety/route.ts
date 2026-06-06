@@ -1,7 +1,5 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getAiSafetyDiagnostics } from "@/server/ai/safety-diagnostics";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function parseLimit(request: Request) {
   const url = new URL(request.url);
@@ -11,12 +9,10 @@ function parseLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const diagnostics = await getAiSafetyDiagnostics(tenantScopeFromUser(user), {
+  const diagnostics = await getAiSafetyDiagnostics(access.scope, {
     limit: parseLimit(request)
   });
   return Response.json(diagnostics);

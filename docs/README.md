@@ -10,11 +10,11 @@ This directory is intentionally compact and only keeps implementation-critical d
 - `docs/email-setup.md`
   - Current email runbook and payload contracts (`/api/email/inbound`, `/api/email/send`, `/api/tickets/create`)
 - `docs/platform-support-requirements.md`
-  - Platform (`6ex`) to `6esk` support ticket integration contract
+  - White-label platform/webchat to `6esk` support ticket integration contract
 - `docs/merge-feature-roadmap.md`
   - Current customer identity, customer history, and merge behavior/spec
 - `docs/webagent-escalation-dependencies.md`
-  - Cross-repo env/secret map for prediction backend, Venus runtime, and 6esk
+  - White-label webchat/profile plug metadata and ingress contract
 - `docs/call-capabilities-plan.md`
   - Inbound/outbound voice capability roadmap and implementation phases
 - `docs/call-capabilities-backlog.md`
@@ -35,10 +35,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Voice consent source-of-truth and recording/transcript retention wording
 - `docs/voice-pilot-runbook.md`
   - Current pilot/rollout checklist for the voice feature
-- `docs/Venus-Voice.md`
-  - Venus-to-6esk AI voice integration contract and safety model
 - `docs/6esk-v1-completion-roadmap.md`
-  - Canonical roadmap, execution sequence, and hardening backlog for the `6ex`-custom proprietary `6esk v1` product
+  - Historical v1 roadmap, execution sequence, and hardening backlog
 - `docs/6esk-v2-commercialization-roadmap.md`
   - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including South Africa readiness and BizOps
 

@@ -1,7 +1,5 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { listKnowledgeRetrievalEvents } from "@/server/ai/knowledge-base";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function parseLimit(request: Request) {
   const url = new URL(request.url);
@@ -11,12 +9,10 @@ function parseLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const events = await listKnowledgeRetrievalEvents(tenantScopeFromUser(user), {
+  const events = await listKnowledgeRetrievalEvents(access.scope, {
     limit: parseLimit(request)
   });
   return Response.json({ events });

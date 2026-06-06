@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const slaSchema = z.object({
   firstResponseMinutes: z.number().int().positive(),
@@ -11,11 +9,9 @@ const slaSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
   const result = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
@@ -42,11 +38,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {

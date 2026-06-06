@@ -19,7 +19,8 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 vi.mock("@/server/auth/roles", () => ({
-  isLeadAdmin: (user: { role_name?: string | null } | null) => user?.role_name === "lead_admin"
+  isLeadAdmin: (user: { role_name?: string | null } | null) => user?.role_name === "lead_admin",
+  isPrivilegedRole: (user: { role_name?: string | null } | null) => user?.role_name === "lead_admin"
 }));
 
 vi.mock("@/server/audit", () => ({

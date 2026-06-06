@@ -1,14 +1,10 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { listFailedWhatsAppOutboxEvents } from "@/server/whatsapp/outbox";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");

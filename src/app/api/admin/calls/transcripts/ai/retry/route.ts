@@ -1,31 +1,13 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminOrMachineAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { retryFailedTranscriptAiJobs } from "@/server/calls/transcript-ai-jobs";
-import {
-  isTenantIngressScopeError,
-  tenantScopeFromMachineRequestAsync,
-  tenantScopeFromUser
-} from "@/server/tenant-context";
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  const sharedSecret =
-    process.env.CALLS_OUTBOX_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
-
-  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  let scope;
-  try {
-    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
-  } catch (error) {
-    if (isTenantIngressScopeError(error)) {
-      return Response.json({ error: error.message, code: error.code }, { status: error.status });
-    }
-    throw error;
-  }
+  const access = await requireLeadAdminOrMachineAccess(request, {
+    secretEnvNames: ["CALLS_OUTBOX_SECRET", "INBOUND_SHARED_SECRET"]
+  });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 25) || 25, 1), 100);

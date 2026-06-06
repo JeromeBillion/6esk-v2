@@ -48,7 +48,7 @@ import { PATCH } from "@/app/api/customers/[customerId]/route";
 function buildUser(roleName: "lead_admin" | "agent" | "viewer") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    email: `${roleName}@6ex.co.za`,
+    email: `${roleName}@example.com`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName
@@ -59,7 +59,7 @@ function buildCustomer(overrides?: Partial<Record<string, unknown>>) {
   return {
     id: CUSTOMER_ID,
     kind: "registered",
-    external_system: "prediction-market-mvp",
+    external_system: "external-profile",
     external_user_id: "user-123",
     display_name: "John Davidson",
     primary_email: "john@techcorp.com",

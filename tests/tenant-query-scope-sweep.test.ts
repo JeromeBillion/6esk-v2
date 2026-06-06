@@ -70,6 +70,46 @@ describe("tenant query scope sweep", () => {
     );
   });
 
+  it("scans auth and tenant security policy tables", () => {
+    const result = scanFileContent(
+      "src/server/auth-gaps.ts",
+      `
+      await db.query("SELECT id FROM auth_identity_accounts WHERE user_id = $1", [userId]);
+      await db.query("SELECT workspace_key FROM tenant_security_policies WHERE workspace_key = $1", [workspaceKey]);
+      `
+    );
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table: "auth_identity_accounts",
+          check: "missing_tenant_scope_predicate"
+        }),
+        expect.objectContaining({
+          table: "tenant_security_policies",
+          check: "missing_tenant_scope_predicate"
+        })
+      ])
+    );
+  });
+
+  it("scans billing lifecycle tables", () => {
+    const result = scanFileContent(
+      "src/server/billing-gap.ts",
+      `
+      await db.query("SELECT id FROM workspace_billing_invoices WHERE id = $1", [invoiceId]);
+      await db.query("SELECT id FROM workspace_billing_subscriptions WHERE tenant_key = $1", [tenantKey]);
+      `
+    );
+
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        table: "workspace_billing_invoices",
+        check: "missing_tenant_scope_predicate"
+      })
+    ]);
+  });
+
   it("allows intentional global reads with a suppression comment", () => {
     const result = scanFileContent(
       "src/server/global-admin.ts",

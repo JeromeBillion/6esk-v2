@@ -22,7 +22,9 @@ export type AgentEventPayload = {
   pointers?: Record<string, string>;
 };
 
-const ORG_ID = "6ex-support";
+function getAgentOrgId() {
+  return process.env.AGENT_ORG_ID?.trim() || "default-support";
+}
 
 export function buildAgentEvent({
   eventType,
@@ -57,7 +59,7 @@ export function buildAgentEvent({
     event_id: randomUUID(),
     event_type: eventType,
     occurred_at: new Date().toISOString(),
-    org_id: ORG_ID,
+    org_id: getAgentOrgId(),
     resource: {
       ticket_id: ticketId ?? null,
       message_id: messageId ?? null,

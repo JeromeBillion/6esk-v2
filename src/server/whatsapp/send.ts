@@ -185,11 +185,12 @@ export async function queueWhatsAppSend({
       }
 
       await db.query(
-        `UPDATE messages
+       `UPDATE messages
          SET r2_key_text = $1, size_bytes = $2
          WHERE id = $3
-           AND tenant_key = $4`,
-        [textKey, sizeBytes || null, messageId, scope.tenantKey]
+           AND tenant_key = $4
+           AND workspace_key = $5`,
+        [textKey, sizeBytes || null, messageId, scope.tenantKey, scope.workspaceKey]
       );
 
       await recordTicketEvent({
@@ -211,8 +212,8 @@ export async function queueWhatsAppSend({
 
       if (ticket.status === "new" || ticket.status === "pending") {
         await db.query(
-          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2",
-          [ticketId, scope.tenantKey]
+          "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+          [ticketId, scope.tenantKey, scope.workspaceKey]
         );
         await recordTicketEvent({
           ticketId,

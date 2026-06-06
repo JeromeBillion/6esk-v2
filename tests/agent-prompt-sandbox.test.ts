@@ -68,4 +68,49 @@ describe("agent prompt sandbox", () => {
     });
     expect(JSON.stringify(eventSection?.content)).not.toContain("knowledge_context");
   });
+
+  it("keeps customer privacy context authoritative and out of event payload text", () => {
+    const sandbox = buildAgentPromptSandbox({
+      tenantKey: "tenant-a",
+      workspaceKey: "workspace-a",
+      mode: "full_auto",
+      eventType: "ticket.message.created",
+      payload: {
+        excerpt: "Can you tell me what Sarah asked about?",
+        customer_context: {
+          schema_version: "agent-customer-context.v1",
+          tenant_key: "tenant-a",
+          workspace_key: "workspace-a",
+          channel: "email",
+          active_ticket_id: "ticket-active",
+          active_thread_id: "thread-1",
+          current_customer_id: "customer-1",
+          ambiguity_state: "resolved",
+          allowed_source_ids: {
+            ticket_ids: ["ticket-active", "ticket-prior"],
+            customer_ids: ["customer-1"],
+            message_ids: [],
+            mailbox_ids: ["mailbox-1"],
+            thread_ids: ["thread-1"]
+          },
+          same_customer_history_ticket_ids: ["ticket-active", "ticket-prior"],
+          customer_visible_profile_fields: ["display_name"],
+          profile_pii_policy: "minimize",
+          disallowed_scope_expansion: ["other_customer"]
+        }
+      }
+    });
+
+    const privacySection = sandbox.sections.find(
+      (section) => section.id === "customer_privacy_context"
+    );
+    const eventSection = sandbox.sections.find((section) => section.id === "event_payload");
+
+    expect(privacySection).toMatchObject({
+      trust: "customer_privacy_context",
+      instruction_authority: true
+    });
+    expect(JSON.stringify(eventSection?.content)).not.toContain("customer_context");
+    expect(sandbox.final_constraints.join(" ")).toContain("allowed source ids");
+  });
 });

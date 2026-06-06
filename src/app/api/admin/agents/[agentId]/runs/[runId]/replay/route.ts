@@ -1,19 +1,15 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { getAgentPolicyReplay } from "@/server/agents/policy-replay";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const scope = tenantScopeFromUser(user);
+  const { scope } = access;
   const { agentId, runId } = await params;
   const agent = await getAgentIntegrationById(agentId, scope);
   if (!agent) {

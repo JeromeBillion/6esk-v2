@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { normalizeCallPhone } from "@/server/calls/service";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const providerNumberSchema = z.object({
   id: z.string().uuid().optional().nullable(),
@@ -38,11 +36,9 @@ function serializeProviderNumber(row: {
 }
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
   const result = await db.query(
     `SELECT id, provider, phone_number, account_sid, status, metadata, created_at, updated_at
@@ -57,11 +53,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let body: unknown;
   try {
@@ -184,11 +178,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
   const id = new URL(request.url).searchParams.get("id")?.trim();
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });

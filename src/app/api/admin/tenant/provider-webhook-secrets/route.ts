@@ -1,8 +1,6 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 import {
   listProviderWebhookSecrets,
   ProviderWebhookSecretConfigurationError,
@@ -39,21 +37,17 @@ function configurationErrorResponse(error: unknown) {
 }
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess();
+  if (!auth.ok) return auth.response;
+  const { scope } = auth;
   const secrets = await listProviderWebhookSecrets(scope);
   return Response.json({ secrets });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let payload: unknown;
   try {
@@ -67,7 +61,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const scope = tenantScopeFromUser(user);
   try {
     const result = await rotateProviderWebhookSecret({
       scope,
@@ -124,17 +117,15 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   const secretId = readSecretId(request);
   if (!secretId) {
     return Response.json({ error: "id is required" }, { status: 400 });
   }
 
-  const scope = tenantScopeFromUser(user);
   const secret = await revokeProviderWebhookSecret({ scope, secretId });
   if (!secret) {
     return Response.json({ error: "Provider webhook secret not found" }, { status: 404 });

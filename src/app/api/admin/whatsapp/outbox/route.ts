@@ -1,43 +1,25 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import {
+  requireLeadAdminAccess,
+  requireLeadAdminOrMachineAccess
+} from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { deliverPendingWhatsAppEvents } from "@/server/whatsapp/outbox";
 import { getWhatsAppOutboxMetrics } from "@/server/whatsapp/outbox-metrics";
-import {
-  isTenantIngressScopeError,
-  tenantScopeFromMachineRequestAsync,
-  tenantScopeFromUser
-} from "@/server/tenant-context";
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const scope = tenantScopeFromUser(user);
-  const metrics = await getWhatsAppOutboxMetrics(scope);
+  const metrics = await getWhatsAppOutboxMetrics(access.scope);
   return Response.json(metrics);
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  const sharedSecret =
-    process.env.WHATSAPP_OUTBOX_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
-
-  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  let scope;
-  try {
-    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
-  } catch (error) {
-    if (isTenantIngressScopeError(error)) {
-      return Response.json({ error: error.message, code: error.code }, { status: error.status });
-    }
-    throw error;
-  }
+  const access = await requireLeadAdminOrMachineAccess(request, {
+    secretEnvNames: ["WHATSAPP_OUTBOX_SECRET", "INBOUND_SHARED_SECRET"]
+  });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");

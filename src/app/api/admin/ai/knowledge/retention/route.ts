@@ -1,8 +1,6 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { runKnowledgeRetentionSweep } from "@/server/ai/knowledge-base";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const retentionRunSchema = z.object({
   limit: z.number().int().min(1).max(500).optional()
@@ -16,12 +14,10 @@ function parseLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const result = await runKnowledgeRetentionSweep(tenantScopeFromUser(user), {
+  const result = await runKnowledgeRetentionSweep(access.scope, {
     dryRun: true,
     limit: parseLimit(request)
   });
@@ -29,10 +25,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown = {};
   try {
@@ -46,7 +41,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const result = await runKnowledgeRetentionSweep(tenantScopeFromUser(user), {
+  const result = await runKnowledgeRetentionSweep(scope, {
     dryRun: false,
     limit: parsed.data.limit,
     actorUserId: user?.id ?? null

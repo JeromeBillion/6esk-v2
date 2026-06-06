@@ -76,7 +76,7 @@ Still incomplete or intentionally blocked:
 1. `6ex` can run customer support end-to-end in `6esk` across email, WhatsApp, tickets, and voice.
 2. Voice works with a real provider, not only mock or partial queue simulation.
 3. Cross-channel support history and merge behavior match the operator experience promised in the UI.
-4. Venus can create and act on tickets through supported APIs where required by the `6ex` operating model, with hardened contracts and full context propagation.
+4. Trusted agent integrations can create and act on tickets through supported APIs where required by the operating model, with hardened contracts and full context propagation.
 5. `6esk` can reliably identify `6ex` customers using approved integration boundaries.
 6. Feature availability can be switched on/off cleanly by package or workspace entitlement.
 7. Operations can observe, recover, retry, and audit every major channel flow.
@@ -190,7 +190,7 @@ Billable modules:
 - WhatsApp
 - voice
 - AI automation
-- Venus-derived orchestration module
+- Dexter-owned orchestration module
 - BYO AI provider connector mode
 
 ### Rules
@@ -198,7 +198,7 @@ Billable modules:
 - if `voice` is off, no voice UI, API initiation, or webhook processing should be active for that tenant/workspace
 - if `WhatsApp` is off, WhatsApp send/resend/template features must be disabled at runtime
 - if `email` is off, mailbox sending and inbox controls must be disabled at runtime
-- if `Venus orchestration` is off, 6esk must still function with no Venus dependency
+- if `AI orchestration` is off, 6esk must still function with no hidden orchestration dependency
 - if `BYO AI` is enabled, token-cost pass-through changes, but orchestration/runtime controls remain ours
 
 ### Implementation Items
@@ -222,13 +222,13 @@ Current progress:
 `6esk v1` is still custom software for `6ex`. It should integrate like a real internal platform, not like a generic third-party product.
 
 ### Required Integration Outcomes
-1. Venus/`6ex` can create tickets from `6ex` into `6esk` through hardened, versioned contracts.
+1. Trusted platform integrations can create tickets into `6esk` through hardened, versioned contracts.
 2. `6esk` can resolve `6ex` customers cleanly through approved integration boundaries.
 3. `6esk` can operate as the support control plane while `6ex` remains the source of truth where appropriate.
 4. Integration boundaries are explicit, versioned, and testable.
 
 ### Concrete Gaps To Close
-1. Harden existing Venus/`6ex` -> `6esk` ticket creation and escalation contracts.
+1. Harden existing trusted-platform ticket creation and escalation contracts.
 2. Expand customer identity lookup and reconciliation against `6ex` data.
 3. Enrich tickets with `6ex` customer context, source-system metadata, and deterministic correlation identifiers.
 4. Propagate the `6esk` events that `6ex` actually needs back across the boundary.
@@ -237,7 +237,7 @@ Current progress:
 Current progress:
 - trusted `6ex` -> `6esk` ticket creation is already present
 - `6esk` now owns direct Twilio outbound execution, Twilio webhook handling, and voice artifact ingress without routing telephony through `6ex`
-- `6esk` already delivers lifecycle events directly to Venus where needed
+- `6esk` already delivers lifecycle events directly to trusted agent integrations where needed
 - `6esk` remains the storage owner for call artifacts; even when new Cloudflare R2 buckets are created, they are `6esk` buckets, not `6ex` buckets
 - trusted inbound `6ex` create flows now persist customer identity enrichment and external-user link cache updates inside `6esk`
 - trusted profile matches now promote existing identity-linked customers instead of forking duplicate registered records
@@ -247,7 +247,7 @@ Current progress:
 Lean-build rule:
 - `6esk` remains the CRM system of record
 - `6ex` should not mirror ticket/message/call state unless a concrete `6ex` feature requires it
-- Venus can consume `6esk` lifecycle events directly without forcing `6ex` to become a shadow CRM
+- Agent integrations can consume `6esk` lifecycle events directly without forcing another product to become a shadow CRM
 
 ### Architecture Rule
 Even for `v1`, do not solve this with uncontrolled direct database coupling unless it is deliberately isolated behind a single access layer. If `6esk` reads `6ex` data directly, that must still be treated like an integration module with:
@@ -258,7 +258,7 @@ Even for `v1`, do not solve this with uncontrolled direct database coupling unle
 - fallback behavior
 
 ### Exit Criteria
-- Venus/`6ex` ticket creation is reliable and context-rich
+- trusted-platform ticket creation is reliable and context-rich
 - `6esk` identifies `6ex` customers reliably
 - customer and ticket state stay coherent across the two systems
 - no undocumented “magic coupling” remains
@@ -379,9 +379,9 @@ This section is the single canonical `v1` execution backlog, keeping roadmap int
 | 11 | Live operator experience | Add operator presence states (`online`, `away`, `offline`) | `done` | Presence is persisted and already drives voice eligibility and desk availability |
 | 12 | Live operator experience | Add popup notifications and tones for email, WhatsApp, and calls | `done` | Channel-aware popups and real audio assets are wired for support email, inbox email, WhatsApp, and incoming calls |
 | 13 | Live operator experience | Add real-time/near-real-time desk refresh | `done` | Shared desk snapshot polling refreshes Support and Mail without manual reload while the tab is active |
-| 14 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and Venus handoff policy |
+| 14 | Cross-channel merge vision | Redesign merge/link model for cross-channel linkage | `done` | `linked_case` is now the first-class non-destructive cross-channel model in Support, Merge Reviews, and agent handoff policy |
 | 15 | Cross-channel merge vision | Implement compatibility rules, preflight, and review semantics | `done` | Cross-channel merge now preflights into link semantics, same-channel hard merge stays separate, and operator-linked cases are surfaced in the Support right rail |
-| 16 | Deep 6ex integration | Venus/6ex ticket creation hardening and 6ex context integration | `done` | Trusted `6ex` create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; remaining work is no longer ticket-create hardening |
+| 16 | Deep platform integration | Trusted ticket creation hardening and context integration | `done` | Trusted create flows persist `external_profile`, `profile_lookup`, identity-resolution events, and external-user link cache updates; remaining work is no longer ticket-create hardening |
 | 17 | Deep 6ex integration | 6ex customer identity resolution integration | `done` | Trusted profile matches promote existing identity-linked customers, and contradictory upstream identities preserve the canonical 6esk customer with explicit conflict metadata instead of rebinding ownership |
 | 18 | Product hardening | Expand audit/replay/retry coverage for live channel operations | `done` | Voice, WhatsApp, and AI outbox paths support operator-visible failed queues, targeted retry, stale-processing recovery, and audited recovery triggers |
 | 19 | Live operator experience | Add recoverable personal inbox drafts with a Drafts tab | `done` | Drafts persist for compose/reply/forward and move through Drafts -> Outbox -> Sent |
@@ -412,7 +412,7 @@ Slice B: cross-channel linkage
 - `linked_case` preflight and execution endpoints
 - merge review alignment for non-destructive cross-channel linkage
 - Support right-rail linked-case surfacing and navigation
-- Venus downgrade from unsafe cross-channel merge to linked-case flow
+- agent downgrade from unsafe cross-channel merge to linked-case flow
 
 Slice C: usage metering
 - usage-event persistence for billable modules
@@ -447,7 +447,7 @@ Phase 4: close evidence and rollout proof
 - `6ex` can run serious support work in `6esk`
 - AI can participate meaningfully, including voice where enabled
 - channels can be unified in a way that matches the vision already sold visually
-- Venus and `6ex` integrations are real, not aspirational
+- trusted platform integrations are real, not aspirational
 - feature modules can be switched on/off safely
 - operational recovery paths are trustworthy
 

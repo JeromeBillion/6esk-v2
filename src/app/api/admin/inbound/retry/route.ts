@@ -1,30 +1,13 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminOrMachineAccess } from "@/server/auth/admin-guard";
 import { retryFailedInboundEvents } from "@/server/email/inbound-retry";
 import { recordAuditLog } from "@/server/audit";
-import {
-  isTenantIngressScopeError,
-  tenantScopeFromMachineRequestAsync,
-  tenantScopeFromUser
-} from "@/server/tenant-context";
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
-
-  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  let scope;
-  try {
-    scope = user ? tenantScopeFromUser(user) : await tenantScopeFromMachineRequestAsync(request);
-  } catch (error) {
-    if (isTenantIngressScopeError(error)) {
-      return Response.json({ error: error.message, code: error.code }, { status: error.status });
-    }
-    throw error;
-  }
+  const access = await requireLeadAdminOrMachineAccess(request, {
+    secretEnvNames: ["INBOUND_SHARED_SECRET"]
+  });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");

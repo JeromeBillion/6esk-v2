@@ -264,8 +264,9 @@ export async function sendTicketReply({
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
      WHERE id = $4
-       AND tenant_key = $5`,
-    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey]
+       AND tenant_key = $5
+       AND workspace_key = $6`,
+    [textKey, htmlKey, sizeBytes || null, messageId, scope.tenantKey, scope.workspaceKey]
   );
 
   await recordTicketEvent({
@@ -279,8 +280,8 @@ export async function sendTicketReply({
 
   if (ticket.status === "new" || ticket.status === "pending") {
     await db.query(
-      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2",
-      [ticketId, scope.tenantKey]
+      "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+      [ticketId, scope.tenantKey, scope.workspaceKey]
     );
     await recordTicketEvent({
       ticketId,

@@ -1,5 +1,5 @@
 import { db } from "@/server/db";
-import type { PredictionProfile } from "@/server/integrations/prediction-profile";
+import type { ExternalProfile } from "@/server/integrations/external-profile";
 import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type InboundChannel = "email" | "whatsapp";
@@ -123,7 +123,7 @@ export async function upsertExternalUserLink({
   tenantKey?: string | null;
   workspaceKey?: string | null;
   externalSystem: string;
-  profile: PredictionProfile;
+  profile: ExternalProfile;
   matchedBy?: string | null;
   inboundEmail?: string | null;
   inboundPhone?: string | null;

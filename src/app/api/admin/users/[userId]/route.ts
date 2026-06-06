@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const updateSchema = z.object({
   roleId: z.string().uuid().optional(),
@@ -14,11 +12,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let payload: unknown;
   try {

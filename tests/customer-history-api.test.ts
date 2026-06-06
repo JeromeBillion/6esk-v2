@@ -36,7 +36,7 @@ import { GET } from "@/app/api/tickets/[ticketId]/customer-history/route";
 function buildUser(roleName: "lead_admin" | "agent" | "viewer" = "agent", userId = AGENT_ID) {
   return {
     id: userId,
-    email: `${roleName}@6ex.co.za`,
+    email: `${roleName}@example.com`,
     display_name: roleName,
     role_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     role_name: roleName
@@ -57,7 +57,7 @@ function buildCustomer(id = CUSTOMER_ID) {
   return {
     id,
     kind: "registered",
-    external_system: "prediction-market-mvp",
+    external_system: "external-profile",
     external_user_id: "pm-user-123",
     display_name: "Known User",
     primary_email: "known.user@example.com",

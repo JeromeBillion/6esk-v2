@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getActiveAgentIntegration: vi.fn(),
-  getAgentIntegrationById: vi.fn()
+  getAgentIntegrationById: vi.fn(),
+  listActiveTenantIngressSigningSecrets: vi.fn(),
+  markTenantIngressSigningSecretUsed: vi.fn()
 }));
 
 vi.mock("@/server/agents/integrations", () => ({
   getActiveAgentIntegration: mocks.getActiveAgentIntegration,
   getAgentIntegrationById: mocks.getAgentIntegrationById
+}));
+
+vi.mock("@/server/tenant-ingress-secrets", () => ({
+  listActiveTenantIngressSigningSecrets: mocks.listActiveTenantIngressSigningSecrets,
+  markTenantIngressSigningSecretUsed: mocks.markTenantIngressSigningSecretUsed
 }));
 
 import {
@@ -86,6 +93,8 @@ describe("agent ingress authentication", () => {
     process.env = { ...ORIGINAL_ENV, NODE_ENV: "test" };
     mocks.getAgentIntegrationById.mockResolvedValue(integration());
     mocks.getActiveAgentIntegration.mockResolvedValue(integration());
+    mocks.listActiveTenantIngressSigningSecrets.mockResolvedValue([]);
+    mocks.markTenantIngressSigningSecretUsed.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -140,7 +149,8 @@ describe("agent ingress authentication", () => {
     process.env.TENANT_INGRESS_REQUIRE_SCOPE = "true";
     process.env.TENANT_INGRESS_REQUIRE_SIGNATURE = "true";
     process.env.TENANT_INGRESS_SIGNING_SECRETS_JSON = JSON.stringify({
-      "tenant-a:*": TENANT_SECRET
+      "tenant-a:workspace-a": TENANT_SECRET,
+      "tenant-a:workspace-b": TENANT_SECRET
     });
 
     const result = await getAgentFromRequest(requestWithHeaders(signedAgentHeaders()));

@@ -26,13 +26,13 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
   - 0.5 QA/support from week 3 onward
 - Scope includes:
   - 6esk implementation
-  - integration contract updates for Venus
+  - integration contract updates for Dexter and white-label tenant plugs
 - Scope excludes:
-  - LLM/voice provider key, character, or knowledge management in 6esk.
+  - low-level model hosting or voice synthesis infrastructure.
 
 ## Effort Summary
 - 6esk core (DB/API/UI/analytics/ops): 45 to 63 eng-days
-- Venus integration track: 8 to 12 eng-days
+- Dexter/tenant plug integration track: 8 to 12 eng-days
 - Total combined: 53 to 75 eng-days
 - Delivery window with assumed team: 6 to 8 weeks
 
@@ -45,7 +45,7 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
 | E3 | Outbound Voice Pipeline | 9-12 | P0 | E1 |
 | E4 | Human UX (Create + Ticket Call) | 8-11 | P0 | E1, E3 |
 | E5 | AI Voice Actions in 6esk | 6-8 | P0 | E1, E3 |
-| E6 | Venus Voice Plugin Track | 8-12 | P1 | E5 |
+| E6 | Dexter Voice Integration Track | 8-12 | P1 | E5 |
 | E7 | Analytics + Hardening + Rollout | 11-14 | P0 | E2, E3, E4, E5 |
 
 ## Detailed Backlog
@@ -108,14 +108,14 @@ This backlog converts `docs/call-capabilities-plan.md` into implementation work 
 | VOICE-054 | Emit agent outbox events for voice lifecycle | 1 | VOICE-051 | `ticket.call.*` events delivered through outbox |
 | VOICE-055 | AI voice action tests (unit + integration) | 1-2 | VOICE-054 | Ambiguous-number calls blocked without explicit candidate |
 
-### E6: Venus Voice Plugin Track
+### E6: Dexter Voice Integration Track
 | ID | Work Item | Estimate | Depends On | Acceptance |
 |---|---|---:|---|---|
-| VENUS-100 | Add `sixeskVoiceClient` (typed client + error model) | 2 | VOICE-051 | Typed client supports call-options/initiate-call |
-| VENUS-101 | Register tools (`sixesk_get_ticket_call_options`, `sixesk_initiate_ticket_call`) | 1-2 | VENUS-100 | Tools callable by agent runtime |
-| VENUS-102 | Tool policy layer (selection-required, consent, retryability) | 2-3 | VENUS-101 | Non-retryable errors handled deterministically |
-| VENUS-103 | Webhook reconciliation for `ticket.call.*` events | 2-3 | VOICE-054 | Workflow state updates from call lifecycle events |
-| VENUS-104 | End-to-end validation in staging with 6esk | 1-2 | VENUS-103 | AI call flow passes staging checklist |
+| DEXTER-100 | Add `sixeskVoiceClient` (typed client + error model) | 2 | VOICE-051 | Typed client supports call-options/initiate-call |
+| DEXTER-101 | Register tools (`sixesk_get_ticket_call_options`, `sixesk_initiate_ticket_call`) | 1-2 | DEXTER-100 | Tools callable by agent runtime |
+| DEXTER-102 | Tool policy layer (selection-required, consent, retryability) | 2-3 | DEXTER-101 | Non-retryable errors handled deterministically |
+| DEXTER-103 | Webhook reconciliation for `ticket.call.*` events | 2-3 | VOICE-054 | Workflow state updates from call lifecycle events |
+| DEXTER-104 | End-to-end validation in staging with 6esk | 1-2 | DEXTER-103 | AI call flow passes staging checklist |
 
 ### E7: Analytics + Hardening + Rollout
 | ID | Work Item | Estimate | Depends On | Acceptance |

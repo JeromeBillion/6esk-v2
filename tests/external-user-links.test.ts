@@ -44,7 +44,7 @@ describe("external user link helpers", () => {
 
   test("returns null without querying when no normalized identity is provided", async () => {
     const result = await findExternalUserLinkByIdentity({
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "external-profile",
       email: " ",
       phone: " "
     });
@@ -55,7 +55,7 @@ describe("external user link helpers", () => {
 
   test("queries by normalized identity and returns best match row", async () => {
     const row = {
-      external_system: "prediction-market-mvp",
+      external_system: "external-profile",
       external_user_id: "user-123",
       email: "user@example.com",
       phone: "+27710000001",
@@ -68,7 +68,7 @@ describe("external user link helpers", () => {
     mocks.dbQuery.mockResolvedValue({ rows: [row] });
 
     const result = await findExternalUserLinkByIdentity({
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "external-profile",
       email: "  USER@example.com ",
       phone: " +27 71 000 0001 "
     });
@@ -77,7 +77,7 @@ describe("external user link helpers", () => {
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.any(String), [
       "primary",
-      "prediction-market-mvp",
+      "external-profile",
       "user@example.com",
       "+27710000001"
     ]);

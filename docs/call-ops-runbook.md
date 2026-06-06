@@ -24,7 +24,7 @@ CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 Notes:
 - `CALLS_PROVIDER=twilio` is the supported live-capable execution path for `v1`.
 - `6esk` now owns the real Twilio hookup and Twilio webhook relay layer directly.
-- `6esk` owns durable call artifact storage. Recordings and transcripts must land in `6esk` Cloudflare R2, not in `6ex`.
+- `6esk` owns durable call artifact storage. Recordings and transcripts must land in tenant-scoped `6esk` Cloudflare R2.
 - Keep `CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false` outside migration windows.
 - Keep consent/retention wording aligned with `docs/privacy-retention-policy.md`.
 
@@ -70,7 +70,7 @@ Invoke-RestMethod -Method GET -Uri "https://<your-6esk-domain>/"
 
 ## Railway Layout
 
-Create a dedicated Railway project for `6esk`. Do not deploy voice infrastructure inside `6ex-home`.
+Create a dedicated Railway project for `6esk`. Do not deploy voice infrastructure inside another product workspace.
 
 Recommended project:
 - `6esk-platform`
@@ -100,7 +100,7 @@ Shared project resources:
 - STT provider credentials
 
 Deployment rule:
-- `6ex` stays an external integrated system
+- tenant products stay external integrated systems
 - telephony, call artifacts, transcripts, and QA are platform responsibilities owned by `6esk`
 
 ## Replay-Window Drill
@@ -180,7 +180,7 @@ npm run calls:crm-e2e
 
 Optional:
 - set `DATABASE_URL` to validate local `ticket.call.*` sequence metadata from `agent_outbox`.
-- set `CRM_CALLS_VENUS_EVENTS_URL` (and optional `CRM_CALLS_VENUS_EVENTS_TOKEN`) to verify Venus event observation.
+- set `CRM_CALLS_AGENT_EVENTS_URL` (and optional `CRM_CALLS_AGENT_EVENTS_TOKEN`) to verify downstream agent event observation.
 
 ## Incident Triage
 

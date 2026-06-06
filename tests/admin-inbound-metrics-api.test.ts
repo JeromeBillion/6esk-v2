@@ -107,14 +107,14 @@ describe("GET /api/admin/inbound/metrics", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("returns 401 when caller is not admin and secret is missing", async () => {
+  it("returns 403 when a logged-in caller is not an admin", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await GET(new Request("http://localhost/api/admin/inbound/metrics?hours=24"));
     const body = await response.json();
 
-    expect(response.status).toBe(401);
-    expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
     expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
   });
 

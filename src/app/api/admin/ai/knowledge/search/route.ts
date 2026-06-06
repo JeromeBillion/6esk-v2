@@ -1,8 +1,6 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { KnowledgeUploadError, retrieveKnowledge } from "@/server/ai/knowledge-base";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const searchSchema = z.object({
   query: z.string().min(1).max(1000),
@@ -10,10 +8,9 @@ const searchSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {
@@ -28,7 +25,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    const scope = tenantScopeFromUser(user);
     const results = await retrieveKnowledge({
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,

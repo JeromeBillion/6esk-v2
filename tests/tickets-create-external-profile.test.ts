@@ -9,8 +9,6 @@ const mocks = vi.hoisted(() => ({
   recordTicketEvent: vi.fn(),
   addTagsToTicket: vi.fn(),
   resolveOrCreateCustomerForInbound: vi.fn(),
-  buildProfileMetadataPatch: vi.fn(),
-  lookupPredictionProfile: vi.fn(),
   normalizeCallPhone: vi.fn(),
   queueOutboundCall: vi.fn(),
   queueWhatsAppSend: vi.fn(),
@@ -51,11 +49,6 @@ vi.mock("@/server/tickets", () => ({
 
 vi.mock("@/server/customers", () => ({
   resolveOrCreateCustomerForInbound: mocks.resolveOrCreateCustomerForInbound
-}));
-
-vi.mock("@/server/integrations/prediction-profile", () => ({
-  buildProfileMetadataPatch: mocks.buildProfileMetadataPatch,
-  lookupPredictionProfile: mocks.lookupPredictionProfile
 }));
 
 vi.mock("@/server/integrations/external-user-links", () => ({
@@ -126,7 +119,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
     vi.clearAllMocks();
     process.env = {
       ...ORIGINAL_ENV,
-      SUPPORT_ADDRESS: "support@6ex.co.za",
+      SUPPORT_ADDRESS: "support@example.com",
       INBOUND_SHARED_SECRET: "shared-secret"
     };
 
@@ -141,8 +134,6 @@ describe("POST /api/tickets/create external identity enrichment", () => {
       customerId: "customer-1",
       kind: "registered"
     });
-    mocks.buildProfileMetadataPatch.mockReturnValue({});
-    mocks.lookupPredictionProfile.mockResolvedValue({ status: "missed", durationMs: 5 });
     mocks.normalizeCallPhone.mockReturnValue("+27820000000");
     mocks.queueOutboundCall.mockResolvedValue({
       status: "queued",
@@ -214,7 +205,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
           description: "Need someone to confirm the account owner.",
           metadata: {
             external_profile: {
-              source: "prediction-market-mvp-webchat",
+              source: "white-label-webchat",
               externalUserId: "user-123",
               matchedBy: "session_auth",
               matchedAt: "2026-03-29T07:00:00.000Z",
@@ -225,7 +216,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
               accountStatus: "active"
             },
             profile_lookup: {
-              source: "prediction-market-mvp-webchat",
+              source: "white-label-webchat",
               status: "matched",
               matchedBy: "session_auth",
               lookupAt: "2026-03-29T07:00:00.000Z"
@@ -241,11 +232,10 @@ describe("POST /api/tickets/create external identity enrichment", () => {
       status: "created",
       ticketId: "ticket-1"
     });
-    expect(mocks.lookupPredictionProfile).not.toHaveBeenCalled();
     expect(mocks.upsertExternalUserLink).toHaveBeenCalledWith({
       tenantKey: "primary",
       workspaceKey: "primary",
-      externalSystem: "prediction-market-mvp",
+      externalSystem: "white-label-webchat",
       profile: expect.objectContaining({
         id: "user-123",
         email: "olivia.parker@brightpath.co",
@@ -261,7 +251,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
         ticketId: "ticket-1",
         eventType: "profile_enriched",
         data: expect.objectContaining({
-          source: "prediction-market-mvp",
+          source: "white-label-webchat",
           matchedBy: "session_auth",
           externalUserId: "user-123"
         })
@@ -298,10 +288,10 @@ describe("POST /api/tickets/create external identity enrichment", () => {
       kind: "registered",
       conflict: {
         type: "external_identity_conflict",
-        externalSystem: "prediction-market-mvp",
+        externalSystem: "white-label-webchat",
         incomingExternalUserId: "user-123",
         existingExternalUserId: "user-999",
-        existingExternalSystem: "prediction-market-mvp",
+        existingExternalSystem: "white-label-webchat",
         existingCustomerId: "customer-1",
         matchedIdentity: "email"
       }
@@ -320,7 +310,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
           description: "Need someone to confirm the account owner.",
           metadata: {
             external_profile: {
-              source: "prediction-market-mvp-webchat",
+              source: "white-label-webchat",
               externalUserId: "user-123",
               matchedBy: "session_auth",
               matchedAt: "2026-03-29T07:00:00.000Z",
@@ -331,7 +321,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
               accountStatus: "active"
             },
             profile_lookup: {
-              source: "prediction-market-mvp-webchat",
+              source: "white-label-webchat",
               status: "matched",
               matchedBy: "session_auth",
               lookupAt: "2026-03-29T07:00:00.000Z"
@@ -364,7 +354,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
         ticketId: "ticket-1",
         eventType: "customer_identity_conflict",
         data: expect.objectContaining({
-          source: "prediction-market-mvp",
+          source: "white-label-webchat",
           matchedBy: "session_auth",
           conflict: expect.objectContaining({
             incomingExternalUserId: "user-123",

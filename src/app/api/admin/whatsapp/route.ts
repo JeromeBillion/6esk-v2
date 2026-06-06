@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const payloadSchema = z.object({
   provider: z.string().min(1),
@@ -16,11 +14,9 @@ const payloadSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess();
+  if (!auth.ok) return auth.response;
+  const { scope } = auth;
 
   const result = await db.query(
     `SELECT id, provider, phone_number, waba_id, access_token, verify_token, status, created_at, updated_at
@@ -52,11 +48,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let body: unknown;
   try {

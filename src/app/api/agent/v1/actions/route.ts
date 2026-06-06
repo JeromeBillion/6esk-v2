@@ -9,6 +9,7 @@ import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
 import { isFullAutoPolicyMode } from "@/server/agents/policy-modes";
 import { validateAgentOutput } from "@/server/agents/output-validator";
+import { buildAgentCustomerContext } from "@/server/agents/customer-context";
 import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
@@ -412,6 +413,22 @@ export async function POST(request: Request) {
 
     const outputContent = buildAgentOutputContent(action);
     if (outputContent) {
+      const customerContext =
+        action.type === "draft_reply" || action.type === "send_reply"
+          ? await buildAgentCustomerContext({
+              tenantKey: scope.tenantKey,
+              workspaceKey: scope.workspaceKey,
+              eventType: action.type,
+              payload: {
+                resource: {
+                  ticket_id: action.ticketId,
+                  mailbox_id: ticket.mailbox_id ?? null
+                },
+                customer: ticket.customer_id ? { id: ticket.customer_id } : null,
+                action_metadata: action.metadata ?? null
+              }
+            })
+          : null;
       const outputValidation = await validateAgentOutput({
         tenantKey: scope.tenantKey,
         workspaceKey: scope.workspaceKey,
@@ -420,6 +437,8 @@ export async function POST(request: Request) {
         actionType: action.type,
         sourceId: action.ticketId,
         content: outputContent,
+        customerContext,
+        sourceMetadata: action.metadata ?? null,
         metadata: {
           route: "/api/agent/v1/actions"
         }
@@ -863,11 +882,10 @@ export async function POST(request: Request) {
           results.push({ type: action.type, status: "failed", detail: "Missing priority" });
           break;
         }
-        await db.query("UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3", [
-          action.priority,
-          action.ticketId,
-          scope.tenantKey
-        ]);
+        await db.query(
+          "UPDATE tickets SET priority = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3 AND workspace_key = $4",
+          [action.priority, action.ticketId, scope.tenantKey, scope.workspaceKey]
+        );
         await recordTicketEvent({
           ticketId: action.ticketId,
           eventType: "priority_updated",
@@ -888,8 +906,8 @@ export async function POST(request: Request) {
       }
       case "assign_to": {
         await db.query(
-          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3",
-          [action.assignedUserId ?? null, action.ticketId, scope.tenantKey]
+          "UPDATE tickets SET assigned_user_id = $1, updated_at = now() WHERE id = $2 AND tenant_key = $3 AND workspace_key = $4",
+          [action.assignedUserId ?? null, action.ticketId, scope.tenantKey, scope.workspaceKey]
         );
         await recordTicketEvent({
           ticketId: action.ticketId,

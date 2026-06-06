@@ -25,7 +25,7 @@ import { GET, POST } from "@/app/api/admin/workspace/modules/route";
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    email: `${roleName}@6ex.co.za`,
+    email: `${roleName}@example.com`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName
@@ -40,7 +40,6 @@ const CONFIG = {
     whatsapp: true,
     voice: false,
     aiAutomation: true,
-    venusOrchestration: false,
     vanillaWebchat: true
   }
 };

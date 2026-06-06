@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { BookOpen, Bot, Phone, RefreshCw, Shield, Users, Workflow } from "lucide-react";
+import { BookOpen, Bot, Download, Phone, RefreshCw, Shield, Users, Workflow } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import AppShell from "@/app/components/AppShell";
 import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
 import { HealthIndicator } from "@/app/workspace/components/shared/HealthIndicator";
@@ -31,6 +40,8 @@ import {
   AdminMailboxRecord,
   AgentOutboxMetrics,
   AdminUserRecord,
+  approvePrivilegedAccessGrant,
+  AuthSessionRecord,
   AuditLogRecord,
   CallFailedEvent,
   CallOutboxMetrics,
@@ -50,12 +61,17 @@ import {
   KnowledgeRetrievalEvent,
   KnowledgeRetentionSweepResult,
   KnowledgeSearchResult,
+  MfaEnrollmentResponse,
+  MfaStatus,
+  PrivilegedAccessGrantRecord,
+  PrivilegedAccessStats,
   ProfileLookupMetrics,
   RoleRecord,
   SecuritySnapshot,
   SpamMessageRecord,
   SpamRuleRecord,
   TagRecord,
+  TenantSecurityPolicyRecord,
   WorkspaceModulesConfig,
   WorkspaceModuleUsageSummary,
   WhatsAppTemplate,
@@ -93,11 +109,14 @@ import {
   getDeadLetterSummary,
   getInboundSettings,
   getInboundMetrics,
+  getMfaStatus,
   getProfileLookupMetrics,
   getSecuritySnapshot,
   getSlaConfig,
+  getTenantSecurityPolicy,
   getWorkspaceModules,
   getWorkspaceModuleUsage,
+  getWorkspaceUsageExportUrl,
   getWhatsAppAccount,
   getWhatsAppOutboxMetrics,
   listFailedWhatsAppEvents,
@@ -107,8 +126,10 @@ import {
   listFailedCallEvents,
   listFailedCallTranscriptAiJobs,
   listFailedInboundEvents,
+  listAuthSessions,
   listCallProviderNumbers,
   listDeadLetterEvents,
+  listPrivilegedAccessGrants,
   listRoles,
   listSpamMessages,
   listSpamRules,
@@ -119,9 +140,13 @@ import {
   publishKnowledgeDocument,
   previewKnowledgeRetention,
   requestPasswordResetLink,
+  requestPrivilegedAccessGrant,
+  reviewPrivilegedAccessGrant,
   retryFailedCallEvents,
   retryFailedCallTranscriptAiJobs,
   retryFailedAgentOutboxEvents,
+  revokePrivilegedAccessGrant,
+  revokeAuthSession,
   rollbackAgentPromptTemplate,
   runKnowledgeRetention,
   retryFailedWhatsAppOutboxEvents,
@@ -135,14 +160,17 @@ import {
   searchKnowledge,
   setKnowledgeDocumentLegalHold,
   setMessageSpamStatus,
+  startMfaEnrollment,
   updateAgentIntegration,
   updateInboundSettings,
   updateSlaConfig,
   updateSpamRule,
   updateTag,
+  updateTenantSecurityPolicy,
   updateUser,
   updateWorkspaceModules,
   updateWhatsAppTemplate,
+  verifyMfaEnrollment,
   uploadKnowledgeDocument
 } from "@/app/lib/api/admin";
 import { ApiError } from "@/app/lib/api/http";
@@ -155,6 +183,27 @@ type OperationsFilters = {
   windowHours: number;
   eventLimit: number;
   auditLimit: number;
+};
+
+type TenantSecurityPolicyForm = {
+  allowedLoginDomains: string;
+  enforceSso: boolean;
+  requireMfaForAdmins: boolean;
+  sessionTtlDays: number;
+  authProvider: "password" | "better_auth" | "oidc_broker";
+  oidcIssuer: string;
+};
+
+type PrivilegedAccessForm = {
+  accessType: "support" | "break_glass";
+  subjectEmail: string;
+  subjectName: string;
+  reason: string;
+  reference: string;
+  requestedDurationMinutes: number;
+  approvalNote: string;
+  revokeReason: string;
+  reviewNote: string;
 };
 
 type ToastState = {
@@ -265,13 +314,7 @@ const WORKSPACE_MODULE_FIELDS: Array<{
   {
     key: "aiAutomation",
     label: "AI automation",
-    description: "Autonomous AI text and voice actions when policy allows.",
-    billing: "billable"
-  },
-  {
-    key: "venusOrchestration",
-    label: "Venus orchestration",
-    description: "Optional Venus-derived orchestration paths and runtime hooks.",
+    description: "Dexter-owned AI text and voice actions when policy allows.",
     billing: "billable"
   },
   {
@@ -286,6 +329,80 @@ function formatDate(value: string | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+}
+
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function getGrantReview(grant: PrivilegedAccessGrantRecord) {
+  const review = grant.metadata?.postEventReview;
+  return review && typeof review === "object" && !Array.isArray(review)
+    ? (review as { reviewedAt?: string; reviewNote?: string })
+    : null;
+}
+
+function getLatestGrantAlert(grant: PrivilegedAccessGrantRecord) {
+  const alerts = grant.metadata?.securityAlerts;
+  if (!Array.isArray(alerts)) return null;
+  const latest = alerts.at(-1);
+  return latest && typeof latest === "object" && !Array.isArray(latest)
+    ? (latest as { status?: string; event?: string; severity?: string; attemptedAt?: string })
+    : null;
+}
+
+function needsGrantPostEventReview(grant: PrivilegedAccessGrantRecord) {
+  return (grant.status === "expired" || grant.status === "revoked") && !getGrantReview(grant);
+}
+
+function mapPolicyToForm(policy: TenantSecurityPolicyRecord): TenantSecurityPolicyForm {
+  return {
+    allowedLoginDomains: policy.allowedLoginDomains.join(", "),
+    enforceSso: policy.enforceSso,
+    requireMfaForAdmins: policy.requireMfaForAdmins,
+    sessionTtlDays: policy.sessionTtlDays,
+    authProvider:
+      policy.authProvider === "better_auth" || policy.authProvider === "oidc_broker"
+        ? policy.authProvider
+        : "password",
+    oidcIssuer: policy.oidcIssuer ?? ""
+  };
+}
+
+function defaultPolicyForm(): TenantSecurityPolicyForm {
+  return {
+    allowedLoginDomains: "",
+    enforceSso: false,
+    requireMfaForAdmins: true,
+    sessionTtlDays: 14,
+    authProvider: "password",
+    oidcIssuer: ""
+  };
+}
+
+function defaultPrivilegedAccessForm(): PrivilegedAccessForm {
+  return {
+    accessType: "support",
+    subjectEmail: "",
+    subjectName: "",
+    reason: "",
+    reference: "",
+    requestedDurationMinutes: 60,
+    approvalNote: "",
+    revokeReason: "Access no longer required",
+    reviewNote: "Reviewed privileged access evidence."
+  };
+}
+
+function domainsFromPolicyForm(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim().toLowerCase().replace(/^@+/, ""))
+    .filter(Boolean);
 }
 
 function formatBytes(value: number | null | undefined) {
@@ -499,6 +616,18 @@ export default function AdminClient() {
   const [mailboxForm, setMailboxForm] = useState<MailboxForm>({ address: "", memberEmails: "" });
   const [sla, setSla] = useState<SlaForm>({ firstResponseMinutes: 120, resolutionMinutes: 1440 });
   const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
+  const [authSessions, setAuthSessions] = useState<AuthSessionRecord[]>([]);
+  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [mfaEnrollment, setMfaEnrollment] = useState<MfaEnrollmentResponse | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [tenantSecurityPolicy, setTenantSecurityPolicy] =
+    useState<TenantSecurityPolicyRecord | null>(null);
+  const [tenantSecurityPolicyForm, setTenantSecurityPolicyForm] =
+    useState<TenantSecurityPolicyForm>(defaultPolicyForm);
+  const [privilegedAccessGrants, setPrivilegedAccessGrants] = useState<PrivilegedAccessGrantRecord[]>([]);
+  const [privilegedAccessStats, setPrivilegedAccessStats] = useState<PrivilegedAccessStats | null>(null);
+  const [privilegedAccessForm, setPrivilegedAccessForm] =
+    useState<PrivilegedAccessForm>(defaultPrivilegedAccessForm);
 
   const [workspaceModules, setWorkspaceModules] = useState<WorkspaceModulesConfig | null>(null);
   const [workspaceUsage, setWorkspaceUsage] = useState<WorkspaceModuleUsageSummary | null>(null);
@@ -778,16 +907,35 @@ export default function AdminClient() {
   const loadOverview = useCallback(async () => {
     setLoading((prev) => ({ ...prev, overview: true }));
     try {
-      const [nextRoles, nextUsers, nextSla, nextSecurity] = await Promise.all([
+      const [
+        nextRoles,
+        nextUsers,
+        nextSla,
+        nextSecurity,
+        nextAuthSessions,
+        nextMfaStatus,
+        nextTenantSecurityPolicy,
+        nextPrivilegedAccess
+      ] = await Promise.all([
         listRoles(),
         listUsers(),
         getSlaConfig(),
-        getSecuritySnapshot()
+        getSecuritySnapshot(),
+        listAuthSessions(),
+        getMfaStatus(),
+        getTenantSecurityPolicy(),
+        listPrivilegedAccessGrants()
       ]);
       setRoles(nextRoles);
       setUsers(nextUsers);
       setSla(nextSla);
       setSecurity(nextSecurity);
+      setAuthSessions(nextAuthSessions);
+      setMfaStatus(nextMfaStatus);
+      setTenantSecurityPolicy(nextTenantSecurityPolicy);
+      setTenantSecurityPolicyForm(mapPolicyToForm(nextTenantSecurityPolicy));
+      setPrivilegedAccessGrants(nextPrivilegedAccess.grants);
+      setPrivilegedAccessStats(nextPrivilegedAccess.stats);
       setUserForm((prev) => ({ ...prev, roleId: prev.roleId || nextRoles[0]?.id || "" }));
       setLoaded((prev) => ({ ...prev, overview: true }));
     } catch (error) {
@@ -1252,6 +1400,19 @@ export default function AdminClient() {
     workspaceModules?.modules
   ]);
 
+  const workspaceUsageChartData = useMemo(
+    () =>
+      (workspaceUsage?.daily ?? []).map((entry) => ({
+        date: formatShortDate(entry.date),
+        Email: entry.modules.email,
+        WhatsApp: entry.modules.whatsapp,
+        Voice: entry.modules.voice,
+        AI: entry.modules.aiAutomation,
+        Webchat: entry.modules.vanillaWebchat
+      })),
+    [workspaceUsage?.daily]
+  );
+
   const attentionSignals = useMemo<AttentionSignal[]>(() => {
     if (activeTab === "overview") {
       return [
@@ -1527,6 +1688,131 @@ export default function AdminClient() {
       await loadOverview();
     } catch (error) {
       pushError(error, "Could not update SLA");
+    }
+  }
+
+  async function saveTenantSecurityPolicy() {
+    try {
+      const result = await updateTenantSecurityPolicy({
+        allowedLoginDomains: domainsFromPolicyForm(tenantSecurityPolicyForm.allowedLoginDomains),
+        enforceSso: tenantSecurityPolicyForm.enforceSso,
+        requireMfaForAdmins: tenantSecurityPolicyForm.requireMfaForAdmins,
+        sessionTtlDays: tenantSecurityPolicyForm.sessionTtlDays,
+        authProvider: tenantSecurityPolicyForm.authProvider,
+        oidcIssuer: tenantSecurityPolicyForm.oidcIssuer.trim() || null
+      });
+      setTenantSecurityPolicy(result.policy);
+      setTenantSecurityPolicyForm(mapPolicyToForm(result.policy));
+      pushSuccess("Security policy updated");
+      await Promise.all([
+        getSecuritySnapshot().then(setSecurity),
+        getMfaStatus().then(setMfaStatus)
+      ]);
+    } catch (error) {
+      pushError(error, "Could not update security policy");
+    }
+  }
+
+  async function refreshPrivilegedAccess() {
+    const payload = await listPrivilegedAccessGrants();
+    setPrivilegedAccessGrants(payload.grants);
+    setPrivilegedAccessStats(payload.stats);
+  }
+
+  async function createPrivilegedAccessRequest() {
+    if (!privilegedAccessForm.subjectEmail || privilegedAccessForm.reason.trim().length < 12) {
+      setToast({ tone: "error", message: "Add a subject email and a clear access reason." });
+      return;
+    }
+    try {
+      await requestPrivilegedAccessGrant({
+        accessType: privilegedAccessForm.accessType,
+        subjectEmail: privilegedAccessForm.subjectEmail,
+        subjectName: privilegedAccessForm.subjectName || null,
+        reason: privilegedAccessForm.reason,
+        reference: privilegedAccessForm.reference || null,
+        requestedDurationMinutes: privilegedAccessForm.requestedDurationMinutes
+      });
+      setPrivilegedAccessForm(defaultPrivilegedAccessForm());
+      await refreshPrivilegedAccess();
+      pushSuccess("Privileged access request recorded");
+    } catch (error) {
+      pushError(error, "Could not record privileged access request");
+    }
+  }
+
+  async function approvePrivilegedGrant(grantId: string) {
+    try {
+      await approvePrivilegedAccessGrant(grantId, privilegedAccessForm.approvalNote || null);
+      setPrivilegedAccessForm((prev) => ({ ...prev, approvalNote: "" }));
+      await refreshPrivilegedAccess();
+      pushSuccess("Privileged access approved");
+    } catch (error) {
+      pushError(error, "Could not approve privileged access");
+    }
+  }
+
+  async function revokePrivilegedGrant(grantId: string) {
+    try {
+      await revokePrivilegedAccessGrant(grantId, privilegedAccessForm.revokeReason || "Access revoked");
+      setPrivilegedAccessForm((prev) => ({ ...prev, revokeReason: "Access no longer required" }));
+      await refreshPrivilegedAccess();
+      pushSuccess("Privileged access revoked");
+    } catch (error) {
+      pushError(error, "Could not revoke privileged access");
+    }
+  }
+
+  async function reviewPrivilegedGrant(grantId: string) {
+    try {
+      await reviewPrivilegedAccessGrant(grantId, privilegedAccessForm.reviewNote);
+      setPrivilegedAccessForm((prev) => ({ ...prev, reviewNote: "Reviewed privileged access evidence." }));
+      await refreshPrivilegedAccess();
+      pushSuccess("Privileged access reviewed");
+    } catch (error) {
+      pushError(error, "Could not review privileged access");
+    }
+  }
+
+  async function revokeSession(sessionId: string) {
+    try {
+      const result = await revokeAuthSession(sessionId);
+      const nextSessions = await listAuthSessions().catch(() => []);
+      setAuthSessions(nextSessions);
+      pushSuccess(result.current ? "Current session revoked" : "Session revoked");
+    } catch (error) {
+      pushError(error, "Could not revoke session");
+    }
+  }
+
+  async function startMfaSetup() {
+    try {
+      const enrollment = await startMfaEnrollment("6esk admin");
+      setMfaEnrollment(enrollment);
+      setMfaCode("");
+      pushSuccess("MFA setup started");
+    } catch (error) {
+      pushError(error, "Could not start MFA setup");
+    }
+  }
+
+  async function verifyMfaSetup() {
+    if (!mfaEnrollment) {
+      setToast({ tone: "error", message: "Start MFA setup first." });
+      return;
+    }
+    try {
+      await verifyMfaEnrollment({
+        enrollmentToken: mfaEnrollment.enrollmentToken,
+        code: mfaCode
+      });
+      setMfaEnrollment(null);
+      setMfaCode("");
+      setMfaStatus(await getMfaStatus());
+      await loadOverview();
+      pushSuccess("MFA factor verified");
+    } catch (error) {
+      pushError(error, "Could not verify MFA code");
     }
   }
 
@@ -2299,6 +2585,11 @@ export default function AdminClient() {
                       <Metric label="Agent Integrations" value={security?.agentIntegrationStats.total ?? 0} />
                       <Metric label="Encrypted Agent Secrets" value={security?.agentIntegrationStats.encrypted ?? 0} />
                       <Metric label="Encrypted WA Tokens" value={security?.whatsappTokenStats.encrypted ?? 0} />
+                      <Metric label="Verified MFA Factors" value={security?.mfaStats.activeFactors ?? 0} />
+                      <Metric
+                        label="Admins Missing MFA"
+                        value={security?.mfaStats.privilegedUsersMissingMfa ?? 0}
+                      />
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Badge variant={security?.agentSecretKeyConfigured ? "secondary" : "outline"}>
@@ -2313,10 +2604,613 @@ export default function AdminClient() {
                       <Badge variant="outline">
                         Missing WA tokens {security?.whatsappTokenStats.missing ?? 0}
                       </Badge>
+                      <Badge variant={security?.authIdentity.packageInstalled ? "secondary" : "outline"}>
+                        Better Auth {security?.authIdentity.packageInstalled ? "installed" : "missing"}
+                      </Badge>
+                      <Badge variant={security?.authIdentity.ready ? "secondary" : "outline"}>
+                        Identity bridge {security?.authIdentity.ready ? "ready" : "gated"}
+                      </Badge>
+                      <Badge
+                        variant={
+                          security && security.mfaStats.privilegedUsersMissingMfa === 0 ? "secondary" : "outline"
+                        }
+                      >
+                        Privileged MFA coverage{" "}
+                        {security && security.mfaStats.privilegedUsersMissingMfa === 0 ? "complete" : "incomplete"}
+                      </Badge>
                     </div>
                     <div className="rounded-lg border border-neutral-200 p-3 text-xs text-neutral-600 space-y-2">
                       <p>Admin allowlist: {(security?.adminAllowlist ?? []).join(", ") || "not configured"}</p>
                       <p>Agent allowlist: {(security?.agentAllowlist ?? []).join(", ") || "not configured"}</p>
+                      <p>
+                        Auth providers:{" "}
+                        {(security?.authIdentity.providers ?? [])
+                          .filter((provider) => provider.configured)
+                          .map((provider) => provider.id)
+                          .join(", ") || "none configured"}
+                      </p>
+                      <p>
+                        Auth cache: {security?.authIdentity.cache.provider ?? "none"}{" "}
+                        {security?.authIdentity.cache.configured ? "configured" : "not configured"}
+                      </p>
+                      <p>
+                        Auth policy: MFA admins{" "}
+                        {security?.authIdentity.policy.requireMfaForAdmins ? "required" : "not required"}, session
+                        tracking {security?.authIdentity.policy.sessionDeviceTracking ? "enabled" : "disabled"}
+                      </p>
+                      {(security?.authIdentity.blockers ?? []).length > 0 ? (
+                        <p>Auth blockers: {security?.authIdentity.blockers.join(" ")}</p>
+                      ) : null}
+                    </div>
+                    <div className="rounded-lg border border-neutral-200">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">Tenant security policy</p>
+                          <p className="text-xs text-neutral-500">
+                            {tenantSecurityPolicy
+                              ? `${tenantSecurityPolicy.tenantKey} / ${tenantSecurityPolicy.workspaceKey}`
+                              : "Policy not loaded"}
+                          </p>
+                        </div>
+                        <Button type="button" size="sm" onClick={() => void saveTenantSecurityPolicy()}>
+                          Save policy
+                        </Button>
+                      </div>
+                      <div className="grid gap-3 p-3">
+                        <div className="grid gap-2">
+                          <label className="text-xs font-medium text-neutral-600" htmlFor="allowed-login-domains">
+                            Allowed login domains
+                          </label>
+                          <Textarea
+                            id="allowed-login-domains"
+                            rows={2}
+                            placeholder="example.com, acme.test"
+                            value={tenantSecurityPolicyForm.allowedLoginDomains}
+                            onChange={(event) =>
+                              setTenantSecurityPolicyForm((prev) => ({
+                                ...prev,
+                                allowedLoginDomains: event.target.value
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="auth-provider">
+                              Auth provider
+                            </label>
+                            <select
+                              id="auth-provider"
+                              className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                              value={tenantSecurityPolicyForm.authProvider}
+                              onChange={(event) =>
+                                setTenantSecurityPolicyForm((prev) => ({
+                                  ...prev,
+                                  authProvider: event.target.value as TenantSecurityPolicyForm["authProvider"]
+                                }))
+                              }
+                            >
+                              <option value="password">Password</option>
+                              <option value="better_auth">Google / Microsoft</option>
+                              <option value="oidc_broker">OIDC broker</option>
+                            </select>
+                          </div>
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="session-ttl-days">
+                              Session lifetime days
+                            </label>
+                            <Input
+                              id="session-ttl-days"
+                              type="number"
+                              min={1}
+                              max={90}
+                              value={tenantSecurityPolicyForm.sessionTtlDays}
+                              onChange={(event) =>
+                                setTenantSecurityPolicyForm((prev) => ({
+                                  ...prev,
+                                  sessionTtlDays: Number(event.target.value)
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        {tenantSecurityPolicyForm.authProvider === "oidc_broker" ? (
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="oidc-issuer">
+                              OIDC issuer
+                            </label>
+                            <Input
+                              id="oidc-issuer"
+                              placeholder="https://idp.example.com"
+                              value={tenantSecurityPolicyForm.oidcIssuer}
+                              onChange={(event) =>
+                                setTenantSecurityPolicyForm((prev) => ({
+                                  ...prev,
+                                  oidcIssuer: event.target.value
+                                }))
+                              }
+                            />
+                          </div>
+                        ) : null}
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="flex items-start gap-3 rounded-lg border border-neutral-200 p-3 text-sm">
+                            <Checkbox
+                              checked={tenantSecurityPolicyForm.enforceSso}
+                              onCheckedChange={(checked) =>
+                                setTenantSecurityPolicyForm((prev) => ({
+                                  ...prev,
+                                  enforceSso: checked === true
+                                }))
+                              }
+                            />
+                            <span>
+                              <span className="block font-medium text-neutral-900">Enforce SSO</span>
+                              <span className="block text-xs text-neutral-500">Requires a federated provider.</span>
+                            </span>
+                          </label>
+                          <label className="flex items-start gap-3 rounded-lg border border-neutral-200 p-3 text-sm">
+                            <Checkbox
+                              checked={tenantSecurityPolicyForm.requireMfaForAdmins}
+                              onCheckedChange={(checked) =>
+                                setTenantSecurityPolicyForm((prev) => ({
+                                  ...prev,
+                                  requireMfaForAdmins: checked === true
+                                }))
+                              }
+                            />
+                            <span>
+                              <span className="block font-medium text-neutral-900">Require admin MFA</span>
+                              <span className="block text-xs text-neutral-500">Applies to privileged sign-ins.</span>
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">Privileged access</p>
+                          <p className="text-xs text-neutral-500">Support and break-glass access grants.</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            refreshPrivilegedAccess().catch((error) =>
+                              pushError(error, "Could not refresh privileged access")
+                            )
+                          }
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                      <div className="grid gap-3 p-3">
+                        <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
+                          <Metric label="Pending" value={privilegedAccessStats?.pending ?? 0} />
+                          <Metric label="Active" value={privilegedAccessStats?.active ?? 0} />
+                          <Metric label="Break-glass" value={privilegedAccessStats?.activeBreakGlass ?? 0} />
+                          <Metric label="Expired" value={privilegedAccessStats?.expired ?? 0} />
+                          <Metric label="Revoked" value={privilegedAccessStats?.revoked ?? 0} />
+                          <Metric label="Needs review" value={privilegedAccessStats?.needsPostEventReview ?? 0} />
+                        </div>
+                        <div className="grid gap-3 rounded-lg border border-neutral-200 p-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-subject-email">
+                                Subject email
+                              </label>
+                              <Input
+                                id="privileged-subject-email"
+                                type="email"
+                                value={privilegedAccessForm.subjectEmail}
+                                onChange={(event) =>
+                                  setPrivilegedAccessForm((prev) => ({
+                                    ...prev,
+                                    subjectEmail: event.target.value
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-subject-name">
+                                Subject name
+                              </label>
+                              <Input
+                                id="privileged-subject-name"
+                                value={privilegedAccessForm.subjectName}
+                                onChange={(event) =>
+                                  setPrivilegedAccessForm((prev) => ({
+                                    ...prev,
+                                    subjectName: event.target.value
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-access-type">
+                                Access type
+                              </label>
+                              <select
+                                id="privileged-access-type"
+                                className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
+                                value={privilegedAccessForm.accessType}
+                                onChange={(event) =>
+                                  setPrivilegedAccessForm((prev) => ({
+                                    ...prev,
+                                    accessType: event.target.value as PrivilegedAccessForm["accessType"],
+                                    requestedDurationMinutes:
+                                      event.target.value === "break_glass"
+                                        ? Math.min(prev.requestedDurationMinutes, 60)
+                                        : prev.requestedDurationMinutes
+                                  }))
+                                }
+                              >
+                                <option value="support">Support</option>
+                                <option value="break_glass">Break-glass</option>
+                              </select>
+                            </div>
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-duration">
+                                Duration minutes
+                              </label>
+                              <Input
+                                id="privileged-duration"
+                                type="number"
+                                min={5}
+                                max={privilegedAccessForm.accessType === "break_glass" ? 60 : 480}
+                                value={privilegedAccessForm.requestedDurationMinutes}
+                                onChange={(event) =>
+                                  setPrivilegedAccessForm((prev) => ({
+                                    ...prev,
+                                    requestedDurationMinutes: Number(event.target.value)
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-reference">
+                                Reference
+                              </label>
+                              <Input
+                                id="privileged-reference"
+                                placeholder="Incident or ticket"
+                                value={privilegedAccessForm.reference}
+                                onChange={(event) =>
+                                  setPrivilegedAccessForm((prev) => ({
+                                    ...prev,
+                                    reference: event.target.value
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-reason">
+                              Reason
+                            </label>
+                            <Textarea
+                              id="privileged-reason"
+                              rows={2}
+                              value={privilegedAccessForm.reason}
+                              onChange={(event) =>
+                                setPrivilegedAccessForm((prev) => ({
+                                  ...prev,
+                                  reason: event.target.value
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="flex justify-end">
+                            <Button type="button" onClick={() => void createPrivilegedAccessRequest()}>
+                              Request access
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-approval-note">
+                              Approval note
+                            </label>
+                            <Input
+                              id="privileged-approval-note"
+                              value={privilegedAccessForm.approvalNote}
+                              onChange={(event) =>
+                                setPrivilegedAccessForm((prev) => ({
+                                  ...prev,
+                                  approvalNote: event.target.value
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-revoke-reason">
+                              Revoke reason
+                            </label>
+                            <Input
+                              id="privileged-revoke-reason"
+                              value={privilegedAccessForm.revokeReason}
+                              onChange={(event) =>
+                                setPrivilegedAccessForm((prev) => ({
+                                  ...prev,
+                                  revokeReason: event.target.value
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <label className="text-xs font-medium text-neutral-600" htmlFor="privileged-review-note">
+                              Review note
+                            </label>
+                            <Input
+                              id="privileged-review-note"
+                              value={privilegedAccessForm.reviewNote}
+                              onChange={(event) =>
+                                setPrivilegedAccessForm((prev) => ({
+                                  ...prev,
+                                  reviewNote: event.target.value
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto rounded-lg border border-neutral-200">
+                          <table className="min-w-full text-left text-xs">
+                            <thead className="text-neutral-500">
+                              <tr>
+                                <th className="px-3 py-2 font-medium">Subject</th>
+                                <th className="px-3 py-2 font-medium">Type</th>
+                                <th className="px-3 py-2 font-medium">Status</th>
+                                <th className="px-3 py-2 font-medium">Expires</th>
+                                <th className="px-3 py-2 font-medium">Alert</th>
+                                <th className="px-3 py-2 font-medium">Review</th>
+                                <th className="px-3 py-2 font-medium">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-neutral-100">
+                              {privilegedAccessGrants.length === 0 ? (
+                                <tr>
+                                  <td className="px-3 py-3 text-neutral-500" colSpan={7}>
+                                    No privileged access grants.
+                                  </td>
+                                </tr>
+                              ) : (
+                                privilegedAccessGrants.map((grant) => {
+                                  const latestAlert = getLatestGrantAlert(grant);
+                                  const review = getGrantReview(grant);
+                                  return (
+                                    <tr key={grant.id}>
+                                      <td className="px-3 py-2">
+                                        <div className="font-medium text-neutral-900">
+                                          {grant.subjectName || grant.subjectEmail}
+                                        </div>
+                                        <div className="text-neutral-500">{grant.subjectEmail}</div>
+                                        <div className="text-neutral-400">{grant.reference || "No reference"}</div>
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <Badge variant={grant.accessType === "break_glass" ? "outline" : "secondary"}>
+                                          {grant.accessType === "break_glass" ? "Break-glass" : "Support"}
+                                        </Badge>
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <Badge variant={grant.status === "active" ? "secondary" : "outline"}>
+                                          {grant.status}
+                                        </Badge>
+                                      </td>
+                                      <td className="px-3 py-2">{formatDate(grant.expiresAt)}</td>
+                                      <td className="px-3 py-2">
+                                        {latestAlert ? (
+                                          <div className="space-y-1">
+                                            <Badge
+                                              variant={latestAlert.status === "delivered" ? "secondary" : "outline"}
+                                            >
+                                              {latestAlert.status ?? "unknown"}
+                                            </Badge>
+                                            <div className="text-neutral-400">
+                                              {latestAlert.event ?? "alert"} · {formatDate(latestAlert.attemptedAt)}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-neutral-400">-</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {review ? (
+                                          <div className="space-y-1">
+                                            <Badge variant="secondary">reviewed</Badge>
+                                            <div className="text-neutral-400">{formatDate(review.reviewedAt)}</div>
+                                          </div>
+                                        ) : needsGrantPostEventReview(grant) ? (
+                                          <Badge variant="outline">required</Badge>
+                                        ) : (
+                                          <span className="text-neutral-400">-</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <div className="flex flex-wrap gap-2">
+                                          {grant.status === "pending" ? (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => void approvePrivilegedGrant(grant.id)}
+                                            >
+                                              Approve
+                                            </Button>
+                                          ) : null}
+                                          {grant.status === "pending" || grant.status === "active" ? (
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => void revokePrivilegedGrant(grant.id)}
+                                            >
+                                              Revoke
+                                            </Button>
+                                          ) : null}
+                                          {needsGrantPostEventReview(grant) ? (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => void reviewPrivilegedGrant(grant.id)}
+                                            >
+                                              Review
+                                            </Button>
+                                          ) : null}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">MFA factors</p>
+                          <p className="text-xs text-neutral-500">
+                            Admin policy {mfaStatus?.required ? "requires" : "does not require"} app MFA.
+                          </p>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void startMfaSetup()}>
+                          Set up TOTP
+                        </Button>
+                      </div>
+                      <div className="space-y-3 p-3">
+                        {mfaEnrollment ? (
+                          <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="mfa-secret">
+                                Setup key
+                              </label>
+                              <Input id="mfa-secret" readOnly value={mfaEnrollment.secretBase32} />
+                            </div>
+                            <div className="grid gap-2">
+                              <label className="text-xs font-medium text-neutral-600" htmlFor="mfa-uri">
+                                OTPAuth URI
+                              </label>
+                              <Textarea id="mfa-uri" readOnly value={mfaEnrollment.otpauthUrl} rows={3} />
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                              <Input
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                placeholder="6-digit code"
+                                value={mfaCode}
+                                onChange={(event) => setMfaCode(event.target.value)}
+                              />
+                              <Button type="button" onClick={() => void verifyMfaSetup()}>
+                                Verify
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {(mfaStatus?.factors ?? []).length === 0 ? (
+                          <p className="text-xs text-neutral-500">No MFA factors enrolled for this user.</p>
+                        ) : (
+                          <div className="grid gap-2">
+                            {mfaStatus?.factors.map((factor) => (
+                              <div
+                                key={factor.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 p-3 text-xs"
+                              >
+                                <div>
+                                  <p className="font-medium text-neutral-900">{factor.label ?? factor.factor_type}</p>
+                                  <p className="text-neutral-500">
+                                    Created {formatDate(factor.created_at)}
+                                    {factor.last_used_at ? `, last used ${formatDate(factor.last_used_at)}` : ""}
+                                  </p>
+                                </div>
+                                <Badge variant={factor.disabled_at ? "outline" : "secondary"}>
+                                  {factor.disabled_at ? "Disabled" : "Active"}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-neutral-200">
+                      <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">Active sessions</p>
+                          <p className="text-xs text-neutral-500">Provider, expiry, and device fingerprint status.</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            listAuthSessions()
+                              .then(setAuthSessions)
+                              .catch((error) => pushError(error, "Could not refresh sessions"))
+                          }
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="text-neutral-500">
+                            <tr>
+                              <th className="px-3 py-2 font-medium">Provider</th>
+                              <th className="px-3 py-2 font-medium">Created</th>
+                              <th className="px-3 py-2 font-medium">Expires</th>
+                              <th className="px-3 py-2 font-medium">Device</th>
+                              <th className="px-3 py-2 font-medium">Status</th>
+                              <th className="px-3 py-2 font-medium">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-100">
+                            {authSessions.length === 0 ? (
+                              <tr>
+                                <td className="px-3 py-3 text-neutral-500" colSpan={6}>
+                                  No sessions loaded.
+                                </td>
+                              </tr>
+                            ) : (
+                              authSessions.map((session) => (
+                                <tr key={session.id}>
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span>{session.auth_provider}</span>
+                                      {session.current ? <Badge variant="secondary">Current</Badge> : null}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-neutral-600">{formatDate(session.created_at)}</td>
+                                  <td className="px-3 py-2 text-neutral-600">{formatDate(session.expires_at)}</td>
+                                  <td className="px-3 py-2 text-neutral-600">
+                                    {session.has_device_fingerprint ? "Tracked" : "Untracked"}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <Badge variant={session.revoked_at ? "outline" : "secondary"}>
+                                      {session.revoked_at ? "Revoked" : "Active"}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={Boolean(session.revoked_at)}
+                                      onClick={() => void revokeSession(session.id)}
+                                    >
+                                      Revoke
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -2388,6 +3282,44 @@ export default function AdminClient() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {workspaceUsageChartData.length ? (
+                    <div className="h-56 rounded-lg border border-neutral-200 p-3">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={workspaceUsageChartData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
+                          <XAxis
+                            dataKey="date"
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fill: "#737373" }}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fill: "#737373" }}
+                            width={34}
+                          />
+                          <Tooltip
+                            cursor={{ fill: "rgba(17, 24, 39, 0.06)" }}
+                            contentStyle={{
+                              borderRadius: 8,
+                              borderColor: "#d4d4d4",
+                              fontSize: 12
+                            }}
+                          />
+                          <Bar dataKey="Email" stackId="usage" fill="#111827" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="WhatsApp" stackId="usage" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="Voice" stackId="usage" fill="#059669" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="AI" stackId="usage" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="Webchat" stackId="usage" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-neutral-300 p-4 text-sm text-neutral-500">
+                      No usage events recorded for this window.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {(workspaceUsage?.modules ?? []).map((moduleUsage) => {
                       const moduleField = WORKSPACE_MODULE_FIELDS.find(
@@ -2436,10 +3368,18 @@ export default function AdminClient() {
                       );
                     })}
                   </div>
-                  <p className="text-xs text-neutral-500">
-                    Generated {formatDate(workspaceUsage?.generatedAt)} for the last{" "}
-                    {workspaceUsage?.windowDays ?? 30} days.
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-neutral-500">
+                      Generated {formatDate(workspaceUsage?.generatedAt)} for the last{" "}
+                      {workspaceUsage?.windowDays ?? 30} days.
+                    </p>
+                    <Button asChild variant="outline" size="sm">
+                      <a href={getWorkspaceUsageExportUrl(workspaceUsage?.windowDays ?? 30, "csv")}>
+                        <Download />
+                        Export CSV
+                      </a>
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -2464,14 +3404,14 @@ export default function AdminClient() {
                         onChange={(event) =>
                           setMailboxForm((previous) => ({ ...previous, address: event.target.value }))
                         }
-                        placeholder="support@6ex.co.za"
+                        placeholder="support@example.com"
                       />
                       <Input
                         value={mailboxForm.memberEmails}
                         onChange={(event) =>
                           setMailboxForm((previous) => ({ ...previous, memberEmails: event.target.value }))
                         }
-                        placeholder="agent1@6ex.co.za, agent2@6ex.co.za"
+                        placeholder="agent1@example.com, agent2@example.com"
                       />
                     </div>
                     <div className="flex gap-2">
@@ -3927,8 +4867,8 @@ export default function AdminClient() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Profile Lookup</CardTitle>
-                  <CardDescription>Operational lookup quality over time.</CardDescription>
+                  <CardTitle>External Profiles</CardTitle>
+                  <CardDescription>Profile metadata supplied by tenant webchat and profile plugs.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2">
@@ -3943,7 +4883,7 @@ export default function AdminClient() {
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
                     <Metric label="Total" value={profile?.summary.total ?? 0} />
                     <Metric label="Matched" value={profile?.summary.matched ?? 0} />
-                    <Metric label="Cache" value={profile?.summary.matchedCache ?? 0} />
+                    <Metric label="Linked" value={profile?.summary.matchedCache ?? 0} />
                     <Metric label="Missed" value={profile?.summary.missed ?? 0} />
                     <Metric label="Errors" value={profile?.summary.errored ?? 0} />
                     <Metric label="Timeout" value={profile?.summary.timeoutErrors ?? 0} />

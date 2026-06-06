@@ -40,20 +40,40 @@ export type WorkspaceModuleFlags = {
   whatsapp: boolean;
   voice: boolean;
   aiAutomation: boolean;
-  venusOrchestration: boolean;
   vanillaWebchat: boolean;
 };
 
+export type WorkspaceModuleStatus = "active" | "disabled" | "suspended" | "downgrade_pending";
+
+export type WorkspaceModuleEntitlement = {
+  enabled: boolean;
+  status: WorkspaceModuleStatus;
+  planKey: string | null;
+  billingMode: "billable" | "included" | "trial" | "none" | null;
+  reason: string | null;
+  effectiveAt: string | null;
+};
+
 export type WorkspaceModulesConfig = {
+  tenantKey?: string;
   workspaceKey: string;
   updatedAt: string | null;
   modules: WorkspaceModuleFlags;
+  entitlements?: Record<keyof WorkspaceModuleFlags, WorkspaceModuleEntitlement>;
+  source?: "database" | "default" | "fail_closed";
+  failureReason?: "database_error" | "missing_configuration" | null;
 };
 
 export type WorkspaceModuleUsageSummary = {
   workspaceKey: string;
   windowDays: number;
   generatedAt: string;
+  daily: Array<{
+    date: string;
+    totalQuantity: number;
+    eventCount: number;
+    modules: Record<keyof WorkspaceModuleFlags, number>;
+  }>;
   modules: Array<{
     moduleKey: keyof WorkspaceModuleFlags;
     totalQuantity: number;
@@ -440,6 +460,22 @@ export type TenantExportObjectRef = {
   sizeBytes?: number | null;
 };
 
+export type TenantExportObjectPayload = {
+  ref: TenantExportObjectRef;
+  encoding: "base64";
+  contentType: string | null;
+  sizeBytes: number;
+  sha256: string;
+  base64: string;
+};
+
+export type TenantExportObjectPayloadSkip = {
+  ref: TenantExportObjectRef;
+  reason: "unsafe_key" | "exceeds_limit" | "fetch_failed";
+  detail?: string;
+  sizeBytes?: number | null;
+};
+
 export type TenantExportBundle = {
   formatVersion: "tenant-export.v1";
   exportId: string;
@@ -455,7 +491,62 @@ export type TenantExportBundle = {
     redactedColumnsBySection: Record<string, string[]>;
   };
   objectStorageManifest: TenantExportObjectRef[];
+  objectStoragePayloads: TenantExportObjectPayload[];
+  objectStoragePayloadSkips: TenantExportObjectPayloadSkip[];
+  objectStoragePayloadSummary: {
+    requested: boolean;
+    included: number;
+    skipped: number;
+    maxBytesPerObject: number;
+  };
   sections: TenantExportSection[];
+};
+
+export type TenantOffboardingMode = "anonymize" | "delete";
+
+export type TenantOffboardingPlannedAction =
+  | "anonymize"
+  | "delete_ephemeral"
+  | "deactivate"
+  | "retain_audit_evidence"
+  | "retain_usage_evidence"
+  | "delete_requires_rehearsal";
+
+export type TenantOffboardingTablePlan = {
+  key: string;
+  source: string;
+  scope: "tenant" | "workspace";
+  rowCount: number;
+  plannedAction: TenantOffboardingPlannedAction;
+  note?: string;
+};
+
+export type TenantOffboardingMutationResult = {
+  key: string;
+  source: string;
+  affectedRows: number;
+  action: TenantOffboardingPlannedAction;
+};
+
+export type TenantOffboardingReport = {
+  formatVersion: "tenant-offboarding.v1";
+  operationId: string;
+  generatedAt: string;
+  tenantKey: string;
+  workspaceKey: string;
+  mode: TenantOffboardingMode;
+  dryRun: boolean;
+  confirmationRequired: string;
+  totalRows: number;
+  tableCount: number;
+  blockers: string[];
+  warnings: string[];
+  residualRisks: string[];
+  legalHold: {
+    knowledgeDocumentCount: number;
+  };
+  tables: TenantOffboardingTablePlan[];
+  mutations: TenantOffboardingMutationResult[];
 };
 
 export type AiGuardEventRecord = {
@@ -589,6 +680,132 @@ export type SecuritySnapshot = {
     unencrypted: number;
     missing: number;
   };
+  mfaStats: {
+    activeFactors: number;
+    privilegedUsers: number;
+    privilegedUsersMissingMfa: number;
+  };
+  authIdentity: {
+    packageInstalled: boolean;
+    authProvider: string;
+    enabled: boolean;
+    routePath: string;
+    routeEnabled: boolean;
+    dbBridgeReady: boolean;
+    ready: boolean;
+    blockers: string[];
+    providers: Array<{
+      id: "google" | "microsoft" | "oidc" | string;
+      configured: boolean;
+      missing: string[];
+    }>;
+    cache: {
+      provider: string;
+      required: boolean;
+      configured: boolean;
+    };
+    policy: {
+      requireMfaForAdmins: boolean;
+      sessionDeviceTracking: boolean;
+      allowedEmailDomains: string[];
+    };
+  };
+};
+
+export type AuthSessionRecord = {
+  id: string;
+  auth_provider: string;
+  created_at: string;
+  last_seen_at: string | null;
+  expires_at: string;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+  has_device_fingerprint: boolean;
+  current: boolean;
+};
+
+export type MfaFactorRecord = {
+  id: string;
+  factor_type: string;
+  label: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  disabled_at: string | null;
+};
+
+export type MfaStatus = {
+  required: boolean;
+  factors: MfaFactorRecord[];
+};
+
+export type MfaEnrollmentResponse = {
+  enrollmentToken: string;
+  otpauthUrl: string;
+  secretBase32: string;
+  expiresAt: string;
+};
+
+export type TenantSecurityPolicyRecord = {
+  tenantKey: string;
+  workspaceKey: string;
+  allowedLoginDomains: string[];
+  enforceSso: boolean;
+  requireMfaForAdmins: boolean;
+  sessionTtlDays: number;
+  authProvider: "password" | "better_auth" | "oidc_broker" | string;
+  oidcIssuer: string | null;
+};
+
+export type TenantSecurityPolicyInput = {
+  allowedLoginDomains: string[];
+  enforceSso: boolean;
+  requireMfaForAdmins: boolean;
+  sessionTtlDays: number;
+  authProvider: "password" | "better_auth" | "oidc_broker";
+  oidcIssuer?: string | null;
+};
+
+export type PrivilegedAccessGrantRecord = {
+  id: string;
+  tenantKey: string;
+  workspaceKey: string;
+  accessType: "support" | "break_glass";
+  status: "pending" | "active" | "revoked" | "expired" | "denied";
+  subjectEmail: string;
+  subjectName: string | null;
+  requestedByUserId: string | null;
+  approvedByUserId: string | null;
+  revokedByUserId: string | null;
+  reason: string;
+  reference: string | null;
+  approvalNote: string | null;
+  revokeReason: string | null;
+  requestedDurationMinutes: number;
+  requestedAt: string;
+  approvedAt: string | null;
+  revokedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+};
+
+export type PrivilegedAccessStats = {
+  pending: number;
+  active: number;
+  activeBreakGlass: number;
+  expired: number;
+  revoked: number;
+  needsPostEventReview?: number;
+};
+
+export type PrivilegedAccessGrantInput = {
+  accessType: "support" | "break_glass";
+  subjectEmail: string;
+  subjectName?: string | null;
+  reason: string;
+  reference?: string | null;
+  requestedDurationMinutes: number;
 };
 
 export type InboundFailureReason = {
@@ -921,6 +1138,14 @@ export function getWorkspaceModuleUsage(days = 30) {
   return apiFetch<{ summary: WorkspaceModuleUsageSummary }>(
     `/api/admin/workspace/usage?days=${days}`
   );
+}
+
+export function getWorkspaceUsageExportUrl(days = 30, format: "csv" | "json" = "csv") {
+  const params = new URLSearchParams({
+    days: String(days),
+    format
+  });
+  return `/api/admin/workspace/usage/export?${params.toString()}`;
 }
 
 export async function listTags(signal?: AbortSignal) {
@@ -1271,7 +1496,11 @@ export async function getKnowledgeIngestionReadiness() {
   return payload.readiness;
 }
 
-export async function exportTenantDataBundle(input?: { limitPerSection?: number }) {
+export async function exportTenantDataBundle(input?: {
+  limitPerSection?: number;
+  includeObjectPayloads?: boolean;
+  objectPayloadMaxBytes?: number;
+}) {
   const payload = await apiFetch<{ status: string; export: TenantExportBundle }>(
     "/api/admin/tenant/export",
     {
@@ -1281,6 +1510,23 @@ export async function exportTenantDataBundle(input?: { limitPerSection?: number 
     }
   );
   return payload.export;
+}
+
+export async function runTenantOffboarding(input?: {
+  mode?: TenantOffboardingMode;
+  dryRun?: boolean;
+  confirmation?: string;
+  reason?: string;
+}) {
+  const payload = await apiFetch<{ status: string; offboarding: TenantOffboardingReport }>(
+    "/api/admin/tenant/offboarding",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {})
+    }
+  );
+  return payload.offboarding;
 }
 
 export async function previewKnowledgeRetention(limit = 100) {
@@ -1380,6 +1626,102 @@ export function getProfileLookupMetrics(days = 14) {
 
 export function getSecuritySnapshot() {
   return apiFetch<SecuritySnapshot>("/api/admin/security");
+}
+
+export async function listAuthSessions() {
+  const payload = await apiFetch<{ sessions: AuthSessionRecord[] }>("/api/auth/sessions");
+  return payload.sessions ?? [];
+}
+
+export function revokeAuthSession(sessionId: string) {
+  return apiFetch<{ status: string; current: boolean }>("/api/auth/sessions", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId })
+  });
+}
+
+export function getMfaStatus() {
+  return apiFetch<MfaStatus>("/api/auth/mfa/enroll");
+}
+
+export async function getTenantSecurityPolicy() {
+  const payload = await apiFetch<{ policy: TenantSecurityPolicyRecord }>("/api/admin/security/policy");
+  return payload.policy;
+}
+
+export function updateTenantSecurityPolicy(input: TenantSecurityPolicyInput) {
+  return apiFetch<{ status: string; policy: TenantSecurityPolicyRecord }>("/api/admin/security/policy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function listPrivilegedAccessGrants(limit = 25) {
+  return apiFetch<{ grants: PrivilegedAccessGrantRecord[]; stats: PrivilegedAccessStats }>(
+    `/api/admin/security/privileged-access?limit=${limit}`
+  );
+}
+
+export function requestPrivilegedAccessGrant(input: PrivilegedAccessGrantInput) {
+  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
+    "/api/admin/security/privileged-access",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function approvePrivilegedAccessGrant(grantId: string, approvalNote?: string | null) {
+  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
+    "/api/admin/security/privileged-access",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve", grantId, approvalNote })
+    }
+  );
+}
+
+export function revokePrivilegedAccessGrant(grantId: string, revokeReason: string) {
+  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
+    "/api/admin/security/privileged-access",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "revoke", grantId, revokeReason })
+    }
+  );
+}
+
+export function reviewPrivilegedAccessGrant(grantId: string, reviewNote: string) {
+  return apiFetch<{ status: string; grant: PrivilegedAccessGrantRecord }>(
+    "/api/admin/security/privileged-access",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "review", grantId, reviewNote })
+    }
+  );
+}
+
+export function startMfaEnrollment(label?: string) {
+  return apiFetch<MfaEnrollmentResponse>("/api/auth/mfa/enroll", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label })
+  });
+}
+
+export function verifyMfaEnrollment(input: { enrollmentToken: string; code: string }) {
+  return apiFetch<{ status: string; factorId: string | null }>("/api/auth/mfa/enroll/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
 }
 
 export function getInboundMetrics(hours = 24) {

@@ -144,14 +144,15 @@ export async function PATCH(
   fields.push("updated_at = now()");
   values.push(ticketId);
 
-  await db.query(
-    `UPDATE tickets
-     SET ${fields.join(", ")}
-     WHERE id = $${index}
-       AND tenant_key = $${index + 1}
-     RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
-    [...values, scope.tenantKey]
-  );
+	  await db.query(
+	    `UPDATE tickets
+	     SET ${fields.join(", ")}
+	     WHERE id = $${index}
+	       AND tenant_key = $${index + 1}
+	       AND workspace_key = $${index + 2}
+	     RETURNING id, requester_email, subject, status, priority, assigned_user_id, created_at, updated_at`,
+	    [...values, scope.tenantKey, scope.workspaceKey]
+	  );
   const updated = await getTicketById(ticketId, scope);
 
   if (parsed.data.status && parsed.data.status !== ticket.status) {

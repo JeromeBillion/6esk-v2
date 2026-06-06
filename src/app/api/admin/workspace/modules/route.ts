@@ -1,40 +1,33 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   getWorkspaceModules,
   saveWorkspaceModules,
   type WorkspaceModuleFlags
 } from "@/server/workspace-modules";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const modulesSchema = z.object({
   email: z.boolean(),
   whatsapp: z.boolean(),
   voice: z.boolean(),
   aiAutomation: z.boolean(),
-  venusOrchestration: z.boolean(),
   vanillaWebchat: z.boolean()
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess();
+  if (!auth.ok) return auth.response;
+  const { scope } = auth;
 
   const config = await getWorkspaceModules(scope.workspaceKey, scope.tenantKey);
   return Response.json({ config });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const auth = await requireLeadAdminAccess({ requireMfa: true });
+  if (!auth.ok) return auth.response;
+  const { user, scope } = auth;
 
   let body: unknown;
   try {

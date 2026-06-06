@@ -1,8 +1,6 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { listRecentAgentRuns } from "@/server/agents/run-ledger";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function parseLimit(request: Request) {
   const url = new URL(request.url);
@@ -15,13 +13,11 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
   const { agentId } = await params;
-  const scope = tenantScopeFromUser(user);
+  const { scope } = access;
   const agent = await getAgentIntegrationById(agentId, scope);
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });

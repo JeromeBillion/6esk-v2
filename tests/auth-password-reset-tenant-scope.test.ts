@@ -43,7 +43,8 @@ describe("POST /api/auth/password-reset tenant scope", () => {
         ]
       })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 2, rows: [] });
 
     const response = await POST(
       new Request("http://localhost/api/auth/password-reset", {
@@ -53,6 +54,10 @@ describe("POST /api/auth/password-reset tenant scope", () => {
     );
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "updated",
+      revokedSessionCount: 2
+    });
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("JOIN users u"),
@@ -73,12 +78,27 @@ describe("POST /api/auth/password-reset tenant scope", () => {
       expect.stringContaining("AND workspace_key = $3"),
       ["reset-1", "tenant-users", "workspace-users"]
     );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining("SET revoked_at = now()"),
+      ["target-user", "tenant-users", "workspace-users", "password_reset"]
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantKey: "tenant-users",
         workspaceKey: "workspace-users",
         action: "password_reset_completed",
-        entityId: "target-user"
+        entityId: "target-user",
+        data: { revokedSessionCount: 2 }
+      })
+    );
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantKey: "tenant-users",
+        workspaceKey: "workspace-users",
+        action: "auth_sessions_revoked",
+        entityId: "target-user",
+        data: { reason: "password_reset", revokedSessionCount: 2 }
       })
     );
   });

@@ -22,6 +22,7 @@ import {
 } from "@/server/ai/guard";
 import { buildAgentKnowledgeContext } from "@/server/agents/rag-context";
 import { buildAgentPromptSandboxForRuntime } from "@/server/agents/prompt-templates";
+import { buildAgentCustomerContext } from "@/server/agents/customer-context";
 import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 type EnqueueArgs = {
@@ -188,12 +189,17 @@ export async function enqueueAgentEvent({
     eventType,
     payload
   });
-  const commandPayload = knowledgeContext
-    ? {
-        ...payload,
-        knowledge_context: knowledgeContext
-      }
-    : payload;
+  const customerContext = await buildAgentCustomerContext({
+    tenantKey,
+    workspaceKey: resolvedWorkspaceKey,
+    eventType,
+    payload
+  });
+  const commandPayload = {
+    ...payload,
+    ...(knowledgeContext ? { knowledge_context: knowledgeContext } : {}),
+    customer_context: customerContext
+  };
   const commandEnvelope = buildAgentCommandEnvelope({
     commandType: mapEventTypeToCommandType(eventType),
     tenantKey,
@@ -228,7 +234,8 @@ export async function enqueueAgentEvent({
     mode: commandEnvelope.mode,
     eventType,
     payload: safeCommandPayload,
-    policy: integration.policy
+    policy: integration.policy,
+    customerContext
   });
 
   if (isAiGuardUnsafe(commandSafety)) {

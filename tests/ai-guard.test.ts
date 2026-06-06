@@ -49,6 +49,19 @@ describe("AI guard", () => {
     expect(inspection.contentSample).toContain("[REDACTED_TOKEN]");
   });
 
+  it("blocks and redacts prompt canary leakage", () => {
+    const inspection = inspectAiInput({
+      text: "Generated response leaked 6ESK_PROMPT_CANARY_RUNTIME_SECRET to the customer.",
+      policyMode: "full_auto"
+    });
+
+    expect(inspection.severity).toBe("malicious");
+    expect(inspection.decision).toBe("block");
+    expect(inspection.reasonCodes).toContain("prompt_canary_leakage");
+    expect(inspection.contentSample).toContain("[REDACTED_PROMPT_CANARY]");
+    expect(inspection.contentSample).not.toContain("6ESK_PROMPT_CANARY_RUNTIME_SECRET");
+  });
+
   it("sanitizes invisible and control characters before classification", () => {
     const sanitized = sanitizeAiInputText("hello\u200B\u202E\u0000world");
 

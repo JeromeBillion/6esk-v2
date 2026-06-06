@@ -1,5 +1,6 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { db } from "@/server/db";
+import { getObjectBuffer } from "@/server/storage/r2";
 import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 
 export type TenantExportSection = {
@@ -22,6 +23,22 @@ export type TenantExportObjectRef = {
   sizeBytes?: number | null;
 };
 
+export type TenantExportObjectPayload = {
+  ref: TenantExportObjectRef;
+  encoding: "base64";
+  contentType: string | null;
+  sizeBytes: number;
+  sha256: string;
+  base64: string;
+};
+
+export type TenantExportObjectPayloadSkip = {
+  ref: TenantExportObjectRef;
+  reason: "unsafe_key" | "exceeds_limit" | "fetch_failed";
+  detail?: string;
+  sizeBytes?: number | null;
+};
+
 export type TenantExportBundle = {
   formatVersion: "tenant-export.v1";
   exportId: string;
@@ -37,6 +54,14 @@ export type TenantExportBundle = {
     redactedColumnsBySection: Record<string, string[]>;
   };
   objectStorageManifest: TenantExportObjectRef[];
+  objectStoragePayloads: TenantExportObjectPayload[];
+  objectStoragePayloadSkips: TenantExportObjectPayloadSkip[];
+  objectStoragePayloadSummary: {
+    requested: boolean;
+    included: number;
+    skipped: number;
+    maxBytesPerObject: number;
+  };
   sections: TenantExportSection[];
 };
 
@@ -52,9 +77,21 @@ type SectionSpec = {
 
 const WORKSPACE_TABLES = [
   "workspaces",
+  "tenant_security_policies",
   "workspace_modules",
   "workspace_module_usage_events",
+  "workspace_billing_subscriptions",
+  "workspace_billing_plan_changes",
+  "workspace_billing_invoices",
+  "workspace_billing_adjustments",
+  "workspace_billing_dunning_events",
   "users",
+  "auth_sessions",
+  "auth_identity_accounts",
+  "auth_mfa_factors",
+  "auth_mfa_enrollments",
+  "auth_mfa_challenges",
+  "password_resets",
   "mailboxes",
   "mailbox_memberships",
   "customers",
@@ -65,6 +102,7 @@ const WORKSPACE_TABLES = [
   "ticket_events",
   "replies",
   "audit_logs",
+  "privileged_access_grants",
   "sla_configs",
   "csat_ratings",
   "ticket_merges",
@@ -94,6 +132,9 @@ const WORKSPACE_TABLES = [
   "call_outbox_events",
   "call_transcript_jobs",
   "call_transcript_ai_jobs",
+  "voice_operator_presence",
+  "voice_consent_events",
+  "call_review_writebacks",
   "ai_guard_events",
   "ai_policy_decisions",
   "ai_knowledge_folders",
@@ -166,9 +207,24 @@ const TENANT_EXPORT_SECTIONS: SectionSpec[] = [
   },
   tenantTableSpec("organizations"),
   workspaceTableSpec("workspaces"),
+  workspaceTableSpec("tenant_security_policies", ["oidc_issuer"]),
   workspaceTableSpec("workspace_modules"),
   workspaceTableSpec("workspace_module_usage_events"),
+  workspaceTableSpec("workspace_billing_subscriptions", [
+    "provider_customer_ref",
+    "provider_subscription_ref"
+  ]),
+  workspaceTableSpec("workspace_billing_plan_changes"),
+  workspaceTableSpec("workspace_billing_invoices"),
+  workspaceTableSpec("workspace_billing_adjustments"),
+  workspaceTableSpec("workspace_billing_dunning_events"),
   workspaceTableSpec("users", ["password_hash"]),
+  workspaceTableSpec("auth_sessions", ["token_hash", "user_agent_hash", "ip_hash"]),
+  workspaceTableSpec("auth_identity_accounts", ["access_token_encrypted", "refresh_token_encrypted"]),
+  workspaceTableSpec("auth_mfa_factors", ["secret_encrypted", "credential_id"]),
+  workspaceTableSpec("auth_mfa_enrollments", ["enrollment_hash", "secret_encrypted"]),
+  workspaceTableSpec("auth_mfa_challenges", ["challenge_hash"]),
+  workspaceTableSpec("password_resets", ["token_hash"]),
   workspaceTableSpec("mailboxes"),
   workspaceTableSpec("mailbox_memberships"),
   workspaceTableSpec("customers"),
@@ -179,6 +235,7 @@ const TENANT_EXPORT_SECTIONS: SectionSpec[] = [
   workspaceTableSpec("ticket_events"),
   workspaceTableSpec("replies"),
   workspaceTableSpec("audit_logs"),
+  workspaceTableSpec("privileged_access_grants"),
   workspaceTableSpec("sla_configs"),
   workspaceTableSpec("csat_ratings"),
   workspaceTableSpec("ticket_merges"),
@@ -216,6 +273,9 @@ const TENANT_EXPORT_SECTIONS: SectionSpec[] = [
   workspaceTableSpec("call_outbox_events"),
   workspaceTableSpec("call_transcript_jobs"),
   workspaceTableSpec("call_transcript_ai_jobs"),
+  workspaceTableSpec("voice_operator_presence"),
+  workspaceTableSpec("voice_consent_events"),
+  workspaceTableSpec("call_review_writebacks"),
   tenantTableSpec("agent_integrations", ["shared_secret"]),
   tenantTableSpec("agent_outbox"),
   tenantTableSpec("agent_runs"),
@@ -319,6 +379,13 @@ function readLimitPerSection(value?: number | null) {
   return Math.min(Math.max(Math.trunc(value ?? 500), 1), 5_000);
 }
 
+function readObjectPayloadMaxBytes(value?: number | null) {
+  if (!Number.isFinite(value ?? NaN)) {
+    return 2 * 1024 * 1024;
+  }
+  return Math.min(Math.max(Math.trunc(value ?? 2 * 1024 * 1024), 1), 25 * 1024 * 1024);
+}
+
 async function exportSection(
   spec: SectionSpec,
   scope: { tenantKey: string; workspaceKey: string },
@@ -408,12 +475,91 @@ function buildObjectStorageManifest(sections: TenantExportSection[]) {
   return refs;
 }
 
+function hasUnsafeObjectKeyCharacters(key: string) {
+  return key.includes("\0") || key.includes("\\") || key.startsWith("/") || key.split("/").includes("..");
+}
+
+function isTenantScopedObjectKey(key: string, scope: { tenantKey: string; workspaceKey: string }) {
+  const expectedPrefix = `tenants/${scope.tenantKey}/workspaces/${scope.workspaceKey}/`;
+  return key.startsWith(expectedPrefix) && !hasUnsafeObjectKeyCharacters(key);
+}
+
+async function buildObjectStoragePayloads(
+  refs: TenantExportObjectRef[],
+  scope: { tenantKey: string; workspaceKey: string },
+  options: {
+    includeObjectPayloads: boolean;
+    maxBytesPerObject: number;
+  }
+) {
+  const payloads: TenantExportObjectPayload[] = [];
+  const skips: TenantExportObjectPayloadSkip[] = [];
+  if (!options.includeObjectPayloads) {
+    return { payloads, skips };
+  }
+
+  for (const ref of refs) {
+    if (!isTenantScopedObjectKey(ref.key, scope)) {
+      skips.push({
+        ref,
+        reason: "unsafe_key",
+        detail: "Object key is outside the requested tenant/workspace prefix.",
+        sizeBytes: ref.sizeBytes ?? null
+      });
+      continue;
+    }
+    if (typeof ref.sizeBytes === "number" && ref.sizeBytes > options.maxBytesPerObject) {
+      skips.push({
+        ref,
+        reason: "exceeds_limit",
+        detail: "Object size metadata exceeds the export payload limit.",
+        sizeBytes: ref.sizeBytes
+      });
+      continue;
+    }
+
+    try {
+      const { buffer, contentType } = await getObjectBuffer(ref.key);
+      if (buffer.byteLength > options.maxBytesPerObject) {
+        skips.push({
+          ref,
+          reason: "exceeds_limit",
+          detail: "Fetched object exceeds the export payload limit.",
+          sizeBytes: buffer.byteLength
+        });
+        continue;
+      }
+      payloads.push({
+        ref,
+        encoding: "base64",
+        contentType: contentType ?? ref.contentType ?? null,
+        sizeBytes: buffer.byteLength,
+        sha256: createHash("sha256").update(buffer).digest("hex"),
+        base64: buffer.toString("base64")
+      });
+    } catch (error) {
+      skips.push({
+        ref,
+        reason: "fetch_failed",
+        detail: error instanceof Error ? error.message.slice(0, 500) : "Object fetch failed.",
+        sizeBytes: ref.sizeBytes ?? null
+      });
+    }
+  }
+  return { payloads, skips };
+}
+
 export async function exportTenantDataBundle(
   scopeInput?: TenantScopeInput,
-  options: { limitPerSection?: number | null } = {}
+  options: {
+    limitPerSection?: number | null;
+    includeObjectPayloads?: boolean | null;
+    objectPayloadMaxBytes?: number | null;
+  } = {}
 ): Promise<TenantExportBundle> {
   const scope = resolveTenantScope(scopeInput);
   const limitPerSection = readLimitPerSection(options.limitPerSection);
+  const objectPayloadMaxBytes = readObjectPayloadMaxBytes(options.objectPayloadMaxBytes);
   const sections: TenantExportSection[] = [];
   for (const spec of TENANT_EXPORT_SECTIONS) {
     sections.push(await exportSection(spec, scope, limitPerSection));
@@ -424,6 +570,11 @@ export async function exportTenantDataBundle(
       .map((section) => [section.key, section.redactedColumns])
   );
   const objectStorageManifest = buildObjectStorageManifest(sections);
+  const { payloads: objectStoragePayloads, skips: objectStoragePayloadSkips } =
+    await buildObjectStoragePayloads(objectStorageManifest, scope, {
+      includeObjectPayloads: options.includeObjectPayloads === true,
+      maxBytesPerObject: objectPayloadMaxBytes
+    });
 
   return {
     formatVersion: "tenant-export.v1",
@@ -440,6 +591,14 @@ export async function exportTenantDataBundle(
       redactedColumnsBySection
     },
     objectStorageManifest,
+    objectStoragePayloads,
+    objectStoragePayloadSkips,
+    objectStoragePayloadSummary: {
+      requested: options.includeObjectPayloads === true,
+      included: objectStoragePayloads.length,
+      skipped: objectStoragePayloadSkips.length,
+      maxBytesPerObject: objectPayloadMaxBytes
+    },
     sections
   };
 }

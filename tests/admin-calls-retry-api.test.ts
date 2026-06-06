@@ -48,14 +48,14 @@ describe("POST /api/admin/calls/retry", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("returns 401 for non-admin users without secret", async () => {
+  it("returns 403 for logged-in non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
 
     const response = await POST(new Request("http://localhost/api/admin/calls/retry", { method: "POST" }));
     const body = await response.json();
 
-    expect(response.status).toBe(401);
-    expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
   });
 
   it("retries failed call outbox events for admins", async () => {

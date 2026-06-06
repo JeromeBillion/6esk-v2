@@ -1,9 +1,6 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
-import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export type DeadLetterEvent = {
   id: string;
@@ -43,11 +40,9 @@ export type DeadLetterSummary = {
  * Get dead-letter events (failed calls with exhausted retries or poison conditions)
  */
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
+  const { scope } = access;
 
   const url = new URL(request.url);
   const action = url.searchParams.get("action") ?? "list";
@@ -192,11 +187,9 @@ export async function GET(request: Request) {
  * Mark dead-letter event as recoverable and reset for retry
  */
 export async function PATCH(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let body: unknown;
   try {
@@ -352,11 +345,9 @@ export async function PATCH(request: Request) {
  * Batch recover multiple dead-letter events
  */
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let body: unknown;
   try {

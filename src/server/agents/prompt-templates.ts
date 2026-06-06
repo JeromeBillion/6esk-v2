@@ -7,6 +7,7 @@ import {
 } from "@/server/agents/prompt-sandbox";
 import { resolveTenantScope, type TenantScopeInput } from "@/server/tenant-context";
 import type { CanonicalAgentPolicyMode } from "@/server/agents/policy-modes";
+import type { AgentCustomerContext } from "@/server/agents/customer-context";
 
 export type AgentPromptTemplateStatus = "draft" | "active" | "retired";
 
@@ -33,6 +34,7 @@ type RuntimePromptSandboxInput = {
   eventType: string;
   payload: Record<string, unknown>;
   policy?: Record<string, unknown> | null;
+  customerContext?: AgentCustomerContext | null;
 };
 
 function stableJson(value: unknown): string {

@@ -1,6 +1,5 @@
-import { getSessionUser } from "@/server/auth/session";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getWorkspaceModuleUsageSummary } from "@/server/module-metering";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function clampWindowDays(value: string | null) {
   const parsed = Number(value ?? "30");
@@ -9,17 +8,12 @@ function clampWindowDays(value: string | null) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (user.role_name !== "lead_admin") {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
   const url = new URL(request.url);
   const days = clampWindowDays(url.searchParams.get("days"));
-  const scope = tenantScopeFromUser(user);
+  const { scope } = access;
   const summary = await getWorkspaceModuleUsageSummary({
     tenantKey: scope.tenantKey,
     workspaceKey: scope.workspaceKey,

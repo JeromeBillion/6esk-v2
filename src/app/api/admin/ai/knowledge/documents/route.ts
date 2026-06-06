@@ -1,32 +1,27 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   ingestKnowledgeDocument,
   KnowledgeUploadError,
   listKnowledgeDocuments
 } from "@/server/ai/knowledge-base";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 function readString(value: FormDataEntryValue | null) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const documents = await listKnowledgeDocuments(tenantScopeFromUser(user));
+  const documents = await listKnowledgeDocuments(access.scope);
   return Response.json({ documents });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let form: FormData;
   try {
@@ -42,7 +37,6 @@ export async function POST(request: Request) {
 
   const bytes = Buffer.from(await file.arrayBuffer());
   try {
-    const scope = tenantScopeFromUser(user);
     const document = await ingestKnowledgeDocument({
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,

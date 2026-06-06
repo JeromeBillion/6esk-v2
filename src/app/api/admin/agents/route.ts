@@ -1,13 +1,11 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import {
   createAgentIntegration,
   listAgentIntegrations
 } from "@/server/agents/integrations";
 import { AGENT_POLICY_MODE_VALUES } from "@/server/agents/policy-modes";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 const createSchema = z.object({
   tenantKey: z.string().min(1).optional(),
@@ -24,22 +22,18 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess();
+  if (!access.ok) return access.response;
 
-  const scope = tenantScopeFromUser(user);
+  const { scope } = access;
   const agents = await listAgentIntegrations(scope);
   return Response.json({ agents });
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const scope = tenantScopeFromUser(user);
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   let payload: unknown;
   try {

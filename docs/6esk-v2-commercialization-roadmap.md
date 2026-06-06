@@ -1,7 +1,7 @@
 # 6esk v2 Commercialization Roadmap (Multi-Tenant SaaS)
 
 ## Purpose
-`6esk v2` is the independence and go-to-market version of the product: a true multi-tenant B2B SaaS platform, no longer a custom internal CRM for `6ex`.
+`6esk v2` is the independence and go-to-market version of the product: a true multi-tenant B2B SaaS platform, no longer a customer-specific internal CRM.
 
 This roadmap starts only after `v1` is fully working.
 
@@ -26,14 +26,14 @@ Security is the top priority for `v2`. This is not a polish workstream after the
 - all provider secrets, OAuth tokens, webhook secrets, AI keys, and hosted-email credentials are tenant-scoped and rotatable
 - internal support access is just-in-time, least-privilege, time-bounded, and fully audited
 - AI output is treated as untrusted derived data, never as verified truth
-- security telemetry, audit trails, backup/restore proof, incident response, and tenant deletion/export controls are launch gates, not later improvements
+- security telemetry, audit trails, incident response, and tenant export/offboarding controls are launch gates; production-only backup/restore/delete execution proof is still required evidence, but is captured during deploy/testing or post-launch lifecycle hardening rather than claimed locally
 
 The commercial test is simple: if we cannot explain and prove tenant isolation, access control, auditability, incident response, and data lifecycle controls to a serious buyer, `v2` is not ready to sell.
 
 ## Baseline Assumptions
 - architecture: true multi-tenant SaaS
-- `v2` can run with no Venus dependency
-- a forked AI orchestration module will originate from Venus, but be packaged as a 6esk module
+- `v2` has no hidden internal orchestration dependency
+- AI orchestration is Dexter-owned and packaged as a 6esk module
 - customers may choose:
   - no AI
   - 6esk-managed AI orchestration
@@ -60,7 +60,7 @@ These should not be priced as standalone add-ons:
 - WhatsApp
 - voice
 - AI automation
-- AI orchestration service module (forked from Venus)
+- AI orchestration service module
 - bring-your-own AI provider mode
 - implementation / professional services (business-side offering)
 
@@ -100,6 +100,138 @@ If a customer brings their own AI API/provider:
 7. Security posture is strong enough for real procurement and enterprise review.
 8. South Africa legal/compliance requirements are met and international readiness is planned.
 9. `6esk Work` exists as the internal backoffice for running the SaaS business.
+
+## Roadmap Completion Control Plan
+This section is the operating board for finishing `v2`. It exists to prevent scattered "continue" work from creating parallel plans, duplicated docs, or unsequenced implementation.
+
+### Completion Rules
+- this roadmap is the single source of truth for `v2` launch readiness
+- work proceeds one package at a time, in the order below, unless a newer security finding changes priority
+- every package must close with code, docs/runbook updates where relevant, tests, and a named evidence artifact or verification command
+- no external tenant data is onboarded until `P0` launch gates are complete, verified, and reviewed
+- no new module polish should outrank tenant isolation, auth, AI safety, code-owned lifecycle controls, or incident readiness
+- old internal-platform, Venus, profile-lookup, and prediction-market assumptions must keep being removed or converted into tenant-safe, white-label extension points
+- do not mark runtime, production-credential, provider-dashboard, deployed-infrastructure, real-R2, OAuth-smoke, branch-protection, backup/restore, physical-delete, or production evidence tasks complete from local workstation work
+
+### Current Execution Stance: Pre-Deploy Core Code First
+Updated: 2026-06-06.
+
+Immediate work is limited to core code that can be implemented and verified locally before deploy/testing. The active deploy-readiness slice is billing lifecycle code: subscription persistence, plan-change/proration behavior, manual credits/refunds, collections/dunning, and full invoice lifecycle. Data lifecycle work is deferred to post-launch unless it is required for code-level product safety. Runtime-dependent evidence stays documented below, but it is not part of the local pre-deploy completion queue.
+
+Immediate pre-deploy code includes:
+- tenant isolation code gaps
+- auth, session, MFA, and security-policy code gaps
+- privileged access and admin authorization code gaps
+- Dexter/AI customer-context safety code gaps
+- entitlement, billing, usage enforcement, subscription, proration, credits/refunds, collections/dunning, and invoice lifecycle code gaps
+- provider routing, webhook, and secret code gaps
+- code-owned observability/admin diagnostics gaps
+- tests, lint, typecheck, build, static audits, and roadmap cleanup
+
+Deferred to deploy/testing/post-launch evidence, not local code blockers:
+- production OAuth/provider smoke evidence
+- release session/cache drills
+- production provider routing evidence
+- tenant ingress signing evidence against deployed URLs
+- branch-protection and CI enforcement proof
+- external provider dashboard validation
+- production object-payload export rehearsal and R2 checks against real data
+- production scanner/extractor deployment evidence
+- production telemetry evidence
+- provider-spend reconciliation against deployed credentials, provider dashboards, and real provider invoices
+
+Deferred to post-launch lifecycle hardening:
+- physical tenant delete execution
+- production offboarding execution beyond prepared anonymization workflow
+- R2 object-destruction rehearsal
+- backup/restore drills
+- broad retention enforcement beyond the current knowledge-retention foundation
+- legal/compliance artifact production and counsel review
+- production evidence pack captures that require live tenants, real credentials, or deployed infrastructure
+
+The target handover state is "ready for deploy/testing," not "launch complete," unless every immediate core-code item and every deploy/runtime evidence gate has also been completed and reviewed.
+
+### P0 Completion Queue: Immediate Core-Code Blockers
+1. Branch and release baseline
+   - reconcile the current dirty branch into one coherent implementation set
+   - run and record `npm run typecheck`, `npm run lint`, `npm run build`, full tests, `git diff --check`, and focused tenant/AI safety tests
+   - leave no redundant handover/parallel-work docs unless they are linked from this roadmap or `docs/README.md`
+2. Tenant isolation proof
+   - keep `npm run audit:tenant-query-scope` and `npm run test:tenant-isolation` clean on the final branch state
+   - finish or explicitly bound the repository boundary, workspace-level enforcement strategy, or row-level security strategy on top of the runtime tenant query guard so tenant isolation is stronger than static audits alone
+   - expand cross-tenant tests across user APIs, admin APIs, workers, queues, object storage, exports, analytics, support tooling, and background jobs
+3. Auth and privileged access
+   - keep privileged support access, break-glass controls, tenant-admin security policy UI/API, session controls, and central admin guards complete on all sensitive routes
+   - close any remaining privileged-role MFA challenge edge coverage and security audit event edge cases
+   - ensure future internal-support routes use explicit active-grant enforcement instead of broadening ordinary lead-admin APIs
+4. AI/Dexter production safety
+   - implement live customer context envelopes with tenant, workspace, channel, active ticket/thread, current customer, allowed history source ids, and ambiguity state
+   - allow resolved same-customer CRM history without OTP while blocking other-customer, other-tenant, mailbox-wide, analytics-wide, and hidden runtime scope expansion
+   - extend output validators for customer-visible history, profile-PII minimization, source-id enforcement, and ambiguous customer handoff
+   - finish local prompt-injection classifier/rule hardening, replay redaction policy, and code-owned canary controls; provider/model eval suites and external worker lifecycle drills move to deploy/testing
+5. Data lifecycle code controls
+   - keep tenant export payload inclusion, anonymization workflow, legal-hold blocking, retention-preview behavior, and offboarding rehearsal scripts complete and tested locally
+   - defer physical delete, production offboarding execution, R2 object-destruction, backup/restore drills, broad retention rollout, and legal artifact production as documented handover/post-launch items
+6. Billing, usage, and entitlement integrity
+   - finish module entitlements, plan/catalog behavior, downgrade/suspend safety, usage metering, subscription persistence, plan-change/proration behavior, manual credits/refunds, collections/dunning, full invoice lifecycle, VAT posture, customer-safe invoice exports, and usage page/admin visibility
+   - ensure entitlement checks occur before provider calls, queue writes, AI execution, outbound sends, and billable usage recording
+   - defer provider-spend reconciliation evidence until deployed credentials/provider dashboards/real provider invoices exist
+7. Observability, supportability, and incident readiness
+   - finish code-owned tenant-aware admin diagnostics, support visibility, dead-letter visibility, queue/retry/idempotency summaries, and security incident evidence collection hooks
+   - defer dashboards, alerts, status-page workflow, and deployed telemetry proof to deploy/testing
+   - make failures diagnosable without direct engineering/database access
+
+### P1 Completion Queue: Commercialization Foundation
+- connected-provider email and managed 6esk email mode must share the same operator experience but remain separately onboarded, metered, secured, and supported
+- `6esk Work` must support tenant onboarding, entitlement management, implementation tracking, support/incidents, finance visibility, security artifact tracking, privileged access reviews, and provider credential operations
+- public GTM assets must match shipped capability: pricing, trust/security page, status page, legal docs, help docs, implementation playbooks, support SLAs, and security questionnaire process
+
+### Completion Evidence Required
+Pre-deploy local evidence:
+- release branch test evidence: typecheck, lint, build, full tests, focused tenant tests, focused AI safety tests, static query-scope audit, dependency audit, and diff whitespace check
+- AI local evidence: red-team fixture results, prompt/template version coverage, run replay bundle tests, output-validator denial samples, and customer-history source-boundary tests
+- tenant local evidence: tenant isolation test suite, tenant export/offboarding tests, tenant offboarding rehearsal script coverage, and static query-scope evidence
+
+Deploy/testing evidence:
+- tenant isolation database audit, provider routing rehearsal, tenant ingress signing drill, migration dry-run, apply/rollback bundle review, object-storage access checks, production OAuth/provider smoke, session/cache drills, webhook failure drill, provider secret rotation drill, privileged access review trail, billing reconciliation sample, and production object-payload export rehearsal
+
+Post-launch lifecycle evidence:
+- physical tenant delete execution, production offboarding execution, R2 object-destruction rehearsal, backup/restore drill evidence, broad retention enforcement, legal/compliance artifact publication, trust-center/security-pack evidence, and any counsel-reviewed POPIA/PAIA/operator-agreement artifacts
+
+### Current P0.1 Baseline Evidence
+Updated: 2026-06-06.
+
+Completed:
+- branch inventory captured for the current `codex/merge-v1-roadmaps` dirty implementation set
+- `npm audit --audit-level=high` is clean after upgrading Vitest to `4.1.8` and overriding transitive PostCSS to `8.5.15`
+- `npm ls postcss vitest vite esbuild` confirms Next, Vite, and Tailwind PostCSS paths resolve to patched PostCSS/Vite/esbuild versions
+- `npm run typecheck` passes
+- `npm run lint` passes with no warnings or errors
+- `npm run build` passes on Next `15.5.19`; the production route manifest includes `/api/admin/workspace/billing`
+- `npm run test:tenant-isolation` passes: 80 test files, 284 tests
+- `npm run test:ai-safety` passes: typecheck plus 7 AI safety test files, 46 tests
+- `npm test` passes: 184 test files, 749 tests
+- `npm run audit:tenant-query-scope` passes: report `0fb0d2a4-265c-4d42-a970-6c8af92fbe08`, 274 files, 706 query calls, 573 scoped calls, 0 findings
+- `git diff --check` reports no whitespace errors; Windows CRLF normalization warnings remain expected
+
+### Current P0.2 Tenant-Isolation Evidence
+Updated: 2026-06-03.
+
+Completed:
+- runtime tenant query guard now wraps the shared Postgres pool and clients returned from `db.connect()`, inspects SQL string/query-config calls, and blocks tenant-scoped table access without `tenant_key` evidence in strict mode
+- `TENANT_QUERY_GUARD_MODE` is now environment-validated, defaults to strict in production, is set to strict in `.env.example`, and cannot be `off` in production validation
+- focused guard regression coverage now verifies strict blocking, warning mode, query-config inspection, SQL comment/string stripping, explicit suppression comments, and production default behavior
+- `npm run audit:tenant-query-scope` passes locally with 0 findings after scanning 272 files and 680 query calls, including 550 calls with tenant-scope evidence
+- `npm run test:tenant-isolation` passes: 78 test files, 269 tests
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm run test:ai-safety`, `npm test`, `npm audit --audit-level=high`, and `git diff --check` all pass on the current branch state
+
+Still required for pre-deploy code handover:
+- keep the final branch green for `npm run audit:tenant-query-scope`, `npm run test:tenant-isolation`, and the full release verification set
+- extend, or explicitly risk-bound, mechanical enforcement beyond the runtime `tenant_key` guard with workspace-scoped repository boundaries or database row-level security, especially for analytics, exports, support tooling, background jobs, and object-storage payload retrieval
+
+Deferred to deploy/testing evidence:
+- capture production/release-tenant evidence for provider routing rehearsal, tenant-ingress signing drill, tenant backfill dry-run/apply/rollback bundle review, tenant isolation database audit, and object-storage access checks
+- the current local environment does not have `DATABASE_URL`, `APP_URL`, `TENANT_INGRESS_TENANT`, `TENANT_INGRESS_WORKSPACE`, `PROVIDER_ROUTING_REHEARSAL_TENANT`, or `PROVIDER_ROUTING_REHEARSAL_WORKSPACE` configured, so those evidence artifacts cannot be honestly captured from this workstation
 
 ## v2 Security Launch Gates
 These gates must pass before external beta, and again before general availability.
@@ -195,7 +327,7 @@ The move from `v1` internal/custom data to `v2` tenant data needs explicit tooli
 - keep rollback and read-only migration modes available until the cutover is verified
 
 ### Current Tenant-Isolation Implementation Status
-Updated: 2026-06-01.
+Updated: 2026-06-03.
 
 Implemented foundation:
 - shared server-side tenant context now normalizes trusted tenant/workspace scope and keeps the legacy `primary` tenant as a compatibility bridge
@@ -209,6 +341,7 @@ Implemented foundation:
 - support tags and ticket tag mutations now use tenant-scoped tag uniqueness instead of the original global tag-name constraint
 - audit log writes and ticket audit-log reads now carry tenant/workspace scope
 - lead-admin tenant data export now produces a tenant/workspace-scoped JSON bundle across core CRM, messaging, channel, AI, billing-usage, audit, and operations tables, with password/provider secrets redacted, an object-storage manifest for R2-backed message/attachment/call/quarantine artifacts, and an audit event that records counts without row payloads
+- tenant data export can now optionally include actual R2 object payloads in the export bundle: object payload inclusion is explicit, per-object size bounded, base64 encoded with SHA-256 evidence, and refuses to fetch any object key outside `tenants/{tenantKey}/workspaces/{workspaceKey}/...`; skipped object refs record `unsafe_key`, `exceeds_limit`, or `fetch_failed` evidence instead of silently omitting payloads
 - tenant isolation audit reporting now checks missing tenant/workspace scope, orphaned tenant/workspace rows, orphaned parent-owned records, cross-tenant parent references, unscoped voice-consent identity rows, and the legacy `primary` bridge; the lead-admin endpoint records only summary evidence in audit logs
 - operator and CI wiring now exists for tenant isolation evidence: `npm run test:tenant-isolation` runs the focused regression suite, `npm run audit:tenant-isolation` runs a direct Postgres catalog/data audit against `DATABASE_URL`, and the Tenant Isolation Gate workflow runs tests on PR/push plus an optional scheduled/manual database audit when `TENANT_ISOLATION_AUDIT_DATABASE_URL` is configured
 - tenant backfill dry-run planning now exists: `npm run plan:tenant-backfill -- --target-tenant=<tenant> --target-workspace=<workspace>` reads the live Postgres catalog, classifies every tenant/workspace-scoped table still using the source scope, verifies target roots, and writes a redacted JSON evidence artifact under `.launch-evidence/tenant-backfill/` without database writes
@@ -235,6 +368,10 @@ Implemented foundation:
 - inbound email event lifecycle writes now carry tenant/workspace scope: processed and failed state transitions require the event's stored workspace scope, failed-event locks and targeted retries filter by tenant and workspace, retry processing passes locked event scope into storage and terminal updates, and runtime/static regressions cover the inbound event SQL surface; the current static sweep candidate count is down to 2 remaining findings
 - auth session lifecycle now carries tenant/workspace scope: logout deletes only the session row matching the token's stored tenant/workspace scope, active session reads require both tenant and workspace alignment with the user row, and runtime/static regressions cover the auth-session SQL surface; the current static sweep candidate count is down to 1 remaining finding
 - agent draft writes now carry tenant/workspace scope: the draft table has explicit tenant/workspace columns and indexes, legacy rows are backfilled from their ticket scope, draft creation inserts only through a matching ticket plus same-tenant integration, draft reads/updates require draft and ticket scope alignment, action callbacks pass the authenticated agent workspace into draft creation, and runtime/static regressions cover the draft SQL surface; the static tenant query-scope sweep now has 0 remaining findings
+- runtime tenant-query enforcement now exists at the shared Postgres boundary: `db.query` and clients returned by `db.connect()` run through `TENANT_QUERY_GUARD_MODE`, production defaults to strict mode, production env validation rejects disabling it, and the focused tenant-isolation suite includes guard regression coverage
+- tenant export/offboarding data coverage now includes the newer auth and voice evidence surfaces: tenant security policies, auth sessions, auth identity accounts, MFA factors/enrollments/challenges, password resets, voice operator presence, voice consent events, and call review writebacks are part of the tenant export table map, tenant isolation audit coverage, or runtime query guard as appropriate
+- tenant offboarding now has a privileged-access admin route and backend service for versioned dry-run plans plus executable anonymization: plans return row-count evidence, exact confirmation text, blockers, legal-hold counts, table-level actions, and residual risks; execution requires tenant-admin MFA or a break-glass grant, exact `ANONYMIZE tenant/workspace` confirmation, a concrete reason, legal-hold clearance, a non-`primary` scope, a single transaction, and an audit event
+- tenant offboarding rehearsal evidence now has a read-only release capture path: `npm run rehearse:tenant-offboarding -- --tenant=<tenant> --workspace=<workspace>` inspects the live Postgres catalog, proves target tenant/workspace existence, validates expected tenant/workspace scope columns, counts all covered tables, flags legal-hold blockers, warns on R2 object references requiring object-destruction handling, records global Better Auth adapter residual risk, and writes redacted JSON evidence under `.launch-evidence/tenant-offboarding/`
 - shared-secret machine ingress now has a fail-closed scope gate: ticket creation, inbound maintenance jobs, email/WhatsApp outbox jobs, call outbox jobs, and transcript jobs require explicit `x-6esk-tenant` plus `x-6esk-workspace` when `TENANT_INGRESS_REQUIRE_SCOPE=true` or `NODE_ENV=production`, instead of silently falling back to `primary`
 - shared-secret machine ingress can now require signed tenant envelopes: when `TENANT_INGRESS_REQUIRE_SIGNATURE=true` or `NODE_ENV=production`, tenant/workspace headers must be backed by an HMAC over tenant, workspace, method, path/query, and timestamp, using a tenant/workspace signing-secret map and a replay window
 - maintenance scripts and the combined jobs runner now generate the same signed tenant envelopes from `TENANT_INGRESS_TENANT`, `TENANT_INGRESS_WORKSPACE`, and tenant signing-secret configuration, so strict production ingress can be enabled without breaking retry/outbox/transcript worker calls
@@ -250,15 +387,20 @@ Implemented foundation:
 - inbound voice routing now has tenant-owned `call_provider_numbers` records for provider phone/account ownership; new Twilio/generic inbound calls resolve tenant scope from destination phone or provider account and reject unresolved/ambiguous strict-mode routes before creating call sessions or ringing operators
 - lead-admin APIs now exist to list, create, update, and soft-disable tenant/workspace-scoped voice provider numbers, with normalized phone storage and audit logs for each ownership change
 - focused tenant-isolation regression coverage now verifies tenant-stamped ticket creation, tenant-filtered ticket reads, tenant-scoped mailbox uniqueness, and tenant-scoped external user link upserts
+- shared ticket and customer helper reads now require workspace scope as well as tenant scope for ticket lookup, ticket lists, ticket messages/events, customer lookup, customer identity listing, customer history, and customer-to-ticket attachment; this closes the workspace-broad helper gap that could otherwise undercut user APIs and Dexter privacy controls inside the same tenant
 
-Still launch-blocking:
-- this is the first core CRM isolation slice, not proof that the whole product is tenant-safe
-- provider-to-tenant routing still needs the actual production evidence artifact captured for each launch tenant before external traffic, but the read-only rehearsal command is now wired and checks ambiguous ownership plus missing tenant-scoped provider secrets for Resend, WhatsApp, Twilio, managed STT/Deepgram, and public origins
-- remaining API and worker paths still need tenant sweeps and remediation, but the static sweep command is now wired to produce repeatable blocker evidence; launch still requires a clean/triaged `audit:tenant-query-scope` artifact across drafts, bulk email, resend flows, admin dead-letter handling, analytics/read models, exports, support tooling, macros/saved views, call/WhatsApp/email outbox workers, transcript worker metrics/retries, and object-storage access checks
-- production migration execution evidence, database audit secret/environment configuration, and post-migration verification evidence are still required; dry-run ownership classification, reviewed apply/rollback SQL bundles, and operator runbook coverage are now wired
-- cross-tenant integration tests must cover user APIs, admin APIs, workers, queues, object storage, exports, analytics, and support access before any external tenant data is onboarded
-- a central query guard, repository boundary, or row-level security strategy is still needed so tenant isolation is mechanically enforced instead of relying on every handler to remember a predicate; the static sweep is evidence and triage tooling, not the final enforcement boundary
-- tenant onboarding, domain-aware login, tenant-specific security policy, support/break-glass access, destructive delete/anonymization workflows, object payload inclusion for exports, and tenant-scoped audit visibility remain launch blockers
+Still required for pre-deploy code handover:
+- the tenant-isolation foundation is strong, but the final branch still needs clean local release evidence and a documented boundary decision for what remains guarded by runtime SQL enforcement rather than repository/RLS enforcement
+- the static tenant query-scope sweep is clean in the tracked surface, but runtime cross-tenant tests still need to stay expanded across drafts, bulk email, resend flows, admin dead-letter handling, analytics/read models, exports, support tooling, macros/saved views, call/WhatsApp/email outbox workers, transcript worker metrics/retries, and object-storage access checks
+- cross-tenant integration tests must cover user APIs, admin APIs, workers, queues, object storage, exports, analytics, and support access before external tenant data is onboarded
+- privileged-access enforcement must remain explicit for any route that intentionally admits internal support or break-glass users
+
+Deferred to deploy/testing evidence:
+- provider-to-tenant routing still needs actual production evidence captured for each launch tenant before external traffic, but the read-only rehearsal command is wired and checks ambiguous ownership plus missing tenant-scoped provider secrets for Resend, WhatsApp, Twilio, managed STT/Deepgram, and public origins
+- production migration execution evidence, database audit secret/environment configuration, post-migration verification evidence, production SSO/OAuth activation review, release-captured offboarding rehearsal evidence, tenant ingress signing evidence, object-storage access checks, and tenant-scoped audit visibility evidence are still required after deploy/test environment access exists
+
+Deferred to post-launch lifecycle hardening:
+- physical tenant delete, production R2 object-destruction rehearsal, backup/restore drill evidence, and broad lifecycle operations are preserved as requirements but are no longer local pre-deploy code blockers unless a code safety gap is discovered
 
 ## Workstream B: Authentication, Identity, and Access
 ### Must-Haves
@@ -271,6 +413,53 @@ Still launch-blocking:
 - password reset and credential reset revoke active sessions for the affected identity
 - tenant-level security policy controls for MFA, session lifetime, allowed domains, and SSO enforcement
 - audit visibility for login, logout, failed login, MFA challenge, session revoke, role change, and support impersonation
+
+### Selected Auth Direction
+- use Better Auth as the embedded open-source auth foundation for first-party SaaS identity because it is TypeScript-native, MIT-licensed, and has plugin coverage for social/OIDC, sessions, organizations, and MFA
+- preserve the current `getSessionUser` application boundary during migration so API authorization, tenant isolation checks, and tests do not have to be rewritten all at once
+- support Google and Microsoft first, with tenant/domain-aware login resolution before a session is created
+- keep password auth only as an explicitly allowed tenant policy or break-glass/local-admin path; external tenants should be able to enforce SSO
+- model Keycloak-compatible OIDC as the later enterprise broker path for customers that need heavier IAM, SAML, directory federation, or externally owned identity lifecycle management
+- keep 6esk-owned authorization separate from identity-provider authentication; provider group claims may inform roles, but tenant-scoped roles and permissions remain app-owned and deny-by-default
+
+### Session And Cache Direction
+- store session truth in Postgres so tenant scope, revocation, auditability, and credential-reset invalidation remain durable
+- use a Redis-compatible cache abstraction for rate limits, short-lived auth challenge state, provider nonce/state storage, and session freshness acceleration
+- support Valkey as the open-source self-hosted cache target and Upstash Redis as the serverless managed cache target
+- production must fail closed for auth/rate-limit flows when the configured cache is required but unavailable
+- session/device visibility must include created time, last seen time, auth provider, user-agent/device metadata, IP fingerprint, revocation state, and tenant/workspace scope
+
+### Implementation Sequence
+1. Add auth foundation schema for linked provider accounts, tenant security policies, MFA factors, and revocable session metadata.
+2. Add environment validation for Better Auth, Google, Microsoft, OIDC broker mode, MFA policy, and cache-provider settings.
+3. Close credential-reset session revocation so password reset invalidates active sessions immediately.
+4. Add auth audit events for login success/failure, logout, session revoke, MFA challenge, and role/security-policy changes.
+5. Implement Google and Microsoft login behind the existing session boundary with strict tenant/domain resolution.
+6. Add tenant admin controls for allowed domains, SSO enforcement, MFA requirement, session lifetime, and session revocation.
+7. Add Keycloak-compatible generic OIDC broker support after Google/Microsoft are stable.
+
+### Current Auth Progress
+- Better Auth `1.6.13` is installed and pinned as the open-source auth foundation; the install uses npm legacy peer resolution only to avoid an unused optional TanStack Start/Vite peer conflict
+- Kysely is pinned to `0.28.17`, inside Better Auth's declared peer range, because Better Auth `1.6.13` currently imports Kysely migration constants that are not exported by `0.29.2` during the Next production build
+- Better Auth route exposure is intentionally gated by `AUTH_BETTER_AUTH_ROUTE_ENABLED` and `AUTH_BETTER_AUTH_DB_BRIDGE_READY` so OAuth cannot be enabled before the tenant-safe database/session bridge exists
+- Better Auth now has dedicated adapter tables, a guarded `/api/auth/better` route, Google/Microsoft social provider wiring, generic OIDC provider wiring, and a tenant-safe bridge that only mints a 6esk session after domain policy, tenant policy, and active app-user checks pass
+- admin security now reports Better Auth package readiness, configured Google/Microsoft/OIDC providers, cache posture, MFA/session policy state, and current blockers without exposing provider secrets
+- login now discovers only ready federated providers, and admin security includes current-user session visibility plus user-driven session revocation
+- password-reset completion now revokes active sessions for the affected tenant/workspace user and writes revocation audit evidence
+- tenant-admin security policy controls now exist in the admin security surface and `/api/admin/security/policy`: lead admins can manage allowed login domains, SSO enforcement, admin MFA requirement, session lifetime, auth provider mode, and OIDC issuer; updates are tenant/workspace-scoped and audit logged
+- new sessions now read `tenant_security_policies.session_ttl_days` for the user's tenant/workspace before writing the auth session expiry, so session lifetime policy is enforced at session creation instead of only displayed in admin
+- privileged support and break-glass access now has a durable tenant/workspace-scoped grant lifecycle: `privileged_access_grants` stores subject email/name, access type, reason, reference, requested duration, approval/revocation users, expiry, status, and audit metadata; the table is included in tenant query guard/sweep, tenant isolation audit, and tenant export surfaces
+- `/api/admin/security/privileged-access` lets lead admins list, request, approve, and revoke privileged grants; support and break-glass transitions record tenant-visible audit events, and break-glass approval requires an active admin MFA factor plus an approval note
+- privileged access is now enforced on high-risk tenant-data reads: `resolveTenantDataAccess` centralizes lead-admin versus internal-support authorization, tenant export requires an active `break_glass` grant for internal support, tenant audit-log reads allow active `support` or `break_glass` grants, grant usage emits `privileged_access_used`, export audits record access mode/grant id, and audit-log reads are workspace-scoped
+- auth audit coverage now includes password login success/failure, MFA-completed login success, and user logout: failed login events are tenant-scoped and avoid raw email storage, MFA challenge verification records the final `auth_login_success`, logout records `auth_logout` against the active session, and stale/anonymous logout still clears the cookie without fabricating an audit actor
+- privileged grant alerting and post-event review now exist: request/approve/revoke attempts call the `SECURITY_ALERT_WEBHOOK`, persist delivered/missing/failed alert outcomes in tenant-scoped grant metadata, write tenant-visible alert audit events, require `SECURITY_ALERT_WEBHOOK` in production env validation, expose latest alert status and review debt in Admin security, and allow lead admins to record post-event reviews for expired/revoked grants
+- privileged MFA edge enforcement now covers the highest-risk admin/support operations: MFA is required for lead-admin, internal-support, support-admin, and break-glass roles; session context carries the auth provider; MFA-incomplete sessions are blocked from tenant export, audit-log reads, security-policy updates, privileged grant mutations, admin configuration writes, AI prompt/knowledge mutations, provider number changes, WhatsApp template changes, user/admin mutations, tenant ingress secret/origin changes, and manual queue/dead-letter trigger paths; read-only security bootstrap remains available so admins can complete enrollment
+- lead-admin admin authorization is now centralized through `src/server/auth/admin-guard.ts`: `requireLeadAdminAccess` applies tenant scope and optional sensitive-session MFA for human admins, while `requireLeadAdminOrMachineAccess` keeps service-to-service outbox/retry/alert routes available only through configured shared secrets plus tenant ingress scope/signature, and blocks logged-in non-admin users from falling through to machine authorization
+- the admin security surface now shows privileged-access stats, request form, approval note, revoke reason, and pending/active grant actions, with demo/mock API parity for policy and privileged-access routes
+- focused auth/tenant coverage now includes `tests/auth-login-mfa-api.test.ts`, `tests/auth-mfa-api.test.ts`, `tests/auth-logout-api.test.ts`, `tests/sensitive-session.test.ts`, `tests/admin-guard.test.ts`, `tests/tenant-security-policy.test.ts`, `tests/admin-security-policy-api.test.ts`, `tests/privileged-access.test.ts`, `tests/privileged-access-alerts.test.ts`, `tests/privileged-access-authorization.test.ts`, and `tests/admin-privileged-access-api.test.ts` in `npm run test:tenant-isolation`
+- Vitest/Vite audit remediation is complete: Vitest is upgraded to `4.1.8`, Vite resolves to `8.0.16`, esbuild resolves through the patched Vite chain, and PostCSS is overridden to `8.5.15`
+- current verification on 2026-06-05: `npm run typecheck`, `npm run lint`, `npm run build`, `npm run test:tenant-isolation` (78 files, 269 tests), `npm run test:ai-safety` (7 files, 46 tests), `npm test` (182 files, 734 tests), `npm audit --audit-level=high`, `npm run audit:tenant-query-scope` (272 files, 680 query calls, 550 scoped calls, 0 findings), and `git diff --check` pass; Git reports only expected Windows CRLF normalization warnings
+- still outstanding: production OAuth/provider smoke evidence, release-environment session/cache drills, and any future routes that intentionally admit internal support roles must use explicit active-grant enforcement rather than broadening ordinary lead-admin APIs
 
 ### Commercial Requirement
 Auth can no longer assume a single internal company operating model. Identity must support:
@@ -322,6 +511,27 @@ The system must distinguish:
 - downgrade/suspend states stop new usage safely without destroying customer records
 - billing/metering data is append-only or reconciliation-safe enough to defend invoices
 - failed entitlement checks are visible in support diagnostics without exposing other tenant data
+
+Completed local code:
+- workspace module entitlements now fail closed when `ENTITLEMENTS_FAIL_CLOSED=true` or in production: missing module configuration or a database read failure disables billable modules instead of falling back to enabled defaults
+- module entitlement JSON remains backward-compatible with boolean flags but now supports structured states such as `active`, `disabled`, `suspended`, and `downgrade_pending`, so downgrade/suspend controls can stop new usage without deleting records
+- billable usage metering now fails closed under `ENTITLEMENTS_FAIL_CLOSED=true`, `MODULE_METERING_FAIL_CLOSED=true`, or production, so metering write failures are no longer silently hidden under the launch safety posture
+- production env validation now requires `ENTITLEMENTS_FAIL_CLOSED=true` and `MODULE_METERING_FAIL_CLOSED=true`, and `.env.example` documents both flags
+- the admin workspace usage API now returns tenant/workspace-scoped daily usage buckets, and the admin Workspace tab renders a stacked module-usage chart plus per-module actor/kind breakdown cards
+- a server-owned billing catalog now defines the v2 modular CRM quote shape for Core OS, WhatsApp, Voice, AI Orchestration, and Vanilla Webchat, with configurable `BILLING_VAT_RATE_PERCENT` validation
+- `/api/admin/workspace/usage/export` now provides a lead-admin-MFA-gated tenant/workspace-scoped usage export in JSON or CSV, includes quote data, omits customer/contact identifiers, and audits export metadata without row payloads
+- billing lifecycle persistence now exists in migration `0059_billing_lifecycle.sql`: tenant/workspace-scoped subscriptions, plan changes, invoices, manual adjustments, and dunning events are the local source of truth, with finance-admin role seeding and workspace foreign keys
+- `src/server/billing/lifecycle.ts` now owns deterministic plan-change/proration calculations, subscription lifecycle changes, manual credits/refunds/write-offs/plan overrides, collections/dunning events, invoice state transitions, and customer-safe invoice export data without live payment-provider calls
+- `/api/admin/workspace/billing` now exposes the billing lifecycle surface behind `lead_admin` or `finance_admin` MFA access, passes tenant/workspace scope into every service call, and audits invoice export metadata without row payloads
+- billing suspension now syncs workspace module entitlements into suspended state, and billable usage metering checks module entitlement before recording usage under the fail-closed launch posture
+- billing lifecycle tables are included in the tenant query guard, static query-scope sweep, tenant export, tenant isolation audit, and offboarding rehearsal inventories
+- focused regression coverage now includes `tests/workspace-modules-entitlements.test.ts`, `tests/module-metering-fail-closed.test.ts`, `tests/admin-workspace-usage-export-api.test.ts`, `tests/billing-lifecycle.test.ts`, and `tests/admin-workspace-billing-api.test.ts` in `npm run test:tenant-isolation`
+
+Still required for pre-deploy code handover:
+- no remaining local billing lifecycle code blocker is identified in this workstream after the 2026-06-06 focused checks; final release verification must still stay green on the whole branch before deploy/testing handover
+
+Deferred to deploy/testing/post-launch evidence:
+- provider-spend reconciliation must compare billable usage against actual provider charges after deploy credentials, provider dashboards, and real provider invoice evidence exist; this is not a local code-completion blocker for the current ready-to-deploy handover
 
 ### Email Service Commercial Requirement
 The platform must support two distinct email commercial models:
@@ -395,7 +605,7 @@ The roadmap must support:
 
 ## Workstream E: AI Productization
 ### Product Requirement
-The current Venus-derived capability must become an optional `6esk` module, not a hidden internal dependency.
+Dexter-owned AI capability must remain an optional `6esk` module with no hidden internal-platform dependency.
 
 ### Modes To Support
 1. No AI.
@@ -426,6 +636,28 @@ The current Venus-derived capability must become an optional `6esk` module, not 
 - BYO AI keys are tenant secrets and must never be visible to other tenants or broad internal roles
 - provider responses, embeddings, transcripts, summaries, and QA flags must not cross tenant boundaries in caches, traces, prompts, eval datasets, or analytics
 - human review is a `hybrid_review` policy behavior, not a hidden global fallback; `full_auto` must still be bounded by tenant policy, tool policy, denial, rollback, and audit controls
+- customer-facing Dexter sessions must be bound to a single tenant, workspace, channel, active ticket/thread, and current customer context before any model prompt, retrieval, or tool action is built
+- no customer OTP or 6esk-owned customer verification step is planned for live call/email/chat launch; customer identity assurance is a tenant business responsibility, while 6esk verifies tenant users, tenant admins, machine integrations, channel ownership, and tenant/workspace boundaries
+- for email and WhatsApp, Dexter may treat the tenant-resolved channel identity as sufficient to support that customer's active and historical CRM context, because the tenant is responsible for customer identity collection and channel consent
+- for voice, Dexter may continue after the call notice/recording-consent script is accepted; phone-based support must use the tenant-resolved customer record and recorded-call consent rather than OTP step-up
+- same-customer history is an intended customer-support capability, not only an internal routing aid; Dexter should be able to discuss the customer's own prior tickets, trade/order/service history, support notes appropriate for customer visibility, and current resolution state when those records are bound to the same tenant/workspace/customer context
+- customer profile data such as phone, email, address, account identifiers, billing identifiers, and private identity metadata should be minimized in replies and only used or repeated when required to complete the customer's support task or route them to the tenant's approved channel
+- other-customer and other-tenant data is never eligible context, even when the requested information is non-identifying or the customer attempts prompt injection
+
+### Customer-Facing AI History Stance
+`6esk` is a CRM operating system for tenants helping their own customers. The platform must not add friction that makes normal support workflows unusable, so customer-facing Dexter must support customer history without an OTP requirement.
+
+Requirements:
+- tenant/user verification is a 6esk platform responsibility; customer verification is a tenant operating responsibility
+- tenant integrations must resolve every inbound call, email, WhatsApp, or chat into tenant key, workspace key, channel, active conversation/ticket where possible, and the best-known customer record
+- once a same-customer context is resolved, Dexter may answer questions about that customer's own active case and prior CRM history across enabled modules, including ticket history, trade/order/service status, previous resolutions, and relevant tenant-approved business knowledge
+- Dexter must never use a customer request to widen scope from the resolved customer to another customer, another tenant, all customers, mailbox-wide history, analytics exports, raw databases, or hidden agent/runtime data
+- if customer identity is ambiguous, conflicted, or linked to multiple possible customer records, Dexter should avoid disclosing history and should create a clarification/handoff path instead of guessing
+- voice flows must begin with tenant-approved recording/monitoring notice text; once accepted, the call can proceed without OTP
+- email, WhatsApp, and webchat flows rely on the tenant's channel onboarding and identity-resolution rules; 6esk should provide configurable tenant policy controls but should not force customer OTP by default
+- customer-visible history should be filtered to information appropriate for the customer, not internal-only notes, hidden agent analysis, provider secrets, operator-only audit trails, or unrelated customer data
+- all customer-history answers must be traceable to allowed source records in the command envelope or retrieval context so output validation can reject answers sourced from outside the resolved customer boundary
+- tenants should be able to configure stricter customer-history disclosure rules later, but the default launch posture is CRM-useful same-customer history with hard tenant/customer isolation
 
 ### AI Prompt-Injection Defense Pipeline
 Prompt injection must be handled as a production security boundary, not as prompt wording. The AI runtime needs a layered pipeline between user/customer-controlled content, retrieved knowledge, model prompts, tool execution, and persisted outputs.
@@ -446,6 +678,8 @@ Required layers:
 3. Prompt-template and sandbox layer
    - build prompts from structured envelopes rather than free-text concatenation
    - delimit user content, retrieved SOPs, conversation history, system policy, and tool schemas with typed sections that the model is instructed to treat differently
+   - include a server-built customer privacy context with allowed tenant, workspace, ticket, thread, customer, and source ids; model text must never be allowed to expand this context
+   - include customer-visible history as a distinct typed section so the model can support continuity while validators can keep internal-only notes, other-customer records, and hidden policy out of customer replies
    - version prompt templates and critical constraints, with rollout, rollback, audit history, and tenant-specific policy overlays
    - repeat non-negotiable constraints at the action boundary: never reveal system/developer prompts, never execute tools outside the validated capability set, never use untrusted content as instruction authority
 4. Capability and tool-policy layer
@@ -469,16 +703,21 @@ Implementation plan:
 2. Centralize AI input normalization and injection scoring so uploads, chat messages, ticket context, transcripts, retrieved knowledge, and agent callbacks use the same guard contract.
 3. Wrap Dexter command envelopes with a pre-tool policy validator that checks tenant ownership, entitlements, permissions, tool class, destination, idempotency, and policy mode before dispatch.
 4. Add output validators for command envelopes, customer-visible replies, operator-visible drafts, knowledge mutations, and external-send payloads.
-5. Build a tenant-scoped AI Security page in admin showing guard events, tool denials, prompt/template versions, run-level replay evidence, policy mode, blocked payload samples with redaction, and model/provider health.
-6. Add regression tests and red-team fixtures for every layer before enabling `full_auto` for external tenants.
+5. Add a customer privacy firewall for live channels that allows resolved same-customer CRM history, blocks cross-tenant/cross-customer scope expansion, handles ambiguous customer identity with clarification or handoff, and minimizes unnecessary profile-PII repetition before drafts or sends can persist.
+6. Build a tenant-scoped AI Security page in admin showing guard events, tool denials, prompt/template versions, run-level replay evidence, policy mode, blocked payload samples with redaction, and model/provider health.
+7. Add regression tests and red-team fixtures for every layer before enabling `full_auto` for external tenants.
 
 Acceptance criteria:
 - prompt injection cannot cause Dexter to reveal hidden prompts, bypass tenant/permission checks, call unentitled tools, send unauthorized outbound messages, or access another tenant's knowledge/files
 - every AI tool call is explainable from a tenant-scoped command envelope, policy decision, run ledger entry, and audit event
 - `hybrid_review` creates human approval tasks only where tenant policy requires them; `full_auto` remains autonomous but bounded by hard policy denies, downgrades, idempotency, rollback strategy, and alerts
 - knowledge-base uploads and retrieval snippets are screened for direct and indirect injection before they can influence a tool-capable prompt
+- customer-facing AI cannot reveal another customer's ticket, query topic, conversation content, contact details, or profile fields, including within the same tenant/workspace
+- customer-facing AI can help with the resolved customer's own active thread and prior CRM history without OTP when the channel/customer context is tenant-resolved and not ambiguous
+- customer-facing AI does not require OTP for call, email, WhatsApp, or chat; voice relies on the tenant-approved call recording/monitoring notice, while email/WhatsApp/chat rely on tenant-managed channel identity and consent
+- customer-facing AI minimizes profile/account identifiers and repeats them only when needed for the support task or approved tenant workflow
 - guard decisions and validator failures are visible in tenant-safe admin diagnostics and security telemetry without leaking sensitive payloads across tenants
-- launch testing includes direct prompt injection, indirect RAG injection, poisoned SOP uploads, hostile transcript content, model-output schema violations, cross-tenant exfiltration attempts, BYO-provider behavior, and tool-abuse scenarios
+- launch testing includes direct prompt injection, indirect RAG injection, poisoned SOP uploads, hostile transcript content, model-output schema violations, cross-tenant exfiltration attempts, cross-customer history probes, ambiguous-customer identity probes, same-customer history support scenarios, profile-PII minimization probes, BYO-provider behavior, and tool-abuse scenarios
 
 ### Explicit Commercial Rule
 BYO AI should reduce customer cost materially, but 6esk still owns:
@@ -531,14 +770,22 @@ Implemented foundation:
 - published knowledge retrieval is tenant/workspace-key scoped, records retrieval audit events, and uses Postgres full-text search as the first local retrieval path
 - knowledge retrieval now screens search queries and retrieved snippets for direct or indirect prompt injection before they can be attached to Dexter command envelopes
 - Dexter command envelopes can now include tenant-scoped published knowledge context from the knowledge base, capped per retrieval result, so agent actions can use customer SOPs without broadening cross-tenant access
+- Dexter command envelopes now include a server-built `agent-customer-context.v1` privacy context with tenant, workspace, channel, active ticket/thread, current customer, ambiguity state, and allowed source ids; prompt sandboxing places that context in an authoritative `customer_privacy_context` section outside untrusted event payload text
+- the agent output validator now enforces customer-visible privacy boundaries before drafts or sends persist: it blocks out-of-scope source ids, profile PII overexposure, unresolved/ambiguous/conflicted history disclosure, and generated language that expands scope to another customer, tenant, workspace, mailbox-wide data, analytics-wide data, raw database records, or hidden runtime state
+- local guard hardening now covers encoded-instruction smuggling, Afrikaans/South-African override phrasing, and prompt-canary leakage; leaked canary samples are redacted in diagnostics as `[REDACTED_PROMPT_CANARY]`
+- `npm run test:ai-safety` now passes with the customer-context and expanded prompt-injection coverage included: typecheck plus 7 AI safety test files, 46 tests
 
-Still launch-blocking:
-- `tenant_key = primary` is still a compatibility bridge for un-migrated paths; full tenant/workspace/org coverage, backfill tooling, orphan detection, and cross-tenant regression tests remain required before external customer data
-- production scanner and document-extractor service deployment, production R2 quarantine bucket provisioning/lifecycle policy, destructive offboarding delete/anonymization, actual object payload bundling for exports, and broader cross-module retention enforcement are not complete
-- embeddings/vector retrieval and retrieval evaluation are not complete
-- the prompt-injection defense pipeline is still not complete; stronger classifier/model-assisted guards, canary rollout policy, replay redaction policy, GitHub branch-protection enforcement for the AI safety workflow, and model/provider evaluation suites are still required before full autonomy
-- prompt-injection/data-poisoning tests now cover guard classification, upload screening, retrieval query/snippet shaping, pre-tool policy decisions, output validation, prompt sandbox trust boundaries, cross-tenant exfiltration language, admin safety diagnostics, and initial hostile-provider, long-context, and multilingual cases, but still need broader mutation suites, more languages/locales, and model/provider evaluation-set coverage
-- full external ElizaOS/Dexter worker process isolation, lifecycle health, and replay drill coverage remain required before full autonomy is production-safe
+Still required for pre-deploy code handover:
+- `tenant_key = primary` is still a compatibility bridge for un-migrated paths; local code work must keep tenant/workspace/org coverage, backfill tooling, orphan detection, and cross-tenant regression tests aligned before external customer data
+- embeddings/vector retrieval can remain a later capability, but the current local retrieval path must keep tenant/workspace scope, guard screening, and source-bound evidence intact
+- the prompt-injection defense pipeline has a stronger local rule/canary baseline; remaining work is deeper mutation fuzzing, replay redaction review across every admin diagnostic surface, and live-channel end-to-end scenarios before external traffic
+- live customer-facing history safety now has the local source-bound context and validator foundation; remaining pre-deploy work is any required handoff UX/action behavior for ambiguous identity and end-to-end live-channel scenarios proving the same-customer history path behaves correctly before external traffic
+
+Deferred to deploy/testing evidence:
+- production scanner and document-extractor service deployment, production R2 quarantine bucket provisioning/lifecycle policy, production export object-payload rehearsal against real R2 data, production tenant-offboarding rehearsal capture, model/provider evaluation suites, GitHub branch-protection enforcement for the AI safety workflow, and external Dexter worker lifecycle/replay drills require deployed infrastructure or provider/runtime access
+
+Deferred to post-launch lifecycle hardening:
+- physical offboarding delete, production anonymization/offboarding execution rehearsal, backup/restore drill evidence, and broader cross-module retention enforcement are preserved as lifecycle requirements but are not immediate local code blockers unless they expose a code safety gap
 
 ### Voice / Transcript Product Rule
 - call recordings and transcripts remain `6esk` artifacts, not provider-owned artifacts
@@ -698,6 +945,14 @@ The current internal-tool telemetry bar is not enough.
 - tenant-scoped correlation IDs across API requests, worker jobs, provider callbacks, outbound sends, transcript jobs, AI jobs, billing events, and audit logs
 - queue-depth, retry, dead-letter, idempotency, and duplicate-suppression dashboards for customer-contact paths
 
+Completed local code:
+- API middleware now normalizes an inbound `x-6esk-request-id` / `x-request-id` or generates a bounded request id, forwards it to route handlers as `x-6esk-request-id`, and returns the same id on normal and rate-limited responses
+- request-id normalization rejects short, oversized, and control-character values so caller-supplied correlation ids cannot poison response headers or logs
+- focused coverage now includes `tests/request-correlation.test.ts`; route-level tenant/workspace audit/event correlation still needs broader adoption as code-owned follow-up
+
+Deferred to deploy/testing evidence:
+- external dashboards, alert routing, SLO burn-rate checks, public status workflow, and production telemetry proof require the deploy/runtime environment and should be captured during deploy/testing rather than claimed locally
+
 ### Why This Matters
 A SaaS business dies if it cannot:
 - explain failures quickly
@@ -723,6 +978,26 @@ A SaaS business dies if it cannot:
 - billing suspension must stop new billable usage without corrupting historical records or audit trails
 - invoices and usage exports must never include another tenant's usage, identifiers, or metadata
 - manual credits, refunds, write-offs, and plan overrides require role checks and audit trails
+
+### Current Deploy-Readiness Billing Slice
+Done means the local branch is ready to hand to deploy/testing after these code-owned capabilities are implemented and verified:
+- subscription persistence has a tenant/workspace-scoped source of truth for plan, module add-ons, billing status, renewal dates, cancellation/downgrade state, and audit metadata
+- plan-change/proration behavior can calculate upgrade, downgrade, renewal, and cancellation effects deterministically without calling a live payment provider
+- manual credits, refunds, write-offs, and plan overrides use explicit lead-admin or finance-admin authorization and tenant-visible audit events
+- collections/dunning state can record overdue, suspended, retry, grace-period, and restored states without destroying historical usage or invoices
+- invoice lifecycle covers draft, issued, paid, void, credited, refunded, overdue, and written-off states with tenant/workspace isolation and customer-safe export data
+- entitlement and metering enforcement remain upstream of provider calls, queue writes, AI execution, outbound sends, and billable usage recording
+- focused tests cover tenant isolation, authorization, state transitions, proration, adjustment auditability, and invoice export safety; broader `typecheck`, `lint`, `build`, full tests, static tenant-query audit, and `git diff --check` pass
+
+Current local status:
+- implemented locally on 2026-06-06 through `workspace_billing_subscriptions`, `workspace_billing_plan_changes`, `workspace_billing_invoices`, `workspace_billing_adjustments`, `workspace_billing_dunning_events`, `src/server/billing/lifecycle.ts`, and `/api/admin/workspace/billing`
+- tenant/workspace isolation is enforced by runtime query guard registration, static query-scope sweep registration, tenant export coverage, tenant isolation audit coverage, offboarding rehearsal coverage, and focused billing/API tests
+- provider reconciliation and live collection are intentionally excluded from this local done state until deployed credentials, provider dashboards, and real provider invoice evidence exist
+
+Out of scope for this local done state:
+- live payment-processor collection
+- provider-spend reconciliation against deployed credentials or provider dashboards
+- production OAuth smoke, provider dashboard validation, R2 checks, branch-protection proof, and production telemetry evidence
 
 ### Missing From Current Internal-Tool Shape
 The platform currently behaves like a product. `v2` must also behave like a business system.

@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { z } from "zod";
 import { db } from "@/server/db";
 import { hashPassword } from "@/server/auth/password";
+import { revokeUserSessions } from "@/server/auth/session";
 import { recordAuditLog } from "@/server/audit";
 
 const resetSchema = z.object({
@@ -68,14 +69,35 @@ export async function POST(request: Request) {
        AND workspace_key = $3`,
     [reset.id, reset.tenant_key, reset.workspace_key]
   );
+  const revokedSessionCount = await revokeUserSessions({
+    userId: reset.user_id,
+    tenantKey: reset.tenant_key,
+    workspaceKey: reset.workspace_key,
+    reason: "password_reset"
+  });
 
   await recordAuditLog({
     tenantKey: reset.tenant_key,
     workspaceKey: reset.workspace_key,
     action: "password_reset_completed",
     entityType: "user",
-    entityId: reset.user_id
+    entityId: reset.user_id,
+    data: { revokedSessionCount }
   });
 
-  return Response.json({ status: "updated" });
+  if (revokedSessionCount > 0) {
+    await recordAuditLog({
+      tenantKey: reset.tenant_key,
+      workspaceKey: reset.workspace_key,
+      action: "auth_sessions_revoked",
+      entityType: "user",
+      entityId: reset.user_id,
+      data: { reason: "password_reset", revokedSessionCount }
+    });
+  }
+
+  return Response.json({
+    status: "updated",
+    revokedSessionCount
+  });
 }

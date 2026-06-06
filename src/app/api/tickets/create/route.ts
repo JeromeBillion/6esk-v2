@@ -19,10 +19,11 @@ import {
   type CustomerResolutionConflict
 } from "@/server/customers";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile,
-  type PredictionProfile
-} from "@/server/integrations/prediction-profile";
+  enrichExternalProfileMetadata,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import { normalizeCallPhone, queueOutboundCall } from "@/server/calls/service";
 import { deliverPendingCallEvents } from "@/server/calls/outbox";
@@ -94,70 +95,6 @@ function moduleDisabledResponse(module: "email" | "whatsapp" | "voice") {
   );
 }
 
-function enrichExternalProfileMetadata(metadata: Record<string, unknown> | null) {
-  if (!metadata) return null;
-
-  const hasExternalProfile =
-    typeof metadata.external_profile === "object" && metadata.external_profile !== null;
-  if (hasExternalProfile) {
-    return metadata;
-  }
-
-  const email = readString(metadata.appUserEmail);
-  const isAuthenticated = metadata.isAuthenticated === true;
-  if (!isAuthenticated || !email) {
-    return metadata;
-  }
-
-  const matchedAt = new Date().toISOString();
-  return {
-    ...metadata,
-    external_profile: {
-      source: "prediction-market-mvp-webchat",
-      externalUserId: readString(metadata.appUserId),
-      matchedBy: "session_auth",
-      matchedAt,
-      fullName: readString(metadata.appUserFullName),
-      email,
-      secondaryEmail: readString(metadata.appUserSecondaryEmail),
-      phoneNumber: readString(metadata.appUserPhone),
-      kycStatus: readString(metadata.appUserKycStatus),
-      accountStatus: readString(metadata.appUserAccountStatus)
-    },
-    profile_lookup: {
-      source: "prediction-market-mvp-webchat",
-      status: "matched",
-      matchedBy: "session_auth",
-      lookupAt: matchedAt
-    }
-  } as Record<string, unknown>;
-}
-
-function readProfileFromMetadata(
-  metadata: Record<string, unknown> | null
-): PredictionProfile | null {
-  if (!metadata) return null;
-  const payload = metadata.external_profile;
-  if (!payload || typeof payload !== "object") return null;
-  const profile = payload as Record<string, unknown>;
-
-  const id = readString(profile.externalUserId);
-  const email = readString(profile.email);
-  if (!id || !email) {
-    return null;
-  }
-
-  return {
-    id,
-    email,
-    secondaryEmail: readString(profile.secondaryEmail),
-    fullName: readString(profile.fullName),
-    phoneNumber: readString(profile.phoneNumber),
-    kycStatus: readString(profile.kycStatus),
-    accountStatus: readString(profile.accountStatus)
-  };
-}
-
 function readLookupPhoneFromMetadata(metadata: Record<string, unknown> | null) {
   if (!metadata) return null;
 
@@ -181,15 +118,6 @@ function readLookupPhoneFromMetadata(metadata: Record<string, unknown> | null) {
   );
 }
 
-function readLookupMatchedByFromMetadata(metadata: Record<string, unknown> | null) {
-  if (!metadata) return null;
-  const payload =
-    typeof metadata.profile_lookup === "object" && metadata.profile_lookup !== null
-      ? (metadata.profile_lookup as Record<string, unknown>)
-      : null;
-  return readString(payload?.matchedBy);
-}
-
 function applyIdentityConflictMetadata(
   metadata: Record<string, unknown> | null,
   conflict: CustomerResolutionConflict
@@ -211,25 +139,11 @@ function applyIdentityConflictMetadata(
 }
 
 async function enrichInboundExternalMetadata({
-  fromEmail,
   metadata
 }: {
-  fromEmail: string;
   metadata: Record<string, unknown> | null;
 }) {
-  const enriched = enrichExternalProfileMetadata(metadata);
-  if (readProfileFromMetadata(enriched)) {
-    return enriched;
-  }
-
-  const lookup = await lookupPredictionProfile({
-    email: fromEmail,
-    phone: readLookupPhoneFromMetadata(enriched) ?? undefined
-  });
-  return {
-    ...(enriched ?? {}),
-    ...buildProfileMetadataPatch(lookup)
-  } as Record<string, unknown>;
+  return enrichExternalProfileMetadata(metadata);
 }
 
 export async function POST(request: Request) {
@@ -640,13 +554,15 @@ export async function POST(request: Request) {
     return Response.json({ error: "Description is required" }, { status: 400 });
   }
   let enrichedMetadata = await enrichInboundExternalMetadata({
-    fromEmail,
     metadata: (data.metadata as Record<string, unknown> | null) ?? null
   });
-  const resolvedProfile = readProfileFromMetadata(enrichedMetadata);
+  const resolvedProfile = readExternalProfileFromMetadata(enrichedMetadata);
+  const profileSource = readExternalProfileSource(enrichedMetadata);
+  const profileMatchedBy = readExternalProfileMatchedBy(enrichedMetadata);
   const customerResolution = await resolveOrCreateCustomerForInbound({
     tenantKey: scope.tenantKey,
     workspaceKey: scope.workspaceKey,
+    externalSystem: profileSource,
     profile: resolvedProfile,
     inboundEmail: fromEmail
   });
@@ -701,9 +617,9 @@ export async function POST(request: Request) {
     await upsertExternalUserLink({
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,
-      externalSystem: "prediction-market-mvp",
+      externalSystem: profileSource,
       profile: resolvedProfile,
-      matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+      matchedBy: profileMatchedBy,
       inboundEmail: fromEmail,
       ticketId,
       channel: "email"
@@ -714,8 +630,8 @@ export async function POST(request: Request) {
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,
       data: {
-        source: "prediction-market-mvp",
-        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        source: profileSource,
+        matchedBy: profileMatchedBy,
         externalUserId: resolvedProfile.id
       }
     });
@@ -726,8 +642,8 @@ export async function POST(request: Request) {
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,
       data: {
-        source: "prediction-market-mvp",
-        matchedBy: readLookupMatchedByFromMetadata(enrichedMetadata),
+        source: profileSource,
+        matchedBy: profileMatchedBy,
         conflict: customerResolution.conflict
       }
     });

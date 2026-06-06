@@ -13,9 +13,13 @@ import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { evaluateSpam } from "@/server/email/spam";
 import {
-  buildProfileMetadataPatch,
-  lookupPredictionProfile
-} from "@/server/integrations/prediction-profile";
+  DEFAULT_EXTERNAL_PROFILE_SYSTEM,
+  buildExternalProfileMetadataPatch,
+  readExternalProfileFromMetadata,
+  readExternalProfileMatchedBy,
+  readExternalProfileSource,
+  type ExternalProfile
+} from "@/server/integrations/external-profile";
 import { upsertExternalUserLink } from "@/server/integrations/external-user-links";
 import {
   resolveOrCreateCustomerForInbound,
@@ -105,28 +109,44 @@ export async function storeInboundEmail(data: InboundEmail, scopeInput?: TenantS
     }
   }
 
-  // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  let requesterProfile: Awaited<ReturnType<typeof lookupPredictionProfile>> | null = null;
+  // ── Phase 1: Resolve deterministic data BEFORE the transaction ──
+  let requesterProfile: ExternalProfile | null = null;
+  let profileSource = DEFAULT_EXTERNAL_PROFILE_SYSTEM;
+  let profileMatchedBy: string | null = null;
   let customerResolution: Awaited<ReturnType<typeof resolveOrCreateCustomerForInbound>> | null = null;
   let profileMetadataPatch: Record<string, unknown> = {};
   let existingTicketId: string | null = null;
   let inferredTags: string[] = [];
 
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
-    requesterProfile = await lookupPredictionProfile({ email: fromEmail });
+    const inboundMetadata = ((data.metadata as Record<string, unknown> | null) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    requesterProfile = readExternalProfileFromMetadata(inboundMetadata);
+    profileSource = readExternalProfileSource(inboundMetadata);
+    profileMatchedBy = readExternalProfileMatchedBy(inboundMetadata);
     customerResolution = await resolveOrCreateCustomerForInbound({
       tenantKey: scope.tenantKey,
       workspaceKey: scope.workspaceKey,
-      profile: requesterProfile.status === "matched" ? requesterProfile.profile : null,
+      externalSystem: profileSource,
+      profile: requesterProfile,
       inboundEmail: fromEmail
     });
     profileMetadataPatch =
-      requesterProfile.status === "matched" && customerResolution?.conflict
-        ? applyIdentityConflictMetadata(
-            buildProfileMetadataPatch(requesterProfile),
-            customerResolution.conflict
-          )
-        : buildProfileMetadataPatch(requesterProfile);
+      requesterProfile
+        ? buildExternalProfileMetadataPatch({
+            profile: requesterProfile,
+            source: profileSource,
+            matchedBy: profileMatchedBy
+          })
+        : {};
+    if (requesterProfile && customerResolution?.conflict) {
+      profileMetadataPatch = applyIdentityConflictMetadata(
+        profileMetadataPatch,
+        customerResolution.conflict
+      );
+    }
 
     const references = [data.inReplyTo, ...(data.references ?? [])].filter(
       (value): value is string => Boolean(value)
@@ -248,17 +268,17 @@ export async function storeInboundEmail(data: InboundEmail, scopeInput?: TenantS
           );
         }
       } else {
-        // Reopen ticket if it was resolved/closed
-        const statusResult = await client.query<{ status: string }>(
-          "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2",
-          [ticketId, scope.tenantKey]
-        );
+	        // Reopen ticket if it was resolved/closed
+	        const statusResult = await client.query<{ status: string }>(
+	          "SELECT status FROM tickets WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	          [ticketId, scope.tenantKey, scope.workspaceKey]
+	        );
         const currentStatus = statusResult.rows[0]?.status;
         if (currentStatus === "solved" || currentStatus === "closed") {
-          await client.query(
-            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2",
-            [ticketId, scope.tenantKey]
-          );
+	          await client.query(
+	            "UPDATE tickets SET status = 'open', updated_at = now() WHERE id = $1 AND tenant_key = $2 AND workspace_key = $3",
+	            [ticketId, scope.tenantKey, scope.workspaceKey]
+	          );
           await client.query(
             `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
              VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -266,59 +286,61 @@ export async function storeInboundEmail(data: InboundEmail, scopeInput?: TenantS
           );
         }
 
-        if (requesterProfile?.status === "matched") {
+        if (requesterProfile) {
           await client.query(
             `UPDATE tickets
              SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                  updated_at = now()
-             WHERE id = $1
-               AND tenant_key = $3`,
-            [ticketId, JSON.stringify(profileMetadataPatch), scope.tenantKey]
-          );
+	             WHERE id = $1
+	               AND tenant_key = $3
+	               AND workspace_key = $4`,
+	            [ticketId, JSON.stringify(profileMetadataPatch), scope.tenantKey, scope.workspaceKey]
+	          );
         }
       }
 
       if (ticketId && customerResolution?.customerId) {
         const customerAttachResult = await client.query(
-          `UPDATE tickets SET customer_id = $2, updated_at = now()
-           WHERE id = $1
-             AND tenant_key = $3
-             AND (customer_id IS NULL OR customer_id != $2)`,
-          [ticketId, customerResolution.customerId, scope.tenantKey]
-        );
+	          `UPDATE tickets SET customer_id = $2, updated_at = now()
+	           WHERE id = $1
+	             AND tenant_key = $3
+	             AND workspace_key = $4
+	             AND (customer_id IS NULL OR customer_id != $2)`,
+	          [ticketId, customerResolution.customerId, scope.tenantKey, scope.workspaceKey]
+	        );
         attachedCustomerToTicket = (customerAttachResult.rowCount ?? 0) > 0;
       }
 
-      if (requesterProfile?.status === "matched" && ticketId && !customerResolution?.conflict) {
+      if (requesterProfile && ticketId && !customerResolution?.conflict) {
         await upsertExternalUserLink({
           tenantKey: scope.tenantKey,
           workspaceKey: scope.workspaceKey,
-          externalSystem: "prediction-market-mvp",
-          profile: requesterProfile.profile,
-          matchedBy: requesterProfile.matchedBy,
+          externalSystem: profileSource,
+          profile: requesterProfile,
+          matchedBy: profileMatchedBy,
           inboundEmail: fromEmail,
           ticketId,
           channel: "email"
         });
       }
 
-      if (createdNewTicket && requesterProfile?.status === "matched" && !customerResolution?.conflict) {
+      if (createdNewTicket && requesterProfile && !customerResolution?.conflict) {
         await client.query(
           `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [scope.tenantKey, scope.workspaceKey, ticketId, "profile_enriched", null, {
-            source: "prediction-market-mvp",
-            matchedBy: requesterProfile.matchedBy,
-            externalUserId: requesterProfile.profile.id
+            source: profileSource,
+            matchedBy: profileMatchedBy,
+            externalUserId: requesterProfile.id
           }]
         );
-      } else if (ticketId && requesterProfile?.status === "matched" && customerResolution?.conflict) {
+      } else if (ticketId && requesterProfile && customerResolution?.conflict) {
         await client.query(
           `INSERT INTO ticket_events (tenant_key, workspace_key, ticket_id, event_type, actor_user_id, data)
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [scope.tenantKey, scope.workspaceKey, ticketId, "customer_identity_conflict", null, {
-            source: "prediction-market-mvp",
-            matchedBy: requesterProfile.matchedBy,
+            source: profileSource,
+            matchedBy: profileMatchedBy,
             conflict: customerResolution.conflict
           }]
         );
@@ -538,7 +560,7 @@ export async function storeInboundEmail(data: InboundEmail, scopeInput?: TenantS
             email: fromEmail,
             phone: null
           },
-          matchedByProfile: requesterProfile?.status === "matched",
+          matchedByProfile: Boolean(requesterProfile),
           ...(customerResolution.conflict ? { conflict: customerResolution.conflict } : {})
         }
       });

@@ -1,21 +1,17 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ agentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { agentId } = await params;
-  const scope = tenantScopeFromUser(user);
   const integration = await getAgentIntegrationById(agentId, scope);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });

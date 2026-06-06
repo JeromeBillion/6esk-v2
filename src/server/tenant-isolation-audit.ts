@@ -82,8 +82,18 @@ type RelationSpec = {
 
 const WORKSPACE_TABLES: ScopedTableSpec[] = [
   idTable("users"),
+  {
+    tableName: "tenant_security_policies",
+    sampleExpression: "tenant_key || ':' || workspace_key",
+    qualifiedSampleExpression: "t.tenant_key || ':' || t.workspace_key"
+  },
   idTable("auth_sessions"),
+  idTable("auth_identity_accounts"),
+  idTable("auth_mfa_factors"),
+  idTable("auth_mfa_enrollments"),
+  idTable("auth_mfa_challenges"),
   idTable("password_resets"),
+  idTable("privileged_access_grants"),
   idTable("mailboxes"),
   {
     tableName: "mailbox_memberships",
@@ -145,7 +155,12 @@ const WORKSPACE_TABLES: ScopedTableSpec[] = [
     sampleExpression: "tenant_key || ':' || workspace_key",
     qualifiedSampleExpression: "t.tenant_key || ':' || t.workspace_key"
   },
-  idTable("workspace_module_usage_events")
+  idTable("workspace_module_usage_events"),
+  idTable("workspace_billing_subscriptions"),
+  idTable("workspace_billing_plan_changes"),
+  idTable("workspace_billing_invoices"),
+  idTable("workspace_billing_adjustments"),
+  idTable("workspace_billing_dunning_events")
 ];
 
 const TENANT_TABLES: ScopedTableSpec[] = [
@@ -161,7 +176,28 @@ const TENANT_TABLES: ScopedTableSpec[] = [
 
 const PARENT_RELATIONS: RelationSpec[] = [
   relation("auth_sessions", "user_id", "users"),
+  relation("auth_identity_accounts", "user_id", "users"),
+  relation("auth_mfa_factors", "user_id", "users"),
+  relation("auth_mfa_enrollments", "user_id", "users"),
+  relation("auth_mfa_challenges", "user_id", "users"),
   relation("password_resets", "user_id", "users"),
+  relation("privileged_access_grants", "requested_by_user_id", "users", { nullable: true }),
+  relation("privileged_access_grants", "approved_by_user_id", "users", { nullable: true }),
+  relation("privileged_access_grants", "revoked_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_subscriptions", "created_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_subscriptions", "updated_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_plan_changes", "subscription_id", "workspace_billing_subscriptions"),
+  relation("workspace_billing_plan_changes", "requested_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_plan_changes", "applied_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_invoices", "subscription_id", "workspace_billing_subscriptions"),
+  relation("workspace_billing_invoices", "created_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_invoices", "updated_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_adjustments", "subscription_id", "workspace_billing_subscriptions"),
+  relation("workspace_billing_adjustments", "invoice_id", "workspace_billing_invoices", { nullable: true }),
+  relation("workspace_billing_adjustments", "created_by_user_id", "users", { nullable: true }),
+  relation("workspace_billing_dunning_events", "subscription_id", "workspace_billing_subscriptions"),
+  relation("workspace_billing_dunning_events", "invoice_id", "workspace_billing_invoices", { nullable: true }),
+  relation("workspace_billing_dunning_events", "created_by_user_id", "users", { nullable: true }),
   relation("mailboxes", "owner_user_id", "users", { nullable: true }),
   relation("mailbox_memberships", "mailbox_id", "mailboxes", {
     childSampleExpression: "c.mailbox_id::text || ':' || c.user_id::text"

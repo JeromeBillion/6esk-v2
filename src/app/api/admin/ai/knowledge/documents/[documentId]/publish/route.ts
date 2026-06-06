@@ -1,20 +1,16 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { requireLeadAdminAccess } from "@/server/auth/admin-guard";
 import { recordAuditLog } from "@/server/audit";
 import { publishKnowledgeDocument } from "@/server/ai/knowledge-base";
-import { tenantScopeFromUser } from "@/server/tenant-context";
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireLeadAdminAccess({ requireMfa: true });
+  if (!access.ok) return access.response;
+  const { user, scope } = access;
 
   const { documentId } = await params;
-  const scope = tenantScopeFromUser(user);
   const document = await publishKnowledgeDocument({
     tenantKey: scope.tenantKey,
     workspaceKey: scope.workspaceKey,
