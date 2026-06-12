@@ -83,6 +83,13 @@ Date: 2026-06-06
   - run-ledger helpers can append tenant-bound cancel/wait/tool/approval/completion envelopes into `agent_run_events`
   - completed agent deliveries now persist a validated `agent.run.completed` envelope, while outbox-created runs continue to persist `agent.run.create`
   - wrong-folder event-to-command mapping behavior was retained as focused v2 command-envelope regression coverage
+- Semantically ported the first OpenClaw-style lane-queue value into v2 Dexter without adding OpenClaw as a dependency:
+  - `src/server/agents/run-ledger.ts`
+  - `src/server/agents/outbox.ts`
+  - Dexter outbox execution now reserves `tenant_id + lane_key` with a Postgres advisory transaction lock before a run can become `running`
+  - sibling runs in the same tenant/resource lane remain queued when another run is already `running` or `waiting_approval`
+  - lane-busy attempts append a tenant-bound `agent.wait` command envelope with `lane_busy` metadata and release the outbox event back to pending without posting to Dexter or consuming an attempt
+  - focused regression coverage proves the atomic reservation query and worker skip/release behavior
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.

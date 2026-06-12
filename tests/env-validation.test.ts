@@ -26,6 +26,8 @@ function baseEnv() {
     WHATSAPP_VERIFY_TOKEN: "whatsapp-verify",
     WHATSAPP_APP_SECRET: "whatsapp-app-secret",
     WHATSAPP_OUTBOX_SECRET: "whatsapp-outbox-secret",
+    AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS: "300",
+    AGENT_OUTBOX_LANE_RETRY_SECONDS: "10",
     AI_API_KEY: "ai-key",
     CALLS_PROVIDER: "twilio",
     CALLS_TWILIO_ACCOUNT_SID: "AC123",

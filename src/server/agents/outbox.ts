@@ -46,6 +46,7 @@ export type FailedAgentOutboxEvent = {
 };
 
 const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
+const DEFAULT_LANE_RETRY_SECONDS = 10;
 const MAX_AGENT_OUTBOX_ATTEMPTS = 5;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -53,6 +54,14 @@ function getProcessingRecoverySeconds() {
   const configured = Number(process.env.AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
   if (!Number.isFinite(configured) || configured <= 0) {
     return DEFAULT_PROCESSING_RECOVERY_SECONDS;
+  }
+  return Math.floor(configured);
+}
+
+function getLaneRetrySeconds() {
+  const configured = Number(process.env.AGENT_OUTBOX_LANE_RETRY_SECONDS ?? `${DEFAULT_LANE_RETRY_SECONDS}`);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return DEFAULT_LANE_RETRY_SECONDS;
   }
   return Math.floor(configured);
 }
@@ -235,6 +244,18 @@ async function markFailed(id: string, attemptCount: number, errorMessage: string
   );
 }
 
+async function releaseLanePending(id: string) {
+  await db.query(
+    `UPDATE agent_outbox
+     SET status = 'pending',
+         next_attempt_at = now() + make_interval(secs => $2::int),
+         updated_at = now()
+     WHERE id = $1
+       AND status = 'processing'`,
+    [id, getLaneRetrySeconds()]
+  );
+}
+
 async function postToAgent(integration: AgentIntegration, payload: Record<string, unknown>) {
   if (
     integration.base_url.startsWith("internal://") ||
@@ -340,11 +361,15 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         });
         runId = run.id;
       }
-      await markAgentRunRunning({
+      const reserved = await markAgentRunRunning({
         tenantId: event.tenant_id,
         runId,
         attemptCount: event.attempt_count + 1
       });
+      if (!reserved) {
+        await releaseLanePending(event.id);
+        continue;
+      }
       await postToAgent(integration, event.payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";

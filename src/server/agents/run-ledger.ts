@@ -38,6 +38,13 @@ type AgentRunRow = {
   lane_key: string;
 };
 
+type AgentRunReservationRow = {
+  reserved: boolean;
+  id: string;
+  lane_key: string;
+  blocked_by_run_id: string | null;
+};
+
 type AgentRunCommandContextRow = {
   id: string;
   tenant_id: string;
@@ -561,16 +568,73 @@ export async function markAgentRunRunning({
   runId: string;
   attemptCount: number;
 }) {
-  await db.query(
-    `UPDATE agent_runs
-     SET status = 'running',
-         started_at = COALESCE(started_at, now()),
-         failure_reason = NULL,
-         updated_at = now()
-     WHERE tenant_id = $1
-       AND id = $2`,
+  const result = await db.query<AgentRunReservationRow>(
+    `WITH target AS MATERIALIZED (
+       SELECT id, tenant_id, lane_key
+       FROM agent_runs
+       WHERE tenant_id = $1
+         AND id = $2
+     ),
+     lane_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(
+                hashtext(target.tenant_id::text),
+                hashtext(target.lane_key)
+              )
+       FROM target
+     ),
+     blocker AS MATERIALIZED (
+       SELECT other.id
+       FROM agent_runs other, target, lane_lock
+       WHERE other.tenant_id = target.tenant_id
+         AND other.lane_key = target.lane_key
+         AND other.id <> target.id
+         AND other.status IN ('running', 'waiting_approval')
+       ORDER BY other.updated_at ASC, other.created_at ASC
+       LIMIT 1
+     ),
+     updated AS (
+       UPDATE agent_runs run
+       SET status = 'running',
+           started_at = COALESCE(started_at, now()),
+           failure_reason = NULL,
+           updated_at = now()
+       FROM target, lane_lock
+       WHERE run.tenant_id = target.tenant_id
+         AND run.id = target.id
+         AND NOT EXISTS (SELECT 1 FROM blocker)
+       RETURNING run.id, run.lane_key
+     )
+     SELECT true AS reserved, id, lane_key, NULL::uuid AS blocked_by_run_id
+     FROM updated
+     UNION ALL
+     SELECT false AS reserved, target.id, target.lane_key, blocker.id AS blocked_by_run_id
+     FROM target
+     JOIN blocker ON true
+     WHERE NOT EXISTS (SELECT 1 FROM updated)`,
     [tenantId, runId]
   );
+  const reservation = result.rows[0] ?? null;
+  if (!reservation?.reserved) {
+    if (reservation?.blocked_by_run_id) {
+      await appendAgentRunControlPlaneCommand({
+        tenantId,
+        runId,
+        command: "agent.wait",
+        eventType: "agent.run.lane_wait",
+        status: "queued",
+        summary: "Agent run lane is busy; queued behind active run",
+        commandData: {
+          waitReason: "lane_busy",
+          metadata: {
+            attemptCount,
+            blockedByRunId: reservation.blocked_by_run_id,
+            laneKey: reservation.lane_key
+          }
+        }
+      });
+    }
+    return false;
+  }
   await appendAgentRunEvent({
     tenantId,
     runId,
@@ -579,6 +643,7 @@ export async function markAgentRunRunning({
     summary: "Agent run delivery started",
     eventData: { attemptCount }
   });
+  return true;
 }
 
 export async function markAgentRunCompleted({

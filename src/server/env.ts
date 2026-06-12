@@ -40,6 +40,8 @@ const envSchema = z.object({
   WHATSAPP_APP_SECRET: optionalNonEmptyString,
   WHATSAPP_OUTBOX_SECRET: optionalNonEmptyString,
   WHATSAPP_ALLOW_UNSIGNED_WEBHOOKS: optionalBooleanish,
+  AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS: optionalNonEmptyString,
+  AGENT_OUTBOX_LANE_RETRY_SECONDS: optionalNonEmptyString,
 
   AI_API_KEY: optionalNonEmptyString,
   OPENAI_API_KEY: optionalNonEmptyString,

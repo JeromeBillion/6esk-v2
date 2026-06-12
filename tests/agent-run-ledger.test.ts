@@ -7,6 +7,7 @@ const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const TICKET_ID = "44444444-4444-4444-8444-444444444444";
 const TOOL_CALL_ID = "55555555-5555-4555-8555-555555555555";
 const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
+const BLOCKING_RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 const mocks = vi.hoisted(() => ({
   db: {
@@ -172,7 +173,20 @@ describe("agent run ledger", () => {
   });
 
   it("records running, completed, and retryable failure events", async () => {
-    await markAgentRunRunning({ tenantId: TENANT_ID, runId: RUN_ID, attemptCount: 1 });
+    mocks.db.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            reserved: true,
+            id: RUN_ID,
+            lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+            blocked_by_run_id: null
+          }
+        ]
+      })
+      .mockResolvedValue({ rows: [] });
+
+    const reserved = await markAgentRunRunning({ tenantId: TENANT_ID, runId: RUN_ID, attemptCount: 1 });
     await markAgentRunCompleted({ tenantId: TENANT_ID, runId: RUN_ID });
     await markAgentRunFailed({
       tenantId: TENANT_ID,
@@ -182,6 +196,7 @@ describe("agent run ledger", () => {
       attemptCount: 2
     });
 
+    expect(reserved).toBe(true);
     expect(mocks.db.query).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'running'"),
       [TENANT_ID, RUN_ID]
@@ -198,6 +213,73 @@ describe("agent run ledger", () => {
       expect.stringContaining("INSERT INTO agent_run_events"),
       expect.arrayContaining([TENANT_ID, RUN_ID, "agent.run.retry_queued", "queued"])
     );
+  });
+
+  it("reserves a tenant lane atomically before running a Dexter run", async () => {
+    mocks.db.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            reserved: true,
+            id: RUN_ID,
+            lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+            blocked_by_run_id: null
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const reserved = await markAgentRunRunning({ tenantId: TENANT_ID, runId: RUN_ID, attemptCount: 1 });
+
+    expect(reserved).toBe(true);
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("pg_advisory_xact_lock"),
+      [TENANT_ID, RUN_ID]
+    );
+    expect(mocks.db.query.mock.calls[0][0]).toContain("other.status IN ('running', 'waiting_approval')");
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.run.running", "running"])
+    );
+  });
+
+  it("keeps a run queued when another run owns the same lane", async () => {
+    mocks.db.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            reserved: false,
+            id: RUN_ID,
+            lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+            blocked_by_run_id: BLOCKING_RUN_ID
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const reserved = await markAgentRunRunning({ tenantId: TENANT_ID, runId: RUN_ID, attemptCount: 2 });
+
+    expect(reserved).toBe(false);
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.run.lane_wait", "queued"])
+    );
+    const eventData = JSON.parse(mocks.db.query.mock.calls[2][1][5]);
+    expect(eventData.commandEnvelope).toMatchObject({
+      command: "agent.wait",
+      commandData: {
+        waitReason: "lane_busy",
+        metadata: {
+          attemptCount: 2,
+          blockedByRunId: BLOCKING_RUN_ID,
+          laneKey: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`
+        }
+      }
+    });
   });
 
   it("records a typed run-completed command envelope in the timeline", async () => {
