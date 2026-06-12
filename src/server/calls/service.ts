@@ -22,6 +22,7 @@ import {
 } from "@/server/tickets";
 import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 import { runInBackground } from "@/server/async";
 import { logger } from "@/server/logger";
 
@@ -923,6 +924,28 @@ async function getCallSessionById(callSessionId: string) {
     [callSessionId]
   );
   return result.rows[0] ?? null;
+}
+
+export async function resolveCallSessionProviderScope({
+  callSessionId,
+  provider,
+  providerCallId
+}: {
+  callSessionId?: string | null;
+  provider?: string | null;
+  providerCallId?: string | null;
+}) {
+  const providerValue = readString(provider) ?? "pending";
+  const providerCallIdValue = readString(providerCallId);
+  const session =
+    (callSessionId ? await getCallSessionById(callSessionId) : null) ??
+    (providerCallIdValue ? await getCallSessionByProvider(providerValue, providerCallIdValue) : null);
+  return session
+    ? {
+        tenantId: session.tenant_id,
+        workspaceKey: DEFAULT_WORKSPACE_KEY
+      }
+    : null;
 }
 
 export async function updateCallSessionStatus({

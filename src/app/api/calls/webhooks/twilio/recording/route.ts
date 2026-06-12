@@ -1,12 +1,16 @@
 import { recordAuditLog } from "@/server/audit";
-import { attachCallRecording } from "@/server/calls/service";
-import { normalizeTwilioParams, validateTwilioWebhook } from "@/server/calls/twilio";
+import { attachCallRecording, resolveCallSessionProviderScope } from "@/server/calls/service";
+import { normalizeTwilioParams, validateTwilioWebhookForTenant } from "@/server/calls/twilio";
 import {
   integrationError,
   integrationSuccess,
   validateIntegrationApiVersion
 } from "@/server/api-contract";
 import { runInBackground } from "@/server/async";
+import {
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
 
 function parseTimestamp(value: string | null | undefined) {
   if (!value) return null;
@@ -35,14 +39,68 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const params = normalizeTwilioParams(url.searchParams);
-  const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/recording",
-    requestUrl: request.url,
-    signature: request.headers.get("x-twilio-signature"),
-    params: {}
-  });
+  const providerCallId = params.CallSid?.trim() || null;
+  const recordingUrl = params.RecordingUrl?.trim() || null;
+  if (!providerCallId) {
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_sid",
+      message: "CallSid is required"
+    });
+  }
 
-  if (!isValid) {
+  const scope = await resolveCallSessionProviderScope({
+    provider: "twilio",
+    providerCallId
+  });
+  if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
+    runInBackground(recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/recording",
+        mode: "twilio_signature",
+        reason: "unresolved_call_provider_route",
+        callSid: providerCallId
+      }
+    }), "Failed to record rejected Twilio recording webhook audit event");
+    return integrationError(request, {
+      status: 404,
+      code: "unresolved_call_provider_route",
+      message: "Call session not found"
+    });
+  }
+
+  let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
+  try {
+    verification = await validateTwilioWebhookForTenant({
+      scope,
+      providerAccountId: params.AccountSid ?? null,
+      pathname: "/api/calls/webhooks/twilio/recording",
+      requestUrl: request.url,
+      signature: request.headers.get("x-twilio-signature"),
+      params: {}
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return integrationError(request, {
+        status: 503,
+        code: "provider_webhook_secret_configuration_missing",
+        message: error.message
+      });
+    }
+    throw error;
+  }
+
+  if (verification.missingSecret) {
+    return integrationError(request, {
+      status: 503,
+      code: "provider_webhook_secret_missing",
+      message: "Provider webhook secret is not configured for this tenant."
+    });
+  }
+
+  if (!verification.valid) {
     runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
@@ -59,15 +117,6 @@ export async function GET(request: Request) {
     });
   }
 
-  const providerCallId = params.CallSid?.trim() || null;
-  const recordingUrl = params.RecordingUrl?.trim() || null;
-  if (!providerCallId) {
-    return integrationError(request, {
-      status: 400,
-      code: "missing_call_sid",
-      message: "CallSid is required"
-    });
-  }
   if (!recordingUrl) {
     return integrationSuccess(request, { status: "ignored", reason: "missing_recording_url" });
   }

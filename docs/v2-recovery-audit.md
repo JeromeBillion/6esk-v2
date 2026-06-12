@@ -149,13 +149,19 @@ Date: 2026-06-06
   - `src/server/email/resend-webhook.ts`
   - strict mode now requires an explicit tenant/workspace scope for Resend webhooks, verifies signatures against the matched tenant-scoped persisted Resend secret, marks the matched secret as used, and only falls back to the global `RESEND_WEBHOOK_SECRET` outside strict mode
   - scoped Resend webhook payloads are rejected before inbound processing when the primary recipient mailbox belongs to a different tenant, so a valid tenant secret cannot be used to inject another tenant's mailbox
+- Semantically ported the v1 Twilio follow-up callback secret adoption into v2-native `tenant_id` form:
+  - `src/server/calls/twilio.ts`
+  - `src/server/calls/service.ts`
+  - `src/app/api/calls/webhooks/twilio/status/route.ts`
+  - `src/app/api/calls/webhooks/twilio/recording/route.ts`
+  - status and recording callbacks now resolve tenant scope from the existing ticket-owned call session, verify against tenant-scoped persisted `twilio/auth_token` secrets in strict mode, mark matched secrets as used, and only fall back to global `CALLS_TWILIO_AUTH_TOKEN` outside strict mode
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
 
 Deferred for future semantic port, not lost:
 - Better Auth package adoption: rejected for this launch slice because v2 already has tenant-scoped `users`, `auth_sessions`, MFA, session revocation, and privileged-access state. The retained value is the provider-login capability, now implemented as a v2-native Google/Microsoft OAuth adapter. A future OIDC broker can still be added without replacing the v2 session source of truth.
-- Tenant ingress/provider webhook adoption for providers beyond WhatsApp/Resend: persisted v2-native services, admin routes, WhatsApp fallback verification, and strict Resend webhook verification are now ported; Twilio and Deepgram/STT-specific webhook paths still need semantic adoption where their provider verification currently reads process env.
+- Tenant ingress/provider webhook adoption for providers beyond WhatsApp/Resend/Twilio follow-up callbacks: persisted v2-native services, admin routes, WhatsApp fallback verification, strict Resend webhook verification, and Twilio status/recording callback verification are now ported; Twilio inbound voice/queue provider-number routing and Deepgram/STT-specific webhook paths still need semantic adoption where their provider verification currently reads process env.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing provider reconciliation and customer-facing export polish: core lifecycle persistence is now ported; provider payment evidence, invoice PDF/export, and chart/export UI polish remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
@@ -238,3 +244,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/calls-transcript-ai-openai-api.test.ts`
 - Resend provider-webhook secret adoption tests pass in the focused slice:
   - `tests/email-resend-webhook-api.test.ts`
+- Twilio follow-up callback provider-secret adoption tests pass in the focused slice:
+  - `tests/calls-twilio-status-webhook.test.ts`
+  - `tests/calls-twilio-recording-webhook.test.ts`
+  - `tests/call-service-tenant-isolation.test.ts`

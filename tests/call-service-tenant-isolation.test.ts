@@ -76,7 +76,11 @@ vi.mock("@/server/calls/twilio", () => ({
   buildTwilioMediaFetchConfig: vi.fn()
 }));
 
-import { createOrUpdateInboundCall, queueOutboundCall } from "@/server/calls/service";
+import {
+  createOrUpdateInboundCall,
+  queueOutboundCall,
+  resolveCallSessionProviderScope
+} from "@/server/calls/service";
 
 function setupClient() {
   mocks.clientQuery.mockImplementation((sql: string) => {
@@ -219,5 +223,28 @@ describe("call service tenant isolation", () => {
     ).rejects.toThrow("CALLS_TENANT_ID is required");
 
     expect(mocks.getOrCreateMailbox).not.toHaveBeenCalled();
+  });
+
+  it("resolves provider callback scope from the ticket-owned call session", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "call-session-1",
+          tenant_id: TENANT_ID
+        }
+      ],
+      rowCount: 1
+    });
+
+    const scope = await resolveCallSessionProviderScope({
+      provider: "twilio",
+      providerCallId: "CA123"
+    });
+
+    expect(scope).toEqual({ tenantId: TENANT_ID, workspaceKey: "primary" });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("JOIN tickets ticket ON ticket.id = session.ticket_id"),
+      ["twilio", "CA123"]
+    );
   });
 });
