@@ -32,6 +32,28 @@ type CallCandidateSource =
   | "ticket_metadata"
   | "ticket_requester";
 
+type InboundCallProviderRoutingCode =
+  | "ambiguous_call_provider_route"
+  | "unresolved_call_provider_route";
+
+export class InboundCallProviderRoutingError extends Error {
+  code: InboundCallProviderRoutingCode;
+  status: number;
+
+  constructor(message: string, code: InboundCallProviderRoutingCode, status: number) {
+    super(message);
+    this.name = "InboundCallProviderRoutingError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function isInboundCallProviderRoutingError(
+  error: unknown
+): error is InboundCallProviderRoutingError {
+  return error instanceof InboundCallProviderRoutingError;
+}
+
 export type TicketCallCandidate = {
   candidateId: string;
   phone: string;
@@ -112,6 +134,34 @@ function readString(value: unknown) {
   return trimmed || null;
 }
 
+function readProviderAccountSid(metadata?: Record<string, unknown> | null) {
+  if (!metadata) return null;
+  return (
+    readString(metadata.accountSid) ??
+    readString(metadata.AccountSid) ??
+    readString(metadata.account_sid) ??
+    readString(metadata.providerAccountSid) ??
+    readString(metadata.provider_account_sid)
+  );
+}
+
+function distinctInboundCallProviderScopes(
+  rows: Array<{ tenant_id: string; workspace_key: string | null }>
+) {
+  const seen = new Set<string>();
+  const scopes: Array<{ tenantId: string; workspaceKey: string }> = [];
+  for (const row of rows) {
+    const tenantId = readString(row.tenant_id);
+    if (!tenantId) continue;
+    const workspaceKey = readString(row.workspace_key) ?? DEFAULT_WORKSPACE_KEY;
+    const key = `${tenantId}:${workspaceKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    scopes.push({ tenantId, workspaceKey });
+  }
+  return scopes;
+}
+
 export function normalizeCallPhone(value: string | null | undefined) {
   if (!value) return null;
   const normalized = normalizeLinkPhone(value);
@@ -121,6 +171,69 @@ export function normalizeCallPhone(value: string | null | undefined) {
     return null;
   }
   return normalized;
+}
+
+export async function resolveInboundCallProviderScope({
+  provider,
+  toPhone,
+  metadata,
+  tenantId,
+  workspaceKey
+}: {
+  provider?: string | null;
+  toPhone?: string | null;
+  metadata?: Record<string, unknown> | null;
+  tenantId?: string | null;
+  workspaceKey?: string | null;
+}) {
+  const explicitTenantId = readString(tenantId);
+  if (explicitTenantId) {
+    return {
+      tenantId: explicitTenantId,
+      workspaceKey: readString(workspaceKey) ?? DEFAULT_WORKSPACE_KEY
+    };
+  }
+
+  const providerValue = (readString(provider) ?? "pending").toLowerCase();
+  const normalizedTo = normalizeCallPhone(toPhone);
+  const accountSid = readProviderAccountSid(metadata);
+  if (!normalizedTo && !accountSid) {
+    return null;
+  }
+
+  const result = await db.query<{
+    tenant_id: string;
+    workspace_key: string | null;
+  }>(
+    `SELECT tenant_id::text AS tenant_id, workspace_key
+     FROM call_provider_numbers
+     WHERE provider = $1
+       AND status = 'active'
+       AND (
+         ($2::text IS NOT NULL AND regexp_replace(phone_number, '\\s+', '', 'g') = $2::text)
+         OR ($3::text IS NOT NULL AND account_sid = $3::text)
+       )
+     ORDER BY
+       CASE
+         WHEN $2::text IS NOT NULL AND regexp_replace(phone_number, '\\s+', '', 'g') = $2::text
+           THEN 0
+         ELSE 1
+       END,
+       updated_at DESC,
+       created_at DESC`,
+    [providerValue, normalizedTo, accountSid]
+  );
+
+  const scopes = distinctInboundCallProviderScopes(result.rows);
+  if (scopes.length > 1) {
+    throw new InboundCallProviderRoutingError(
+      "Ambiguous call provider route for destination phone/account.",
+      "ambiguous_call_provider_route",
+      409
+    );
+  }
+
+  return scopes[0] ?? null;
 }
 
 function extractRequesterPhone(value: string | null | undefined) {

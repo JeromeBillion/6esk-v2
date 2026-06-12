@@ -1,8 +1,12 @@
-import { createOrUpdateInboundCall } from "@/server/calls/service";
+import {
+  createOrUpdateInboundCall,
+  isInboundCallProviderRoutingError,
+  resolveInboundCallProviderScope
+} from "@/server/calls/service";
 import {
   buildTwilioPublicUrl,
   normalizeTwilioParams,
-  validateTwilioWebhook
+  validateTwilioWebhookForTenant
 } from "@/server/calls/twilio";
 import { reserveNextVoiceDeskOperatorForCall } from "@/server/calls/operators";
 import {
@@ -17,6 +21,10 @@ import {
   validateIntegrationApiVersion
 } from "@/server/api-contract";
 import { runInBackground } from "@/server/async";
+import {
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
 
 function readString(value: FormDataEntryValue | null | undefined) {
   if (typeof value !== "string") return null;
@@ -38,14 +46,103 @@ export async function POST(request: Request) {
       )
     )
   );
-  const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/voice",
-    requestUrl: request.url,
-    signature: request.headers.get("x-twilio-signature"),
-    params
-  });
 
-  if (!isValid) {
+  const providerCallId = readString(formData.get("CallSid"));
+  const fromPhone = readString(formData.get("From"));
+  const toPhone = readString(formData.get("To"));
+  const attempt = Number(new URL(request.url).searchParams.get("attempt") ?? "0");
+
+  if (!providerCallId || !fromPhone) {
+    return integrationError(request, {
+      status: 400,
+      code: "missing_call_fields",
+      message: "CallSid and From are required"
+    });
+  }
+
+  let routedScope: Awaited<ReturnType<typeof resolveInboundCallProviderScope>> = null;
+  try {
+    routedScope = await resolveInboundCallProviderScope({
+      provider: "twilio",
+      toPhone,
+      metadata: {
+        accountSid: params.AccountSid ?? null
+      }
+    });
+  } catch (error) {
+    if (isInboundCallProviderRoutingError(error)) {
+      runInBackground(recordAuditLog({
+        action: "call_webhook_rejected",
+        entityType: "call_webhook",
+        data: {
+          endpoint: "/api/calls/webhooks/twilio/voice",
+          mode: "twilio_signature",
+          reason: error.code,
+          callSid: providerCallId,
+          toPhone
+        }
+      }), "Failed to record rejected Twilio voice webhook audit event");
+      return integrationError(request, {
+        status: error.status,
+        code: error.code,
+        message:
+          error.code === "unresolved_call_provider_route"
+            ? "Unresolved call provider route"
+            : "Ambiguous call provider route"
+      });
+    }
+    throw error;
+  }
+
+  if (!routedScope && shouldRequireTenantProviderWebhookSecrets()) {
+    runInBackground(recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/voice",
+        mode: "twilio_signature",
+        reason: "unresolved_call_provider_route",
+        callSid: providerCallId,
+        toPhone
+      }
+    }), "Failed to record rejected Twilio voice webhook audit event");
+    return integrationError(request, {
+      status: 404,
+      code: "unresolved_call_provider_route",
+      message: "Unresolved call provider route"
+    });
+  }
+
+  let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
+  try {
+    verification = await validateTwilioWebhookForTenant({
+      scope: routedScope,
+      providerAccountId: params.AccountSid ?? null,
+      pathname: "/api/calls/webhooks/twilio/voice",
+      requestUrl: request.url,
+      signature: request.headers.get("x-twilio-signature"),
+      params
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return integrationError(request, {
+        status: 503,
+        code: "provider_webhook_secret_configuration_missing",
+        message: error.message
+      });
+    }
+    throw error;
+  }
+
+  if (verification.missingSecret) {
+    return integrationError(request, {
+      status: 503,
+      code: "provider_webhook_secret_missing",
+      message: "Provider webhook secret is not configured for this tenant."
+    });
+  }
+
+  if (!verification.valid) {
     runInBackground(recordAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
@@ -62,20 +159,8 @@ export async function POST(request: Request) {
     });
   }
 
-  const providerCallId = readString(formData.get("CallSid"));
-  const fromPhone = readString(formData.get("From"));
-  const toPhone = readString(formData.get("To"));
-  const attempt = Number(new URL(request.url).searchParams.get("attempt") ?? "0");
-
-  if (!providerCallId || !fromPhone) {
-    return integrationError(request, {
-      status: 400,
-      code: "missing_call_fields",
-      message: "CallSid and From are required"
-    });
-  }
-
   const inbound = await createOrUpdateInboundCall({
+    tenantId: routedScope?.tenantId,
     provider: "twilio",
     providerCallId,
     fromPhone,

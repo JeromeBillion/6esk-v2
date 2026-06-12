@@ -13,7 +13,7 @@ import {
 import {
   buildTwilioPublicUrl,
   normalizeTwilioParams,
-  validateTwilioWebhook
+  validateTwilioWebhookForTenant
 } from "@/server/calls/twilio";
 import { recordAuditLog } from "@/server/audit";
 import {
@@ -21,6 +21,11 @@ import {
   validateIntegrationApiVersion
 } from "@/server/api-contract";
 import { runInBackground } from "@/server/async";
+import { resolveCallSessionProviderScope } from "@/server/calls/service";
+import {
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
 
 function readString(value: FormDataEntryValue | string | null | undefined) {
   if (typeof value !== "string") return null;
@@ -49,29 +54,6 @@ export async function POST(request: Request) {
       )
     )
   );
-  const isValid = validateTwilioWebhook({
-    pathname: "/api/calls/webhooks/twilio/voice/queue",
-    requestUrl: request.url,
-    signature: request.headers.get("x-twilio-signature"),
-    params
-  });
-
-  if (!isValid) {
-    runInBackground(recordAuditLog({
-      action: "call_webhook_rejected",
-      entityType: "call_webhook",
-      data: {
-        endpoint: "/api/calls/webhooks/twilio/voice/queue",
-        mode: "twilio_signature",
-        reason: "invalid_signature"
-      }
-    }), "Failed to record rejected Twilio queue webhook audit event");
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
-  }
 
   const requestParams = new URL(request.url).searchParams;
   const callSessionId = readString(requestParams.get("callSessionId"));
@@ -87,6 +69,71 @@ export async function POST(request: Request) {
       status: 400,
       code: "missing_queue_fields",
       message: "callSessionId and operatorUserId are required"
+    });
+  }
+
+  const scope = await resolveCallSessionProviderScope({ callSessionId });
+  if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
+    runInBackground(recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/voice/queue",
+        mode: "twilio_signature",
+        reason: "unresolved_call_provider_route",
+        callSessionId
+      }
+    }), "Failed to record rejected Twilio queue webhook audit event");
+    return integrationError(request, {
+      status: 404,
+      code: "unresolved_call_provider_route",
+      message: "Call session not found"
+    });
+  }
+
+  let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
+  try {
+    verification = await validateTwilioWebhookForTenant({
+      scope,
+      providerAccountId: params.AccountSid ?? null,
+      pathname: "/api/calls/webhooks/twilio/voice/queue",
+      requestUrl: request.url,
+      signature: request.headers.get("x-twilio-signature"),
+      params
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return integrationError(request, {
+        status: 503,
+        code: "provider_webhook_secret_configuration_missing",
+        message: error.message
+      });
+    }
+    throw error;
+  }
+
+  if (verification.missingSecret) {
+    return integrationError(request, {
+      status: 503,
+      code: "provider_webhook_secret_missing",
+      message: "Provider webhook secret is not configured for this tenant."
+    });
+  }
+
+  if (!verification.valid) {
+    runInBackground(recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/webhooks/twilio/voice/queue",
+        mode: "twilio_signature",
+        reason: "invalid_signature"
+      }
+    }), "Failed to record rejected Twilio queue webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
     });
   }
 

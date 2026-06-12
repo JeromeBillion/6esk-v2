@@ -78,7 +78,9 @@ vi.mock("@/server/calls/twilio", () => ({
 
 import {
   createOrUpdateInboundCall,
+  isInboundCallProviderRoutingError,
   queueOutboundCall,
+  resolveInboundCallProviderScope,
   resolveCallSessionProviderScope
 } from "@/server/calls/service";
 
@@ -246,5 +248,49 @@ describe("call service tenant isolation", () => {
       expect.stringContaining("JOIN tickets ticket ON ticket.id = session.ticket_id"),
       ["twilio", "CA123"]
     );
+  });
+
+  it("resolves inbound provider-owned voice numbers to a v2 tenant scope", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [{ tenant_id: TENANT_ID, workspace_key: "primary" }],
+      rowCount: 1
+    });
+
+    const scope = await resolveInboundCallProviderScope({
+      provider: "twilio",
+      toPhone: "+27 11 000 0000",
+      metadata: { accountSid: "AC123" }
+    });
+
+    expect(scope).toEqual({ tenantId: TENANT_ID, workspaceKey: "primary" });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("FROM call_provider_numbers"),
+      ["twilio", "+27110000000", "AC123"]
+    );
+  });
+
+  it("rejects ambiguous inbound provider-owned voice routes", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        { tenant_id: TENANT_ID, workspace_key: "primary" },
+        { tenant_id: "99999999-9999-4999-8999-999999999999", workspace_key: "primary" }
+      ],
+      rowCount: 2
+    });
+
+    try {
+      await resolveInboundCallProviderScope({
+        provider: "twilio",
+        toPhone: "+27 11 000 0000",
+        metadata: { accountSid: "AC123" }
+      });
+      throw new Error("Expected route resolution to fail.");
+    } catch (error) {
+      expect(isInboundCallProviderRoutingError(error)).toBe(true);
+      expect(error).toMatchObject({
+        code: "ambiguous_call_provider_route",
+        status: 409
+      });
+    }
   });
 });
