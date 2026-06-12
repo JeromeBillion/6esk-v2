@@ -5,6 +5,8 @@ const INTEGRATION_ID = "11111111-1111-4111-8111-111111111111";
 const OUTBOX_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const TICKET_ID = "44444444-4444-4444-8444-444444444444";
+const TOOL_CALL_ID = "55555555-5555-4555-8555-555555555555";
+const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
 
 const mocks = vi.hoisted(() => ({
   db: {
@@ -17,12 +19,32 @@ vi.mock("@/server/db", () => ({
 }));
 
 import {
+  appendAgentApprovalRequestedCommand,
+  appendAgentToolRequestedCommand,
   createAgentRunForOutbox,
   deriveAgentRunContext,
   markAgentRunCompleted,
   markAgentRunFailed,
   markAgentRunRunning
 } from "@/server/agents/run-ledger";
+
+function runContext(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: RUN_ID,
+    tenant_id: TENANT_ID,
+    integration_id: INTEGRATION_ID,
+    lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+    source_channel: "ticket",
+    resource_type: "ticket",
+    resource_id: TICKET_ID,
+    trigger_event_type: "ticket.message.created",
+    trigger_outbox_id: OUTBOX_ID,
+    requested_scopes: ["tickets:read"],
+    rollout_mode: "hybrid_review",
+    provider_mode: "managed",
+    ...overrides
+  };
+}
 
 describe("agent run ledger", () => {
   beforeEach(() => {
@@ -176,5 +198,90 @@ describe("agent run ledger", () => {
       expect.stringContaining("INSERT INTO agent_run_events"),
       expect.arrayContaining([TENANT_ID, RUN_ID, "agent.run.retry_queued", "queued"])
     );
+  });
+
+  it("records a typed run-completed command envelope in the timeline", async () => {
+    mocks.db.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await markAgentRunCompleted({ tenantId: TENANT_ID, runId: RUN_ID });
+
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("FROM agent_runs"),
+      [TENANT_ID, RUN_ID]
+    );
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.run.completed", "completed"])
+    );
+    const eventData = JSON.parse(mocks.db.query.mock.calls[2][1][5]);
+    expect(eventData.commandEnvelope).toMatchObject({
+      protocol: "6esk.dexter.control-plane",
+      command: "agent.run.completed",
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      resourceRefs: [{ type: "ticket", id: TICKET_ID }],
+      rolloutMode: "hybrid_review",
+      providerMode: "managed",
+      commandData: {
+        completionStatus: "completed"
+      }
+    });
+  });
+
+  it("records typed tool and approval control-plane envelopes", async () => {
+    mocks.db.query
+      .mockResolvedValueOnce({ rows: [runContext({ rollout_mode: "full_auto" })] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await appendAgentToolRequestedCommand({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      actor: { type: "agent", id: INTEGRATION_ID },
+      toolName: "send_reply",
+      toolCallId: TOOL_CALL_ID,
+      requestedScopes: ["tickets:write", "email:send"],
+      idempotencyKey: "tool:send-reply:1",
+      metadata: { toolClass: "external_send" }
+    });
+
+    await appendAgentApprovalRequestedCommand({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      actor: { type: "agent", id: INTEGRATION_ID },
+      approvalId: APPROVAL_ID,
+      reason: "Hybrid review required for customer-visible reply"
+    });
+
+    const toolEventData = JSON.parse(mocks.db.query.mock.calls[1][1][5]);
+    expect(toolEventData.commandEnvelope).toMatchObject({
+      command: "agent.tool.requested",
+      idempotencyKey: "tool:send-reply:1",
+      requestedScopes: ["tickets:write", "email:send"],
+      rolloutMode: "full_auto",
+      commandData: {
+        toolName: "send_reply",
+        toolCallId: TOOL_CALL_ID,
+        metadata: {
+          toolClass: "external_send"
+        }
+      }
+    });
+
+    const approvalEventData = JSON.parse(mocks.db.query.mock.calls[3][1][5]);
+    expect(approvalEventData.commandEnvelope).toMatchObject({
+      command: "agent.approval.requested",
+      rolloutMode: "hybrid_review",
+      commandData: {
+        approvalId: APPROVAL_ID,
+        reason: "Hybrid review required for customer-visible reply"
+      }
+    });
   });
 });

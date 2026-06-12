@@ -3,6 +3,7 @@ import { z } from "zod";
 const uuidSchema = z.string().uuid();
 const nonEmptyText = z.string().trim().min(1);
 const commandVersion = "2026-05-14";
+const maxCommandDataJsonBytes = 4096;
 
 export const dexterCommandNameSchema = z.enum([
   "agent.run.create",
@@ -34,6 +35,25 @@ export const dexterResourceRefSchema = z.object({
   id: uuidSchema
 }).strict();
 
+const boundedJsonRecordSchema = z.record(z.unknown()).refine((value) => {
+  try {
+    return JSON.stringify(value).length <= maxCommandDataJsonBytes;
+  } catch {
+    return false;
+  }
+}, `Must serialize to ${maxCommandDataJsonBytes} bytes or fewer`);
+
+export const dexterCommandDataSchema = z.object({
+  toolName: z.string().trim().min(1).max(160).optional(),
+  toolCallId: uuidSchema.optional(),
+  approvalId: uuidSchema.optional(),
+  waitReason: z.string().trim().min(1).max(240).optional(),
+  completionStatus: z.enum(["completed", "failed", "cancelled", "timed_out"]).optional(),
+  reason: z.string().trim().min(1).max(500).optional(),
+  resultSummary: boundedJsonRecordSchema.optional(),
+  metadata: boundedJsonRecordSchema.optional()
+}).strict();
+
 export const dexterCommandEnvelopeSchema = z.object({
   protocol: z.literal("6esk.dexter.control-plane"),
   version: z.literal(commandVersion),
@@ -53,12 +73,15 @@ export const dexterCommandEnvelopeSchema = z.object({
   rolloutMode: dexterRolloutModeSchema,
   providerMode: dexterProviderModeSchema,
   laneKey: nonEmptyText.max(320),
+  commandData: dexterCommandDataSchema.optional(),
   createdAt: z.string().datetime()
 }).strict();
 
 export type DexterCommandEnvelope = z.infer<typeof dexterCommandEnvelopeSchema>;
+export type DexterCommandName = z.infer<typeof dexterCommandNameSchema>;
 export type DexterRolloutMode = z.infer<typeof dexterRolloutModeSchema>;
 export type DexterProviderMode = z.infer<typeof dexterProviderModeSchema>;
+export type DexterCommandData = z.infer<typeof dexterCommandDataSchema>;
 
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -107,6 +130,62 @@ export function parseDexterCommandEnvelope(value: unknown): DexterCommandEnvelop
   return parsed.data;
 }
 
+export function mapEventTypeToDexterCommand(eventType: string): DexterCommandName {
+  if (eventType === "agent.run.cancel") return "agent.run.cancel";
+  if (eventType === "agent.wait") return "agent.wait";
+  if (eventType === "agent.tool.requested") return "agent.tool.requested";
+  if (eventType === "agent.tool.completed") return "agent.tool.completed";
+  if (eventType === "agent.approval.requested" || eventType.endsWith(".review.required")) {
+    return "agent.approval.requested";
+  }
+  if (eventType === "agent.run.completed") return "agent.run.completed";
+  return "agent.run.create";
+}
+
+export function buildDexterCommandEnvelope(input: {
+  command: DexterCommandName;
+  tenantId: string;
+  runId: string;
+  actor: z.infer<typeof dexterActorSchema>;
+  idempotencyKey: string;
+  sourceChannel: string;
+  triggerEventType: string;
+  outboxEventId?: string | null;
+  payloadSchema?: string | null;
+  resourceRefs?: Array<z.infer<typeof dexterResourceRefSchema>>;
+  requestedScopes?: unknown;
+  rolloutMode?: unknown;
+  providerMode?: unknown;
+  laneKey: string;
+  commandData?: DexterCommandData | null;
+  createdAt?: Date;
+}) {
+  const envelope = {
+    protocol: "6esk.dexter.control-plane",
+    version: commandVersion,
+    command: input.command,
+    tenantId: input.tenantId,
+    runId: input.runId,
+    actor: input.actor,
+    idempotencyKey: input.idempotencyKey,
+    source: {
+      channel: input.sourceChannel,
+      triggerEventType: input.triggerEventType,
+      ...(input.outboxEventId ? { outboxEventId: input.outboxEventId } : {}),
+      payloadSchema: input.payloadSchema ?? null
+    },
+    resourceRefs: input.resourceRefs ?? [],
+    requestedScopes: normalizeRequestedScopes(input.requestedScopes),
+    rolloutMode: normalizeRolloutMode(input.rolloutMode),
+    providerMode: normalizeProviderMode(input.providerMode),
+    laneKey: input.laneKey,
+    ...(input.commandData ? { commandData: input.commandData } : {}),
+    createdAt: (input.createdAt ?? new Date()).toISOString()
+  };
+
+  return parseDexterCommandEnvelope(envelope);
+}
+
 export function buildOutboxRunCreateCommand(input: {
   tenantId: string;
   integrationId: string;
@@ -124,9 +203,7 @@ export function buildOutboxRunCreateCommand(input: {
   payloadSchema?: string | null;
   createdAt?: Date;
 }) {
-  const envelope = {
-    protocol: "6esk.dexter.control-plane",
-    version: commandVersion,
+  return buildDexterCommandEnvelope({
     command: "agent.run.create",
     tenantId: input.tenantId,
     runId: input.runId,
@@ -136,12 +213,10 @@ export function buildOutboxRunCreateCommand(input: {
       displayName: "Dexter outbox integration"
     },
     idempotencyKey: input.idempotencyKey ?? `outbox:${input.outboxEventId}`,
-    source: {
-      channel: input.sourceChannel,
-      triggerEventType: input.eventType,
-      outboxEventId: input.outboxEventId,
-      payloadSchema: input.payloadSchema ?? null
-    },
+    sourceChannel: input.sourceChannel,
+    triggerEventType: input.eventType,
+    outboxEventId: input.outboxEventId,
+    payloadSchema: input.payloadSchema ?? null,
     resourceRefs:
       input.resourceType && input.resourceId
         ? [{ type: input.resourceType, id: input.resourceId }]
@@ -150,8 +225,6 @@ export function buildOutboxRunCreateCommand(input: {
     rolloutMode: normalizeRolloutMode(input.rolloutMode),
     providerMode: normalizeProviderMode(input.providerMode),
     laneKey: input.laneKey,
-    createdAt: (input.createdAt ?? new Date()).toISOString()
-  };
-
-  return parseDexterCommandEnvelope(envelope);
+    createdAt: input.createdAt
+  });
 }

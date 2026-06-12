@@ -1,4 +1,10 @@
-import { buildOutboxRunCreateCommand } from "@/server/agents/command-envelope";
+import {
+  buildDexterCommandEnvelope,
+  buildOutboxRunCreateCommand,
+  type DexterCommandData,
+  type DexterCommandEnvelope,
+  type DexterCommandName
+} from "@/server/agents/command-envelope";
 import { db } from "@/server/db";
 
 export type AgentRunStatus =
@@ -30,6 +36,21 @@ type AgentRunRow = {
   tenant_id: string;
   status: AgentRunStatus;
   lane_key: string;
+};
+
+type AgentRunCommandContextRow = {
+  id: string;
+  tenant_id: string;
+  integration_id: string | null;
+  lane_key: string;
+  source_channel: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  trigger_event_type: string | null;
+  trigger_outbox_id: string | null;
+  requested_scopes: unknown;
+  rollout_mode: string | null;
+  provider_mode: string | null;
 };
 
 function queryable(client?: Queryable) {
@@ -112,6 +133,17 @@ function buildLaneKey({
 
 function readJsonArray(value: unknown) {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeJsonArray(value: unknown) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function readPayloadSchema(payload: Record<string, unknown>) {
@@ -205,6 +237,219 @@ export async function appendAgentRunEvent({
       JSON.stringify(eventData ?? {})
     ]
   );
+}
+
+async function getAgentRunCommandContext(client: Queryable, tenantId: string, runId: string) {
+  const result = await client.query<AgentRunCommandContextRow>(
+    `SELECT id,
+            tenant_id,
+            integration_id,
+            lane_key,
+            source_channel,
+            resource_type,
+            resource_id,
+            trigger_event_type,
+            trigger_outbox_id,
+            requested_scopes,
+            rollout_mode,
+            provider_mode
+     FROM agent_runs
+     WHERE tenant_id = $1
+       AND id = $2
+     LIMIT 1`,
+    [tenantId, runId]
+  );
+  return result.rows[0] ?? null;
+}
+
+function fallbackCommandContext(tenantId: string, runId: string): AgentRunCommandContextRow {
+  return {
+    id: runId,
+    tenant_id: tenantId,
+    integration_id: null,
+    lane_key: `tenant:${tenantId}:run:${runId}`,
+    source_channel: "agent",
+    resource_type: null,
+    resource_id: null,
+    trigger_event_type: "agent.run",
+    trigger_outbox_id: null,
+    requested_scopes: [],
+    rollout_mode: "draft_only",
+    provider_mode: "managed"
+  };
+}
+
+export async function appendAgentRunControlPlaneCommand({
+  client,
+  tenantId,
+  runId,
+  command,
+  eventType,
+  status,
+  summary,
+  actor,
+  idempotencyKey,
+  requestedScopes,
+  commandData,
+  eventData
+}: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  command: DexterCommandName;
+  eventType?: string | null;
+  status?: AgentRunStatus | null;
+  summary?: string | null;
+  actor?: DexterCommandEnvelope["actor"];
+  idempotencyKey?: string | null;
+  requestedScopes?: unknown;
+  commandData?: DexterCommandData | null;
+  eventData?: Record<string, unknown>;
+}) {
+  const activeClient = queryable(client);
+  const context = (await getAgentRunCommandContext(activeClient, tenantId, runId)) ?? fallbackCommandContext(tenantId, runId);
+  const commandEnvelope = buildDexterCommandEnvelope({
+    command,
+    tenantId,
+    runId,
+    actor: actor ?? {
+      type: "system",
+      displayName: "6esk Dexter control plane"
+    },
+    idempotencyKey: idempotencyKey ?? `${runId}:${command}:${eventType ?? command}`,
+    sourceChannel: context.source_channel ?? "agent",
+    triggerEventType: eventType ?? command,
+    outboxEventId: context.trigger_outbox_id,
+    resourceRefs:
+      context.resource_type && context.resource_id
+        ? [{ type: context.resource_type, id: context.resource_id }]
+        : [],
+    requestedScopes: requestedScopes ?? normalizeJsonArray(context.requested_scopes),
+    rolloutMode: context.rollout_mode,
+    providerMode: context.provider_mode,
+    laneKey: context.lane_key,
+    commandData
+  });
+
+  await appendAgentRunEvent({
+    client: activeClient,
+    tenantId,
+    runId,
+    eventType: eventType ?? command,
+    status,
+    summary,
+    eventData: {
+      ...(eventData ?? {}),
+      commandEnvelope
+    }
+  });
+
+  return commandEnvelope;
+}
+
+export function appendAgentRunCancelCommand(input: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  reason?: string | null;
+}) {
+  return appendAgentRunControlPlaneCommand({
+    ...input,
+    command: "agent.run.cancel",
+    eventType: "agent.run.cancel",
+    status: "cancelled",
+    summary: "Agent run cancellation requested",
+    commandData: input.reason ? { reason: input.reason } : undefined
+  });
+}
+
+export function appendAgentRunWaitCommand(input: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  waitReason: string;
+}) {
+  return appendAgentRunControlPlaneCommand({
+    ...input,
+    command: "agent.wait",
+    eventType: "agent.wait",
+    status: "waiting_approval",
+    summary: "Agent run waiting",
+    commandData: { waitReason: input.waitReason }
+  });
+}
+
+export function appendAgentToolRequestedCommand(input: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  toolName: string;
+  toolCallId?: string | null;
+  requestedScopes?: unknown;
+  idempotencyKey?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  return appendAgentRunControlPlaneCommand({
+    ...input,
+    command: "agent.tool.requested",
+    eventType: "agent.tool.requested",
+    status: "running",
+    summary: `Agent tool requested: ${input.toolName}`,
+    commandData: {
+      toolName: input.toolName,
+      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {})
+    }
+  });
+}
+
+export function appendAgentToolCompletedCommand(input: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  toolName: string;
+  toolCallId?: string | null;
+  resultSummary?: Record<string, unknown> | null;
+}) {
+  return appendAgentRunControlPlaneCommand({
+    ...input,
+    command: "agent.tool.completed",
+    eventType: "agent.tool.completed",
+    status: "running",
+    summary: `Agent tool completed: ${input.toolName}`,
+    commandData: {
+      toolName: input.toolName,
+      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+      ...(input.resultSummary ? { resultSummary: input.resultSummary } : {})
+    }
+  });
+}
+
+export function appendAgentApprovalRequestedCommand(input: {
+  client?: Queryable;
+  tenantId: string;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  approvalId?: string | null;
+  reason: string;
+  metadata?: Record<string, unknown> | null;
+}) {
+  return appendAgentRunControlPlaneCommand({
+    ...input,
+    command: "agent.approval.requested",
+    eventType: "agent.approval.requested",
+    status: "waiting_approval",
+    summary: "Agent approval requested",
+    commandData: {
+      reason: input.reason,
+      ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {})
+    }
+  });
 }
 
 export async function createAgentRunForOutbox(input: CreateOutboxRunInput) {
@@ -353,12 +598,14 @@ export async function markAgentRunCompleted({
        AND id = $2`,
     [tenantId, runId]
   );
-  await appendAgentRunEvent({
+  await appendAgentRunControlPlaneCommand({
     tenantId,
     runId,
+    command: "agent.run.completed",
     eventType: "agent.run.completed",
     status: "completed",
-    summary: "Agent run delivery completed"
+    summary: "Agent run delivery completed",
+    commandData: { completionStatus: "completed" }
   });
 }
 
