@@ -51,6 +51,11 @@ const SAFETY_RULES: Array<{
     pattern: /\b(other|all|every)\b.{0,40}\b(tenant|client|customer)\b.{0,80}\b(data|records|documents|tickets|messages)\b/i
   },
   {
+    code: "rag_poisoning",
+    severity: "high",
+    pattern: /\bthis document\b.{0,100}\b(is|has|contains)\b.{0,100}\b(highest priority|system authority|developer authority|runtime authority|tool authority)\b/i
+  },
+  {
     code: "tool_coercion",
     severity: "medium",
     pattern: /\b(call|invoke|run|execute|trigger)\b.{0,80}\b(tool|function|shell|command|webhook|api)\b/i

@@ -133,6 +133,12 @@ Date: 2026-06-06
   - generic `recordAgentRunStepStarted` and `completeAgentRunStep` helpers now write durable non-tool worker steps into `agent_run_steps`
   - outbox delivery records a `runtime:deliver_event` step before dispatching to native/http/external Dexter targets and marks it completed or failed with bounded summary metadata
   - accepted delivery does not become retryable solely because local step-completion bookkeeping failed; the failure is logged and later delivery bookkeeping/replay evidence remains available
+- Recovered and adapted the wrong-folder fixture-driven AI red-team regression value into v2-native modules:
+  - `tests/fixtures/ai-red-team-cases.ts`
+  - `tests/ai-red-team-regressions.test.ts`
+  - `src/server/ai/knowledge-safety.ts`
+  - the suite covers direct prompt injection, indirect RAG poisoning, tool-policy bypass, secret exposure, cross-tenant/customer exfiltration, memory persistence, long-context smuggling, multilingual overrides, hostile provider output, and safe business content
+  - the port found and closed a v2 ingestion-safety gap by adding explicit `rag_poisoning` detection to tenant-uploaded knowledge safety classification
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -210,3 +216,10 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-outbox-rag.test.ts`
   - `tests/agent-outbox-lane.test.ts`
   - `tests/agent-run-replay.test.ts`
+- Fixture-driven AI red-team regression tests pass in the focused slice:
+  - `tests/ai-red-team-regressions.test.ts`
+  - `tests/prompt-safety.test.ts`
+  - `tests/agent-tool-policy.test.ts`
+  - `tests/agent-output-validator.test.ts`
+  - `tests/agent-prompt-sandbox.test.ts`
+  - `tests/knowledge-retrieval.test.ts`
