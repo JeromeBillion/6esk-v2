@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   markTranscriptJobFailed: vi.fn(),
   markTranscriptJobSubmitted: vi.fn(),
   attachCallTranscript: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  shouldRequireTenantProviderWebhookSecrets: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -31,9 +33,15 @@ vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
 
+vi.mock("@/server/provider-webhook-secrets", () => ({
+  listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+  shouldRequireTenantProviderWebhookSecrets: mocks.shouldRequireTenantProviderWebhookSecrets
+}));
+
 import { deliverPendingTranscriptJobs } from "@/server/calls/transcript-worker";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("deliverPendingTranscriptJobs", () => {
   beforeEach(() => {
@@ -46,6 +54,8 @@ describe("deliverPendingTranscriptJobs", () => {
     mocks.getTranscriptProvider.mockReturnValue("managed_http");
     mocks.getProcessingRecoverySeconds.mockReturnValue(300);
     mocks.lockPendingTranscriptJobs.mockResolvedValue([]);
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(false);
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.attachCallTranscript.mockResolvedValue({
       status: "attached",
@@ -63,6 +73,7 @@ describe("deliverPendingTranscriptJobs", () => {
     mocks.lockPendingTranscriptJobs.mockResolvedValue([
       {
         id: "job-1",
+        tenant_id: TENANT_ID,
         call_session_id: "11111111-1111-1111-1111-111111111111",
         provider: "managed_http",
         recording_r2_key: "messages/msg/recording.mp3",
@@ -115,6 +126,7 @@ describe("deliverPendingTranscriptJobs", () => {
     mocks.lockPendingTranscriptJobs.mockResolvedValue([
       {
         id: "job-2",
+        tenant_id: TENANT_ID,
         call_session_id: "33333333-3333-3333-3333-333333333333",
         provider: "managed_http",
         recording_r2_key: "messages/msg/recording.mp3",
@@ -141,5 +153,54 @@ describe("deliverPendingTranscriptJobs", () => {
     });
     expect(mocks.attachCallTranscript).not.toHaveBeenCalled();
     expect(mocks.markTranscriptJobFailed).not.toHaveBeenCalled();
+  });
+
+  it("passes tenant-scoped STT provider secrets to managed HTTP jobs", async () => {
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(true);
+    mocks.lockPendingTranscriptJobs.mockResolvedValue([
+      {
+        id: "job-3",
+        tenant_id: TENANT_ID,
+        call_session_id: "44444444-4444-4444-8444-444444444444",
+        provider: "managed_http",
+        recording_r2_key: "messages/msg/recording.mp3",
+        metadata: {},
+        attempt_count: 0
+      }
+    ]);
+    mocks.listActiveProviderWebhookSecrets.mockImplementation(({ provider }) => {
+      if (provider === "deepgram") {
+        return Promise.resolve([{ id: "secret-callback", secret: "tenant-dg-token", source: "db" }]);
+      }
+      if (provider === "managed_stt") {
+        return Promise.resolve([{ id: "secret-http", secret: "tenant-http-secret", source: "db" }]);
+      }
+      return Promise.resolve([]);
+    });
+    mocks.submitTranscriptJob.mockResolvedValue({
+      status: "accepted",
+      providerJobId: "provider-job-3"
+    });
+
+    const result = await deliverPendingTranscriptJobs({ limit: 1 });
+
+    expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "managed_http" });
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      provider: "deepgram",
+      secretType: "callback_token"
+    });
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      provider: "managed_stt",
+      secretType: "http_secret"
+    });
+    expect(mocks.submitTranscriptJob).toHaveBeenCalledWith(
+      "managed_http",
+      expect.objectContaining({
+        callbackSecret: "tenant-dg-token",
+        providerHttpSecret: "tenant-http-secret"
+      })
+    );
   });
 });

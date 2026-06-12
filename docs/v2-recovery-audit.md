@@ -161,13 +161,19 @@ Date: 2026-06-06
   - `src/app/api/calls/webhooks/twilio/voice/route.ts`
   - `src/app/api/calls/webhooks/twilio/voice/queue/route.ts`
   - inbound voice now resolves tenant ownership from provider phone/account records before signature verification, strict mode rejects unresolved or ambiguous routes before creating tickets/call sessions or ringing operators, and voice/queue callbacks verify with tenant-scoped persisted `twilio/auth_token` secrets before mutating call or queue state
+- Semantically ported the v1 Deepgram/STT secret adoption into v2-native `tenant_id` form:
+  - `src/server/calls/stt-provider.ts`
+  - `src/server/calls/transcript-worker.ts`
+  - `src/app/api/internal/calls/stt/deepgram/route.ts`
+  - `src/app/api/calls/transcript/route.ts`
+  - transcript workers now retrieve tenant-scoped `deepgram/callback_token` and `managed_stt/http_secret` provider secrets for managed STT jobs, the internal Deepgram bridge verifies tenant-scoped internal STT secrets before submitting audio to Deepgram, and transcript callbacks verify tenant-scoped Deepgram callback tokens before writing transcript content to a call session
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
 
 Deferred for future semantic port, not lost:
 - Better Auth package adoption: rejected for this launch slice because v2 already has tenant-scoped `users`, `auth_sessions`, MFA, session revocation, and privileged-access state. The retained value is the provider-login capability, now implemented as a v2-native Google/Microsoft OAuth adapter. A future OIDC broker can still be added without replacing the v2 session source of truth.
-- Tenant ingress/provider webhook adoption for providers beyond WhatsApp/Resend/Twilio voice callbacks: persisted v2-native services, admin routes, WhatsApp fallback verification, strict Resend webhook verification, Twilio status/recording callback verification, and Twilio inbound voice/queue routing are now ported; Deepgram/STT-specific webhook paths and tenant-admin provider-number management still need semantic adoption where provider verification or configuration still reads only process env/manual database state.
+- Tenant ingress/provider webhook adoption for providers beyond WhatsApp/Resend/Twilio/Deepgram callbacks: persisted v2-native services, admin routes, WhatsApp fallback verification, strict Resend webhook verification, Twilio callback verification/routing, and Deepgram/STT secret verification are now ported; tenant-admin provider-number management still needs semantic adoption because provider phone/account ownership currently requires manual database state.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing provider reconciliation and customer-facing export polish: core lifecycle persistence is now ported; provider payment evidence, invoice PDF/export, and chart/export UI polish remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
@@ -258,3 +264,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/calls-twilio-voice-webhook-api.test.ts`
   - `tests/calls-twilio-voice-queue-webhook-api.test.ts`
   - `tests/call-service-tenant-isolation.test.ts`
+- Deepgram/STT provider-secret adoption tests pass in the focused slice:
+  - `tests/calls-stt-deepgram-api.test.ts`
+  - `tests/calls-transcript-api.test.ts`
+  - `tests/call-transcript-worker.test.ts`

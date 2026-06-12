@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { attachCallTranscript } from "@/server/calls/service";
+import { timingSafeEqual } from "crypto";
+import { attachCallTranscript, resolveCallSessionProviderScope } from "@/server/calls/service";
 import { normalizeDeepgramTranscriptPayload } from "@/server/calls/stt-deepgram";
-import { authorizeCallWebhook } from "@/server/calls/webhook";
+import { authorizeCallWebhook, type CallWebhookAuthResult } from "@/server/calls/webhook";
 import { recordAuditLog } from "@/server/audit";
 import {
   integrationError,
@@ -9,6 +10,13 @@ import {
   validateIntegrationApiVersion
 } from "@/server/api-contract";
 import { runInBackground } from "@/server/async";
+import {
+  listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed,
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets,
+  type ActiveProviderWebhookSecret
+} from "@/server/provider-webhook-secrets";
 
 const callTranscriptSchema = z.object({
   callSessionId: z.string().uuid().optional().nullable(),
@@ -19,6 +27,14 @@ const callTranscriptSchema = z.object({
   timestamp: z.union([z.string(), z.number()]).optional().nullable(),
   payload: z.record(z.unknown()).optional().nullable()
 });
+
+type TranscriptWebhookAuthResult =
+  | CallWebhookAuthResult
+  | {
+      authorized: boolean;
+      mode: "provider_token";
+      reason: "ok" | "invalid_provider_token" | "missing_provider_token";
+    };
 
 function parseTimestamp(value: string | number | null | undefined) {
   if (value == null) return null;
@@ -35,6 +51,17 @@ function parseTimestamp(value: string | number | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function constantTimeEquals(left: string | null | undefined, right: string) {
+  const leftValue = left?.trim();
+  if (!leftValue) return false;
+  const leftBuffer = Buffer.from(leftValue, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 export async function POST(request: Request) {
   const versionError = validateIntegrationApiVersion(request);
   if (versionError) {
@@ -46,55 +73,10 @@ export async function POST(request: Request) {
   const providedSecret = request.headers.get("x-6esk-secret") ?? request.headers.get("x-call-secret");
   const deepgramToken = request.headers.get("dg-token")?.trim() ?? null;
   const callbackToken = requestUrl.searchParams.get("callback_token")?.trim() ?? null;
-  const expectedDeepgramToken = process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN?.trim() ?? "";
   const transcriptSharedSecrets = [
     process.env.CALLS_TRANSCRIPT_SHARED_SECRET?.trim(),
     process.env.INBOUND_SHARED_SECRET?.trim()
   ].filter((value): value is string => Boolean(value));
-  const authorization =
-    expectedDeepgramToken && (deepgramToken || callbackToken)
-      ? (deepgramToken ?? callbackToken) === expectedDeepgramToken
-        ? {
-            authorized: true as const,
-            mode: "provider_token" as const,
-            reason: "ok" as const
-          }
-        : {
-            authorized: false as const,
-            mode: "provider_token" as const,
-            reason: "invalid_provider_token" as const
-          }
-      : transcriptSharedSecrets.includes(providedSecret ?? "")
-        ? {
-            authorized: true as const,
-            mode: "shared_secret" as const,
-            reason: "ok" as const
-          }
-        : authorizeCallWebhook({
-            rawBody,
-            providedSignature:
-              request.headers.get("x-6esk-signature") ?? request.headers.get("x-call-signature"),
-            providedSecret,
-            providedTimestamp:
-              request.headers.get("x-6esk-timestamp") ?? request.headers.get("x-call-timestamp")
-          });
-
-  if (!authorization.authorized) {
-    runInBackground(recordAuditLog({
-      action: "call_webhook_rejected",
-      entityType: "call_webhook",
-      data: {
-        endpoint: "/api/calls/transcript",
-        mode: authorization.mode,
-        reason: authorization.reason
-      }
-    }), "Failed to record rejected call transcript webhook audit event");
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
-  }
 
   let payload: unknown;
   try {
@@ -120,6 +102,135 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
+  const providerToken = deepgramToken ?? callbackToken;
+  const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
+  const isDeepgramPayload =
+    data.provider?.trim().toLowerCase() === "deepgram" ||
+    ((data.payload as { source?: unknown } | null)?.source === "deepgram");
+  let authorization: TranscriptWebhookAuthResult;
+
+  if (providerToken) {
+    if (!data.callSessionId && !data.providerCallId) {
+      return integrationError(request, {
+        status: 400,
+        code: "missing_call_identifier",
+        message: "callSessionId or providerCallId is required"
+      });
+    }
+
+    const scope = await resolveCallSessionProviderScope({
+      callSessionId: data.callSessionId ?? null,
+      provider: data.provider ?? null,
+      providerCallId: data.providerCallId ?? null
+    });
+    if (!scope && requireTenantSecrets) {
+      return integrationError(request, {
+        status: 404,
+        code: "unresolved_call_provider_route",
+        message: "Call session not found"
+      });
+    }
+
+    let providerSecrets: ActiveProviderWebhookSecret[] = [];
+    try {
+      providerSecrets = scope
+        ? await listActiveProviderWebhookSecrets({
+            scope,
+            provider: "deepgram",
+            secretType: "callback_token"
+          })
+        : [];
+    } catch (error) {
+      if (error instanceof ProviderWebhookSecretConfigurationError) {
+        return integrationError(request, {
+          status: 503,
+          code: "provider_webhook_secret_configuration_missing",
+          message: error.message
+        });
+      }
+      throw error;
+    }
+
+    const globalDeepgramToken = process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN?.trim();
+    if (globalDeepgramToken && !requireTenantSecrets) {
+      providerSecrets.push({
+        id: "env:CALLS_STT_DEEPGRAM_CALLBACK_TOKEN",
+        secret: globalDeepgramToken,
+        source: "env"
+      });
+    }
+    if (!requireTenantSecrets) {
+      transcriptSharedSecrets.forEach((secret, index) => {
+        providerSecrets.push({
+          id: `env:CALLS_TRANSCRIPT_SHARED_SECRET:${index}`,
+          secret,
+          source: "env"
+        });
+      });
+    }
+
+    if (!providerSecrets.length && requireTenantSecrets) {
+      return integrationError(request, {
+        status: 503,
+        code: "provider_webhook_secret_missing",
+        message: "Provider webhook secret is not configured for this tenant."
+      });
+    }
+
+    const matchedSecret =
+      providerSecrets.find((secret) => constantTimeEquals(providerToken, secret.secret)) ?? null;
+    if (matchedSecret) {
+      if (scope) {
+        await markProviderWebhookSecretUsed(matchedSecret.id, scope).catch(() => {});
+      }
+      authorization = { authorized: true, mode: "provider_token", reason: "ok" };
+    } else {
+      authorization = {
+        authorized: false,
+        mode: "provider_token",
+        reason: "invalid_provider_token"
+      };
+    }
+  } else if (requireTenantSecrets && isDeepgramPayload) {
+    authorization = {
+      authorized: false,
+      mode: "provider_token",
+      reason: "missing_provider_token"
+    };
+  } else if (transcriptSharedSecrets.includes(providedSecret ?? "")) {
+    authorization = {
+      authorized: true,
+      mode: "shared_secret",
+      reason: "ok"
+    };
+  } else {
+    authorization = authorizeCallWebhook({
+      rawBody,
+      providedSignature:
+        request.headers.get("x-6esk-signature") ?? request.headers.get("x-call-signature"),
+      providedSecret,
+      providedTimestamp:
+        request.headers.get("x-6esk-timestamp") ?? request.headers.get("x-call-timestamp")
+    });
+  }
+
+  if (!authorization.authorized) {
+    runInBackground(recordAuditLog({
+      action: "call_webhook_rejected",
+      entityType: "call_webhook",
+      data: {
+        endpoint: "/api/calls/transcript",
+        mode: authorization.mode,
+        reason: authorization.reason
+      }
+    }), "Failed to record rejected call transcript webhook audit event");
+    return integrationError(request, {
+      status: 401,
+      code: "unauthorized",
+      message: "Unauthorized"
+    });
+  }
+
   if (!data.callSessionId && !data.providerCallId) {
     return integrationError(request, {
       status: 400,

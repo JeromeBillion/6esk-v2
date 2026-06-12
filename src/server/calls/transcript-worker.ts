@@ -1,6 +1,11 @@
 import { recordAuditLog } from "@/server/audit";
 import { attachCallTranscript } from "@/server/calls/service";
 import { getTranscriptProvider, submitTranscriptJob } from "@/server/calls/stt-provider";
+import {
+  listActiveProviderWebhookSecrets,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
+import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 import { logger } from "@/server/logger";
 import {
   getProcessingRecoverySeconds,
@@ -18,10 +23,44 @@ function buildCallbackUrl(appUrl: string, path: string) {
 }
 
 function getTranscriptCallbackSecret() {
+  const deepgram = process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN?.trim();
+  if (deepgram) return deepgram;
   const explicit = process.env.CALLS_TRANSCRIPT_SHARED_SECRET?.trim();
   if (explicit) return explicit;
   const inbound = process.env.INBOUND_SHARED_SECRET?.trim();
   return inbound || null;
+}
+
+async function getScopedProviderSecret({
+  tenantId,
+  provider,
+  secretType,
+  fallbackEnv
+}: {
+  tenantId: string;
+  provider: string;
+  secretType: string;
+  fallbackEnv?: string;
+}) {
+  const scope = { tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY };
+  const secrets = await listActiveProviderWebhookSecrets({
+    scope,
+    provider,
+    secretType
+  });
+  if (secrets[0]) {
+    return secrets[0].secret;
+  }
+
+  if (!shouldRequireTenantProviderWebhookSecrets() && fallbackEnv) {
+    return process.env[fallbackEnv]?.trim() || null;
+  }
+
+  if (shouldRequireTenantProviderWebhookSecrets()) {
+    throw new Error(`Provider webhook secret missing for ${provider}/${secretType}.`);
+  }
+
+  return null;
 }
 
 export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: number } = {}) {
@@ -47,7 +86,24 @@ export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: numb
         callSessionId: job.call_session_id,
         recordingR2Key: job.recording_r2_key,
         callbackUrl,
-        callbackSecret,
+        callbackSecret:
+          provider === "managed_http"
+            ? (await getScopedProviderSecret({
+                tenantId: job.tenant_id,
+                provider: "deepgram",
+                secretType: "callback_token",
+                fallbackEnv: "CALLS_STT_DEEPGRAM_CALLBACK_TOKEN"
+              })) ?? callbackSecret
+            : callbackSecret,
+        providerHttpSecret:
+          provider === "managed_http"
+            ? await getScopedProviderSecret({
+                tenantId: job.tenant_id,
+                provider: "managed_stt",
+                secretType: "http_secret",
+                fallbackEnv: "CALLS_STT_PROVIDER_HTTP_SECRET"
+              })
+            : null,
         metadata: job.metadata ?? null
       });
 

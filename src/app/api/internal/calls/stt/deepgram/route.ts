@@ -1,4 +1,13 @@
 import { z } from "zod";
+import { timingSafeEqual } from "crypto";
+import { resolveCallSessionProviderScope } from "@/server/calls/service";
+import {
+  listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed,
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets,
+  type ActiveProviderWebhookSecret
+} from "@/server/provider-webhook-secrets";
 
 export const runtime = "nodejs";
 
@@ -36,6 +45,17 @@ function withCallbackToken(callbackUrl: string, callbackToken: string) {
   const callback = new URL(callbackUrl);
   callback.searchParams.set("callback_token", callbackToken);
   return callback.toString();
+}
+
+function constantTimeEquals(left: string | null | undefined, right: string) {
+  const leftValue = readString(left);
+  if (!leftValue) return false;
+  const leftBuffer = Buffer.from(leftValue, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function buildDeepgramUrl(
@@ -80,24 +100,7 @@ function buildDeepgramUrl(
 }
 
 export async function POST(request: Request) {
-  const expectedSecret = readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET);
   const providedSecret = request.headers.get("x-6esk-secret");
-
-  if (!expectedSecret || providedSecret !== expectedSecret) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const apiKey = readString(process.env.CALLS_STT_DEEPGRAM_API_KEY);
-  const callbackToken = readString(process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN);
-  if (!apiKey) {
-    return Response.json({ error: "CALLS_STT_DEEPGRAM_API_KEY is not configured." }, { status: 500 });
-  }
-  if (!callbackToken) {
-    return Response.json(
-      { error: "CALLS_STT_DEEPGRAM_CALLBACK_TOKEN is not configured." },
-      { status: 500 }
-    );
-  }
 
   const formData = await request.formData();
   const rawJob = formData.get("job");
@@ -114,6 +117,90 @@ export async function POST(request: Request) {
 
   if (!(audio instanceof File)) {
     return Response.json({ error: "Audio file is required." }, { status: 400 });
+  }
+
+  const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
+  const scope = await resolveCallSessionProviderScope({
+    callSessionId: parsedJob.callSessionId
+  });
+  if (!scope && requireTenantSecrets) {
+    return Response.json(
+      { error: "Call session not found", code: "unresolved_call_provider_route" },
+      { status: 404 }
+    );
+  }
+
+  let providerSecrets: ActiveProviderWebhookSecret[] = [];
+  try {
+    providerSecrets = scope
+      ? await listActiveProviderWebhookSecrets({
+          scope,
+          provider: "managed_stt",
+          secretType: "http_secret"
+        })
+      : [];
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      return Response.json(
+        {
+          error: error.message,
+          code: "provider_webhook_secret_configuration_missing"
+        },
+        { status: 503 }
+      );
+    }
+    throw error;
+  }
+
+  const globalHttpSecret = readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET);
+  if (globalHttpSecret && !requireTenantSecrets) {
+    providerSecrets.push({
+      id: "env:CALLS_STT_PROVIDER_HTTP_SECRET",
+      secret: globalHttpSecret,
+      source: "env"
+    });
+  }
+
+  if (!providerSecrets.length && requireTenantSecrets) {
+    return Response.json(
+      {
+        error: "Provider webhook secret is not configured for this tenant.",
+        code: "provider_webhook_secret_missing"
+      },
+      { status: 503 }
+    );
+  }
+
+  const matchedSecret =
+    providerSecrets.find((secret) => constantTimeEquals(providedSecret, secret.secret)) ?? null;
+  if (!matchedSecret) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (scope) {
+    await markProviderWebhookSecretUsed(matchedSecret.id, scope).catch(() => {});
+  }
+
+  const apiKey = readString(process.env.CALLS_STT_DEEPGRAM_API_KEY);
+  if (!apiKey) {
+    return Response.json({ error: "CALLS_STT_DEEPGRAM_API_KEY is not configured." }, { status: 500 });
+  }
+
+  const callbackToken =
+    readString(parsedJob.callbackSecret) ??
+    (!requireTenantSecrets ? readString(process.env.CALLS_STT_DEEPGRAM_CALLBACK_TOKEN) : null);
+  if (!callbackToken) {
+    return requireTenantSecrets
+      ? Response.json(
+          {
+            error: "Provider webhook secret is not configured for this tenant.",
+            code: "provider_webhook_secret_missing"
+          },
+          { status: 503 }
+        )
+      : Response.json(
+          { error: "CALLS_STT_DEEPGRAM_CALLBACK_TOKEN is not configured." },
+          { status: 500 }
+        );
   }
 
   const metadata = {
