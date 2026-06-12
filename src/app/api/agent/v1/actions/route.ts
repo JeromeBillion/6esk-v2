@@ -5,6 +5,12 @@ import { createDraft } from "@/server/agents/drafts";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
 import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
+import {
+  completeAgentToolCall,
+  recordAgentToolCallDenied,
+  recordAgentToolCallRequested,
+  type AgentToolCallLedger
+} from "@/server/agents/run-ledger";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
@@ -106,6 +112,19 @@ const DEFAULT_LIMITED_AUTO_ACTIONS = new Set([
   "set_priority",
   "assign_to"
 ]);
+const ACTION_REQUESTED_SCOPES: Record<AgentAction["type"], string[]> = {
+  draft_reply: ["tickets:read", "drafts:write"],
+  send_reply: ["tickets:read", "tickets:write", "customer_contact:send"],
+  initiate_call: ["tickets:read", "voice:call"],
+  set_tags: ["tickets:read", "tickets:write"],
+  set_priority: ["tickets:read", "tickets:write"],
+  assign_to: ["tickets:read", "tickets:write"],
+  request_human_review: ["tickets:read", "reviews:write"],
+  merge_tickets: ["tickets:read", "tickets:merge"],
+  link_tickets: ["tickets:read", "tickets:write"],
+  merge_customers: ["customers:read", "customers:merge"],
+  propose_merge: ["tickets:read", "merge_reviews:write"]
+};
 
 function getAgentMergeMinConfidence() {
   const raw = Number.parseFloat(
@@ -441,6 +460,145 @@ function extractRunIdFromMetadata(metadata: Record<string, unknown> | null | und
   }
 
   return null;
+}
+
+function actionArgsSummary(input: {
+  action: AgentAction;
+  ticket: Record<string, unknown>;
+  rolloutMode: AgentActionRolloutMode;
+  policyDecision?: string | null;
+  toolClass?: string | null;
+}) {
+  const action = input.action;
+  return {
+    actionType: action.type,
+    ticketId: action.ticketId,
+    mailboxId: readString(input.ticket.mailbox_id),
+    customerId: readString(input.ticket.customer_id),
+    rolloutMode: input.rolloutMode,
+    policyDecision: input.policyDecision ?? null,
+    toolClass: input.toolClass ?? null,
+    hasText: Boolean(action.text),
+    hasHtml: Boolean(action.html),
+    hasTemplate: Boolean(action.template),
+    tagCount: action.tags?.length ?? 0,
+    priority: action.priority ?? null,
+    assignedUserId: action.assignedUserId ?? null,
+    sourceTicketId: action.sourceTicketId ?? null,
+    targetTicketId: action.targetTicketId ?? null,
+    sourceCustomerId: action.sourceCustomerId ?? null,
+    targetCustomerId: action.targetCustomerId ?? null,
+    confidence: action.confidence ?? null,
+    candidateId: action.candidateId ?? null,
+    metadataKeys: Object.keys(action.metadata ?? {}).sort().slice(0, 20)
+  };
+}
+
+function actionResultFailed(result: ActionResult) {
+  return result.status === "failed" ||
+    result.status === "blocked" ||
+    result.status === "not_found" ||
+    result.status === "ignored" ||
+    result.status === "dry_run";
+}
+
+function actionResultSummary(result: ActionResult) {
+  return {
+    type: result.type,
+    status: result.status,
+    detail: result.detail ?? null,
+    dataKeys: Object.keys(result.data ?? {}).sort().slice(0, 20)
+  };
+}
+
+async function recordToolCallDeniedBestEffort(input: {
+  tenantId: string;
+  integrationId: string;
+  runId: string | null;
+  action: AgentAction;
+  ticket: Record<string, unknown>;
+  rolloutMode: AgentActionRolloutMode;
+  reason: string;
+  toolClass?: string | null;
+  policyDecision?: string | null;
+  idempotencyKey?: string | null;
+}) {
+  if (!input.runId) return;
+  try {
+    await recordAgentToolCallDenied({
+      tenantId: input.tenantId,
+      runId: input.runId,
+      toolName: input.action.type,
+      requestedScopes: ACTION_REQUESTED_SCOPES[input.action.type],
+      argsSummary: actionArgsSummary(input),
+      idempotencyKey: input.idempotencyKey ?? null,
+      reason: input.reason,
+      metadata: {
+        route: "/api/agent/v1/actions",
+        integrationId: input.integrationId,
+        toolClass: input.toolClass ?? null,
+        policyDecision: input.policyDecision ?? null
+      }
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Failed to record denied tool call";
+    runInBackground(recordAuditLog({
+      tenantId: input.tenantId,
+      action: "agent_tool_ledger_write_failed",
+      entityType: "ticket",
+      entityId: input.action.ticketId,
+      data: {
+        agentId: input.integrationId,
+        runId: input.runId,
+        actionType: input.action.type,
+        phase: "denied",
+        detail
+      }
+    }), "Failed to record denied agent tool ledger audit event", {
+      route: "/api/agent/v1/actions",
+      tenantId: input.tenantId,
+      runId: input.runId,
+      actionType: input.action.type
+    });
+  }
+}
+
+async function recordToolCallCompletionBestEffort(input: {
+  tenantId: string;
+  integrationId: string;
+  ledger: AgentToolCallLedger | null;
+  result: ActionResult;
+}) {
+  if (!input.ledger) return;
+  try {
+    await completeAgentToolCall({
+      ledger: input.ledger,
+      status: actionResultFailed(input.result) ? "failed" : "completed",
+      resultSummary: actionResultSummary(input.result),
+      errorMessage: actionResultFailed(input.result) ? input.result.detail ?? input.result.status : null
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Failed to complete tool-call ledger";
+    runInBackground(recordAuditLog({
+      tenantId: input.tenantId,
+      action: "agent_tool_ledger_write_failed",
+      entityType: "agent_run",
+      entityId: input.ledger.runId,
+      data: {
+        agentId: input.integrationId,
+        runId: input.ledger.runId,
+        toolCallId: input.ledger.toolCallId,
+        actionType: input.ledger.toolName,
+        phase: "completed",
+        detail
+      }
+    }), "Failed to record completed agent tool ledger audit event", {
+      route: "/api/agent/v1/actions",
+      tenantId: input.tenantId,
+      runId: input.ledger.runId,
+      toolCallId: input.ledger.toolCallId
+    });
+  }
 }
 
 function normalizeForStableJson(value: unknown): unknown {
@@ -813,6 +971,18 @@ export async function POST(request: Request) {
           reasonCodes: toolPolicy.reasonCodes
         }
       };
+      await recordToolCallDeniedBestEffort({
+        tenantId,
+        integrationId: integration.id,
+        runId: actionRunId,
+        action,
+        ticket,
+        rolloutMode: actionRolloutMode,
+        reason: toolPolicy.detail ?? "Agent tool policy blocked this action.",
+        toolClass: toolPolicy.toolClass,
+        policyDecision: toolPolicy.decision,
+        idempotencyKey
+      });
       await recordAuditLog({
         tenantId,
         action: "ai_tool_policy_blocked",
@@ -861,6 +1031,18 @@ export async function POST(request: Request) {
         }
       });
       results.push(rolloutDecision);
+      await recordToolCallDeniedBestEffort({
+        tenantId,
+        integrationId: integration.id,
+        runId: actionRunId,
+        action,
+        ticket,
+        rolloutMode: actionRolloutMode,
+        reason: rolloutDecision.detail ?? "Agent action rollout mode blocked this action.",
+        toolClass: toolPolicy.toolClass,
+        policyDecision: "rollout_blocked",
+        idempotencyKey
+      });
       if (idempotencyClaim) {
         await completeAgentActionIdempotency({
           tenantId,
@@ -871,6 +1053,67 @@ export async function POST(request: Request) {
         });
       }
       continue;
+    }
+
+    let toolLedger: AgentToolCallLedger | null = null;
+    if (actionRunId) {
+      try {
+        toolLedger = await recordAgentToolCallRequested({
+          tenantId,
+          runId: actionRunId,
+          actor: { type: "agent", id: integration.id },
+          toolName: action.type,
+          requestedScopes: ACTION_REQUESTED_SCOPES[action.type],
+          argsSummary: actionArgsSummary({
+            action,
+            ticket,
+            rolloutMode: actionRolloutMode,
+            policyDecision: toolPolicy.decision,
+            toolClass: toolPolicy.toolClass
+          }),
+          idempotencyKey,
+          metadata: {
+            route: "/api/agent/v1/actions",
+            integrationId: integration.id,
+            toolClass: toolPolicy.toolClass,
+            policyDecision: toolPolicy.decision
+          }
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Agent tool ledger unavailable.";
+        const result: ActionResult = {
+          type: action.type,
+          status: "failed",
+          detail: "Agent tool ledger write failed before action execution.",
+          data: {
+            errorCode: "agent_tool_ledger_write_failed"
+          }
+        };
+        await recordAuditLog({
+          tenantId,
+          action: "agent_tool_ledger_write_failed",
+          entityType: "ticket",
+          entityId: action.ticketId,
+          data: {
+            agentId: integration.id,
+            runId: actionRunId,
+            actionType: action.type,
+            phase: "requested",
+            detail
+          }
+        });
+        results.push(result);
+        if (idempotencyClaim) {
+          await completeAgentActionIdempotency({
+            tenantId,
+            integrationId: integration.id,
+            idempotencyKey: idempotencyClaim.idempotencyKey,
+            requestHash: idempotencyClaim.requestHash,
+            result
+          });
+        }
+        continue;
+      }
     }
 
     const resultStartIndex = results.length;
@@ -1916,6 +2159,14 @@ export async function POST(request: Request) {
         integrationId: integration.id,
         idempotencyKey: idempotencyClaim.idempotencyKey,
         requestHash: idempotencyClaim.requestHash,
+        result: results[resultStartIndex]
+      });
+    }
+    if (results.length > resultStartIndex) {
+      await recordToolCallCompletionBestEffort({
+        tenantId,
+        integrationId: integration.id,
+        ledger: toolLedger,
         result: results[resultStartIndex]
       });
     }

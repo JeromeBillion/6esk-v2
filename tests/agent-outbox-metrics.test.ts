@@ -77,6 +77,21 @@ describe("agent outbox metrics", () => {
             oldest_wait_seconds: 900
           }
         ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            requested: 0,
+            approved: 0,
+            denied: 2,
+            running: 1,
+            completed: 8,
+            failed: 1,
+            cancelled: 0,
+            last_denied_at: new Date("2026-06-01T08:45:00.000Z"),
+            last_failed_at: new Date("2026-06-01T08:50:00.000Z")
+          }
+        ]
       });
 
     const metrics = await getAgentOutboxMetrics(INTEGRATION_ID, 10, TENANT_ID);
@@ -106,6 +121,14 @@ describe("agent outbox metrics", () => {
             oldestWaitSeconds: 900
           }
         ]
+      },
+      toolCalls: {
+        denied: 2,
+        running: 1,
+        completed: 8,
+        failed: 1,
+        lastDeniedAt: "2026-06-01T08:45:00.000Z",
+        lastFailedAt: "2026-06-01T08:50:00.000Z"
       }
     });
     expect(mocks.db.query).toHaveBeenNthCalledWith(
@@ -117,6 +140,11 @@ describe("agent outbox metrics", () => {
       4,
       expect.stringContaining("GROUP BY lane_key"),
       [TENANT_ID, INTEGRATION_ID, 900]
+    );
+    expect(mocks.db.query).toHaveBeenNthCalledWith(
+      5,
+      expect.stringContaining("FROM agent_tool_calls"),
+      [TENANT_ID, INTEGRATION_ID]
     );
   });
 });

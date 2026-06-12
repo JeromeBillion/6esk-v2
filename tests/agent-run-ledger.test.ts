@@ -6,6 +6,7 @@ const OUTBOX_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const TICKET_ID = "44444444-4444-4444-8444-444444444444";
 const TOOL_CALL_ID = "55555555-5555-4555-8555-555555555555";
+const STEP_ID = "99999999-9999-4999-8999-999999999999";
 const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
 const BLOCKING_RUN_ID = "77777777-7777-4777-8777-777777777777";
 
@@ -27,11 +28,14 @@ vi.mock("@/server/db", () => ({
 import {
   appendAgentApprovalRequestedCommand,
   appendAgentToolRequestedCommand,
+  completeAgentToolCall,
   createAgentRunForOutbox,
   deriveAgentRunContext,
   markAgentRunCompleted,
   markAgentRunFailed,
   markAgentRunRunning,
+  recordAgentToolCallDenied,
+  recordAgentToolCallRequested,
   recoverStaleAgentRuns
 } from "@/server/agents/run-ledger";
 
@@ -373,6 +377,114 @@ describe("agent run ledger", () => {
         reason: "Hybrid review required for customer-visible reply"
       }
     });
+  });
+
+  it("populates durable step and tool-call ledgers for requested and completed tools", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: STEP_ID }] })
+      .mockResolvedValueOnce({ rows: [{ id: TOOL_CALL_ID }] })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValue({ rows: [] });
+
+    const ledger = await recordAgentToolCallRequested({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      actor: { type: "agent", id: INTEGRATION_ID },
+      toolName: "send_reply",
+      requestedScopes: ["tickets:write", "customer_contact:send"],
+      argsSummary: { actionType: "send_reply", ticketId: TICKET_ID, hasText: true },
+      idempotencyKey: "idem-1",
+      metadata: { toolClass: "external_send" }
+    });
+
+    await completeAgentToolCall({
+      ledger,
+      status: "completed",
+      resultSummary: { status: "sent" }
+    });
+
+    expect(ledger).toEqual({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      stepId: STEP_ID,
+      toolCallId: TOOL_CALL_ID,
+      toolName: "send_reply"
+    });
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_steps"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "tool:send_reply"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_tool_calls"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, STEP_ID, "send_reply"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE agent_tool_calls"),
+      expect.arrayContaining([TENANT_ID, TOOL_CALL_ID, "completed"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE agent_run_steps"),
+      expect.arrayContaining([TENANT_ID, STEP_ID, "completed"])
+    );
+    const requestedEventData = JSON.parse(mocks.client.query.mock.calls[4][1][5]);
+    expect(requestedEventData.commandEnvelope).toMatchObject({
+      command: "agent.tool.requested",
+      commandData: {
+        toolName: "send_reply",
+        toolCallId: TOOL_CALL_ID
+      }
+    });
+    const completedEventData = JSON.parse(mocks.client.query.mock.calls[10][1][5]);
+    expect(completedEventData.commandEnvelope).toMatchObject({
+      command: "agent.tool.completed",
+      commandData: {
+        toolName: "send_reply",
+        toolCallId: TOOL_CALL_ID,
+        resultSummary: { status: "sent" }
+      }
+    });
+  });
+
+  it("records denied tool calls without executing a tool", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: STEP_ID }] })
+      .mockResolvedValueOnce({ rows: [{ id: TOOL_CALL_ID }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await recordAgentToolCallDenied({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      toolName: "merge_customers",
+      requestedScopes: ["customers:merge"],
+      argsSummary: { actionType: "merge_customers", confidence: 0.4 },
+      idempotencyKey: "idem-denied",
+      reason: "Confidence below tenant threshold.",
+      metadata: { policyDecision: "rollout_blocked" }
+    });
+
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_steps"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "tool:merge_customers", "Agent tool denied: merge_customers"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_tool_calls"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, STEP_ID, "merge_customers"])
+    );
+    expect(mocks.client.query.mock.calls[2][1]).toContain("Confidence below tenant threshold.");
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.tool.denied", "running"])
+    );
   });
 
   it("recovers stale active runs with retry and dead-letter evidence", async () => {

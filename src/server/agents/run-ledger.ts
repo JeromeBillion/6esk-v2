@@ -64,6 +64,14 @@ export type StaleAgentRunRecoveryRow = {
   outbox_recovery_action: "retry_queued" | "dead_lettered" | "none";
 };
 
+export type AgentToolCallLedger = {
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  toolCallId: string;
+  toolName: string;
+};
+
 type AgentRunCommandContextRow = {
   id: string;
   tenant_id: string;
@@ -95,6 +103,21 @@ function normalizeLimit(value: number | null | undefined, fallback: number, max:
 function toNumber(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeJsonSummary(value: Record<string, unknown> | null | undefined) {
+  const summary = value ?? {};
+  try {
+    const serialized = JSON.stringify(summary);
+    if (serialized.length <= 3500) return summary;
+    return {
+      truncated: true,
+      originalBytes: serialized.length,
+      preview: serialized.slice(0, 500)
+    };
+  } catch {
+    return { unserializable: true };
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -467,6 +490,278 @@ export function appendAgentToolCompletedCommand(input: {
       ...(input.resultSummary ? { resultSummary: input.resultSummary } : {})
     }
   });
+}
+
+export async function recordAgentToolCallRequested(input: {
+  tenantId: string;
+  runId: string;
+  toolName: string;
+  actor?: DexterCommandEnvelope["actor"];
+  requestedScopes?: unknown;
+  argsSummary?: Record<string, unknown> | null;
+  idempotencyKey?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<AgentToolCallLedger> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const stepResult = await client.query<{ id: string }>(
+      `WITH locked_run AS (
+         SELECT id
+         FROM agent_runs
+         WHERE tenant_id = $1
+           AND id = $2
+         FOR UPDATE
+       ),
+       next_step AS (
+         SELECT COALESCE(MAX(step_index), -1) + 1 AS value
+         FROM agent_run_steps
+         WHERE tenant_id = $1
+           AND run_id = $2
+       )
+       INSERT INTO agent_run_steps (
+         tenant_id, run_id, step_index, step_type, status, summary, metadata, started_at
+       )
+       SELECT $1, $2, next_step.value, $3, 'running', $4, $5::jsonb, now()
+       FROM locked_run, next_step
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.runId,
+        `tool:${input.toolName}`,
+        `Agent tool started: ${input.toolName}`.slice(0, 500),
+        JSON.stringify({
+          toolName: input.toolName,
+          ...(input.metadata ?? {})
+        })
+      ]
+    );
+    const stepId = stepResult.rows[0]?.id;
+    if (!stepId) {
+      throw new Error("Agent run not found for tool-call ledger start.");
+    }
+
+    const toolResult = await client.query<{ id: string }>(
+      `INSERT INTO agent_tool_calls (
+         tenant_id, run_id, step_id, tool_name, status, requested_scopes,
+         args_summary, idempotency_key
+       )
+       VALUES ($1, $2, $3, $4, 'running', $5::jsonb, $6::jsonb, $7)
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.runId,
+        stepId,
+        input.toolName,
+        JSON.stringify(normalizeJsonArray(input.requestedScopes)),
+        JSON.stringify(safeJsonSummary(input.argsSummary)),
+        input.idempotencyKey ?? null
+      ]
+    );
+    const toolCallId = toolResult.rows[0]?.id;
+    if (!toolCallId) {
+      throw new Error("Agent tool-call ledger start failed.");
+    }
+
+    await appendAgentToolRequestedCommand({
+      client,
+      tenantId: input.tenantId,
+      runId: input.runId,
+      actor: input.actor,
+      toolName: input.toolName,
+      toolCallId,
+      requestedScopes: input.requestedScopes,
+      idempotencyKey: input.idempotencyKey,
+      metadata: input.metadata
+    });
+
+    await client.query("COMMIT");
+    return {
+      tenantId: input.tenantId,
+      runId: input.runId,
+      stepId,
+      toolCallId,
+      toolName: input.toolName
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordAgentToolCallDenied(input: {
+  tenantId: string;
+  runId: string;
+  toolName: string;
+  requestedScopes?: unknown;
+  argsSummary?: Record<string, unknown> | null;
+  idempotencyKey?: string | null;
+  reason: string;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const stepResult = await client.query<{ id: string }>(
+      `WITH locked_run AS (
+         SELECT id
+         FROM agent_runs
+         WHERE tenant_id = $1
+           AND id = $2
+         FOR UPDATE
+       ),
+       next_step AS (
+         SELECT COALESCE(MAX(step_index), -1) + 1 AS value
+         FROM agent_run_steps
+         WHERE tenant_id = $1
+           AND run_id = $2
+       )
+       INSERT INTO agent_run_steps (
+         tenant_id, run_id, step_index, step_type, status, summary, metadata, started_at, completed_at
+       )
+       SELECT $1, $2, next_step.value, $3, 'skipped', $4, $5::jsonb, now(), now()
+       FROM locked_run, next_step
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.runId,
+        `tool:${input.toolName}`,
+        `Agent tool denied: ${input.toolName}`.slice(0, 500),
+        JSON.stringify({
+          toolName: input.toolName,
+          denialReason: input.reason.slice(0, 500),
+          ...(input.metadata ?? {})
+        })
+      ]
+    );
+    const stepId = stepResult.rows[0]?.id;
+    if (!stepId) {
+      throw new Error("Agent run not found for denied tool-call ledger.");
+    }
+
+    const toolResult = await client.query<{ id: string }>(
+      `INSERT INTO agent_tool_calls (
+         tenant_id, run_id, step_id, tool_name, status, requested_scopes,
+         args_summary, idempotency_key, error_message
+       )
+       VALUES ($1, $2, $3, $4, 'denied', $5::jsonb, $6::jsonb, $7, $8)
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.runId,
+        stepId,
+        input.toolName,
+        JSON.stringify(normalizeJsonArray(input.requestedScopes)),
+        JSON.stringify(safeJsonSummary(input.argsSummary)),
+        input.idempotencyKey ?? null,
+        input.reason.slice(0, 500)
+      ]
+    );
+
+    await appendAgentRunEvent({
+      client,
+      tenantId: input.tenantId,
+      runId: input.runId,
+      eventType: "agent.tool.denied",
+      status: "running",
+      summary: `Agent tool denied: ${input.toolName}`,
+      eventData: {
+        toolName: input.toolName,
+        toolCallId: toolResult.rows[0]?.id ?? null,
+        reason: input.reason.slice(0, 500),
+        metadata: input.metadata ?? {}
+      }
+    });
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function completeAgentToolCall(input: {
+  ledger: AgentToolCallLedger;
+  status: "completed" | "failed";
+  resultSummary?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+}) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE agent_tool_calls
+       SET status = $3,
+           result_summary = $4::jsonb,
+           error_message = $5,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2`,
+      [
+        input.ledger.tenantId,
+        input.ledger.toolCallId,
+        input.status,
+        JSON.stringify(safeJsonSummary(input.resultSummary)),
+        input.errorMessage?.slice(0, 500) ?? null
+      ]
+    );
+    await client.query(
+      `UPDATE agent_run_steps
+       SET status = $3,
+           completed_at = CASE WHEN $3 = 'completed' THEN now() ELSE completed_at END,
+           failed_at = CASE WHEN $3 = 'failed' THEN now() ELSE failed_at END,
+           metadata = metadata || $4::jsonb,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2`,
+      [
+        input.ledger.tenantId,
+        input.ledger.stepId,
+        input.status,
+        JSON.stringify({
+          resultStatus: input.status,
+          ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
+        })
+      ]
+    );
+
+    if (input.status === "completed") {
+      await appendAgentToolCompletedCommand({
+        client,
+        tenantId: input.ledger.tenantId,
+        runId: input.ledger.runId,
+        toolName: input.ledger.toolName,
+        toolCallId: input.ledger.toolCallId,
+        resultSummary: safeJsonSummary(input.resultSummary)
+      });
+    } else {
+      await appendAgentRunEvent({
+        client,
+        tenantId: input.ledger.tenantId,
+        runId: input.ledger.runId,
+        eventType: "agent.tool.failed",
+        status: "running",
+        summary: `Agent tool failed: ${input.ledger.toolName}`,
+        eventData: {
+          toolName: input.ledger.toolName,
+          toolCallId: input.ledger.toolCallId,
+          errorMessage: input.errorMessage?.slice(0, 500) ?? null,
+          resultSummary: safeJsonSummary(input.resultSummary)
+        }
+      });
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function appendAgentApprovalRequestedCommand(input: {

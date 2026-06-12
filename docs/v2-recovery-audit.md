@@ -96,12 +96,15 @@ Date: 2026-06-06
   - focused regression coverage proves the atomic reservation query, worker skip/release behavior, lane diagnostics, and stale recovery/dead-letter behavior
 - Semantically ported the wrong-folder/OpenClaw-style agent tool-policy value into v2 without replacing native Dexter:
   - `src/server/agents/tool-policy.ts`
+  - `src/server/agents/run-ledger.ts`
+  - `src/server/agents/outbox-metrics.ts`
   - `src/app/api/agent/v1/actions/route.ts`
   - `db/migrations/0055_agent_tool_policy_decisions.sql`
   - route actions are classified by impact before side effects: review request, draft, reversible write, external send, and irreversible write
   - action content is evaluated through the v2 central prompt-safety guard after tenant ticket/scope/idempotency checks and before rollout/side-effect execution
   - `full_auto` high-risk actions are blocked and audited as policy denials, medium-risk `full_auto` actions downgrade to read-only/no-tool behavior, and `hybrid_review` suspicious actions require review instead of silently performing side effects
   - policy decisions are stored with `tenant_id`, optional integration/run references, tool class, decision, reason codes, resource summary, and redacted prompt-safety telemetry
+  - run-aware route actions now populate durable `agent_run_steps` and `agent_tool_calls`; policy/rollout denials are stored as denied tool calls, successful side-effect attempts are stored as running tool calls before execution and then closed as completed or failed, and admin outbox metrics include tool-call status counts
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.

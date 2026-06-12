@@ -42,6 +42,18 @@ type LaneSummaryRow = {
   oldest_wait_seconds: number | string | null;
 };
 
+type ToolCallSummaryRow = {
+  requested: number | string | null;
+  approved: number | string | null;
+  denied: number | string | null;
+  running: number | string | null;
+  completed: number | string | null;
+  failed: number | string | null;
+  cancelled: number | string | null;
+  last_denied_at: Date | null;
+  last_failed_at: Date | null;
+};
+
 function toNumber(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -141,6 +153,26 @@ export async function getAgentOutboxMetrics(
     [integration.tenant_id, integration.id, DEFAULT_AGENT_RUN_STALE_SECONDS]
   );
 
+  const toolCallResult = await db.query<ToolCallSummaryRow>(
+    `SELECT
+       COUNT(*) FILTER (WHERE tool.status = 'requested')::int AS requested,
+       COUNT(*) FILTER (WHERE tool.status = 'approved')::int AS approved,
+       COUNT(*) FILTER (WHERE tool.status = 'denied')::int AS denied,
+       COUNT(*) FILTER (WHERE tool.status = 'running')::int AS running,
+       COUNT(*) FILTER (WHERE tool.status = 'completed')::int AS completed,
+       COUNT(*) FILTER (WHERE tool.status = 'failed')::int AS failed,
+       COUNT(*) FILTER (WHERE tool.status = 'cancelled')::int AS cancelled,
+       MAX(tool.updated_at) FILTER (WHERE tool.status = 'denied') AS last_denied_at,
+       MAX(tool.updated_at) FILTER (WHERE tool.status = 'failed') AS last_failed_at
+     FROM agent_tool_calls tool
+     JOIN agent_runs run
+       ON run.tenant_id = tool.tenant_id
+      AND run.id = tool.run_id
+     WHERE tool.tenant_id = $1
+       AND run.integration_id = $2`,
+    [integration.tenant_id, integration.id]
+  );
+
   const summary = summaryResult.rows[0] ?? {
     pending: 0,
     due_now: 0,
@@ -162,6 +194,17 @@ export async function getAgentOutboxMetrics(
     stale_active: 0,
     oldest_queued_at: null,
     oldest_active_at: null
+  };
+  const toolCallSummary = toolCallResult.rows[0] ?? {
+    requested: 0,
+    approved: 0,
+    denied: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    last_denied_at: null,
+    last_failed_at: null
   };
 
   return {
@@ -209,6 +252,17 @@ export async function getAgentOutboxMetrics(
         oldestActiveAt: toIso(lane.oldest_active_at),
         oldestWaitSeconds: toNumber(lane.oldest_wait_seconds)
       }))
+    },
+    toolCalls: {
+      requested: toNumber(toolCallSummary.requested),
+      approved: toNumber(toolCallSummary.approved),
+      denied: toNumber(toolCallSummary.denied),
+      running: toNumber(toolCallSummary.running),
+      completed: toNumber(toolCallSummary.completed),
+      failed: toNumber(toolCallSummary.failed),
+      cancelled: toNumber(toolCallSummary.cancelled),
+      lastDeniedAt: toIso(toolCallSummary.last_denied_at),
+      lastFailedAt: toIso(toolCallSummary.last_failed_at)
     }
   };
 }
