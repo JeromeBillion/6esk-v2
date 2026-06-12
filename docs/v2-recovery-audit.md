@@ -69,6 +69,13 @@ Date: 2026-06-06
   - estimated invoices are built from persisted subscription items, tenant-scoped usage events, pending adjustments, and VAT rules
   - internal backoffice billing actions can sync subscriptions, create audited credits/refunds/write-offs/prorations, create duplicate-safe invoice drafts, transition invoice status, and record collection events
   - tenant admins can read current billing lifecycle visibility through the workspace billing API
+- Semantically ported AI prompt-safety value without replacing native Dexter:
+  - `src/server/ai/prompt-safety.ts`
+  - `src/server/ai/knowledge-retrieval.ts`
+  - user-controlled runtime prompts are treated as untrusted input, stripped of zero-width/control characters, classified for prompt injection, prompt/canary leakage, secret/token exposure, multilingual overrides, encoded smuggling, RAG poisoning, cross-tenant/customer exfiltration, tool-policy bypass, tool coercion, audit/citation suppression, memory persistence, and role impersonation
+  - runtime-style RAG retrieval denies high-risk prompts before knowledge chunk search, downgrades medium-risk prompts to read-only/unsafe-content-filtered behavior, and writes redacted query summaries plus redacted prompt-safety decisions into `knowledge_retrieval_events` without storing the full normalized prompt
+  - wrong-folder red-team prompt fixtures were retained as focused v2 prompt-safety regression coverage
+  - native Dexter runtime, run ledger, command envelope, and tenant Knowledge Base architecture are preserved
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.

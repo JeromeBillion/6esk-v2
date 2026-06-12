@@ -6,6 +6,11 @@ import {
   type KnowledgeCitationSafety,
   type KnowledgeRetrievalSafetySummary
 } from "@/server/ai/knowledge-safety";
+import {
+  evaluatePromptSafety,
+  isPromptDenied,
+  promptSafetyTelemetry
+} from "@/server/ai/prompt-safety";
 
 const DEFAULT_RETRIEVAL_LIMIT = 6;
 const MAX_RETRIEVAL_LIMIT = 12;
@@ -102,7 +107,8 @@ export async function retrievePublishedKnowledge({
   resourceType,
   resourceId,
   outcome = "answered",
-  excludeUnsafeContent = false
+  excludeUnsafeContent = false,
+  enforcePromptSafety
 }: {
   tenantId: string;
   actorUserId?: string | null;
@@ -115,22 +121,38 @@ export async function retrievePublishedKnowledge({
   resourceId?: string | null;
   outcome?: KnowledgeRetrievalOutcome;
   excludeUnsafeContent?: boolean;
+  enforcePromptSafety?: boolean;
 }) {
   const normalizedQuery = normalizeQuery(query);
+  const shouldEnforcePromptSafety = enforcePromptSafety ?? excludeUnsafeContent;
+  const promptSafety = evaluatePromptSafety({
+    text: normalizedQuery,
+    source: queryPurpose,
+    maxLength: 500
+  });
+  const promptSafetySummary = promptSafetyTelemetry(promptSafety);
+  const retrievalQuery = shouldEnforcePromptSafety ? promptSafety.normalizedText : normalizedQuery;
+  const retrievalQuerySummary = shouldEnforcePromptSafety
+    ? promptSafetySummary.contentSample
+    : retrievalQuery;
+  const effectiveExcludeUnsafeContent =
+    excludeUnsafeContent ||
+    (shouldEnforcePromptSafety && promptSafety.toolPolicy.forceKnowledgeSafetyFilter);
   const normalizedFolderIds = normalizeFolderIds(folderIds);
   const normalizedLimit = normalizeLimit(limit);
-  const candidateLimit = excludeUnsafeContent
+  const candidateLimit = effectiveExcludeUnsafeContent
     ? Math.min(normalizedLimit * 3, MAX_SEARCH_CANDIDATES)
     : normalizedLimit;
 
-  if (normalizedQuery.length < 2) {
+  if (shouldEnforcePromptSafety && isPromptDenied(promptSafety)) {
     const safety = summarizeKnowledgeRetrievalSafety([]);
-    const empty = {
-      query: normalizedQuery,
+    const denied = {
+      query: retrievalQuery,
       citations: [] as KnowledgeRetrievalCitation[],
       confidence: 0,
-      outcome: "no_answer" as const,
-      safety
+      outcome: "denied" as const,
+      safety,
+      promptSafety
     };
     await recordKnowledgeRetrievalEvent({
       tenantId,
@@ -139,18 +161,53 @@ export async function retrievePublishedKnowledge({
       resourceType,
       resourceId,
       queryPurpose,
-      querySummary: normalizedQuery,
+      querySummary: retrievalQuerySummary,
       filters: {
         folderIds: normalizedFolderIds,
         limit: normalizedLimit,
         publishedOnly: true,
         aiVisibleOnly: true,
-        excludeUnsafeContent
+        excludeUnsafeContent: effectiveExcludeUnsafeContent,
+        enforcePromptSafety: shouldEnforcePromptSafety
+      },
+      citations: denied.citations,
+      confidence: denied.confidence,
+      outcome: denied.outcome,
+      usageMetadata: { safety, promptSafety: promptSafetySummary }
+    });
+    return denied;
+  }
+
+  if (retrievalQuery.length < 2) {
+    const safety = summarizeKnowledgeRetrievalSafety([]);
+    const empty = {
+      query: retrievalQuery,
+      citations: [] as KnowledgeRetrievalCitation[],
+      confidence: 0,
+      outcome: "no_answer" as const,
+      safety,
+      promptSafety
+    };
+    await recordKnowledgeRetrievalEvent({
+      tenantId,
+      actorUserId,
+      runId,
+      resourceType,
+      resourceId,
+      queryPurpose,
+      querySummary: retrievalQuerySummary,
+      filters: {
+        folderIds: normalizedFolderIds,
+        limit: normalizedLimit,
+        publishedOnly: true,
+        aiVisibleOnly: true,
+        excludeUnsafeContent: effectiveExcludeUnsafeContent,
+        enforcePromptSafety: shouldEnforcePromptSafety
       },
       citations: empty.citations,
       confidence: empty.confidence,
       outcome: empty.outcome,
-      usageMetadata: { safety }
+      usageMetadata: { safety, promptSafety: promptSafetySummary }
     });
     return empty;
   }
@@ -202,14 +259,14 @@ export async function retrievePublishedKnowledge({
        )
      ORDER BY score DESC, v.published_at DESC NULLS LAST, d.updated_at DESC, c.chunk_index ASC
      LIMIT $4`,
-    [tenantId, normalizedQuery, normalizedFolderIds, candidateLimit]
+    [tenantId, retrievalQuery, normalizedFolderIds, candidateLimit]
   );
 
   const candidateCitations = result.rows.map(toCitation);
-  const excludedUnsafeCitationCount = excludeUnsafeContent
+  const excludedUnsafeCitationCount = effectiveExcludeUnsafeContent
     ? candidateCitations.filter((citation) => isHighRiskKnowledgeSafety(citation.safety)).length
     : 0;
-  const citations = (excludeUnsafeContent
+  const citations = (effectiveExcludeUnsafeContent
     ? candidateCitations.filter((citation) => !isHighRiskKnowledgeSafety(citation.safety))
     : candidateCitations
   ).slice(0, normalizedLimit);
@@ -228,29 +285,32 @@ export async function retrievePublishedKnowledge({
     resourceType,
     resourceId,
     queryPurpose,
-    querySummary: normalizedQuery,
+    querySummary: retrievalQuerySummary,
     filters: {
       folderIds: normalizedFolderIds,
       limit: normalizedLimit,
       publishedOnly: true,
       aiVisibleOnly: true,
-      excludeUnsafeContent
+      excludeUnsafeContent: effectiveExcludeUnsafeContent,
+      enforcePromptSafety: shouldEnforcePromptSafety
     },
     citations,
     confidence,
     outcome: resolvedOutcome,
     usageMetadata: {
       safety,
+      promptSafety: promptSafetySummary,
       candidateCitationCount: candidateCitations.length
     }
   });
 
   return {
-    query: normalizedQuery,
+    query: retrievalQuery,
     citations,
     confidence,
     outcome: resolvedOutcome,
-    safety
+    safety,
+    promptSafety
   };
 }
 
