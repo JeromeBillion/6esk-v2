@@ -524,6 +524,7 @@ Completed production-readiness slices:
 - Twilio inbound voice and queue callbacks now consume the persisted tenant provider-secret foundation in v2-native form: provider phone/account ownership is stored in `call_provider_numbers`, strict mode rejects unresolved or ambiguous tenant routes before creating call state, and voice/queue callbacks verify with tenant-scoped persisted `twilio/auth_token` secrets before ringing or mutating operator queue state
 - Deepgram/STT now consumes the persisted tenant provider-secret foundation in v2-native form: transcript workers retrieve tenant-scoped `deepgram/callback_token` and `managed_stt/http_secret` secrets, the internal Deepgram bridge verifies tenant-scoped STT HTTP secrets before submitting audio, and transcript callbacks verify tenant-scoped Deepgram callback tokens before attaching transcript content
 - Tenant-admin provider-number management is now v2-native: admins can list, create, update, and soft-disable Twilio/provider phone-account ownership records through `/api/admin/calls/provider-numbers`, scoped by `tenant_id` and audited
+- Runtime tenant query enforcement is now recovered in v2-native form: `db.query` and clients returned by `db.connect()` inspect tenant-scoped table queries for `tenant_id` evidence, production defaults to strict mode, and env validation rejects disabling it in production
 
 ### OpenClaw Review Findings For Dexter CRM Orchestration
 Local review source: `C:\Users\choma\Desktop\Claw\openclaw-main`, reviewed as a pattern source only. We are not making OpenClaw a dependency and we are not copying its personal-assistant trust model into `6esk`.
@@ -1035,6 +1036,7 @@ Retained and verified in the current recovery branch:
 - Twilio inbound voice/queue callback verification now uses tenant-owned `call_provider_numbers` records to resolve the tenant before call creation and verifies with tenant-scoped persisted Twilio auth-token secrets before queue/call state changes
 - Deepgram/STT callback verification now uses tenant-scoped persisted callback/internal HTTP secrets in strict mode before transcript job dispatch or transcript attachment
 - tenant-admin provider-number management now covers Twilio/provider phone-account ownership records, avoiding manual database edits for inbound voice routing configuration
+- runtime tenant-query enforcement now exists at the shared Postgres boundary for tenant-scoped tables, with `TENANT_QUERY_GUARD_MODE` validated for production
 - production env validation for tenant ingress and provider webhook secret encryption keys
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
@@ -1046,7 +1048,7 @@ Still outstanding before v2 main can be considered deploy-ready:
 - OAuth runtime evidence: provider app callback registration, staging Google/Microsoft smoke tests, and dashboard credential verification are deploy dependencies rather than additional core code
 - AI follow-through: remaining policy-pipeline stages beyond the current route-level tool policy gate, native/runtime worker step/tool-call ledger population beyond `/api/agent/v1/actions`, stronger prompt-injection evals, vetted binary extraction/malware scanning, embeddings/vector search, and rollout evidence while preserving native Dexter and v2 runtime files
 - billing follow-through: provider payment/reconciliation wiring, invoice PDF/export, chart/export UI polish, and deployed finance dashboard evidence
-- tenant export/offboarding/query-scope audit slices
+- tenant export/offboarding/delete workflows remain deferred to post-launch by instruction; query-scope enforcement is now recovered for launch
 - full verification: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `git diff --check`, stale-coupling scan, migration-sequence check, and roadmap reality check
 
 ## Production-Readiness Audit Findings (May 2026)

@@ -21,6 +21,7 @@ function baseEnv() {
     AUTH_MFA_ISSUER: "6esk",
     TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "b".repeat(64),
     PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "c".repeat(64),
+    TENANT_QUERY_GUARD_MODE: "strict",
     CRON_SECRET: "cron-secret",
     OAUTH_ENCRYPTION_KEY: "a".repeat(64),
     WHATSAPP_VERIFY_TOKEN: "whatsapp-verify",
@@ -117,6 +118,22 @@ describe("validateEnv", () => {
 
     expect(() => validateEnv(envWithoutAck)).toThrow(/DEXTER_RUNTIME_ALPHA_ACK/);
     expect(() => validateEnv(envWithAck)).not.toThrow();
+  });
+
+  it("rejects disabled or invalid tenant query guard mode in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        TENANT_QUERY_GUARD_MODE: "off"
+      })
+    ).toThrow(/TENANT_QUERY_GUARD_MODE cannot be off in production/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        TENANT_QUERY_GUARD_MODE: "observe"
+      })
+    ).toThrow(/TENANT_QUERY_GUARD_MODE must be off, warn, or strict/);
   });
 
   it("requires bridge configuration when Dexter runtime uses http_bridge mode", () => {

@@ -171,6 +171,13 @@ Date: 2026-06-06
   - `src/app/api/admin/calls/provider-numbers/route.ts`
   - `tests/admin-calls-provider-numbers-api.test.ts`
   - tenant admins can list, create, update, and soft-disable Twilio/provider phone-account ownership records under their v2 tenant scope, with normalized phone numbers and audit logging
+- Semantically ported the v1 runtime tenant query guard into v2-native `tenant_id` form:
+  - `src/server/tenant-query-guard.ts`
+  - `src/server/db.ts`
+  - `.env.example`
+  - `tests/tenant-query-guard.test.ts`
+  - `tests/env-validation.test.ts`
+  - shared Postgres pool/client queries now inspect tenant-scoped table access for `tenant_id` evidence, production defaults to strict mode, and production env validation rejects `TENANT_QUERY_GUARD_MODE=off`
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -178,6 +185,7 @@ The wrong-folder tree at `491af65` was not cherry-picked because it would overwr
 Deferred for future semantic port, not lost:
 - Better Auth package adoption: rejected for this launch slice because v2 already has tenant-scoped `users`, `auth_sessions`, MFA, session revocation, and privileged-access state. The retained value is the provider-login capability, now implemented as a v2-native Google/Microsoft OAuth adapter. A future OIDC broker can still be added without replacing the v2 session source of truth.
 - Tenant ingress/provider webhook adoption for WhatsApp, Resend, Twilio, and Deepgram/STT core paths is now ported into v2-native `tenant_id` form, including tenant-admin provider-number management. Remaining work in this area is runtime evidence with real provider dashboards/credentials, which is intentionally deferred to deployment validation.
+- Data lifecycle export/delete/offboarding utilities from the wrong-folder work remain intentionally deferred to post-launch per instruction; runtime query-scope enforcement was retained because it is a launch security guard, not lifecycle machinery.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing provider reconciliation and customer-facing export polish: core lifecycle persistence is now ported; provider payment evidence, invoice PDF/export, and chart/export UI polish remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
@@ -274,3 +282,6 @@ Before this recovery branch can replace `main`, run:
   - `tests/call-transcript-worker.test.ts`
 - Tenant-admin provider-number management tests pass in the focused slice:
   - `tests/admin-calls-provider-numbers-api.test.ts`
+- Tenant query guard tests pass in the focused slice:
+  - `tests/tenant-query-guard.test.ts`
+  - `tests/env-validation.test.ts`

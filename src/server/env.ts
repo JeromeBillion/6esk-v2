@@ -26,6 +26,7 @@ const envSchema = z.object({
   PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
   TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: optionalBooleanish,
   TENANT_PROVIDER_WEBHOOK_SECRETS_JSON: optionalNonEmptyString,
+  TENANT_QUERY_GUARD_MODE: optionalNonEmptyString,
   INBOUND_ALERT_WEBHOOK: z.union([z.string().url(), z.literal("")]).optional(),
   INBOUND_ALERT_THRESHOLD: z.string().optional(),
   INBOUND_ALERT_WINDOW_MINUTES: z.string().optional(),
@@ -277,6 +278,16 @@ function formatIssues(issues: string[]) {
   return Array.from(new Set(issues)).join(", ");
 }
 
+function addTenantQueryGuardIssues(source: EnvSource, strictProduction: boolean, issues: string[]) {
+  const mode = readString(source, "TENANT_QUERY_GUARD_MODE")?.toLowerCase();
+  if (mode && !["off", "warn", "strict"].includes(mode)) {
+    issues.push("TENANT_QUERY_GUARD_MODE must be off, warn, or strict");
+  }
+  if (strictProduction && mode === "off") {
+    issues.push("TENANT_QUERY_GUARD_MODE cannot be off in production");
+  }
+}
+
 export function validateEnv(source: EnvSource = process.env, options: ValidateEnvOptions = {}) {
   const parsed = envSchema.safeParse(source);
   const issues: string[] = [];
@@ -286,6 +297,7 @@ export function validateEnv(source: EnvSource = process.env, options: ValidateEn
   }
 
   const strictProduction = options.strictProduction ?? source.NODE_ENV === "production";
+  addTenantQueryGuardIssues(source, strictProduction, issues);
   if (strictProduction) {
     addProductionIssues(source, issues);
   }
