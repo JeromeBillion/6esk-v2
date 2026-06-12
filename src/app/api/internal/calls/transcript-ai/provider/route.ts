@@ -1,7 +1,10 @@
 import { z } from "zod";
 
-import { getTenantAiProviderConfig } from "@/server/tenant/ai-provider";
-import { getGlobalAiResponsesUrl } from "@/server/ai/global-provider";
+import {
+  createAiProviderAbortSignal,
+  getAiProviderResponsesUrl,
+  resolveTenantAiProviderPlan
+} from "@/server/ai/provider-gateway";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 export const runtime = "nodejs";
@@ -135,17 +138,15 @@ export async function POST(request: Request) {
     );
   }
 
-  let config;
-  try {
-    config = await getTenantAiProviderConfig(tenantId);
-  } catch (error) {
+  const providerPlan = await resolveTenantAiProviderPlan(tenantId);
+  if (providerPlan.status === "misconfigured") {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Tenant AI provider is not configured." },
+      { error: providerPlan.denialReason },
       { status: 500 }
     );
   }
 
-  if (config.providerMode === "none") {
+  if (providerPlan.status === "disabled") {
     return Response.json(
       { error: "Tenant AI provider is disabled for transcript analysis." },
       { status: 403 }
@@ -153,78 +154,94 @@ export async function POST(request: Request) {
   }
 
   const prompt = buildPrompt(parsedJob);
-  const response = await fetch(getGlobalAiResponsesUrl(config), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: config.model,
-      input: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "You analyze support-call transcripts and produce strict operational QA JSON."
-            }
-          ]
-        },
-        {
-          role: "user",
-          content: [{ type: "input_text", text: prompt }]
-        }
-      ],
-      max_output_tokens: 1200,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "call_transcript_analysis",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["summary", "resolutionNote", "qaStatus", "qaFlags", "actionItems"],
-            properties: {
-              summary: { type: "string" },
-              resolutionNote: { type: "string" },
-              qaStatus: { type: "string", enum: ["pass", "watch", "review"] },
-              qaFlags: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["code", "severity", "title", "detail", "evidence"],
-                  properties: {
-                    code: { type: "string" },
-                    severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
-                    title: { type: "string" },
-                    detail: { type: "string" },
-                    evidence: { type: ["string", "null"] }
+  const abort = createAiProviderAbortSignal(providerPlan.timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(getAiProviderResponsesUrl(providerPlan), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${providerPlan.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: providerPlan.model,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  "You analyze support-call transcripts and produce strict operational QA JSON."
+              }
+            ]
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: prompt }]
+          }
+        ],
+        max_output_tokens: 1200,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "call_transcript_analysis",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["summary", "resolutionNote", "qaStatus", "qaFlags", "actionItems"],
+              properties: {
+                summary: { type: "string" },
+                resolutionNote: { type: "string" },
+                qaStatus: { type: "string", enum: ["pass", "watch", "review"] },
+                qaFlags: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["code", "severity", "title", "detail", "evidence"],
+                    properties: {
+                      code: { type: "string" },
+                      severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+                      title: { type: "string" },
+                      detail: { type: "string" },
+                      evidence: { type: ["string", "null"] }
+                    }
                   }
-                }
-              },
-              actionItems: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["owner", "priority", "description"],
-                  properties: {
-                    owner: { type: "string", enum: ["agent", "supervisor", "system"] },
-                    priority: { type: "string", enum: ["low", "medium", "high"] },
-                    description: { type: "string" }
+                },
+                actionItems: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["owner", "priority", "description"],
+                    properties: {
+                      owner: { type: "string", enum: ["agent", "supervisor", "system"] },
+                      priority: { type: "string", enum: ["low", "medium", "high"] },
+                      description: { type: "string" }
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    })
-  });
+      }),
+      signal: abort.signal
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Provider request failed";
+    return Response.json(
+      {
+        error: "Global AI transcript analysis failed.",
+        detail
+      },
+      { status: 502 }
+    );
+  } finally {
+    abort.clear();
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -264,14 +281,17 @@ export async function POST(request: Request) {
   // We record tokens. The billing system will apply the zero-markup pricing logic.
   await recordModuleUsageEvent({
     tenantId,
-    moduleKey: "aiAutomation",
+    moduleKey: providerPlan.costCapture.moduleKey,
     usageKind: "transcript_analysis",
     actorType: "ai",
-    providerMode: config.providerMode,
+    providerMode: providerPlan.providerMode,
     quantity: inputTokens + outputTokens,
-    unit: "tokens",
+    unit: providerPlan.costCapture.unit,
     metadata: {
-      model: config.model,
+      model: providerPlan.model,
+      provider: providerPlan.provider,
+      fallbackModels: providerPlan.fallbackModels,
+      timeoutMs: providerPlan.timeoutMs,
       inputTokens,
       outputTokens,
       jobId: parsedJob.jobId,
@@ -282,8 +302,8 @@ export async function POST(request: Request) {
   return Response.json({
     status: "completed",
     providerJobId: readString(body?.id) ?? parsedJob.jobId,
-    provider: config.provider,
-    model: config.model,
+    provider: providerPlan.provider,
+    model: providerPlan.model,
     summary: parsedAnalysis.summary,
     resolutionNote: parsedAnalysis.resolutionNote,
     qaStatus: parsedAnalysis.qaStatus,
@@ -291,8 +311,8 @@ export async function POST(request: Request) {
     actionItems: parsedAnalysis.actionItems,
     rawResponse: {
       id: readString(body?.id),
-      provider: config.provider,
-      model: readString(body?.model) ?? config.model,
+      provider: providerPlan.provider,
+      model: readString(body?.model) ?? providerPlan.model,
       usage:
         body?.usage && typeof body.usage === "object" && !Array.isArray(body.usage)
           ? body.usage

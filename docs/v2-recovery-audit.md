@@ -139,6 +139,11 @@ Date: 2026-06-06
   - `src/server/ai/knowledge-safety.ts`
   - the suite covers direct prompt injection, indirect RAG poisoning, tool-policy bypass, secret exposure, cross-tenant/customer exfiltration, memory persistence, long-context smuggling, multilingual overrides, hostile provider output, and safe business content
   - the port found and closed a v2 ingestion-safety gap by adding explicit `rag_poisoning` detection to tenant-uploaded knowledge safety classification
+- Added the first v2-native model/provider gateway foundation without requiring deployed provider evidence:
+  - `src/server/ai/provider-gateway.ts`
+  - `src/app/api/internal/calls/transcript-ai/provider/route.ts`
+  - tenant AI resolution now returns explicit ready/disabled/misconfigured plans, bounded provider timeouts, fallback model metadata, provider-mode cost capture, and clear denial reasons
+  - transcript AI now uses the provider plan for OpenAI-compatible response calls and records provider/fallback/timeout metadata into usage evidence without exposing provider secrets
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -223,3 +228,6 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-output-validator.test.ts`
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/knowledge-retrieval.test.ts`
+- AI provider gateway tests pass in the focused slice:
+  - `tests/ai-provider-gateway.test.ts`
+  - `tests/calls-transcript-ai-openai-api.test.ts`

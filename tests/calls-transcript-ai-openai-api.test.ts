@@ -14,6 +14,7 @@ vi.mock("@/server/module-metering", () => ({
 }));
 
 import { POST } from "@/app/api/internal/calls/transcript-ai/provider/route";
+import { AI_PROVIDER_MISCONFIGURED_DENIAL } from "@/server/ai/provider-gateway";
 
 const ORIGINAL_ENV = { ...process.env };
 const originalFetch = global.fetch;
@@ -276,6 +277,35 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns a safe denial when tenant AI provider resolution fails", async () => {
+    mocks.getTenantAiProviderConfig.mockRejectedValue(
+      new Error("secret decrypt failed for provider key openai-key")
+    );
+    global.fetch = vi.fn() as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "qa-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ error: AI_PROVIDER_MISCONFIGURED_DENIAL });
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
