@@ -12,6 +12,13 @@ import {
   markAgentRunFailed,
   markAgentRunRunning
 } from "@/server/agents/run-ledger";
+import {
+  attachDexterRagContextToPayload,
+  buildDegradedDexterRagContext,
+  buildDexterRagContextForEvent,
+  summarizeDexterRagContextForLedger,
+  type DexterRagContext
+} from "@/server/ai/dexter-rag-context";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
 import { logger } from "@/server/logger";
@@ -323,6 +330,67 @@ async function recordAcceptedDeliveryBookkeepingFailure({
   }
 }
 
+async function recordDexterRagContextAttached({
+  tenantId,
+  runId,
+  context
+}: {
+  tenantId: string;
+  runId: string;
+  context: DexterRagContext;
+}) {
+  try {
+    await appendAgentRunEvent({
+      tenantId,
+      runId,
+      eventType: "agent.rag.context_attached",
+      status: "running",
+      summary: `Runtime knowledge context ${context.status}`,
+      eventData: summarizeDexterRagContextForLedger(context)
+    });
+  } catch (error) {
+    logger.warn("Failed to append Dexter RAG context ledger event", {
+      error,
+      tenantId,
+      runId,
+      ragStatus: context.status
+    });
+  }
+}
+
+async function buildDeliveryPayloadWithDexterRag({
+  tenantId,
+  runId,
+  eventType,
+  payload
+}: {
+  tenantId: string;
+  runId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}) {
+  let context: DexterRagContext;
+  try {
+    context = await buildDexterRagContextForEvent({
+      tenantId,
+      runId,
+      eventType,
+      payload
+    });
+  } catch (error) {
+    context = buildDegradedDexterRagContext({ runId, eventType, payload, error });
+    logger.warn("Dexter runtime knowledge retrieval degraded for agent delivery", {
+      error,
+      tenantId,
+      runId,
+      eventType
+    });
+  }
+
+  await recordDexterRagContextAttached({ tenantId, runId, context });
+  return attachDexterRagContextToPayload(payload, context);
+}
+
 export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
   const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
   const integration = integrationId
@@ -370,7 +438,13 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         await releaseLanePending(event.id);
         continue;
       }
-      await postToAgent(integration, event.payload);
+      const deliveryPayload = await buildDeliveryPayloadWithDexterRag({
+        tenantId: event.tenant_id,
+        runId,
+        eventType: event.event_type,
+        payload: event.payload
+      });
+      await postToAgent(integration, deliveryPayload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";
       const attempts = event.attempt_count + 1;

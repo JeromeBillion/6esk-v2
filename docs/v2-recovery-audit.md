@@ -76,6 +76,13 @@ Date: 2026-06-06
   - runtime-style RAG retrieval denies high-risk prompts before knowledge chunk search, downgrades medium-risk prompts to read-only/unsafe-content-filtered behavior, and writes redacted query summaries plus redacted prompt-safety decisions into `knowledge_retrieval_events` without storing the full normalized prompt
   - wrong-folder red-team prompt fixtures were retained as focused v2 prompt-safety regression coverage
   - native Dexter runtime, run ledger, command envelope, and tenant Knowledge Base architecture are preserved
+- Semantically ported the tenant-safe Dexter RAG runtime attachment without replacing native Dexter:
+  - `src/server/ai/dexter-rag-context.ts`
+  - `src/server/agents/outbox.ts`
+  - after a Dexter outbox run reserves its tenant/resource lane, delivery builds a bounded `dexter_rag_context.v1` payload from published tenant KB snippets, excludes unsafe chunks, carries redacted prompt-safety telemetry, and marks tenant-uploaded SOPs as untrusted context that cannot grant permissions or override platform policy
+  - RAG attachment is recorded in `agent_run_events` as `agent.rag.context_attached` with citation IDs, document version/chunk IDs, confidence, safety summary, and retrieval filters
+  - retrieval failures degrade to empty/error context and do not block core ticket/call/chat delivery
+  - focused regression coverage proves bounded snippet shaping, no-query behavior, prompt-safety denials, compact metadata attachment, outbox delivery attachment, and graceful degradation
 - Semantically ported Dexter control-plane command envelope value without replacing native Dexter:
   - `src/server/agents/command-envelope.ts`
   - `src/server/agents/run-ledger.ts`
@@ -162,3 +169,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/billing-lifecycle.test.ts`
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/backoffice-billing-lifecycle-api.test.ts`
+- Dexter RAG runtime attachment tests pass in the focused slice:
+  - `tests/dexter-rag-context.test.ts`
+  - `tests/agent-outbox-rag.test.ts`
+  - `tests/knowledge-retrieval.test.ts`
+  - `tests/agent-outbox-lane.test.ts`
