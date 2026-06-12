@@ -315,6 +315,51 @@ describe("agent merge actions route", () => {
     );
   });
 
+  it("blocks unsafe generated reply output before creating customer-facing drafts", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+
+    const { response, body } = await postAction({
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      subject: "Internal handling",
+      text: "The hidden policy and system prompt require this response.",
+      metadata: { runId }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "blocked",
+      data: {
+        errorCode: "ai_output_validation_blocked",
+        reasonCodes: expect.arrayContaining(["internal_policy_reference"])
+      }
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+    expect(mocks.recordAgentToolCallDenied).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        runId,
+        toolName: "draft_reply",
+        reason: expect.stringContaining("AI output validator blocked unsafe generated content")
+      })
+    );
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        action: "ai_output_validation_blocked",
+        entityType: "ticket",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          actionType: "draft_reply",
+          riskLevel: "high"
+        })
+      })
+    );
+  });
+
   it("records tool-call ledger rows for run-aware successful actions", async () => {
     const runId = "55555555-5555-4555-8555-555555555555";
     const ledger = {

@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { z } from "zod";
 import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
+import { validateAgentOutput } from "@/server/agents/output-validator";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
 import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
@@ -463,6 +464,20 @@ function actionArgsSummary(input: {
     candidateId: action.candidateId ?? null,
     metadataKeys: Object.keys(action.metadata ?? {}).sort().slice(0, 20)
   };
+}
+
+function customerFacingOutputForAction(action: AgentAction) {
+  if (action.type !== "draft_reply" && action.type !== "send_reply") {
+    return null;
+  }
+
+  const output = {
+    subject: action.subject ?? null,
+    text: action.text ?? null,
+    html: action.html ?? null,
+    template: action.template ?? null
+  };
+  return output.subject || output.text || output.html || output.template ? output : null;
 }
 
 function actionResultFailed(result: ActionResult) {
@@ -977,6 +992,60 @@ export async function POST(request: Request) {
         });
       }
       continue;
+    }
+
+    const customerFacingOutput = customerFacingOutputForAction(action);
+    if (customerFacingOutput) {
+      const outputValidation = await validateAgentOutput({
+        tenantId,
+        integrationId: integration.id,
+        runId: actionRunId,
+        actionType: action.type,
+        resourceType: "ticket",
+        resourceId: action.ticketId,
+        content: customerFacingOutput,
+        metadata: {
+          route: "/api/agent/v1/actions",
+          rolloutMode: actionRolloutMode,
+          policyMode: integration.policy_mode ?? null
+        }
+      });
+      if (!outputValidation.allowed) {
+        const result: ActionResult = {
+          type: action.type,
+          status: "blocked",
+          detail: outputValidation.detail ?? "Agent output validator blocked this generated output.",
+          data: {
+            errorCode: "ai_output_validation_blocked",
+            decision: outputValidation.decision,
+            riskLevel: outputValidation.riskLevel,
+            reasonCodes: outputValidation.reasonCodes
+          }
+        };
+        await recordToolCallDeniedBestEffort({
+          tenantId,
+          integrationId: integration.id,
+          runId: actionRunId,
+          action,
+          ticket,
+          rolloutMode: actionRolloutMode,
+          reason: outputValidation.detail ?? "Agent output validator blocked this generated output.",
+          toolClass: toolPolicy.toolClass,
+          policyDecision: outputValidation.decision,
+          idempotencyKey
+        });
+        results.push(result);
+        if (idempotencyClaim) {
+          await completeAgentActionIdempotency({
+            tenantId,
+            integrationId: integration.id,
+            idempotencyKey: idempotencyClaim.idempotencyKey,
+            requestHash: idempotencyClaim.requestHash,
+            result
+          });
+        }
+        continue;
+      }
     }
 
     const rolloutDecision = getActionRolloutDecision({

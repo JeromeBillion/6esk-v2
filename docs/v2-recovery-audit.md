@@ -120,6 +120,13 @@ Date: 2026-06-06
   - replay evidence assembles the run row, ordered run events, steps, tool calls, tool-policy decisions, and Knowledge Base retrieval events for a single run
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
   - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
+- Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
+  - `src/server/agents/prompt-sandbox.ts`
+  - `src/server/agents/output-validator.ts`
+  - `src/app/api/agent/v1/actions/route.ts`
+  - prompt construction now has a reusable sandbox shape that separates system constraints, tenant policy, server runtime context, untrusted event payloads, and untrusted retrieved knowledge
+  - generated customer-facing `draft_reply` and `send_reply` output is validated before side effects; unsafe output is blocked, tenant-scoped audit evidence is written, and denied run-tool evidence is recorded when a run id is present
+  - the validator reuses v2 prompt-safety telemetry and stores redacted samples instead of raw generated output
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -187,3 +194,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-agent-run-replay-api.test.ts`
   - `tests/admin-agent-run-recover-api.test.ts`
   - `tests/agent-run-ledger.test.ts`
+- Prompt sandbox/output validator tests pass in the focused slice:
+  - `tests/agent-prompt-sandbox.test.ts`
+  - `tests/agent-output-validator.test.ts`
+  - `tests/agent-merge-actions.test.ts`
+  - `tests/agent-tool-policy.test.ts`
