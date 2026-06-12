@@ -21,6 +21,10 @@ export type AgentRunStatus =
 type Queryable = Pick<typeof db, "query">;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const DEFAULT_AGENT_RUN_STALE_SECONDS = 900;
+export const DEFAULT_AGENT_APPROVAL_STALE_SECONDS = 86400;
+export const DEFAULT_AGENT_RUN_RECOVERY_LIMIT = 25;
+export const MAX_STALE_AGENT_RUN_RECOVERY_LIMIT = 100;
 
 type CreateOutboxRunInput = {
   client?: Queryable;
@@ -45,6 +49,21 @@ type AgentRunReservationRow = {
   blocked_by_run_id: string | null;
 };
 
+export type StaleAgentRunRecoveryRow = {
+  id: string;
+  tenant_id: string;
+  integration_id: string | null;
+  previous_status: AgentRunStatus;
+  recovered_status: AgentRunStatus;
+  lane_key: string;
+  trigger_outbox_id: string | null;
+  previous_outbox_status: string | null;
+  recovered_outbox_status: string | null;
+  previous_attempt_count: number | string | null;
+  recovered_attempt_count: number | string | null;
+  outbox_recovery_action: "retry_queued" | "dead_lettered" | "none";
+};
+
 type AgentRunCommandContextRow = {
   id: string;
   tenant_id: string;
@@ -62,6 +81,20 @@ type AgentRunCommandContextRow = {
 
 function queryable(client?: Queryable) {
   return client ?? db;
+}
+
+function normalizePositiveInteger(value: number | null | undefined, fallback: number) {
+  if (!Number.isFinite(value) || !value || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
+function normalizeLimit(value: number | null | undefined, fallback: number, max: number) {
+  return Math.min(Math.max(normalizePositiveInteger(value, fallback), 1), max);
+}
+
+function toNumber(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -711,6 +744,233 @@ export async function markAgentRunFailed({
       errorMessage: errorMessage.slice(0, 500)
     }
   });
+}
+
+export async function recoverStaleAgentRuns({
+  tenantId,
+  integrationId,
+  runningStaleSeconds,
+  approvalStaleSeconds,
+  limit,
+  maxOutboxAttempts = 5
+}: {
+  tenantId: string;
+  integrationId?: string | null;
+  runningStaleSeconds?: number | null;
+  approvalStaleSeconds?: number | null;
+  limit?: number | null;
+  maxOutboxAttempts?: number;
+}) {
+  const normalizedRunningStaleSeconds = normalizePositiveInteger(
+    runningStaleSeconds,
+    DEFAULT_AGENT_RUN_STALE_SECONDS
+  );
+  const normalizedApprovalStaleSeconds = normalizePositiveInteger(
+    approvalStaleSeconds,
+    DEFAULT_AGENT_APPROVAL_STALE_SECONDS
+  );
+  const normalizedLimit = normalizeLimit(
+    limit,
+    DEFAULT_AGENT_RUN_RECOVERY_LIMIT,
+    MAX_STALE_AGENT_RUN_RECOVERY_LIMIT
+  );
+  const normalizedMaxAttempts = normalizePositiveInteger(maxOutboxAttempts, 5);
+  const failureReason = "Recovered stale Dexter run after active-state timeout.";
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<StaleAgentRunRecoveryRow>(
+      `WITH candidates AS MATERIALIZED (
+         SELECT r.id,
+                r.tenant_id,
+                r.integration_id,
+                r.status AS previous_status,
+                r.lane_key,
+                r.trigger_outbox_id,
+                o.status AS previous_outbox_status,
+                COALESCE(o.attempt_count, 0) AS previous_attempt_count,
+                CASE
+                  WHEN r.status = 'running' THEN 'timed_out'
+                  ELSE 'lost'
+                END AS recovered_status,
+                CASE
+                  WHEN o.id IS NULL OR o.status IN ('delivered', 'failed') THEN 'none'
+                  WHEN COALESCE(o.attempt_count, 0) + 1 >= $6::int THEN 'dead_lettered'
+                  ELSE 'retry_queued'
+                END AS outbox_recovery_action
+         FROM agent_runs r
+         LEFT JOIN agent_outbox o
+           ON o.tenant_id = r.tenant_id
+          AND o.id = r.trigger_outbox_id
+         WHERE r.tenant_id = $1
+           AND ($2::uuid IS NULL OR r.integration_id = $2::uuid)
+           AND r.status IN ('running', 'waiting_approval')
+           AND (
+             (r.status = 'running' AND r.updated_at <= now() - make_interval(secs => $3::int))
+             OR (
+               r.status = 'waiting_approval'
+               AND r.updated_at <= now() - make_interval(secs => $4::int)
+             )
+           )
+         ORDER BY r.updated_at ASC, r.created_at ASC
+         LIMIT $5
+         FOR UPDATE OF r SKIP LOCKED
+       ),
+       updated_runs AS (
+         UPDATE agent_runs r
+         SET status = candidates.recovered_status,
+             timed_out_at = CASE
+               WHEN candidates.recovered_status = 'timed_out' THEN now()
+               ELSE r.timed_out_at
+             END,
+             lost_at = CASE
+               WHEN candidates.recovered_status = 'lost' THEN now()
+               ELSE r.lost_at
+             END,
+             failure_reason = $7,
+             updated_at = now()
+         FROM candidates
+         WHERE r.tenant_id = candidates.tenant_id
+           AND r.id = candidates.id
+         RETURNING r.id,
+                   r.tenant_id,
+                   r.integration_id,
+                   candidates.previous_status,
+                   r.status AS recovered_status,
+                   r.lane_key,
+                   r.trigger_outbox_id,
+                   candidates.previous_outbox_status,
+                   candidates.previous_attempt_count,
+                   candidates.outbox_recovery_action
+       ),
+       updated_outbox AS (
+         UPDATE agent_outbox o
+         SET status = CASE
+               WHEN candidates.outbox_recovery_action = 'retry_queued' THEN 'pending'
+               WHEN candidates.outbox_recovery_action = 'dead_lettered' THEN 'failed'
+               ELSE o.status
+             END,
+             attempt_count = CASE
+               WHEN candidates.outbox_recovery_action IN ('retry_queued', 'dead_lettered')
+                 THEN candidates.previous_attempt_count + 1
+               ELSE o.attempt_count
+             END,
+             last_error = CASE
+               WHEN candidates.outbox_recovery_action IN ('retry_queued', 'dead_lettered')
+                 THEN $7
+               ELSE o.last_error
+             END,
+             next_attempt_at = CASE
+               WHEN candidates.outbox_recovery_action = 'retry_queued' THEN now()
+               ELSE o.next_attempt_at
+             END,
+             run_id = CASE
+               WHEN candidates.outbox_recovery_action = 'retry_queued' THEN NULL
+               ELSE o.run_id
+             END,
+             updated_at = CASE
+               WHEN candidates.outbox_recovery_action IN ('retry_queued', 'dead_lettered') THEN now()
+               ELSE o.updated_at
+             END
+         FROM candidates
+         WHERE o.tenant_id = candidates.tenant_id
+           AND o.id = candidates.trigger_outbox_id
+           AND candidates.outbox_recovery_action <> 'none'
+         RETURNING o.id,
+                   o.status AS recovered_outbox_status,
+                   o.attempt_count AS recovered_attempt_count
+       )
+       SELECT updated_runs.id,
+              updated_runs.tenant_id,
+              updated_runs.integration_id,
+              updated_runs.previous_status,
+              updated_runs.recovered_status,
+              updated_runs.lane_key,
+              updated_runs.trigger_outbox_id,
+              updated_runs.previous_outbox_status,
+              updated_outbox.recovered_outbox_status,
+              updated_runs.previous_attempt_count,
+              updated_outbox.recovered_attempt_count,
+              updated_runs.outbox_recovery_action
+       FROM updated_runs
+       LEFT JOIN updated_outbox
+         ON updated_outbox.id = updated_runs.trigger_outbox_id`,
+      [
+        tenantId,
+        integrationId ?? null,
+        normalizedRunningStaleSeconds,
+        normalizedApprovalStaleSeconds,
+        normalizedLimit,
+        normalizedMaxAttempts,
+        failureReason
+      ]
+    );
+
+    for (const row of result.rows) {
+      const eventData = {
+        previousStatus: row.previous_status,
+        recoveredStatus: row.recovered_status,
+        laneKey: row.lane_key,
+        outboxEventId: row.trigger_outbox_id,
+        previousOutboxStatus: row.previous_outbox_status,
+        recoveredOutboxStatus: row.recovered_outbox_status,
+        previousAttemptCount: toNumber(row.previous_attempt_count),
+        recoveredAttemptCount: toNumber(row.recovered_attempt_count),
+        outboxRecoveryAction: row.outbox_recovery_action,
+        runningStaleSeconds: normalizedRunningStaleSeconds,
+        approvalStaleSeconds: normalizedApprovalStaleSeconds
+      };
+
+      if (row.recovered_status === "timed_out") {
+        await appendAgentRunControlPlaneCommand({
+          client,
+          tenantId: row.tenant_id,
+          runId: row.id,
+          command: "agent.run.completed",
+          eventType: "agent.run.timed_out",
+          status: "timed_out",
+          summary: "Agent run timed out and was recovered",
+          commandData: {
+            completionStatus: "timed_out",
+            reason: failureReason,
+            metadata: eventData
+          }
+        });
+      } else {
+        await appendAgentRunEvent({
+          client,
+          tenantId: row.tenant_id,
+          runId: row.id,
+          eventType: "agent.run.lost",
+          status: "lost",
+          summary: "Agent run marked lost after stale approval wait",
+          eventData
+        });
+      }
+    }
+
+    await client.query("COMMIT");
+    const retryQueued = result.rows.filter((row) => row.outbox_recovery_action === "retry_queued").length;
+    const deadLettered = result.rows.filter((row) => row.outbox_recovery_action === "dead_lettered").length;
+    const timedOut = result.rows.filter((row) => row.recovered_status === "timed_out").length;
+    const lost = result.rows.filter((row) => row.recovered_status === "lost").length;
+    return {
+      recovered: result.rows.length,
+      retryQueued,
+      deadLettered,
+      timedOut,
+      lost,
+      runningStaleSeconds: normalizedRunningStaleSeconds,
+      approvalStaleSeconds: normalizedApprovalStaleSeconds,
+      limit: normalizedLimit,
+      runs: result.rows
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function listRecentAgentRuns({

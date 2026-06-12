@@ -86,10 +86,14 @@ Date: 2026-06-06
 - Semantically ported the first OpenClaw-style lane-queue value into v2 Dexter without adding OpenClaw as a dependency:
   - `src/server/agents/run-ledger.ts`
   - `src/server/agents/outbox.ts`
+  - `src/server/agents/outbox-metrics.ts`
+  - `src/app/api/admin/agents/[agentId]/runs/recover/route.ts`
   - Dexter outbox execution now reserves `tenant_id + lane_key` with a Postgres advisory transaction lock before a run can become `running`
   - sibling runs in the same tenant/resource lane remain queued when another run is already `running` or `waiting_approval`
   - lane-busy attempts append a tenant-bound `agent.wait` command envelope with `lane_busy` metadata and release the outbox event back to pending without posting to Dexter or consuming an attempt
-  - focused regression coverage proves the atomic reservation query and worker skip/release behavior
+  - admin outbox metrics now include run queue health, stale-active counts, and top lane depth/wait snapshots
+  - tenant-scoped stale-run recovery marks stale `running` runs as `timed_out`, stale `waiting_approval` runs as `lost`, requeues eligible outbox work with `run_id = NULL` so a fresh run is created, dead-letters exhausted outbox attempts, and writes recovery ledger/audit evidence
+  - focused regression coverage proves the atomic reservation query, worker skip/release behavior, lane diagnostics, and stale recovery/dead-letter behavior
 - Semantically ported the wrong-folder/OpenClaw-style agent tool-policy value into v2 without replacing native Dexter:
   - `src/server/agents/tool-policy.ts`
   - `src/app/api/agent/v1/actions/route.ts`

@@ -10,7 +10,12 @@ const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
 const BLOCKING_RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 const mocks = vi.hoisted(() => ({
+  client: {
+    query: vi.fn(),
+    release: vi.fn()
+  },
   db: {
+    connect: vi.fn(),
     query: vi.fn()
   }
 }));
@@ -26,7 +31,8 @@ import {
   deriveAgentRunContext,
   markAgentRunCompleted,
   markAgentRunFailed,
-  markAgentRunRunning
+  markAgentRunRunning,
+  recoverStaleAgentRuns
 } from "@/server/agents/run-ledger";
 
 function runContext(overrides: Partial<Record<string, unknown>> = {}) {
@@ -50,7 +56,9 @@ function runContext(overrides: Partial<Record<string, unknown>> = {}) {
 describe("agent run ledger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.db.connect.mockResolvedValue(mocks.client);
     mocks.db.query.mockResolvedValue({ rows: [] });
+    mocks.client.query.mockResolvedValue({ rows: [] });
   });
 
   it("derives tenant/resource lane context from outbox payload", () => {
@@ -364,6 +372,95 @@ describe("agent run ledger", () => {
         approvalId: APPROVAL_ID,
         reason: "Hybrid review required for customer-visible reply"
       }
+    });
+  });
+
+  it("recovers stale active runs with retry and dead-letter evidence", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: RUN_ID,
+            tenant_id: TENANT_ID,
+            integration_id: INTEGRATION_ID,
+            previous_status: "running",
+            recovered_status: "timed_out",
+            lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+            trigger_outbox_id: OUTBOX_ID,
+            previous_outbox_status: "processing",
+            recovered_outbox_status: "pending",
+            previous_attempt_count: 1,
+            recovered_attempt_count: 2,
+            outbox_recovery_action: "retry_queued"
+          },
+          {
+            id: BLOCKING_RUN_ID,
+            tenant_id: TENANT_ID,
+            integration_id: INTEGRATION_ID,
+            previous_status: "waiting_approval",
+            recovered_status: "lost",
+            lane_key: `tenant:${TENANT_ID}:ticket:${TICKET_ID}`,
+            trigger_outbox_id: "88888888-8888-4888-8888-888888888888",
+            previous_outbox_status: "processing",
+            recovered_outbox_status: "failed",
+            previous_attempt_count: 4,
+            recovered_attempt_count: 5,
+            outbox_recovery_action: "dead_lettered"
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [runContext()] })
+      .mockResolvedValue({ rows: [] });
+
+    const result = await recoverStaleAgentRuns({
+      tenantId: TENANT_ID,
+      integrationId: INTEGRATION_ID,
+      runningStaleSeconds: 60,
+      approvalStaleSeconds: 3600,
+      limit: 10,
+      maxOutboxAttempts: 5
+    });
+
+    expect(result).toMatchObject({
+      recovered: 2,
+      retryQueued: 1,
+      deadLettered: 1,
+      timedOut: 1,
+      lost: 1
+    });
+    expect(mocks.client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("FOR UPDATE OF r SKIP LOCKED"),
+      [
+        TENANT_ID,
+        INTEGRATION_ID,
+        60,
+        3600,
+        10,
+        5,
+        "Recovered stale Dexter run after active-state timeout."
+      ]
+    );
+    expect(mocks.client.query.mock.calls[1][0]).toContain("run_id = CASE");
+    expect(mocks.client.query.mock.calls[1][0]).toContain("'dead_lettered'");
+    expect(mocks.client.query).toHaveBeenCalledWith("COMMIT");
+
+    const timeoutEventData = JSON.parse(mocks.client.query.mock.calls[3][1][5]);
+    expect(timeoutEventData.commandEnvelope).toMatchObject({
+      command: "agent.run.completed",
+      commandData: {
+        completionStatus: "timed_out",
+        metadata: {
+          outboxRecoveryAction: "retry_queued",
+          recoveredOutboxStatus: "pending"
+        }
+      }
+    });
+    const lostEventData = JSON.parse(mocks.client.query.mock.calls[4][1][5]);
+    expect(lostEventData).toMatchObject({
+      outboxRecoveryAction: "dead_lettered",
+      recoveredOutboxStatus: "failed"
     });
   });
 });
