@@ -113,6 +113,13 @@ Date: 2026-06-06
   - action execution now treats `hybrid_review` and `full_auto` as first-class modes while still reading legacy aliases: `limited_auto` resolves to `hybrid_review`, `auto` resolves to `full_auto`, admin writes persist canonical names, hybrid side-effect attempts return `needs_review` and audit `ai_action_review_required`, and full-auto execution does not create hidden approval records
   - policy decisions are stored with `tenant_id`, optional integration/run references, tool class, decision, reason codes, resource summary, and redacted prompt-safety telemetry
   - run-aware route actions now populate durable `agent_run_steps` and `agent_tool_calls`; policy/rollout denials are stored as denied tool calls, successful side-effect attempts are stored as running tool calls before execution and then closed as completed or failed, and admin outbox metrics include tool-call status counts
+- Semantically ported the wrong-folder agent run replay diagnostics into v2-native `tenant_id` form without copying the wrong tenant model:
+  - `src/server/agents/run-replay.ts`
+  - `src/app/api/admin/agents/[agentId]/runs/[runId]/replay/route.ts`
+  - lead-admin replay access is scoped through the tenant-owned agent integration before any run evidence is returned
+  - replay evidence assembles the run row, ordered run events, steps, tool calls, tool-policy decisions, and Knowledge Base retrieval events for a single run
+  - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
+  - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -175,3 +182,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-outbox-rag.test.ts`
   - `tests/knowledge-retrieval.test.ts`
   - `tests/agent-outbox-lane.test.ts`
+- Dexter run replay diagnostics tests pass in the focused slice:
+  - `tests/agent-run-replay.test.ts`
+  - `tests/admin-agent-run-replay-api.test.ts`
+  - `tests/admin-agent-run-recover-api.test.ts`
+  - `tests/agent-run-ledger.test.ts`
