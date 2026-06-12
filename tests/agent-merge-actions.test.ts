@@ -588,7 +588,7 @@ describe("agent merge actions route", () => {
     );
   });
 
-  it("blocks customer contact in limited auto mode unless explicitly allowlisted", async () => {
+  it("requires review before customer contact in hybrid-review mode", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
       tenant_id: TENANT_ID,
@@ -596,7 +596,7 @@ describe("agent merge actions route", () => {
       policy_mode: "auto_send",
       scopes: {},
       capabilities: {},
-      policy: { actionRolloutMode: "limited_auto" }
+      policy: { actionRolloutMode: "hybrid_review" }
     });
     mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
 
@@ -610,18 +610,28 @@ describe("agent merge actions route", () => {
     expect(response.status).toBe(200);
     expect(body.results[0]).toMatchObject({
       type: "send_reply",
-      status: "blocked",
-      detail: "Action blocked by limited auto-action rollout mode.",
+      status: "needs_review",
+      detail: "Hybrid-review mode requires human approval before side effects.",
       data: {
-        rolloutMode: "limited_auto",
-        errorCode: "action_rollout_blocked"
+        rolloutMode: "hybrid_review",
+        errorCode: "action_review_required"
       }
     });
     expect(mocks.isAutoSendAllowed).not.toHaveBeenCalled();
     expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_action_review_required",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          rolloutMode: "hybrid_review",
+          actionType: "send_reply"
+        })
+      })
+    );
   });
 
-  it("allows explicitly allowlisted customer contact in limited auto mode", async () => {
+  it("allows customer contact in full-auto mode when safety checks pass", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",
       tenant_id: TENANT_ID,
@@ -630,7 +640,7 @@ describe("agent merge actions route", () => {
       scopes: {},
       capabilities: {},
       policy: {
-        actionRolloutMode: "limited_auto",
+        actionRolloutMode: "full_auto",
         allowedAutoActions: ["send_reply"]
       }
     });

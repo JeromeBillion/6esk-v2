@@ -112,7 +112,7 @@ describe("admin agent rollout controls API", () => {
       agentId: "agent-1",
       tenantId: TENANT_ID,
       rollout: {
-        actionRolloutMode: "limited_auto",
+        actionRolloutMode: "hybrid_review",
         allowedAutoActions: ["send_reply", "set_priority"],
         maxActionsPerMinute: 12
       }
@@ -133,7 +133,7 @@ describe("admin agent rollout controls API", () => {
   it("writes canonical rollout policy and strips stale aliases", async () => {
     const response = await PATCH(
       request({
-        actionRolloutMode: "limited_auto",
+        actionRolloutMode: "hybrid_review",
         allowedAutoActions: ["send_reply", "send_reply", "set_priority"],
         maxActionsPerMinute: 20
       }),
@@ -145,7 +145,7 @@ describe("admin agent rollout controls API", () => {
     expect(body).toMatchObject({
       status: "updated",
       rollout: {
-        actionRolloutMode: "limited_auto",
+        actionRolloutMode: "hybrid_review",
         allowedAutoActions: ["send_reply", "set_priority"],
         maxActionsPerMinute: 20
       }
@@ -157,7 +157,7 @@ describe("admin agent rollout controls API", () => {
       {
         policy: {
           escalation: { out_of_hours: "draft_only" },
-          actionRolloutMode: "limited_auto",
+          actionRolloutMode: "hybrid_review",
           allowedAutoActions: ["send_reply", "set_priority"]
         },
         capabilities: {
@@ -173,7 +173,7 @@ describe("admin agent rollout controls API", () => {
         entityId: "agent-1",
         data: expect.objectContaining({
           previous: expect.objectContaining({ actionRolloutMode: "dry_run" }),
-          next: expect.objectContaining({ actionRolloutMode: "limited_auto" })
+          next: expect.objectContaining({ actionRolloutMode: "hybrid_review" })
         })
       })
     );

@@ -87,11 +87,16 @@ type ActionResult = {
   detail?: string;
   data?: Record<string, unknown>;
 };
-type AgentActionRolloutMode = "dry_run" | "draft_only" | "limited_auto" | "auto";
+type AgentActionRolloutMode = "dry_run" | "draft_only" | "hybrid_review" | "full_auto";
 
 const DEFAULT_AGENT_MERGE_MIN_CONFIDENCE = 0.85;
 const DEFAULT_AGENT_ACTIONS_MAX_PER_MINUTE = 120;
 const DRAFT_ONLY_ROLLOUT_ACTIONS = new Set(["draft_reply", "request_human_review", "propose_merge"]);
+const HYBRID_REVIEW_DIRECT_ACTIONS = new Set([
+  "draft_reply",
+  "request_human_review",
+  "propose_merge"
+]);
 const REQUIRED_IDEMPOTENCY_ACTIONS = new Set<AgentAction["type"]>([
   "send_reply",
   "initiate_call",
@@ -103,14 +108,6 @@ const REQUIRED_IDEMPOTENCY_ACTIONS = new Set<AgentAction["type"]>([
   "merge_tickets",
   "link_tickets",
   "merge_customers"
-]);
-const DEFAULT_LIMITED_AUTO_ACTIONS = new Set([
-  "draft_reply",
-  "request_human_review",
-  "propose_merge",
-  "set_tags",
-  "set_priority",
-  "assign_to"
 ]);
 const ACTION_REQUESTED_SCOPES: Record<AgentAction["type"], string[]> = {
   draft_reply: ["tickets:read", "drafts:write"],
@@ -248,30 +245,26 @@ function readString(value: unknown) {
   return trimmed || null;
 }
 
-function readStringList(value: unknown) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => readString(item))
-      .filter((item): item is string => Boolean(item));
-  }
-  const raw = readString(value);
-  return raw ? raw.split(",").map((item) => item.trim()).filter(Boolean) : [];
-}
-
 function normalizeAgentActionRolloutMode(value: unknown): AgentActionRolloutMode | null {
   const normalized = readString(value)?.toLowerCase().replace(/-/g, "_");
   if (!normalized) return null;
   if (normalized === "dry_run" || normalized === "dryrun" || normalized === "audit_only") {
     return "dry_run";
   }
-  if (normalized === "draft_only" || normalized === "review_only" || normalized === "human_review") {
+  if (normalized === "draft_only" || normalized === "review_only") {
     return "draft_only";
   }
-  if (normalized === "limited_auto" || normalized === "limited" || normalized === "limited_auto_action") {
-    return "limited_auto";
+  if (
+    normalized === "hybrid_review" ||
+    normalized === "human_review" ||
+    normalized === "limited_auto" ||
+    normalized === "limited" ||
+    normalized === "limited_auto_action"
+  ) {
+    return "hybrid_review";
   }
   if (normalized === "auto" || normalized === "auto_send" || normalized === "full_auto") {
-    return "auto";
+    return "full_auto";
   }
   return null;
 }
@@ -295,30 +288,12 @@ function getAgentActionRolloutMode(input: {
   policy?: Record<string, unknown> | null;
   capabilities?: Record<string, unknown> | null;
 }) {
-  return readActionRolloutModeFrom(input.policy) ?? readActionRolloutModeFrom(input.capabilities) ?? "auto";
-}
-
-function getConfiguredLimitedAutoActions(input: {
-  policy?: Record<string, unknown> | null;
-  capabilities?: Record<string, unknown> | null;
-}) {
-  const actions = [
-    ...readStringList(input.policy?.limitedAutoActions),
-    ...readStringList(input.policy?.limited_auto_actions),
-    ...readStringList(input.policy?.allowedAutoActions),
-    ...readStringList(input.policy?.allowed_auto_actions),
-    ...readStringList(input.capabilities?.limitedAutoActions),
-    ...readStringList(input.capabilities?.limited_auto_actions),
-    ...readStringList(input.capabilities?.allowedAutoActions),
-    ...readStringList(input.capabilities?.allowed_auto_actions)
-  ];
-  return new Set(actions);
+  return readActionRolloutModeFrom(input.policy) ?? readActionRolloutModeFrom(input.capabilities) ?? "full_auto";
 }
 
 function getActionRolloutDecision(input: {
   action: AgentAction;
   rolloutMode: AgentActionRolloutMode;
-  allowedLimitedAutoActions: Set<string>;
 }): ActionResult | null {
   if (input.rolloutMode === "dry_run") {
     return {
@@ -347,18 +322,14 @@ function getActionRolloutDecision(input: {
     };
   }
 
-  if (
-    input.rolloutMode === "limited_auto" &&
-    !DEFAULT_LIMITED_AUTO_ACTIONS.has(input.action.type) &&
-    !input.allowedLimitedAutoActions.has(input.action.type)
-  ) {
+  if (input.rolloutMode === "hybrid_review" && !HYBRID_REVIEW_DIRECT_ACTIONS.has(input.action.type)) {
     return {
       type: input.action.type,
-      status: "blocked",
-      detail: "Action blocked by limited auto-action rollout mode.",
+      status: "needs_review",
+      detail: "Hybrid-review mode requires human approval before side effects.",
       data: {
         rolloutMode: input.rolloutMode,
-        errorCode: "action_rollout_blocked"
+        errorCode: "action_review_required"
       }
     };
   }
@@ -880,10 +851,6 @@ export async function POST(request: Request) {
     policy: integration.policy,
     capabilities: integration.capabilities
   });
-  const allowedLimitedAutoActions = getConfiguredLimitedAutoActions({
-    policy: integration.policy,
-    capabilities: integration.capabilities
-  });
 
   for (const action of actions) {
     const ticket = await getTicketById(action.ticketId, tenantId);
@@ -1014,13 +981,17 @@ export async function POST(request: Request) {
 
     const rolloutDecision = getActionRolloutDecision({
       action,
-      rolloutMode: actionRolloutMode,
-      allowedLimitedAutoActions
+      rolloutMode: actionRolloutMode
     });
     if (rolloutDecision) {
       await recordAuditLog({
         tenantId,
-        action: rolloutDecision.status === "dry_run" ? "ai_action_dry_run" : "ai_action_rollout_blocked",
+        action:
+          rolloutDecision.status === "dry_run"
+            ? "ai_action_dry_run"
+            : rolloutDecision.status === "needs_review"
+              ? "ai_action_review_required"
+              : "ai_action_rollout_blocked",
         entityType: "ticket",
         entityId: action.ticketId,
         data: {
@@ -1040,7 +1011,7 @@ export async function POST(request: Request) {
         rolloutMode: actionRolloutMode,
         reason: rolloutDecision.detail ?? "Agent action rollout mode blocked this action.",
         toolClass: toolPolicy.toolClass,
-        policyDecision: "rollout_blocked",
+        policyDecision: rolloutDecision.status === "needs_review" ? "review_required" : "rollout_blocked",
         idempotencyKey
       });
       if (idempotencyClaim) {

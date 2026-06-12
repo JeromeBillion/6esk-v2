@@ -8,7 +8,14 @@ import {
 } from "@/server/agents/integrations";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
-const actionRolloutModeSchema = z.enum(["dry_run", "draft_only", "limited_auto", "auto"]);
+const actionRolloutModeSchema = z.enum([
+  "dry_run",
+  "draft_only",
+  "hybrid_review",
+  "full_auto",
+  "limited_auto",
+  "auto"
+]);
 const agentActionTypeSchema = z.enum([
   "draft_reply",
   "send_reply",
@@ -38,7 +45,7 @@ const rolloutUpdateSchema = z
     "At least one rollout control is required."
   );
 
-type AgentRolloutMode = z.infer<typeof actionRolloutModeSchema>;
+type AgentRolloutMode = "dry_run" | "draft_only" | "hybrid_review" | "full_auto";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
@@ -64,11 +71,17 @@ function normalizeRolloutMode(value: unknown): AgentRolloutMode | null {
   const normalized = readString(value)?.toLowerCase().replace(/-/g, "_");
   if (!normalized) return null;
   if (normalized === "dry_run" || normalized === "dryrun" || normalized === "audit_only") return "dry_run";
-  if (normalized === "draft_only" || normalized === "review_only" || normalized === "human_review") return "draft_only";
-  if (normalized === "limited_auto" || normalized === "limited" || normalized === "limited_auto_action") {
-    return "limited_auto";
+  if (normalized === "draft_only" || normalized === "review_only") return "draft_only";
+  if (
+    normalized === "hybrid_review" ||
+    normalized === "human_review" ||
+    normalized === "limited_auto" ||
+    normalized === "limited" ||
+    normalized === "limited_auto_action"
+  ) {
+    return "hybrid_review";
   }
-  if (normalized === "auto" || normalized === "auto_send" || normalized === "full_auto") return "auto";
+  if (normalized === "auto" || normalized === "auto_send" || normalized === "full_auto") return "full_auto";
   return null;
 }
 
@@ -102,7 +115,7 @@ function getRolloutControls(input: {
   const policy = asRecord(input.policy);
   const capabilities = asRecord(input.capabilities);
   return {
-    actionRolloutMode: readRolloutModeFrom(policy) ?? readRolloutModeFrom(capabilities) ?? "auto",
+    actionRolloutMode: readRolloutModeFrom(policy) ?? readRolloutModeFrom(capabilities) ?? "full_auto",
     allowedAutoActions: uniqueActions([
       ...readStringList(policy.limitedAutoActions),
       ...readStringList(policy.limited_auto_actions),
@@ -201,7 +214,7 @@ export async function PATCH(
 
   if (parsed.data.actionRolloutMode !== undefined) {
     removeRolloutModeAliases(policy);
-    policy.actionRolloutMode = parsed.data.actionRolloutMode;
+    policy.actionRolloutMode = normalizeRolloutMode(parsed.data.actionRolloutMode);
   }
 
   if (parsed.data.allowedAutoActions !== undefined) {

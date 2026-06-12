@@ -110,6 +110,7 @@ Date: 2026-06-06
   - route actions are classified by impact before side effects: review request, draft, reversible write, external send, and irreversible write
   - action content is evaluated through the v2 central prompt-safety guard after tenant ticket/scope/idempotency checks and before rollout/side-effect execution
   - `full_auto` high-risk actions are blocked and audited as policy denials, medium-risk `full_auto` actions downgrade to read-only/no-tool behavior, and `hybrid_review` suspicious actions require review instead of silently performing side effects
+  - action execution now treats `hybrid_review` and `full_auto` as first-class modes while still reading legacy aliases: `limited_auto` resolves to `hybrid_review`, `auto` resolves to `full_auto`, admin writes persist canonical names, hybrid side-effect attempts return `needs_review` and audit `ai_action_review_required`, and full-auto execution does not create hidden approval records
   - policy decisions are stored with `tenant_id`, optional integration/run references, tool class, decision, reason codes, resource summary, and redacted prompt-safety telemetry
   - run-aware route actions now populate durable `agent_run_steps` and `agent_tool_calls`; policy/rollout denials are stored as denied tool calls, successful side-effect attempts are stored as running tool calls before execution and then closed as completed or failed, and admin outbox metrics include tool-call status counts
 
