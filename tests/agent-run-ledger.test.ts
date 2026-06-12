@@ -28,12 +28,14 @@ vi.mock("@/server/db", () => ({
 import {
   appendAgentApprovalRequestedCommand,
   appendAgentToolRequestedCommand,
+  completeAgentRunStep,
   completeAgentToolCall,
   createAgentRunForOutbox,
   deriveAgentRunContext,
   markAgentRunCompleted,
   markAgentRunFailed,
   markAgentRunRunning,
+  recordAgentRunStepStarted,
   recordAgentToolCallDenied,
   recordAgentToolCallRequested,
   recoverStaleAgentRuns
@@ -451,6 +453,61 @@ describe("agent run ledger", () => {
         resultSummary: { status: "sent" }
       }
     });
+  });
+
+  it("records generic worker run steps for runtime dispatch phases", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: STEP_ID }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const ledger = await recordAgentRunStepStarted({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      stepType: "runtime:deliver_event",
+      summary: "Dexter runtime event delivery started",
+      metadata: {
+        outboxEventId: OUTBOX_ID,
+        eventType: "ticket.message.created"
+      }
+    });
+
+    await completeAgentRunStep({
+      ledger,
+      status: "completed",
+      resultSummary: {
+        outboxEventId: OUTBOX_ID,
+        delivered: true
+      }
+    });
+
+    expect(ledger).toEqual({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      stepId: STEP_ID,
+      stepType: "runtime:deliver_event"
+    });
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_steps"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "runtime:deliver_event"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.step.started", "running"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE agent_run_steps"),
+      expect.arrayContaining([TENANT_ID, STEP_ID, "completed"])
+    );
+    expect(mocks.client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO agent_run_events"),
+      expect.arrayContaining([TENANT_ID, RUN_ID, "agent.step.completed", "running"])
+    );
   });
 
   it("records denied tool calls without executing a tool", async () => {

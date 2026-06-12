@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   markAgentRunRunning: vi.fn(),
   markAgentRunCompleted: vi.fn(),
   markAgentRunFailed: vi.fn(),
+  recordAgentRunStepStarted: vi.fn(),
+  completeAgentRunStep: vi.fn(),
   appendAgentRunEvent: vi.fn(),
   processInternalDexterMessage: vi.fn(),
   recordModuleUsageEvent: vi.fn(),
@@ -45,9 +47,11 @@ vi.mock("@/server/agents/integrations", () => ({
 vi.mock("@/server/agents/run-ledger", () => ({
   appendAgentRunEvent: mocks.appendAgentRunEvent,
   createAgentRunForOutbox: mocks.createAgentRunForOutbox,
+  completeAgentRunStep: mocks.completeAgentRunStep,
   markAgentRunCompleted: mocks.markAgentRunCompleted,
   markAgentRunFailed: mocks.markAgentRunFailed,
-  markAgentRunRunning: mocks.markAgentRunRunning
+  markAgentRunRunning: mocks.markAgentRunRunning,
+  recordAgentRunStepStarted: mocks.recordAgentRunStepStarted
 }));
 
 vi.mock("@/server/dexter-runtime", () => ({
@@ -141,6 +145,13 @@ describe("agent outbox Dexter RAG attachment", () => {
     mocks.getAgentIntegrationById.mockResolvedValue(activeIntegration());
     mocks.getActiveAgentIntegration.mockResolvedValue(activeIntegration());
     mocks.markAgentRunRunning.mockResolvedValue(true);
+    mocks.recordAgentRunStepStarted.mockResolvedValue({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      stepId: "55555555-5555-4555-8555-555555555555",
+      stepType: "runtime:deliver_event"
+    });
+    mocks.completeAgentRunStep.mockResolvedValue(undefined);
     mocks.processInternalDexterMessage.mockResolvedValue(true);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
     mocks.buildDexterRagContextForEvent.mockResolvedValue(attachedContext);
@@ -179,6 +190,28 @@ describe("agent outbox Dexter RAG attachment", () => {
       ...eventPayload,
       dexterRagContext: attachedContext
     });
+    expect(mocks.recordAgentRunStepStarted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        runId: RUN_ID,
+        stepType: "runtime:deliver_event",
+        metadata: expect.objectContaining({
+          outboxEventId: OUTBOX_ID,
+          eventType: "ticket.message.created",
+          runtimeTarget: "internal"
+        })
+      })
+    );
+    expect(mocks.completeAgentRunStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "completed",
+        resultSummary: expect.objectContaining({
+          outboxEventId: OUTBOX_ID,
+          eventType: "ticket.message.created",
+          runtimeTarget: "internal"
+        })
+      })
+    );
     expect(mocks.markAgentRunCompleted).toHaveBeenCalledWith({
       tenantId: TENANT_ID,
       runId: RUN_ID

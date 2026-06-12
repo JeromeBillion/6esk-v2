@@ -7,10 +7,13 @@ import {
 } from "@/server/agents/integrations";
 import {
   appendAgentRunEvent,
+  completeAgentRunStep,
   createAgentRunForOutbox,
   markAgentRunCompleted,
   markAgentRunFailed,
-  markAgentRunRunning
+  markAgentRunRunning,
+  recordAgentRunStepStarted,
+  type AgentRunStepLedger
 } from "@/server/agents/run-ledger";
 import {
   attachDexterRagContextToPayload,
@@ -391,6 +394,43 @@ async function buildDeliveryPayloadWithDexterRag({
   return attachDexterRagContextToPayload(payload, context);
 }
 
+function runtimeTargetForIntegration(integration: AgentIntegration) {
+  if (integration.base_url.startsWith("internal://")) return "internal";
+  if (integration.base_url.startsWith("native://")) return "native";
+  return "external_webhook";
+}
+
+async function completeDeliveryStepBestEffort({
+  ledger,
+  status,
+  resultSummary,
+  errorMessage
+}: {
+  ledger: AgentRunStepLedger | null;
+  status: "completed" | "failed";
+  resultSummary?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+}) {
+  if (!ledger) return;
+  try {
+    await completeAgentRunStep({
+      ledger,
+      status,
+      resultSummary,
+      errorMessage
+    });
+  } catch (error) {
+    logger.warn("Failed to complete agent runtime delivery step ledger", {
+      error,
+      tenantId: ledger.tenantId,
+      runId: ledger.runId,
+      stepId: ledger.stepId,
+      stepType: ledger.stepType,
+      status
+    });
+  }
+}
+
 export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
   const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
   const integration = integrationId
@@ -418,6 +458,7 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
   let delivered = 0;
   for (const event of pending) {
     let runId = event.run_id;
+    let deliveryStep: AgentRunStepLedger | null = null;
     try {
       if (!runId) {
         const run = await createAgentRunForOutbox({
@@ -444,10 +485,33 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         eventType: event.event_type,
         payload: event.payload
       });
+      deliveryStep = await recordAgentRunStepStarted({
+        tenantId: event.tenant_id,
+        runId,
+        stepType: "runtime:deliver_event",
+        summary: "Dexter runtime event delivery started",
+        metadata: {
+          outboxEventId: event.id,
+          integrationId: event.integration_id,
+          eventType: event.event_type,
+          runtimeTarget: runtimeTargetForIntegration(integration),
+          attemptCount: event.attempt_count + 1
+        }
+      });
       await postToAgent(integration, deliveryPayload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";
       const attempts = event.attempt_count + 1;
+      await completeDeliveryStepBestEffort({
+        ledger: deliveryStep,
+        status: "failed",
+        resultSummary: {
+          outboxEventId: event.id,
+          eventType: event.event_type,
+          attemptCount: attempts
+        },
+        errorMessage: message
+      });
       await markFailed(event.id, attempts, message);
       if (runId) {
         await markAgentRunFailed({
@@ -462,6 +526,16 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
     }
 
     delivered += 1;
+    await completeDeliveryStepBestEffort({
+      ledger: deliveryStep,
+      status: "completed",
+      resultSummary: {
+        outboxEventId: event.id,
+        eventType: event.event_type,
+        attemptCount: event.attempt_count + 1,
+        runtimeTarget: runtimeTargetForIntegration(integration)
+      }
+    });
 
     try {
       await markDelivered(event.id);

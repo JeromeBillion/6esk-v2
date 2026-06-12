@@ -127,6 +127,12 @@ Date: 2026-06-06
   - prompt construction now has a reusable sandbox shape that separates system constraints, tenant policy, server runtime context, untrusted event payloads, and untrusted retrieved knowledge
   - generated customer-facing `draft_reply` and `send_reply` output is validated before side effects; unsafe output is blocked, tenant-scoped audit evidence is written, and denied run-tool evidence is recorded when a run id is present
   - the validator reuses v2 prompt-safety telemetry and stores redacted samples instead of raw generated output
+- Extended v2-native run ledger evidence into the Dexter outbox worker dispatch path:
+  - `src/server/agents/run-ledger.ts`
+  - `src/server/agents/outbox.ts`
+  - generic `recordAgentRunStepStarted` and `completeAgentRunStep` helpers now write durable non-tool worker steps into `agent_run_steps`
+  - outbox delivery records a `runtime:deliver_event` step before dispatching to native/http/external Dexter targets and marks it completed or failed with bounded summary metadata
+  - accepted delivery does not become retryable solely because local step-completion bookkeeping failed; the failure is logged and later delivery bookkeeping/replay evidence remains available
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -199,3 +205,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-output-validator.test.ts`
   - `tests/agent-merge-actions.test.ts`
   - `tests/agent-tool-policy.test.ts`
+- Worker dispatch step-ledger tests pass in the focused slice:
+  - `tests/agent-run-ledger.test.ts`
+  - `tests/agent-outbox-rag.test.ts`
+  - `tests/agent-outbox-lane.test.ts`
+  - `tests/agent-run-replay.test.ts`

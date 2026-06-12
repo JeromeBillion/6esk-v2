@@ -72,6 +72,19 @@ export type AgentToolCallLedger = {
   toolName: string;
 };
 
+export type AgentRunStepStatus =
+  | "completed"
+  | "failed"
+  | "skipped"
+  | "cancelled";
+
+export type AgentRunStepLedger = {
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  stepType: string;
+};
+
 type AgentRunCommandContextRow = {
   id: string;
   tenant_id: string;
@@ -490,6 +503,137 @@ export function appendAgentToolCompletedCommand(input: {
       ...(input.resultSummary ? { resultSummary: input.resultSummary } : {})
     }
   });
+}
+
+export async function recordAgentRunStepStarted(input: {
+  tenantId: string;
+  runId: string;
+  stepType: string;
+  summary?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<AgentRunStepLedger> {
+  const client = await db.connect();
+  const stepType = input.stepType.slice(0, 120);
+  try {
+    await client.query("BEGIN");
+    const stepResult = await client.query<{ id: string }>(
+      `WITH locked_run AS (
+         SELECT id
+         FROM agent_runs
+         WHERE tenant_id = $1
+           AND id = $2
+         FOR UPDATE
+       ),
+       next_step AS (
+         SELECT COALESCE(MAX(step_index), -1) + 1 AS value
+         FROM agent_run_steps
+         WHERE tenant_id = $1
+           AND run_id = $2
+       )
+       INSERT INTO agent_run_steps (
+         tenant_id, run_id, step_index, step_type, status, summary, metadata, started_at
+       )
+       SELECT $1, $2, next_step.value, $3, 'running', $4, $5::jsonb, now()
+       FROM locked_run, next_step
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.runId,
+        stepType,
+        input.summary?.slice(0, 500) ?? `Agent run step started: ${stepType}`.slice(0, 500),
+        JSON.stringify(safeJsonSummary(input.metadata))
+      ]
+    );
+    const stepId = stepResult.rows[0]?.id;
+    if (!stepId) {
+      throw new Error("Agent run not found for step ledger start.");
+    }
+
+    await appendAgentRunEvent({
+      client,
+      tenantId: input.tenantId,
+      runId: input.runId,
+      eventType: "agent.step.started",
+      status: "running",
+      summary: `Agent run step started: ${stepType}`,
+      eventData: {
+        stepId,
+        stepType,
+        metadata: safeJsonSummary(input.metadata)
+      }
+    });
+
+    await client.query("COMMIT");
+    return {
+      tenantId: input.tenantId,
+      runId: input.runId,
+      stepId,
+      stepType
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function completeAgentRunStep(input: {
+  ledger: AgentRunStepLedger;
+  status: AgentRunStepStatus;
+  resultSummary?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+}) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE agent_run_steps
+       SET status = $3,
+           completed_at = CASE WHEN $3 IN ('completed', 'skipped', 'cancelled') THEN now() ELSE completed_at END,
+           failed_at = CASE WHEN $3 = 'failed' THEN now() ELSE failed_at END,
+           metadata = metadata || $4::jsonb,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2`,
+      [
+        input.ledger.tenantId,
+        input.ledger.stepId,
+        input.status,
+        JSON.stringify({
+          resultStatus: input.status,
+          resultSummary: safeJsonSummary(input.resultSummary),
+          ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
+        })
+      ]
+    );
+
+    await appendAgentRunEvent({
+      client,
+      tenantId: input.ledger.tenantId,
+      runId: input.ledger.runId,
+      eventType: input.status === "failed" ? "agent.step.failed" : "agent.step.completed",
+      status: "running",
+      summary:
+        input.status === "failed"
+          ? `Agent run step failed: ${input.ledger.stepType}`
+          : `Agent run step completed: ${input.ledger.stepType}`,
+      eventData: {
+        stepId: input.ledger.stepId,
+        stepType: input.ledger.stepType,
+        resultStatus: input.status,
+        resultSummary: safeJsonSummary(input.resultSummary),
+        errorMessage: input.errorMessage?.slice(0, 500) ?? null
+      }
+    });
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function recordAgentToolCallRequested(input: {

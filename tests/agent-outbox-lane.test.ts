@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   markAgentRunRunning: vi.fn(),
   markAgentRunCompleted: vi.fn(),
   markAgentRunFailed: vi.fn(),
+  recordAgentRunStepStarted: vi.fn(),
+  completeAgentRunStep: vi.fn(),
   appendAgentRunEvent: vi.fn(),
   processInternalDexterMessage: vi.fn(),
   recordModuleUsageEvent: vi.fn(),
@@ -41,9 +43,11 @@ vi.mock("@/server/agents/integrations", () => ({
 vi.mock("@/server/agents/run-ledger", () => ({
   appendAgentRunEvent: mocks.appendAgentRunEvent,
   createAgentRunForOutbox: mocks.createAgentRunForOutbox,
+  completeAgentRunStep: mocks.completeAgentRunStep,
   markAgentRunCompleted: mocks.markAgentRunCompleted,
   markAgentRunFailed: mocks.markAgentRunFailed,
-  markAgentRunRunning: mocks.markAgentRunRunning
+  markAgentRunRunning: mocks.markAgentRunRunning,
+  recordAgentRunStepStarted: mocks.recordAgentRunStepStarted
 }));
 
 vi.mock("@/server/dexter-runtime", () => ({
@@ -107,6 +111,13 @@ describe("agent outbox lane reservation", () => {
     mocks.getAgentIntegrationById.mockResolvedValue(activeIntegration());
     mocks.getActiveAgentIntegration.mockResolvedValue(activeIntegration());
     mocks.markAgentRunRunning.mockResolvedValue(false);
+    mocks.recordAgentRunStepStarted.mockResolvedValue({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      stepId: "55555555-5555-4555-8555-555555555555",
+      stepType: "runtime:deliver_event"
+    });
+    mocks.completeAgentRunStep.mockResolvedValue(undefined);
     mocks.processInternalDexterMessage.mockResolvedValue(true);
   });
 
@@ -126,6 +137,8 @@ describe("agent outbox lane reservation", () => {
     expect(mocks.processInternalDexterMessage).not.toHaveBeenCalled();
     expect(mocks.markAgentRunFailed).not.toHaveBeenCalled();
     expect(mocks.markAgentRunCompleted).not.toHaveBeenCalled();
+    expect(mocks.recordAgentRunStepStarted).not.toHaveBeenCalled();
+    expect(mocks.completeAgentRunStep).not.toHaveBeenCalled();
     expect(mocks.db.query).toHaveBeenCalledWith(
       expect.stringContaining("next_attempt_at = now() + make_interval"),
       [OUTBOX_ID, 10]
