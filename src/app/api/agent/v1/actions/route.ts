@@ -4,6 +4,7 @@ import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
+import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { recordAuditLog } from "@/server/audit";
@@ -417,6 +418,31 @@ function extractCallSessionId(metadata: Record<string, unknown> | null | undefin
   return null;
 }
 
+function extractRunIdFromMetadata(metadata: Record<string, unknown> | null | undefined) {
+  const root = asRecord(metadata);
+  if (!root) return null;
+
+  const direct =
+    readString(root.runId) ?? readString(root.run_id) ?? readString(root.agentRunId);
+  if (direct && UUID_PATTERN.test(direct)) {
+    return direct;
+  }
+
+  const envelope = asRecord(root.commandEnvelope);
+  const envelopeRunId = readString(envelope?.runId) ?? readString(envelope?.run_id);
+  if (envelopeRunId && UUID_PATTERN.test(envelopeRunId)) {
+    return envelopeRunId;
+  }
+
+  const agent = asRecord(root.agent);
+  const agentRunId = readString(agent?.runId) ?? readString(agent?.run_id);
+  if (agentRunId && UUID_PATTERN.test(agentRunId)) {
+    return agentRunId;
+  }
+
+  return null;
+}
+
 function normalizeForStableJson(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeForStableJson(item));
@@ -752,6 +778,68 @@ export async function POST(request: Request) {
       }
 
       idempotencyClaim = claim;
+    }
+
+    const actionRunId = extractRunIdFromMetadata(action.metadata ?? null);
+    const toolPolicy = await evaluateAgentToolPolicy({
+      tenantId,
+      integrationId: integration.id,
+      runId: actionRunId,
+      policyMode: integration.policy_mode,
+      rolloutMode: actionRolloutMode,
+      actionType: action.type,
+      resource: {
+        type: "ticket",
+        ticketId: action.ticketId,
+        customerId: ticket.customer_id ?? null,
+        mailboxId: ticket.mailbox_id ?? null
+      },
+      content: action,
+      metadata: {
+        route: "/api/agent/v1/actions",
+        policyMode: integration.policy_mode ?? null,
+        rolloutMode: actionRolloutMode
+      }
+    });
+    if (!toolPolicy.allowed) {
+      const result: ActionResult = {
+        type: action.type,
+        status: "blocked",
+        detail: toolPolicy.detail ?? "Agent tool policy blocked this action.",
+        data: {
+          errorCode: "ai_tool_policy_blocked",
+          decision: toolPolicy.decision,
+          toolClass: toolPolicy.toolClass,
+          reasonCodes: toolPolicy.reasonCodes
+        }
+      };
+      await recordAuditLog({
+        tenantId,
+        action: "ai_tool_policy_blocked",
+        entityType: "ticket",
+        entityId: action.ticketId,
+        data: {
+          agentId: integration.id,
+          actionType: action.type,
+          decision: toolPolicy.decision,
+          toolClass: toolPolicy.toolClass,
+          reasonCodes: toolPolicy.reasonCodes,
+          runId: actionRunId,
+          rolloutMode: actionRolloutMode,
+          idempotencyKey: idempotencyKey ?? null
+        }
+      });
+      results.push(result);
+      if (idempotencyClaim) {
+        await completeAgentActionIdempotency({
+          tenantId,
+          integrationId: integration.id,
+          idempotencyKey: idempotencyClaim.idempotencyKey,
+          requestHash: idempotencyClaim.requestHash,
+          result
+        });
+      }
+      continue;
     }
 
     const rolloutDecision = getActionRolloutDecision({

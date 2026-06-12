@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => {
     mergeTickets: vi.fn(),
     linkTickets: vi.fn(),
     createMergeReviewTask: vi.fn(),
+    evaluateAgentToolPolicy: vi.fn(),
     getTicketCallOptions: vi.fn(),
     resolveCallPhoneForRequest: vi.fn(),
     getLatestVoiceConsentState: vi.fn(),
@@ -69,6 +70,9 @@ vi.mock("@/server/agents/events", () => ({
 vi.mock("@/server/agents/outbox", () => ({
   deliverPendingAgentEvents: mocks.deliverPendingAgentEvents,
   enqueueAgentEvent: mocks.enqueueAgentEvent
+}));
+vi.mock("@/server/agents/tool-policy", () => ({
+  evaluateAgentToolPolicy: mocks.evaluateAgentToolPolicy
 }));
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
@@ -177,6 +181,13 @@ describe("agent initiate_call action", () => {
     });
     mocks.evaluateVoiceCallPolicy.mockResolvedValue({
       allowed: true
+    });
+    mocks.evaluateAgentToolPolicy.mockResolvedValue({
+      allowed: true,
+      decision: "allow",
+      toolClass: "external_send",
+      reasonCodes: [],
+      detail: null
     });
     mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
     mocks.getLatestVoiceConsentState.mockResolvedValue({

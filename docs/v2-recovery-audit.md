@@ -90,6 +90,14 @@ Date: 2026-06-06
   - sibling runs in the same tenant/resource lane remain queued when another run is already `running` or `waiting_approval`
   - lane-busy attempts append a tenant-bound `agent.wait` command envelope with `lane_busy` metadata and release the outbox event back to pending without posting to Dexter or consuming an attempt
   - focused regression coverage proves the atomic reservation query and worker skip/release behavior
+- Semantically ported the wrong-folder/OpenClaw-style agent tool-policy value into v2 without replacing native Dexter:
+  - `src/server/agents/tool-policy.ts`
+  - `src/app/api/agent/v1/actions/route.ts`
+  - `db/migrations/0055_agent_tool_policy_decisions.sql`
+  - route actions are classified by impact before side effects: review request, draft, reversible write, external send, and irreversible write
+  - action content is evaluated through the v2 central prompt-safety guard after tenant ticket/scope/idempotency checks and before rollout/side-effect execution
+  - `full_auto` high-risk actions are blocked and audited as policy denials, medium-risk `full_auto` actions downgrade to read-only/no-tool behavior, and `hybrid_review` suspicious actions require review instead of silently performing side effects
+  - policy decisions are stored with `tenant_id`, optional integration/run references, tool class, decision, reason codes, resource summary, and redacted prompt-safety telemetry
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
