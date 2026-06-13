@@ -1,10 +1,10 @@
 import { randomBytes, createHash } from "crypto";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getEnv } from "@/server/env";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(
   _request: Request,
@@ -16,7 +16,11 @@ export async function POST(
   }
 
   const { userId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const result = await db.query("SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2", [userId, tenantId]);
   const target = result.rows[0];
   if (!target) {
@@ -29,8 +33,11 @@ export async function POST(
 
   await db.query(
     `INSERT INTO password_resets (user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3)`,
-    [target.id, tokenHash, expiresAt]
+     SELECT id, $2, $3
+     FROM users
+     WHERE id = $1
+       AND tenant_id = $4`,
+    [target.id, tokenHash, expiresAt, tenantId]
   );
 
   await recordAuditLog({

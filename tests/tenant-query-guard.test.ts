@@ -30,9 +30,29 @@ describe("tenant query guard", () => {
     ).toThrow(TenantQueryGuardError);
   });
 
-  it("treats billing lifecycle tables as tenant-scoped", () => {
+  it("treats real v2 agent, knowledge, auth, and billing tables as tenant-scoped", () => {
     expect(() =>
-      enforceTenantQueryGuard("SELECT id FROM workspace_billing_invoices WHERE id = $1", {
+      enforceTenantQueryGuard("SELECT id FROM agent_tool_policy_decisions WHERE run_id = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM agent_action_idempotency WHERE idempotency_key = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM knowledge_quarantine_events WHERE reason_code = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM roles WHERE name = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM organizations WHERE domain = $1", {
         mode: "strict"
       })
     ).toThrow(TenantQueryGuardError);
@@ -41,6 +61,13 @@ describe("tenant query guard", () => {
         mode: "strict"
       })
     ).toThrow(TenantQueryGuardError);
+  });
+
+  it("does not retain wrong-folder table aliases that are absent from v2 migrations", () => {
+    expect(inspectTenantQueryScope("SELECT id FROM ai_guard_events WHERE id = $1").tables).toEqual([]);
+    expect(inspectTenantQueryScope("SELECT id FROM ai_knowledge_documents WHERE id = $1").tables).toEqual([]);
+    expect(inspectTenantQueryScope("SELECT id FROM workspace_billing_invoices WHERE id = $1").tables).toEqual([]);
+    expect(inspectTenantQueryScope("SELECT id FROM auth_identity_accounts WHERE id = $1").tables).toEqual([]);
   });
 
   it("treats public ingress origin allowlists as tenant-scoped", () => {

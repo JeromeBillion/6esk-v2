@@ -94,10 +94,15 @@ export async function createSession(userId: string, options: CreateSessionOption
      LIMIT 1`,
     [userId]
   );
-  const sessionTtlDays = normalizeSessionTtlDays(userResult.rows[0]?.session_ttl_days);
+  const userRow = userResult.rows[0];
+  if (!userRow?.tenant_id) {
+    throw new Error("Cannot create session without tenant scope");
+  }
+
+  const sessionTtlDays = normalizeSessionTtlDays(userRow.session_ttl_days);
   const expiresAt = new Date(Date.now() + sessionTtlDays * 24 * 60 * 60 * 1000);
 
-  await db.query(
+  const sessionResult = await db.query<{ id: string }>(
     `INSERT INTO auth_sessions (
        user_id,
        token_hash,
@@ -106,9 +111,16 @@ export async function createSession(userId: string, options: CreateSessionOption
        user_agent_hash,
        ip_hash
      )
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [userId, tokenHash, expiresAt, authProvider, userAgentHash, ipHash]
+     SELECT id, $2, $3, $4, $5, $6
+     FROM users
+     WHERE id = $1
+       AND tenant_id = $7
+     RETURNING id`,
+    [userId, tokenHash, expiresAt, authProvider, userAgentHash, ipHash, userRow.tenant_id]
   );
+  if (sessionResult.rows.length === 0) {
+    throw new Error("Cannot create session without tenant scope");
+  }
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
@@ -128,11 +140,14 @@ export async function clearSession() {
   }
   const tokenHash = hashToken(token);
   await db.query(
-    `UPDATE auth_sessions
+    `UPDATE auth_sessions s
      SET revoked_at = now(),
          revoke_reason = 'logout'
-     WHERE token_hash = $1
-       AND revoked_at IS NULL`,
+     FROM users u
+     WHERE s.token_hash = $1
+       AND s.user_id = u.id
+       AND u.tenant_id IS NOT NULL
+       AND s.revoked_at IS NULL`,
     [tokenHash]
   );
   cookieStore.set(COOKIE_NAME, "", {
@@ -222,11 +237,14 @@ export async function revokeUserSessions({
   reason: string;
 }) {
   const result = await db.query(
-    `UPDATE auth_sessions
+    `UPDATE auth_sessions s
      SET revoked_at = now(),
          revoke_reason = $2
-     WHERE user_id = $1
-       AND revoked_at IS NULL`,
+     FROM users u
+     WHERE s.user_id = $1
+       AND s.user_id = u.id
+       AND u.tenant_id IS NOT NULL
+       AND s.revoked_at IS NULL`,
     [userId, reason]
   );
   return result.rowCount ?? 0;

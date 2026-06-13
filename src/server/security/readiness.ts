@@ -56,37 +56,43 @@ export async function getSecurityReadinessSnapshot() {
   ] =
     await Promise.all([
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global impersonation count */
+         SELECT COUNT(*)::bigint AS count
          FROM auth_sessions
          WHERE impersonated_tenant_id IS NOT NULL
            AND impersonation_expires_at > now()`
       ),
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global privileged-access count */
+         SELECT COUNT(*)::bigint AS count
          FROM privileged_access_grants
          WHERE status = 'active'
            AND expires_at > now()`
       ),
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global privileged-access review count */
+         SELECT COUNT(*)::bigint AS count
          FROM privileged_access_grants
          WHERE status IN ('expired', 'revoked')
            AND metadata->'postEventReview' IS NULL`
       ),
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global failed-call-outbox count */
+         SELECT COUNT(*)::bigint AS count
          FROM call_outbox_events
          WHERE direction = 'outbound'
            AND status = 'failed'`
       ),
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global failed-whatsapp-outbox count */
+         SELECT COUNT(*)::bigint AS count
          FROM whatsapp_events
          WHERE direction = 'outbound'
            AND status = 'failed'`
       ),
       db.query<CountRow>(
-        `SELECT COUNT(*)::bigint AS count
+        `/* tenant-query-guard: ignore internal-security-readiness global failed-email-outbox count */
+         SELECT COUNT(*)::bigint AS count
          FROM email_outbox_events
          WHERE direction = 'outbound'
            AND status = 'failed'`

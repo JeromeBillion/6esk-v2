@@ -41,6 +41,7 @@ Date: 2026-06-06
   - focused tests for tenant-scoped metadata, rotation, env fallback, tenant-admin route access, one-time plaintext return, audit logging, and fail-closed encryption config
 - Hardened the central session and tenant-context boundary:
   - `src/server/auth/session.ts` now requires a real home tenant join before returning a session user
+  - session creation, logout, user-session revocation, password-reset revocation, and backoffice impersonation session updates now include tenant-derived SQL evidence so production tenant-query guard strict mode does not block core auth flows or allow cookie-hash-only break-glass mutation
   - `src/server/tenant/context.ts` no longer falls back to the default tenant when a session lacks tenant scope
   - `npm run test:tenant-isolation` now includes the session/context and ticket-create machine-ingress regression coverage
 - Semantically ported the auth/session/MFA foundation into v2-native `tenant_id` form:
@@ -50,6 +51,7 @@ Date: 2026-06-06
   - TOTP MFA enrollment/challenge tables and dependency-free TOTP verification service
   - password login now respects tenant SSO/domain policy, creates MFA challenges for enrolled privileged users, and gates privileged users into MFA enrollment when required
   - users can list/revoke their own sessions, password resets revoke sessions in place, and tenant admins can read/update tenant security policy
+  - tenant admin user/role management now lists tenant-owned roles only, rejects admin sessions without tenant scope, validates role assignments under the current tenant, prevents cross-tenant email conflict updates, and creates personal mailboxes through tenant-scoped mailbox ownership
   - focused tests cover policy API access, MFA challenge/enrollment API paths, login policy/MFA boundaries, session revocation, password-reset revocation evidence, and production env validation
   - recovered tenant security policy unit coverage in v2-native `tenant_id` form for domain normalization, allowlist enforcement, scoped reads/upserts, and invalid SSO/OIDC combinations
 - Semantically ported privileged-access grant workflow into v2-native `tenant_id` form:
@@ -199,6 +201,8 @@ Date: 2026-06-06
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
   - shared Postgres pool/client queries now inspect tenant-scoped table access for `tenant_id` evidence, production defaults to strict mode, and production env validation rejects `TENANT_QUERY_GUARD_MODE=off`
+  - the guard now tracks real v2 launch tables including `agent_action_idempotency`, `agent_tool_policy_decisions`, `roles`, and `organizations`, while wrong-folder-only aliases such as `ai_guard_events`, `ai_knowledge_*`, `auth_identity_accounts`, and `workspace_billing_*` remain rejected because those tables are absent from the v2 migration set
+  - intentional internal global readiness counts use explicit `tenant-query-guard: ignore` comments with reason strings instead of silently weakening tenant guard behavior
 - Semantically ported the v1 public-ingress origin allowlist into v2-native `tenant_id` form:
   - `db/migrations/0058_tenant_public_ingress_origins.sql`
   - `src/server/tenant-public-ingress.ts`

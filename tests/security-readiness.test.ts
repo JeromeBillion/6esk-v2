@@ -44,5 +44,8 @@ describe("getSecurityReadinessSnapshot", () => {
     expect(snapshot.operations.privilegedAccessGrantsNeedingReview).toBe(0);
     expect(snapshot.operations.failedOutbox.total).toBe(0);
     expect(snapshot.checks.every((check) => check.ok)).toBe(true);
+    expect(mocks.dbQuery.mock.calls.every(([query]) => String(query).includes("tenant-query-guard: ignore"))).toBe(
+      true
+    );
   });
 });

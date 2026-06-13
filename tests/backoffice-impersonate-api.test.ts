@@ -199,7 +199,9 @@ describe("backoffice impersonation API", () => {
         "INC-9042",
         45,
         "99999999-9999-9999-9999-999999999999",
-        expect.any(String)
+        expect.any(String),
+        "11111111-1111-1111-1111-111111111111",
+        "33333333-3333-3333-3333-333333333333"
       ]
     );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
@@ -233,7 +235,11 @@ describe("backoffice impersonation API", () => {
     expect(response.status).toBe(200);
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("privileged_access_grant_id = NULL"),
-      [expect.any(String)]
+      [
+        expect.any(String),
+        "11111111-1111-1111-1111-111111111111",
+        "33333333-3333-3333-3333-333333333333"
+      ]
     );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({

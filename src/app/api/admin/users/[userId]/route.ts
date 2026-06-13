@@ -2,13 +2,21 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   roleId: z.string().uuid().optional(),
   isActive: z.boolean().optional()
 });
+
+async function roleExistsForTenant(roleId: string, tenantId: string) {
+  const result = await db.query("SELECT id FROM roles WHERE id = $1 AND tenant_id = $2 LIMIT 1", [
+    roleId,
+    tenantId
+  ]);
+  return result.rows.length > 0;
+}
 
 export async function PATCH(
   request: Request,
@@ -32,7 +40,11 @@ export async function PATCH(
   }
 
   const { userId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const existing = await db.query(
     "SELECT id, email, role_id, is_active FROM users WHERE id = $1 AND tenant_id = $2",
     [userId, tenantId]
@@ -47,6 +59,10 @@ export async function PATCH(
   let index = 1;
 
   if (parsed.data.roleId) {
+    const roleIsValid = await roleExistsForTenant(parsed.data.roleId, tenantId);
+    if (!roleIsValid) {
+      return Response.json({ error: "Invalid role" }, { status: 400 });
+    }
     fields.push(`role_id = $${index++}`);
     values.push(parsed.data.roleId);
   }

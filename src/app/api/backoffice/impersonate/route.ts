@@ -105,15 +105,28 @@ export async function POST(request: Request) {
   const tokenHash = hashToken(token);
 
   await db.query(
-    `UPDATE auth_sessions
+    `UPDATE auth_sessions s
      SET impersonated_tenant_id = $1,
          impersonation_reason = $2,
          impersonation_ticket_ref = $3,
          impersonation_started_at = now(),
          impersonation_expires_at = now() + make_interval(mins => $4::int),
          privileged_access_grant_id = $5
-     WHERE token_hash = $6`,
-    [targetTenantId, reason, ticketRef, effectiveDurationMinutes, grant.id, tokenHash]
+     FROM users u
+     WHERE s.token_hash = $6
+       AND s.user_id = u.id
+       AND u.id = $7
+       AND u.tenant_id = $8`,
+    [
+      targetTenantId,
+      reason,
+      ticketRef,
+      effectiveDurationMinutes,
+      grant.id,
+      tokenHash,
+      user!.id,
+      user!.real_tenant_id
+    ]
   );
 
   // Critical: Audit log the break-glass action
@@ -160,15 +173,19 @@ export async function DELETE(request: Request) {
   const previousTenantId = user.tenant_id;
 
   await db.query(
-    `UPDATE auth_sessions
+    `UPDATE auth_sessions s
      SET impersonated_tenant_id = NULL,
          impersonation_reason = NULL,
          impersonation_ticket_ref = NULL,
          impersonation_started_at = NULL,
          impersonation_expires_at = NULL,
          privileged_access_grant_id = NULL
-     WHERE token_hash = $1`,
-    [tokenHash]
+     FROM users u
+     WHERE s.token_hash = $1
+       AND s.user_id = u.id
+       AND u.id = $2
+       AND u.tenant_id = $3`,
+    [tokenHash, user.id, user.real_tenant_id]
   );
 
   await recordAuditLog({

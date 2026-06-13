@@ -32,7 +32,7 @@ describe("auth session hardening", () => {
       .mockResolvedValueOnce({
         rows: [{ tenant_id: "tenant-1", session_ttl_days: 7 }]
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [{ id: "session-1" }] });
 
     await createSession("user-1", {
       authProvider: "password_mfa",
@@ -55,6 +55,7 @@ describe("auth session hardening", () => {
     const insertParams = mocks.dbQuery.mock.calls[1][1];
     expect(insertParams[4]).toEqual(expect.any(String));
     expect(insertParams[5]).toEqual(expect.any(String));
+    expect(insertParams[6]).toBe("tenant-1");
     expect(mocks.cookieSet).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),

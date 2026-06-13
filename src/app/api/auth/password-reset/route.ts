@@ -51,18 +51,30 @@ export async function POST(request: Request) {
   let revokedSessionCount = 0;
   try {
     await client.query("BEGIN");
-    await client.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [
+    await client.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3", [
       passwordHash,
-      reset.user_id
+      reset.user_id,
+      reset.tenant_id
     ]);
-    await client.query("UPDATE password_resets SET used_at = now() WHERE id = $1", [reset.id]);
+    await client.query(
+      `UPDATE password_resets pr
+       SET used_at = now()
+       FROM users u
+       WHERE pr.id = $1
+         AND pr.user_id = u.id
+         AND u.tenant_id = $2`,
+      [reset.id, reset.tenant_id]
+    );
     const revoked = await client.query(
-      `UPDATE auth_sessions
+      `UPDATE auth_sessions s
        SET revoked_at = now(),
            revoke_reason = 'password_reset'
-       WHERE user_id = $1
-         AND revoked_at IS NULL`,
-      [reset.user_id]
+       FROM users u
+       WHERE s.user_id = $1
+         AND s.user_id = u.id
+         AND u.tenant_id = $2
+         AND s.revoked_at IS NULL`,
+      [reset.user_id, reset.tenant_id]
     );
     revokedSessionCount = revoked.rowCount ?? 0;
     await client.query("COMMIT");

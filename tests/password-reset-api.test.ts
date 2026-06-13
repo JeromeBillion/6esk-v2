@@ -75,7 +75,8 @@ describe("POST /api/auth/password-reset", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("revoke_reason = 'password_reset'"), [
-      "user-1"
+      "user-1",
+      "tenant-1"
     ]);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
