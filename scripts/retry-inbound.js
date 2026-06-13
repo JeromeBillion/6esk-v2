@@ -1,7 +1,7 @@
-const { INBOUND_SHARED_SECRET, APP_URL } = process.env;
+const { INBOUND_SHARED_SECRET, APP_URL, INBOUND_TENANT_ID } = process.env;
 
-if (!INBOUND_SHARED_SECRET || !APP_URL) {
-  console.error("INBOUND_SHARED_SECRET and APP_URL are required");
+if (!INBOUND_SHARED_SECRET || !APP_URL || !INBOUND_TENANT_ID) {
+  console.error("INBOUND_SHARED_SECRET, APP_URL, and INBOUND_TENANT_ID are required");
   process.exit(1);
 }
 
@@ -11,7 +11,8 @@ async function main() {
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      "x-6esk-secret": INBOUND_SHARED_SECRET
+      "x-6esk-secret": INBOUND_SHARED_SECRET,
+      "x-6esk-tenant-id": INBOUND_TENANT_ID
     }
   });
 
@@ -27,7 +28,8 @@ async function main() {
   const alertRes = await fetch(alertUrl, {
     method: "POST",
     headers: {
-      "x-6esk-secret": INBOUND_SHARED_SECRET
+      "x-6esk-secret": INBOUND_SHARED_SECRET,
+      "x-6esk-tenant-id": INBOUND_TENANT_ID
     }
   });
   if (alertRes.ok) {

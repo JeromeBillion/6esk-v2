@@ -21,14 +21,16 @@ vi.mock("@/server/audit", () => ({
 import { POST } from "@/app/api/admin/inbound/alerts/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -80,12 +82,25 @@ describe("POST /api/admin/inbound/alerts", () => {
       failures: 7
     });
     expect(mocks.sendInboundFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendInboundFailureAlert).toHaveBeenCalledWith({ tenantId: TENANT_ID });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         actorUserId: admin.id,
         action: "inbound_alert_checked"
       })
     );
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await POST(new Request("http://localhost/api/admin/inbound/alerts", { method: "POST" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.sendInboundFailureAlert).not.toHaveBeenCalled();
   });
 
   it("allows shared-secret callers without a session user", async () => {
@@ -94,7 +109,10 @@ describe("POST /api/admin/inbound/alerts", () => {
     const response = await POST(
       new Request("http://localhost/api/admin/inbound/alerts", {
         method: "POST",
-        headers: { "x-6esk-secret": "inbound-alert-secret" }
+        headers: {
+          "x-6esk-secret": "inbound-alert-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
       })
     );
     const body = await response.json();
@@ -107,12 +125,30 @@ describe("POST /api/admin/inbound/alerts", () => {
       failures: 7
     });
     expect(mocks.sendInboundFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendInboundFailureAlert).toHaveBeenCalledWith({ tenantId: TENANT_ID });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         actorUserId: null,
         action: "inbound_alert_checked"
       })
     );
+  });
+
+  it("returns 400 when a shared-secret caller omits tenant header", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/inbound/alerts", {
+        method: "POST",
+        headers: { "x-6esk-secret": "inbound-alert-secret" }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ error: "Tenant header is required" });
+    expect(mocks.sendInboundFailureAlert).not.toHaveBeenCalled();
   });
 
   it("returns 500 and records failure audit when alert execution throws", async () => {
@@ -134,6 +170,7 @@ describe("POST /api/admin/inbound/alerts", () => {
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         actorUserId: admin.id,
         action: "inbound_alert_check_failed"
       })

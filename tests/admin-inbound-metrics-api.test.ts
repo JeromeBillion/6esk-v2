@@ -16,14 +16,16 @@ vi.mock("@/server/email/inbound-metrics", () => ({
 import { GET } from "@/app/api/admin/inbound/metrics/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -114,7 +116,18 @@ describe("GET /api/admin/inbound/metrics", () => {
       status: "at_or_above_threshold",
       threshold: 5
     });
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(48);
+    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(TENANT_ID, 48);
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET(new Request("http://localhost/api/admin/inbound/metrics?hours=48"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
   });
 
   it("allows maintenance secret callers without session", async () => {
@@ -122,10 +135,28 @@ describe("GET /api/admin/inbound/metrics", () => {
 
     const response = await GET(
       new Request("http://localhost/api/admin/inbound/metrics?hours=6", {
-        headers: { "x-6esk-secret": "inbound-secret" }
+        headers: {
+          "x-6esk-secret": "inbound-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
       })
     );
     expect(response.status).toBe(200);
-    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(6);
+    expect(mocks.getInboundMetrics).toHaveBeenCalledWith(TENANT_ID, 6);
+  });
+
+  it("returns 400 when a maintenance secret caller omits tenant header", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await GET(
+      new Request("http://localhost/api/admin/inbound/metrics?hours=6", {
+        headers: { "x-6esk-secret": "inbound-secret" }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ error: "Tenant header is required" });
+    expect(mocks.getInboundMetrics).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,7 @@ vi.mock("@/server/email/inbound-alert-config", () => ({
 import { sendInboundFailureAlert } from "@/server/email/inbound-alerts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 let fetchMock: ReturnType<typeof vi.fn>;
 
 describe("sendInboundFailureAlert", () => {
@@ -25,6 +26,7 @@ describe("sendInboundFailureAlert", () => {
     vi.clearAllMocks();
     mocks.getInboundAlertConfig.mockResolvedValue({
       source: "db",
+      tenantId: TENANT_ID,
       webhookUrl: "https://alerts.example.com/inbound",
       threshold: 5,
       windowMinutes: 30,
@@ -44,26 +46,28 @@ describe("sendInboundFailureAlert", () => {
   it("returns missing_webhook without querying events when webhook is absent", async () => {
     mocks.getInboundAlertConfig.mockResolvedValue({
       source: "db",
+      tenantId: TENANT_ID,
       webhookUrl: "",
       threshold: 5,
       windowMinutes: 30,
       cooldownMinutes: 60
     });
 
-    const result = await sendInboundFailureAlert();
+    const result = await sendInboundFailureAlert({ tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       sent: false,
       reason: "missing_webhook",
       threshold: 5
     });
+    expect(mocks.getInboundAlertConfig).toHaveBeenCalledWith(TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("returns below_threshold when failures are lower than configured threshold", async () => {
     mocks.dbQuery.mockResolvedValueOnce({ rows: [{ count: "3" }] });
 
-    const result = await sendInboundFailureAlert();
+    const result = await sendInboundFailureAlert({ tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       sent: false,
@@ -73,6 +77,11 @@ describe("sendInboundFailureAlert", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("tenant_id = $1"),
+      [TENANT_ID, "30"]
+    );
   });
 
   it("returns cooldown when recent alert was already sent", async () => {
@@ -81,7 +90,7 @@ describe("sendInboundFailureAlert", () => {
       .mockResolvedValueOnce({ rows: [{ count: "8" }] })
       .mockResolvedValueOnce({ rows: [{ last_sent_at: lastSent }] });
 
-    const result = await sendInboundFailureAlert();
+    const result = await sendInboundFailureAlert({ tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       sent: false,
@@ -91,6 +100,11 @@ describe("sendInboundFailureAlert", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("tenant_id = $1"),
+      [TENANT_ID]
+    );
   });
 
   it("sends webhook with top classified failure reasons when threshold is met", async () => {
@@ -105,7 +119,7 @@ describe("sendInboundFailureAlert", () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const result = await sendInboundFailureAlert();
+    const result = await sendInboundFailureAlert({ tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       sent: true,
@@ -130,5 +144,15 @@ describe("sendInboundFailureAlert", () => {
     ]);
     expect(payload.text).toContain("Top reasons:");
     expect(mocks.dbQuery).toHaveBeenCalledTimes(4);
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("tenant_id = $1"),
+      [TENANT_ID, "30"]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining("ON CONFLICT (tenant_id, alert_type)"),
+      [TENANT_ID, expect.any(Date)]
+    );
   });
 });

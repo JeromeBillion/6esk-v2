@@ -447,9 +447,9 @@ export function buildInboundHourlySeries(
   return points;
 }
 
-export async function getInboundMetrics(hours = 24) {
+export async function getInboundMetrics(tenantId: string, hours = 24) {
   const windowHours = clampHours(hours);
-  const alertConfig = await getInboundAlertConfig();
+  const alertConfig = await getInboundAlertConfig(tenantId);
   const alertWindowMinutes = toPositiveInteger(alertConfig.windowMinutes, 30);
 
   const [
@@ -467,25 +467,25 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*) FILTER (WHERE status = 'processing')::int AS processing_now,
          COUNT(*) FILTER (
            WHERE status = 'processed'
-             AND updated_at >= now() - ($1::int * interval '1 hour')
+             AND updated_at >= now() - ($2::int * interval '1 hour')
          )::int AS processed_window,
          COUNT(*) FILTER (
            WHERE status = 'failed'
-             AND updated_at >= now() - ($1::int * interval '1 hour')
+             AND updated_at >= now() - ($2::int * interval '1 hour')
          )::int AS failed_window,
          COALESCE(
-           SUM(attempt_count) FILTER (WHERE updated_at >= now() - ($1::int * interval '1 hour')),
+           SUM(attempt_count) FILTER (WHERE updated_at >= now() - ($2::int * interval '1 hour')),
            0
          )::int AS attempts_window,
          COUNT(*) FILTER (
            WHERE status = 'processed'
              AND attempt_count > 0
-             AND updated_at >= now() - ($1::int * interval '1 hour')
+             AND updated_at >= now() - ($2::int * interval '1 hour')
          )::int AS retry_processed_window,
          COUNT(*) FILTER (
            WHERE status = 'failed'
              AND attempt_count > 1
-             AND updated_at >= now() - ($1::int * interval '1 hour')
+             AND updated_at >= now() - ($2::int * interval '1 hour')
          )::int AS retry_failed_window,
          COUNT(*) FILTER (WHERE status = 'failed' AND attempt_count >= 5)::int AS high_attempt_queue,
          COALESCE(MAX(attempt_count) FILTER (WHERE status = 'failed'), 0)::int AS max_failed_attempt_count,
@@ -498,8 +498,9 @@ export async function getInboundMetrics(hours = 24) {
            2
          )::float8 AS p95_failed_attempt_count,
          MIN(created_at) FILTER (WHERE status = 'failed') AS oldest_failed_at
-       FROM inbound_events`,
-      [windowHours]
+       FROM inbound_events
+       WHERE tenant_id = $1`,
+      [tenantId, windowHours]
     ),
     db.query<InboundSeriesRow>(
       `SELECT
@@ -509,17 +510,19 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
          COALESCE(SUM(attempt_count), 0)::int AS attempts
        FROM inbound_events
-       WHERE updated_at >= now() - ($1::int * interval '1 hour')
+       WHERE tenant_id = $1
+         AND updated_at >= now() - ($2::int * interval '1 hour')
        GROUP BY 1
        ORDER BY 1 ASC`,
-      [windowHours]
+      [tenantId, windowHours]
     ),
     db.query<InboundAlertWindowRow>(
       `SELECT COUNT(*)::int AS failures
        FROM inbound_events
        WHERE status = 'failed'
-         AND updated_at >= now() - ($1::text || ' minutes')::interval`,
-      [alertWindowMinutes.toString()]
+         AND tenant_id = $1
+         AND updated_at >= now() - ($2::text || ' minutes')::interval`,
+      [tenantId, alertWindowMinutes.toString()]
     ),
     db.query<InboundAlertHistoryRow>(
       `SELECT
@@ -535,20 +538,23 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*)::int AS bucket_count
        FROM (
          SELECT
-           floor(extract(epoch FROM updated_at) / ($1::int * 60)) AS bucket_key,
+           floor(extract(epoch FROM updated_at) / ($2::int * 60)) AS bucket_key,
            COUNT(*)::int AS bucket_failures
          FROM inbound_events
          WHERE status = 'failed'
+           AND tenant_id = $1
            AND updated_at >= now() - interval '7 days'
          GROUP BY 1
        ) buckets`,
-      [alertWindowMinutes]
+      [tenantId, alertWindowMinutes]
     ),
     db.query<InboundLastAlertRow>(
       `SELECT last_sent_at
        FROM inbound_alerts
-       WHERE alert_type = 'inbound_failures'
-       LIMIT 1`
+       WHERE tenant_id = $1
+         AND alert_type = 'inbound_failures'
+       LIMIT 1`,
+      [tenantId]
     ),
     db.query<InboundFailureReasonRow>(
       `SELECT
@@ -556,11 +562,12 @@ export async function getInboundMetrics(hours = 24) {
          COUNT(*)::int AS count
        FROM inbound_events
        WHERE status = 'failed'
-         AND updated_at >= now() - ($1::int * interval '1 hour')
+         AND tenant_id = $1
+         AND updated_at >= now() - ($2::int * interval '1 hour')
        GROUP BY 1
        ORDER BY 2 DESC
        LIMIT 25`,
-      [windowHours]
+      [tenantId, windowHours]
     )
   ]);
 

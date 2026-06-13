@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { inboundEmailSchema } from "@/server/email/schema";
 import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize";
-import { resolveInboundMailbox } from "@/server/email/mailbox";
+import { resolveInboundMailbox, type MailboxRecord } from "@/server/email/mailbox";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
 import {
@@ -35,6 +35,16 @@ function getSupportAddress() {
   return domain ? `support@${domain}`.toLowerCase() : "";
 }
 
+export async function resolveInboundMailboxForEmail(data: InboundEmail) {
+  const toList = normalizeAddressList(data.to);
+  if (toList.length === 0) {
+    return null;
+  }
+
+  const supportAddress = getSupportAddress();
+  return resolveInboundMailbox(toList[0], supportAddress);
+}
+
 function applyIdentityConflictMetadata(
   metadata: Record<string, unknown>,
   conflict: CustomerResolutionConflict
@@ -55,7 +65,10 @@ function applyIdentityConflictMetadata(
   return next;
 }
 
-export async function storeInboundEmail(data: InboundEmail) {
+export async function storeInboundEmail(
+  data: InboundEmail,
+  options: { mailbox?: MailboxRecord | null } = {}
+) {
   const toList = normalizeAddressList(data.to);
   const ccList = normalizeAddressList(data.cc ?? undefined);
   const bccList = normalizeAddressList(data.bcc ?? undefined);
@@ -65,9 +78,8 @@ export async function storeInboundEmail(data: InboundEmail) {
     throw new Error("Missing from/to addresses");
   }
 
-  const supportAddress = getSupportAddress();
   const primaryRecipient = toList[0];
-  const mailbox = await resolveInboundMailbox(primaryRecipient, supportAddress);
+  const mailbox = options.mailbox ?? (await resolveInboundMailboxForEmail(data));
   if (!mailbox) {
     throw new Error(`Mailbox ${primaryRecipient} is not configured.`);
   }
@@ -90,7 +102,8 @@ export async function storeInboundEmail(data: InboundEmail) {
         status: "duplicate",
         messageId: existing.rows[0].id,
         ticketId: existing.rows[0].ticket_id ?? null,
-        mailboxId: mailbox.id
+        mailboxId: mailbox.id,
+        tenantId
       };
     }
   }
@@ -567,5 +580,5 @@ export async function storeInboundEmail(data: InboundEmail) {
     });
   }
 
-  return { status: "stored", messageId, ticketId, mailboxId: mailbox.id };
+  return { status: "stored", messageId, ticketId, mailboxId: mailbox.id, tenantId };
 }

@@ -174,6 +174,16 @@ Date: 2026-06-06
   - `src/server/email/resend-webhook.ts`
   - strict mode now requires an explicit tenant/workspace scope for Resend webhooks, verifies signatures against the matched tenant-scoped persisted Resend secret, marks the matched secret as used, and only falls back to the global `RESEND_WEBHOOK_SECRET` outside strict mode
   - scoped Resend webhook payloads are rejected before inbound processing when the primary recipient mailbox belongs to a different tenant, so a valid tenant secret cannot be used to inject another tenant's mailbox
+- Hardened inbound email operational state into v2-native `tenant_id` form:
+  - `db/migrations/0059_inbound_tenant_scope.sql`
+  - `src/server/email/inbound-events.ts`
+  - `src/server/email/inbound-retry.ts`
+  - `src/server/email/inbound-alert-config.ts`
+  - `src/server/email/inbound-alerts.ts`
+  - `src/server/email/inbound-metrics.ts`
+  - admin inbound alert/retry/metrics/settings routes now reject missing session tenant scope and require explicit tenant headers for machine maintenance calls
+  - production machine maintenance calls reuse the v2 tenant ingress signing-secret verifier instead of allowing a global secret to select arbitrary tenants
+  - inbound processing resolves the mailbox tenant before writing the idempotency ledger, retry refuses payloads that resolve to another tenant, and alert config/history/metrics are no longer global state
 - Semantically ported the v1 Twilio follow-up callback secret adoption into v2-native `tenant_id` form:
   - `src/server/calls/twilio.ts`
   - `src/server/calls/service.ts`
@@ -379,6 +389,15 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
   - billing/usage admin routes now include missing-tenant fail-closed regressions
+- Inbound email operational-state tenant-scope tests pass in the focused slice:
+  - `tests/inbound-admin-scope.test.ts`
+  - `tests/admin-inbound-alerts-api.test.ts`
+  - `tests/admin-inbound-failed-api.test.ts`
+  - `tests/admin-inbound-metrics-api.test.ts`
+  - `tests/admin-inbound-retry-api.test.ts`
+  - `tests/inbound-alerts.test.ts`
+  - `tests/inbound-tenant-isolation.test.ts`
+  - `npm run test:tenant-isolation` now includes the inbound admin alert/metrics/retry and alert-service regressions
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

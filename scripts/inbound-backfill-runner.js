@@ -1,14 +1,15 @@
 const {
   APP_URL,
   INBOUND_SHARED_SECRET,
+  INBOUND_TENANT_ID,
   INBOUND_RETRY_LIMIT,
   INBOUND_JOB_INTERVAL_SECONDS,
   INBOUND_JOB_MAX_RUNS,
   INBOUND_ALERT_EVERY_RUN
 } = process.env;
 
-if (!APP_URL || !INBOUND_SHARED_SECRET) {
-  console.error("APP_URL and INBOUND_SHARED_SECRET are required");
+if (!APP_URL || !INBOUND_SHARED_SECRET || !INBOUND_TENANT_ID) {
+  console.error("APP_URL, INBOUND_SHARED_SECRET, and INBOUND_TENANT_ID are required");
   process.exit(1);
 }
 
@@ -58,7 +59,10 @@ function sleep(ms) {
 async function callMaintenanceEndpoint(pathname) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method: "POST",
-    headers: { "x-6esk-secret": INBOUND_SHARED_SECRET }
+    headers: {
+      "x-6esk-secret": INBOUND_SHARED_SECRET,
+      "x-6esk-tenant-id": INBOUND_TENANT_ID
+    }
   });
 
   const text = await response.text();

@@ -1,14 +1,22 @@
 import { inboundEmailSchema } from "@/server/email/schema";
-import { storeInboundEmail } from "@/server/email/inbound-store";
+import { resolveInboundMailboxForEmail, storeInboundEmail } from "@/server/email/inbound-store";
 import { lockFailedInboundEvents, markInboundFailed, markInboundProcessed } from "@/server/email/inbound-events";
 import { db } from "@/server/db";
 
 type RetryInboundInput = {
+  tenantId: string;
   limit?: number;
   eventIds?: string[];
 };
 
-async function lockSpecificFailedInboundEvents(eventIds: string[]) {
+type LockedInboundEvent = {
+  id: string;
+  tenant_id: string;
+  payload: Record<string, unknown>;
+  attempt_count: number;
+};
+
+async function lockSpecificFailedInboundEvents(tenantId: string, eventIds: string[]) {
   const normalizedIds = Array.from(
     new Set(eventIds.map((value) => value.trim()).filter(Boolean))
   ).slice(0, 100);
@@ -21,24 +29,21 @@ async function lockSpecificFailedInboundEvents(eventIds: string[]) {
      SET status = 'processing',
          updated_at = now()
      WHERE status = 'failed'
-       AND id::text = ANY($1::text[])
-     RETURNING id, payload, attempt_count`,
-    [normalizedIds]
+       AND tenant_id = $1
+       AND id::text = ANY($2::text[])
+     RETURNING id, tenant_id, payload, attempt_count`,
+    [tenantId, normalizedIds]
   );
-  return result.rows as Array<{
-    id: string;
-    payload: Record<string, unknown>;
-    attempt_count: number;
-  }>;
+  return result.rows as LockedInboundEvent[];
 }
 
-export async function retryFailedInboundEvents(input: RetryInboundInput = {}) {
+export async function retryFailedInboundEvents(input: RetryInboundInput) {
   const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
   const targetIds = Array.isArray(input.eventIds) ? input.eventIds : [];
   const events =
     targetIds.length > 0
-      ? await lockSpecificFailedInboundEvents(targetIds)
-      : await lockFailedInboundEvents(limit);
+      ? await lockSpecificFailedInboundEvents(input.tenantId, targetIds)
+      : await lockFailedInboundEvents({ tenantId: input.tenantId, limit });
   if (!events.length) {
     return { requested: targetIds.length > 0 ? targetIds.length : limit, retried: 0, failed: 0, ids: [] as string[] };
   }
@@ -52,6 +57,7 @@ export async function retryFailedInboundEvents(input: RetryInboundInput = {}) {
     if (!parsed.success) {
       await markInboundFailed({
         id: event.id,
+        tenantId: event.tenant_id,
         error: "Stored payload is invalid for inbound schema"
       });
       failed += 1;
@@ -59,9 +65,15 @@ export async function retryFailedInboundEvents(input: RetryInboundInput = {}) {
     }
 
     try {
-      const result = await storeInboundEmail(parsed.data);
+      const mailbox = await resolveInboundMailboxForEmail(parsed.data);
+      if (!mailbox || mailbox.tenant_id !== event.tenant_id) {
+        throw new Error("Stored payload does not resolve to the event tenant");
+      }
+
+      const result = await storeInboundEmail(parsed.data, { mailbox });
       await markInboundProcessed({
         id: event.id,
+        tenantId: event.tenant_id,
         messageId: result.messageId,
         ticketId: result.ticketId ?? null
       });
@@ -69,7 +81,7 @@ export async function retryFailedInboundEvents(input: RetryInboundInput = {}) {
       successfulIds.push(event.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to process inbound";
-      await markInboundFailed({ id: event.id, error: message });
+      await markInboundFailed({ id: event.id, tenantId: event.tenant_id, error: message });
       failed += 1;
     }
   }

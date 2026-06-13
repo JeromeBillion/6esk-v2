@@ -34,18 +34,20 @@ export function computeIdempotencyKey(payload: InboundPayload) {
 }
 
 export async function createInboundEvent({
+  tenantId,
   idempotencyKey,
   payload
 }: {
+  tenantId: string;
   idempotencyKey: string;
   payload: Record<string, unknown>;
 }) {
   const result = await db.query<{ id: string }>(
-    `INSERT INTO inbound_events (idempotency_key, payload, status)
-     VALUES ($1, $2, 'processing')
-     ON CONFLICT (idempotency_key) DO NOTHING
+    `INSERT INTO inbound_events (tenant_id, idempotency_key, payload, status)
+     VALUES ($1, $2, $3, 'processing')
+     ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
      RETURNING id`,
-    [idempotencyKey, payload]
+    [tenantId, idempotencyKey, payload]
   );
 
   if (result.rows[0]) {
@@ -60,8 +62,9 @@ export async function createInboundEvent({
   }>(
     `SELECT id, status, message_id, ticket_id
      FROM inbound_events
-     WHERE idempotency_key = $1`,
-    [idempotencyKey]
+     WHERE tenant_id = $1
+       AND idempotency_key = $2`,
+    [tenantId, idempotencyKey]
   );
 
   return {
@@ -75,38 +78,50 @@ export async function createInboundEvent({
 
 export async function markInboundProcessed({
   id,
+  tenantId,
   messageId,
   ticketId
 }: {
   id: string;
+  tenantId: string;
   messageId: string | null;
   ticketId: string | null;
 }) {
   await db.query(
     `UPDATE inbound_events
      SET status = 'processed',
-         message_id = $2,
-         ticket_id = $3,
+         message_id = $3,
+         ticket_id = $4,
          updated_at = now()
-     WHERE id = $1`,
-    [id, messageId, ticketId]
+     WHERE id = $1
+       AND tenant_id = $2`,
+    [id, tenantId, messageId, ticketId]
   );
 }
 
-export async function markInboundFailed({ id, error }: { id: string; error: string }) {
+export async function markInboundFailed({
+  id,
+  tenantId,
+  error
+}: {
+  id: string;
+  tenantId: string;
+  error: string;
+}) {
   await db.query(
     `UPDATE inbound_events
      SET status = 'failed',
          attempt_count = attempt_count + 1,
-         last_error = $2,
+         last_error = $3,
          next_attempt_at = now() + (INTERVAL '5 minutes' * LEAST(attempt_count + 1, 10)),
          updated_at = now()
-     WHERE id = $1`,
-    [id, error.slice(0, 500)]
+     WHERE id = $1
+       AND tenant_id = $2`,
+    [id, tenantId, error.slice(0, 500)]
   );
 }
 
-export async function lockFailedInboundEvents(limit: number) {
+export async function lockFailedInboundEvents({ tenantId, limit }: { tenantId: string; limit: number }) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -117,16 +132,23 @@ export async function lockFailedInboundEvents(limit: number) {
          SELECT id
          FROM inbound_events
          WHERE status = 'failed'
+           AND tenant_id = $2
            AND next_attempt_at <= now()
          ORDER BY next_attempt_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, payload, attempt_count`,
-      [limit]
+       AND tenant_id = $2
+       RETURNING id, tenant_id, payload, attempt_count`,
+      [limit, tenantId]
     );
     await client.query("COMMIT");
-    return result.rows as Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>;
+    return result.rows as Array<{
+      id: string;
+      tenant_id: string;
+      payload: Record<string, unknown>;
+      attempt_count: number;
+    }>;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

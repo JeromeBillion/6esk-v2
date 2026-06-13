@@ -1,9 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { sendInboundFailureAlert } from "@/server/email/inbound-alerts";
-
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { resolveInboundAdminScope } from "@/server/email/inbound-admin-scope";
 
 async function safeRecordAuditLog(data: {
   tenantId: string;
@@ -26,31 +24,29 @@ async function safeRecordAuditLog(data: {
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
-  const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
-
-  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const scope = await resolveInboundAdminScope(request, user);
+  if (!scope.ok) {
+    return scope.response;
   }
 
   try {
-    const result = await sendInboundFailureAlert();
+    const result = await sendInboundFailureAlert({ tenantId: scope.tenantId });
 
     await safeRecordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "inbound_alert_checked",
-      payload: result as Record<string, unknown>
+      payload: { authMode: scope.authMode, ...(result as Record<string, unknown>) }
     });
 
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     await safeRecordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "inbound_alert_check_failed",
-      payload: { error: detail }
+      payload: { authMode: scope.authMode, error: detail }
     });
     return Response.json(
       {

@@ -5,7 +5,7 @@ import {
   markInboundFailed,
   markInboundProcessed
 } from "@/server/email/inbound-events";
-import { storeInboundEmail } from "@/server/email/inbound-store";
+import { resolveInboundMailboxForEmail, storeInboundEmail } from "@/server/email/inbound-store";
 
 export async function processInboundEmailPayload(payload: unknown) {
   const parsed = inboundEmailSchema.safeParse(payload);
@@ -17,8 +17,17 @@ export async function processInboundEmailPayload(payload: unknown) {
   }
 
   const data = parsed.data;
+  const mailbox = await resolveInboundMailboxForEmail(data);
+  if (!mailbox) {
+    return {
+      status: 400,
+      body: { error: "Inbound mailbox is not configured" }
+    };
+  }
+
+  const tenantId = mailbox.tenant_id;
   const idempotencyKey = computeIdempotencyKey(data);
-  const inboundEvent = await createInboundEvent({ idempotencyKey, payload: data });
+  const inboundEvent = await createInboundEvent({ tenantId, idempotencyKey, payload: data });
   if (inboundEvent.duplicate) {
     return {
       status: 200,
@@ -27,9 +36,10 @@ export async function processInboundEmailPayload(payload: unknown) {
   }
 
   try {
-    const result = await storeInboundEmail(data);
+    const result = await storeInboundEmail(data, { mailbox });
     await markInboundProcessed({
       id: inboundEvent.id,
+      tenantId,
       messageId: result.messageId,
       ticketId: result.ticketId ?? null
     });
@@ -40,7 +50,7 @@ export async function processInboundEmailPayload(payload: unknown) {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process inbound";
-    await markInboundFailed({ id: inboundEvent.id, error: message });
+    await markInboundFailed({ id: inboundEvent.id, tenantId, error: message });
     return {
       status: 500,
       body: { error: "Failed to process inbound", details: message }

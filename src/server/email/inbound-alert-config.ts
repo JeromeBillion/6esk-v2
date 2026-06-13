@@ -2,6 +2,7 @@ import { db } from "@/server/db";
 
 export type InboundAlertConfig = {
   source: "db" | "env";
+  tenantId: string;
   webhookUrl: string;
   threshold: number;
   windowMinutes: number;
@@ -26,19 +27,22 @@ function normalizeWebhook(value: string | null | undefined) {
   return (value ?? "").trim();
 }
 
-export async function getInboundAlertConfig(): Promise<InboundAlertConfig> {
+export async function getInboundAlertConfig(tenantId: string): Promise<InboundAlertConfig> {
   const result = await db.query<InboundAlertConfigRow>(
     `SELECT webhook_url, threshold, window_minutes, cooldown_minutes, updated_at
      FROM inbound_alert_configs
      WHERE is_active = true
+       AND tenant_id = $1
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenantId]
   );
 
   const row = result.rows[0];
   if (row) {
     return {
       source: "db",
+      tenantId,
       webhookUrl: normalizeWebhook(row.webhook_url),
       threshold: parsePositive(row.threshold, 5),
       windowMinutes: parsePositive(row.window_minutes, 30),
@@ -49,6 +53,7 @@ export async function getInboundAlertConfig(): Promise<InboundAlertConfig> {
 
   return {
     source: "env",
+    tenantId,
     webhookUrl: normalizeWebhook(process.env.INBOUND_ALERT_WEBHOOK),
     threshold: parsePositive(process.env.INBOUND_ALERT_THRESHOLD, 5),
     windowMinutes: parsePositive(process.env.INBOUND_ALERT_WINDOW_MINUTES, 30),
@@ -58,6 +63,7 @@ export async function getInboundAlertConfig(): Promise<InboundAlertConfig> {
 }
 
 export async function saveInboundAlertConfig(input: {
+  tenantId: string;
   webhookUrl: string;
   threshold: number;
   windowMinutes: number;
@@ -68,13 +74,15 @@ export async function saveInboundAlertConfig(input: {
   const windowMinutes = parsePositive(input.windowMinutes, 30);
   const cooldownMinutes = parsePositive(input.cooldownMinutes, 60);
 
-  await db.query("UPDATE inbound_alert_configs SET is_active = false WHERE is_active = true");
+  await db.query("UPDATE inbound_alert_configs SET is_active = false WHERE is_active = true AND tenant_id = $1", [
+    input.tenantId
+  ]);
   await db.query(
     `INSERT INTO inbound_alert_configs (
-      webhook_url, threshold, window_minutes, cooldown_minutes, is_active, updated_at
-    ) VALUES ($1, $2, $3, $4, true, now())`,
-    [webhookUrl || null, threshold, windowMinutes, cooldownMinutes]
+      tenant_id, webhook_url, threshold, window_minutes, cooldown_minutes, is_active, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, true, now())`,
+    [input.tenantId, webhookUrl || null, threshold, windowMinutes, cooldownMinutes]
   );
 
-  return getInboundAlertConfig();
+  return getInboundAlertConfig(input.tenantId);
 }

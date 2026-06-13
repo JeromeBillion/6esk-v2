@@ -12,6 +12,7 @@ RESEND_WEBHOOK_SECRET=<resend_webhook_secret>
 RESEND_FROM_DOMAIN=6ex.co.za
 SUPPORT_ADDRESS=support@6ex.co.za
 INBOUND_SHARED_SECRET=<random_long_secret>
+INBOUND_TENANT_ID=<tenant_uuid_for_inbound_maintenance_jobs>
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=<r2_access_key>
 R2_SECRET_ACCESS_KEY=<r2_secret>
@@ -87,6 +88,12 @@ Required worker secrets:
 - `INBOUND_URL=https://<your-6esk-domain>/api/email/inbound`
 - `INBOUND_SHARED_SECRET=<same value as 6esk>`
 
+Inbound maintenance scripts that call admin retry/alert endpoints with `INBOUND_SHARED_SECRET`
+must also set `INBOUND_TENANT_ID`. In production, use the tenant ingress signing secret
+for that tenant as the value sent in `x-6esk-secret`; the global shared-secret fallback is
+only a development/test compatibility path when tenant ingress signing secrets are not required.
+The tenant header is intentionally not inferred for machine maintenance jobs.
+
 Note: this repo currently includes worker code only. Add your own Wrangler project files (`wrangler.toml`, package manager config) before `wrangler deploy`.
 
 ## DNS Setup
@@ -130,6 +137,7 @@ Outbound test:
 
 Useful env vars:
 ```env
+INBOUND_TENANT_ID=<tenant_uuid_for_inbound_maintenance_jobs>
 INBOUND_RETRY_LIMIT=25
 INBOUND_ALERT_EVERY_RUN=true
 INBOUND_JOB_INTERVAL_SECONDS=0
