@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   approvePrivilegedAccessGrant: vi.fn(),
   revokePrivilegedAccessGrant: vi.fn(),
   reviewPrivilegedAccessGrant: vi.fn(),
+  sendPrivilegedAccessAlert: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -30,6 +31,10 @@ vi.mock("@/server/auth/privileged-access", () => ({
   approvePrivilegedAccessGrant: mocks.approvePrivilegedAccessGrant,
   revokePrivilegedAccessGrant: mocks.revokePrivilegedAccessGrant,
   reviewPrivilegedAccessGrant: mocks.reviewPrivilegedAccessGrant
+}));
+
+vi.mock("@/server/auth/privileged-access-alerts", () => ({
+  sendPrivilegedAccessAlert: mocks.sendPrivilegedAccessAlert
 }));
 
 vi.mock("@/server/audit", () => ({
@@ -79,6 +84,7 @@ describe("backoffice privileged access API", () => {
     vi.clearAllMocks();
     mocks.isInternalStaff.mockReturnValue(true);
     mocks.hasPrivilegedMfaSession.mockReturnValue(true);
+    mocks.sendPrivilegedAccessAlert.mockResolvedValue({ delivered: false, status: "missing_webhook" });
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -140,6 +146,12 @@ describe("backoffice privileged access API", () => {
         entityId: GRANT_ID
       })
     );
+    expect(mocks.sendPrivilegedAccessAlert).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      grant,
+      event: "requested",
+      actorUserId: USER_ID
+    });
   });
 
   it("does not attach the actor user id when creating a grant for another subject email", async () => {
@@ -208,6 +220,12 @@ describe("backoffice privileged access API", () => {
         entityId: GRANT_ID
       })
     );
+    expect(mocks.sendPrivilegedAccessAlert).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      grant: expect.objectContaining({ id: GRANT_ID, status: "active" }),
+      event: "approved",
+      actorUserId: internalAdmin.id
+    });
   });
 
   it("rejects grant approval by internal support users", async () => {

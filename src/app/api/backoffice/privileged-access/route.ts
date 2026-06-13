@@ -7,6 +7,7 @@ import {
   hasPrivilegedMfaSession,
   listPrivilegedAccessGrants
 } from "@/server/auth/privileged-access";
+import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
@@ -113,6 +114,12 @@ export async function POST(request: Request) {
         requestedDurationMinutes: grant.requested_duration_minutes,
         reference: grant.reference
       }
+    });
+    await sendPrivilegedAccessAlert({
+      scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
+      grant,
+      event: "requested",
+      actorUserId: auth.user.id
     });
 
     return Response.json({ grant }, { status: 201 });

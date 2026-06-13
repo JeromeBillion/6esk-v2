@@ -37,6 +37,7 @@ const envSchema = z.object({
   AUTH_OAUTH_LOGIN_ENABLED: optionalBooleanish,
   ADMIN_IP_ALLOWLIST: z.string().optional(),
   AGENT_IP_ALLOWLIST: z.string().optional(),
+  SECURITY_ALERT_WEBHOOK: z.union([z.string().url(), z.literal("")]).optional(),
   TENANT_INGRESS_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
   TENANT_INGRESS_REQUIRE_SECRETS: optionalBooleanish,
   PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,

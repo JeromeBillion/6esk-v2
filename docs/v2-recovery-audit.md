@@ -57,6 +57,7 @@ Date: 2026-06-06
   - backoffice APIs for grant request/list/stats and internal-admin approve/revoke/post-event review
   - impersonation now requires an MFA-authenticated internal staff session and an active tenant-scoped privileged-access grant for the support user
   - active grant id is recorded on the auth session, impersonation duration is capped by grant expiry, denial/start/end/review events are audited, and security readiness now reports active grants plus grants needing review
+  - recovered privileged-access security alerting in v2-native `tenant_id` form so request/approve/revoke events append alert outcomes to grant metadata and optionally notify `SECURITY_ALERT_WEBHOOK`
 - Semantically ported the Google/Microsoft auth-login adapter into v2-native `tenant_id` form:
   - `db/migrations/0053_auth_oauth_login.sql`
   - `src/server/auth/oauth-login.ts`

@@ -7,6 +7,7 @@ import {
   reviewPrivilegedAccessGrant,
   revokePrivilegedAccessGrant
 } from "@/server/auth/privileged-access";
+import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
@@ -93,6 +94,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ gra
           expiresAt: grant.expires_at
         }
       });
+      await sendPrivilegedAccessAlert({
+        scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
+        grant,
+        event: "approved",
+        actorUserId: auth.user.id
+      });
       return Response.json({ grant });
     }
 
@@ -114,6 +121,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ gra
           subjectEmail: grant.subject_email,
           revokeReason: grant.revoke_reason
         }
+      });
+      await sendPrivilegedAccessAlert({
+        scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
+        grant,
+        event: "revoked",
+        actorUserId: auth.user.id
       });
       return Response.json({ grant });
     }
