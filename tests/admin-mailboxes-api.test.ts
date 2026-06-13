@@ -27,19 +27,23 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/mailboxes/route";
 
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
 describe("admin mailboxes API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.dbQuery.mockReset();
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -79,6 +83,23 @@ describe("admin mailboxes API", () => {
       address: "support@6ex.co.za",
       type: "platform"
     });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE m.tenant_id = $1"), [
+      TENANT_ID
+    ]);
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("owner.tenant_id = m.tenant_id");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("member.tenant_id = m.tenant_id");
+  });
+
+  it("GET rejects admin-looking sessions without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({ ...buildUser("lead_admin"), tenant_id: "" });
+    mocks.isLeadAdmin.mockReturnValue(true);
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("POST upserts a platform mailbox and replaces memberships", async () => {
@@ -126,13 +147,52 @@ describe("admin mailboxes API", () => {
         type: "platform"
       }
     });
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("tenant_id = $2"),
+      ["support@6ex.co.za", TENANT_ID]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("AND tenant_id = $2"),
+      [["agent1@6ex.co.za", "agent2@6ex.co.za"], TENANT_ID]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      4,
+      expect.stringContaining("m.tenant_id = $2"),
+      ["mailbox-1", TENANT_ID]
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         action: "mailbox_created",
         entityType: "mailbox",
         entityId: "mailbox-1"
       })
     );
+  });
+
+  it("POST rejects cross-tenant mailbox address conflicts", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
+    mocks.isLeadAdmin.mockReturnValue(true);
+    mocks.dbQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/mailboxes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          address: "support@6ex.co.za",
+          memberEmails: []
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({ error: "Mailbox address belongs to another tenant" });
   });
 
   it("POST rejects unknown member emails", async () => {

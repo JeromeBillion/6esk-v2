@@ -2,8 +2,8 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const slaSchema = z.object({
   firstResponseMinutes: z.number().int().positive(),
@@ -16,7 +16,11 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const result = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
      FROM sla_configs
@@ -58,7 +62,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   await db.query(
     "UPDATE sla_configs SET is_active = false WHERE is_active = true AND tenant_id = $1",
     [tenantId]

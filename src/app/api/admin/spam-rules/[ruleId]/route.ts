@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const updateSchema = z.object({
   isActive: z.boolean().optional(),
@@ -49,13 +49,19 @@ export async function PATCH(
     return Response.json({ error: "No changes provided" }, { status: 400 });
   }
 
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const { ruleId } = await params;
-  values.push(ruleId);
+  values.push(ruleId, tenantId);
 
   const result = await db.query(
     `UPDATE spam_rules
      SET ${fields.join(", ")}
      WHERE id = $${index}
+       AND tenant_id = $${index + 1}
      RETURNING id, rule_type, scope, pattern, is_active, created_at`,
     values
   );
@@ -65,7 +71,7 @@ export async function PATCH(
   }
 
   await recordAuditLog({
-    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "spam_rule_updated",
     entityType: "spam_rule",
@@ -86,12 +92,20 @@ export async function DELETE(
   }
 
   const { ruleId } = await params;
-  const result = await db.query("DELETE FROM spam_rules WHERE id = $1 RETURNING id", [ruleId]);
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const result = await db.query("DELETE FROM spam_rules WHERE id = $1 AND tenant_id = $2 RETURNING id", [
+    ruleId,
+    tenantId
+  ]);
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
-    tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "spam_rule_deleted",
     entityType: "spam_rule",

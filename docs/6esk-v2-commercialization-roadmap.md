@@ -244,6 +244,7 @@ The current v2 recovery branch keeps `users` and `auth_sessions` as the identity
 - Password and OAuth sign-in both route enrolled privileged users through TOTP MFA before workspace access.
 - Session creation, logout, session revocation, password reset revocation, and support impersonation session mutation now include tenant-derived SQL evidence so production tenant-query guard strict mode does not block core auth flows and break-glass session updates cannot be applied by cookie hash alone.
 - Tenant admin user/role management now lists only tenant-owned roles, rejects admin sessions without tenant scope, validates role assignment under the current tenant, prevents cross-tenant email conflict updates, and creates personal mailboxes through tenant-scoped mailbox ownership.
+- Admin mailbox, SLA, and spam-rule configuration routes now reject admin sessions without tenant scope; mailbox owner/member joins and membership mutations are tenant-bound, cross-tenant mailbox address conflicts return 409, and spam-rule create/update/delete writes include tenant predicates.
 
 Remaining auth work is deploy/runtime evidence rather than core code: register provider callback URLs, set `AUTH_OAUTH_LOGIN_ENABLED=true` with Google/Microsoft auth credentials, perform staging OAuth smoke tests, and decide whether a future enterprise OIDC broker/SCIM track is needed.
 

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createSchema = z.object({
   ruleType: z.enum(["allow", "block"]),
@@ -17,7 +17,11 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const result = await db.query(
     `SELECT id, rule_type, scope, pattern, is_active, created_at
      FROM spam_rules
@@ -46,14 +50,18 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const result = await db.query(
-    `INSERT INTO spam_rules (rule_type, scope, pattern)
-     VALUES ($1, $2, $3)
+    `INSERT INTO spam_rules (rule_type, scope, pattern, tenant_id)
+     VALUES ($1, $2, $3, $4)
      RETURNING id, rule_type, scope, pattern, is_active, created_at`,
-    [parsed.data.ruleType, parsed.data.scope, parsed.data.pattern.toLowerCase()]
+    [parsed.data.ruleType, parsed.data.scope, parsed.data.pattern.toLowerCase(), tenantId]
   );
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   await recordAuditLog({
     tenantId,
     actorUserId: user?.id ?? null,

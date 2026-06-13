@@ -88,6 +88,8 @@ Date: 2026-06-06
   - tenant admins can export customer-safe usage CSV/JSON with current lifecycle invoice estimates, and customer-safe invoice JSON from persisted invoice lines
   - export audit events record metadata only, not row payloads, tenant IDs in customer payloads, or raw usage/customer metadata
   - admin billing/usage routes now reject admin-looking sessions that lack tenant scope instead of falling back to `DEFAULT_TENANT_ID`
+  - admin mailbox, SLA, and spam-rule configuration routes now reject admin-looking sessions without tenant scope instead of falling back to `DEFAULT_TENANT_ID`
+  - mailbox owner/member joins and mailbox membership mutations are scoped through the mailbox tenant, cross-tenant mailbox address conflicts return 409 instead of mutating another tenant, and spam-rule create/update/delete writes include tenant predicates
   - the runtime tenant query guard now includes the v2 `tenant_billing_*`, `tenant_subscriptions`, `tenant_invoices`, `tenant_invoice_lines`, and `tenant_collection_events` tables
 - Semantically ported AI prompt-safety value without replacing native Dexter:
   - `src/server/ai/prompt-safety.ts`

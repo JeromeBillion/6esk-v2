@@ -2,8 +2,8 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const createMailboxSchema = z.object({
   address: z.string().email(),
@@ -16,7 +16,11 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const result = await db.query(
     `SELECT
         m.id,
@@ -37,9 +41,9 @@ export async function GET() {
           '[]'::json
         ) AS members
      FROM mailboxes m
-     LEFT JOIN users owner ON owner.id = m.owner_user_id
+     LEFT JOIN users owner ON owner.id = m.owner_user_id AND owner.tenant_id = m.tenant_id
      LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
-     LEFT JOIN users member ON member.id = mm.user_id
+     LEFT JOIN users member ON member.id = mm.user_id AND member.tenant_id = m.tenant_id
      WHERE m.tenant_id = $1
      GROUP BY m.id, owner.email
      ORDER BY m.type, m.address`,
@@ -69,10 +73,14 @@ export async function POST(request: Request) {
 
   const address = parsed.data.address.trim().toLowerCase();
   const memberEmails = [...new Set(parsed.data.memberEmails.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const existing = await db.query<{ id: string; type: "platform" | "personal" }>(
-    "SELECT id, type FROM mailboxes WHERE address = $1 LIMIT 1",
-    [address]
+    "SELECT id, type FROM mailboxes WHERE address = $1 AND tenant_id = $2 LIMIT 1",
+    [address, tenantId]
   );
 
   const existingMailbox = existing.rows[0] ?? null;
@@ -89,8 +97,9 @@ export async function POST(request: Request) {
       `SELECT id, email, display_name
        FROM users
        WHERE lower(email) = ANY($1::text[])
+         AND tenant_id = $2
        ORDER BY email`,
-      [memberEmails]
+      [memberEmails, tenantId]
     );
     resolvedMembers = memberResult.rows;
 
@@ -108,22 +117,35 @@ export async function POST(request: Request) {
     }
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const mailboxResult = await db.query<{ id: string; address: string; type: "platform"; created_at: string }>(
     `INSERT INTO mailboxes (type, address, owner_user_id, tenant_id)
      VALUES ('platform', $1, NULL, $2)
      ON CONFLICT (address) DO UPDATE SET address = EXCLUDED.address
+     WHERE mailboxes.tenant_id = EXCLUDED.tenant_id
      RETURNING id, address, type, created_at`,
     [address, tenantId]
   );
   const mailbox = mailboxResult.rows[0];
+  if (!mailbox) {
+    return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
+  }
 
-  await db.query("DELETE FROM mailbox_memberships WHERE mailbox_id = $1", [mailbox.id]);
+  await db.query(
+    `DELETE FROM mailbox_memberships mm
+     USING mailboxes m
+     WHERE mm.mailbox_id = $1
+       AND mm.mailbox_id = m.id
+       AND m.tenant_id = $2`,
+    [mailbox.id, tenantId]
+  );
   for (const member of resolvedMembers) {
     await db.query(
       `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-       VALUES ($1, $2, 'member')`,
-      [mailbox.id, member.id]
+       SELECT $1, $2, 'member'
+       FROM mailboxes m
+       WHERE m.id = $1
+         AND m.tenant_id = $3`,
+      [mailbox.id, member.id, tenantId]
     );
   }
 
