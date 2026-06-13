@@ -54,6 +54,12 @@ export type WorkspaceModuleUsageSummary = {
   workspaceKey: string;
   windowDays: number;
   generatedAt: string;
+  daily: Array<{
+    date: string;
+    totalQuantity: number;
+    eventCount: number;
+    modules: Record<keyof WorkspaceModuleFlags, number>;
+  }>;
   modules: Array<{
     moduleKey: keyof WorkspaceModuleFlags;
     totalQuantity: number;
@@ -577,6 +583,13 @@ export function getWorkspaceModuleUsage(days = 30) {
   return apiFetch<{ summary: WorkspaceModuleUsageSummary }>(
     `/api/admin/workspace/usage?days=${days}`
   );
+}
+
+export function getWorkspaceUsageExportUrl(days = 30, format: "csv" | "json" = "csv") {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  params.set("format", format);
+  return `/api/admin/workspace/usage/export?${params.toString()}`;
 }
 
 export async function listTags(signal?: AbortSignal) {

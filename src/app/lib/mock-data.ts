@@ -2449,6 +2449,34 @@ function buildInitialState(): DemoState {
       workspaceKey: "primary",
       windowDays: 30,
       generatedAt: DEMO_NOW,
+      daily: [
+        {
+          date: "2026-06-05",
+          totalQuantity: 48,
+          eventCount: 48,
+          modules: {
+            email: 19,
+            whatsapp: 14,
+            voice: 4,
+            aiAutomation: 6,
+            dexterOrchestration: 3,
+            vanillaWebchat: 2
+          }
+        },
+        {
+          date: "2026-06-06",
+          totalQuantity: 61,
+          eventCount: 61,
+          modules: {
+            email: 24,
+            whatsapp: 18,
+            voice: 5,
+            aiAutomation: 8,
+            dexterOrchestration: 4,
+            vanillaWebchat: 2
+          }
+        }
+      ],
       modules: [
         {
           moduleKey: "email",

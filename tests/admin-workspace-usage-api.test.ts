@@ -2,11 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
+  isTenantAdmin: vi.fn(),
   getWorkspaceModuleUsageSummary: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
+}));
+
+vi.mock("@/server/auth/roles", () => ({
+  isTenantAdmin: mocks.isTenantAdmin
 }));
 
 vi.mock("@/server/module-metering", () => ({
@@ -18,6 +23,7 @@ import { GET } from "@/app/api/admin/workspace/usage/route";
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    tenant_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -32,12 +38,15 @@ describe("workspace usage admin API", () => {
       workspaceKey: "primary",
       windowDays: 30,
       generatedAt: "2026-03-29T07:00:00.000Z",
+      daily: [],
       modules: []
     });
+    mocks.isTenantAdmin.mockReturnValue(true);
   });
 
   it("returns 403 for non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+    mocks.isTenantAdmin.mockReturnValue(false);
 
     const response = await GET(new Request("http://localhost/api/admin/workspace/usage"));
     const body = await response.json();
@@ -61,6 +70,10 @@ describe("workspace usage admin API", () => {
         windowDays: 30
       }
     });
-    expect(mocks.getWorkspaceModuleUsageSummary).toHaveBeenCalledWith({ windowDays: 45 });
+    expect(mocks.getWorkspaceModuleUsageSummary).toHaveBeenCalledWith({
+      tenantId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      workspaceKey: "primary",
+      windowDays: 45
+    });
   });
 });

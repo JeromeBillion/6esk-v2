@@ -73,6 +73,7 @@ import {
   getSlaConfig,
   getWorkspaceModules,
   getWorkspaceModuleUsage,
+  getWorkspaceUsageExportUrl,
   getWhatsAppAccount,
   getWhatsAppOutboxMetrics,
   listFailedWhatsAppEvents,
@@ -468,6 +469,10 @@ export default function AdminClient() {
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
     [agents, selectedAgentId]
+  );
+  const usageDailyMax = useMemo(
+    () => Math.max(1, ...(workspaceUsage?.daily ?? []).map((bucket) => bucket.totalQuantity)),
+    [workspaceUsage]
   );
   const filteredDeadLetters = useMemo(
     () =>
@@ -1852,12 +1857,52 @@ export default function AdminClient() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Module Usage (30 days)</CardTitle>
-                  <CardDescription>
-                    Lean pilot metering for billable modules and AI runtime actions.
-                  </CardDescription>
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <CardTitle>Module Usage (30 days)</CardTitle>
+                      <CardDescription>
+                        Lean pilot metering for billable modules and AI runtime actions.
+                      </CardDescription>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <a href={getWorkspaceUsageExportUrl(workspaceUsage?.windowDays ?? 30, "csv")}>
+                          Export CSV
+                        </a>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
+                        <a href={getWorkspaceUsageExportUrl(workspaceUsage?.windowDays ?? 30, "json")}>
+                          Export JSON
+                        </a>
+                      </Button>
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {(workspaceUsage?.daily?.length ?? 0) > 0 ? (
+                    <div className="rounded-lg border border-neutral-200 p-4">
+                      <div className="flex h-24 items-end gap-1">
+                        {(workspaceUsage?.daily ?? []).slice(-30).map((bucket) => (
+                          <div
+                            key={bucket.date}
+                            className="flex min-w-2 flex-1 items-end"
+                            title={`${bucket.date}: ${bucket.totalQuantity} events`}
+                          >
+                            <span
+                              className="block w-full rounded-t bg-neutral-900"
+                              style={{
+                                height: `${Math.max(8, Math.round((bucket.totalQuantity / usageDailyMax) * 100))}%`
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between gap-3 text-xs text-neutral-500">
+                        <span>Daily usage</span>
+                        <span>{workspaceUsage?.daily?.length ?? 0} active days</span>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {(workspaceUsage?.modules ?? []).map((moduleUsage) => {
                       const moduleField = WORKSPACE_MODULE_FIELDS.find(

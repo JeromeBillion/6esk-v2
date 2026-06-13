@@ -288,7 +288,9 @@ Current implementation status:
 - tenant-scoped billing lifecycle persistence now exists on migration `0054`, covering billing accounts, subscriptions, subscription items, signed adjustments, invoices, invoice lines, and collection/dunning events
 - `src/server/billing/lifecycle.ts` derives subscription items from the v2 modular catalog, estimates invoice lines from tenant-scoped usage events, applies pending credits/refunds/write-offs/prorations, computes VAT, creates invoice drafts, transitions invoice lifecycle status, and records collection events
 - tenant admins can read lifecycle billing visibility through the workspace billing API; internal staff can sync subscriptions, create audited adjustments, create invoice drafts, transition invoices, and record collection events through the backoffice billing API
-- provider payment collection, real payment-provider reconciliation, invoice PDF/export, and deployed finance dashboard evidence remain deploy/runtime work
+- tenant admins can now export customer-safe invoice JSON from persisted `tenant_invoices` / `tenant_invoice_lines` without tenant IDs or raw metadata, with metadata-only audit evidence
+- Admin module usage now includes daily chart buckets, tenant-scoped current-estimate linkage to the lifecycle invoice, and customer-safe CSV/JSON usage exports with metadata-only audit evidence
+- provider payment collection, real payment-provider reconciliation, invoice PDF rendering, and deployed finance dashboard evidence remain deploy/runtime work
 
 Required page capabilities:
 - current-month estimated bill, split by base modules, add-ons, usage charges, credits, and VAT where applicable
@@ -902,7 +904,7 @@ Current implementation status:
 - invoice drafts persist explainable line items, apply pending adjustments, and prevent duplicate active invoices per tenant/workspace billing period so invoice totals reconcile to the same source estimate
 - collection/dunning events are tenant-scoped records that update billing account collection posture
 - remaining work for item 6 is provider-spend/payment-provider reconciliation with deployed credentials and external dashboard evidence
-- remaining work for item 9 is customer-facing chart/export polish on top of the lifecycle API
+- item 9 is locally covered for launch-readiness by daily usage buckets, Admin chart visibility, customer-safe usage CSV/JSON export, and customer-safe invoice JSON export on top of the lifecycle API; invoice PDF rendering remains a later presentation layer unless required for the first deployment
 
 ### Financial Control Requirements
 - usage records must be tenant-scoped, append-only or reconciliation-safe, and traceable to source events
@@ -1047,7 +1049,7 @@ Still outstanding before v2 main can be considered deploy-ready:
 - provider call-site adoption for persisted tenant ingress/provider webhook secrets is now complete for WhatsApp, Resend, Twilio, and Deepgram/STT core code paths, including tenant-admin provider-number management; remaining provider evidence is deployment/runtime validation with real credentials and dashboards
 - OAuth runtime evidence: provider app callback registration, staging Google/Microsoft smoke tests, and dashboard credential verification are deploy dependencies rather than additional core code
 - AI follow-through: remaining policy-pipeline stages beyond the current route-level tool policy gate, native/runtime worker step/tool-call ledger population beyond `/api/agent/v1/actions`, stronger prompt-injection evals, vetted binary extraction/malware scanning, embeddings/vector search, and rollout evidence while preserving native Dexter and v2 runtime files
-- billing follow-through: provider payment/reconciliation wiring, invoice PDF/export, chart/export UI polish, and deployed finance dashboard evidence
+- billing follow-through: customer-safe invoice export and usage chart/export polish are now locally recovered; provider payment/reconciliation wiring, invoice PDF rendering, and deployed finance dashboard evidence remain deployment/runtime work
 - tenant export/offboarding/delete workflows remain deferred to post-launch by instruction; query-scope enforcement is now recovered for launch
 - full verification: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `git diff --check`, stale-coupling scan, migration-sequence check, and roadmap reality check
 

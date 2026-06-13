@@ -6,7 +6,10 @@ import { getTenantById } from "@/server/tenant/lifecycle";
 import { encrypt } from "@/server/security/encryption";
 import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
-import { getTenantBillingLifecycleSnapshot } from "@/server/billing/lifecycle";
+import {
+  getCustomerSafeInvoiceExport,
+  getTenantBillingLifecycleSnapshot
+} from "@/server/billing/lifecycle";
 
 const billingSettingsSchema = z.object({
   aiProviderMode: z.enum(["managed", "byo", "none"]).optional(),
@@ -15,13 +18,49 @@ const billingSettingsSchema = z.object({
   aiProviderBaseUrl: z.string().url().optional()
 });
 
+function safeAttachmentStem(value: string) {
+  return value.replace(/[^a-z0-9_-]+/gi, "-").slice(0, 100) || "invoice";
+}
+
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!isTenantAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const url = new URL(request.url);
+  const invoiceId = url.searchParams.get("invoiceId");
   const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  if (invoiceId) {
+    const parsedInvoiceId = z.string().uuid().safeParse(invoiceId);
+    if (!parsedInvoiceId.success) {
+      return Response.json({ error: "Invalid invoiceId" }, { status: 400 });
+    }
+    const invoiceExport = await getCustomerSafeInvoiceExport({
+      tenantId,
+      invoiceId: parsedInvoiceId.data
+    });
+    await recordAuditLog({
+      tenantId,
+      actorUserId: user?.id ?? null,
+      action: "billing_invoice_exported",
+      entityType: "tenant_invoice",
+      entityId: parsedInvoiceId.data,
+      data: {
+        formatVersion: invoiceExport.formatVersion,
+        workspaceKey: invoiceExport.workspaceKey,
+        status: invoiceExport.invoice.status,
+        lineCount: invoiceExport.invoice.lines.length
+      }
+    });
+    const invoiceStem = safeAttachmentStem(invoiceExport.invoice.invoiceNumber);
+    return Response.json(invoiceExport, {
+      headers: {
+        "content-disposition": `attachment; filename="6esk-invoice-${invoiceStem}.json"`
+      }
+    });
+  }
+
   const tenant = await getTenantById(tenantId);
   
   if (!tenant) {

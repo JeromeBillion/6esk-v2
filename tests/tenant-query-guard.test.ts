@@ -36,6 +36,11 @@ describe("tenant query guard", () => {
         mode: "strict"
       })
     ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM tenant_invoices WHERE id = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
   });
 
   it("warns instead of blocking in warn mode", () => {

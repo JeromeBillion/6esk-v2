@@ -26,6 +26,12 @@ export type WorkspaceModuleUsageSummary = {
   workspaceKey: string;
   windowDays: number;
   generatedAt: string;
+  daily: Array<{
+    date: string;
+    totalQuantity: number;
+    eventCount: number;
+    modules: Record<WorkspaceModuleKey, number>;
+  }>;
   modules: Array<{
     moduleKey: WorkspaceModuleKey;
     totalQuantity: number;
@@ -141,6 +147,25 @@ export async function getWorkspaceModuleUsageSummary(input?: {
      ORDER BY module_key, usage_kind, actor_type`,
     [tenantId, workspaceKey, String(windowDays)]
   );
+  const dailyResult = await db.query<{
+    day: string;
+    module_key: WorkspaceModuleKey;
+    total_quantity: string | number;
+    event_count: string | number;
+  }>(
+    `SELECT
+       to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+       module_key,
+       SUM(quantity)::bigint AS total_quantity,
+       COUNT(*)::bigint AS event_count
+     FROM workspace_module_usage_events
+     WHERE tenant_id = $1
+       AND workspace_key = $2
+       AND created_at >= now() - ($3::text || ' days')::interval
+     GROUP BY day, module_key
+     ORDER BY day ASC, module_key ASC`,
+    [tenantId, workspaceKey, String(windowDays)]
+  );
 
   const modulesMap = new Map<
     WorkspaceModuleKey,
@@ -196,10 +221,51 @@ export async function getWorkspaceModuleUsageSummary(input?: {
     });
   }
 
+  const dailyMap = new Map<
+    string,
+    {
+      date: string;
+      totalQuantity: number;
+      eventCount: number;
+      modules: Record<WorkspaceModuleKey, number>;
+    }
+  >();
+
+  function emptyDailyModules(): Record<WorkspaceModuleKey, number> {
+    return {
+      email: 0,
+      whatsapp: 0,
+      voice: 0,
+      aiAutomation: 0,
+      dexterOrchestration: 0,
+      vanillaWebchat: 0
+    };
+  }
+
+  for (const row of dailyResult.rows) {
+    if (!MODULE_KEYS.includes(row.module_key)) continue;
+    const day = row.day;
+    const bucket =
+      dailyMap.get(day) ??
+      {
+        date: day,
+        totalQuantity: 0,
+        eventCount: 0,
+        modules: emptyDailyModules()
+      };
+    const quantity = Number(row.total_quantity ?? 0);
+    const eventCount = Number(row.event_count ?? 0);
+    bucket.totalQuantity += quantity;
+    bucket.eventCount += eventCount;
+    bucket.modules[row.module_key] += quantity;
+    dailyMap.set(day, bucket);
+  }
+
   return {
     workspaceKey,
     windowDays,
     generatedAt: new Date().toISOString(),
+    daily: Array.from(dailyMap.values()).sort((left, right) => left.date.localeCompare(right.date)),
     modules: MODULE_KEYS.map((key) => {
       const summary = modulesMap.get(key)!;
       summary.usageKinds.sort((left, right) => right.quantity - left.quantity);

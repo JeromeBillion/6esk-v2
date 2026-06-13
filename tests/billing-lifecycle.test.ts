@@ -22,6 +22,7 @@ import {
   calculateProrationCent,
   createBillingAdjustment,
   createInvoiceDraft,
+  getCustomerSafeInvoiceExport,
   getTenantBillingLifecycleSnapshot,
   syncTenantSubscriptionFromCatalog
 } from "@/server/billing/lifecycle";
@@ -391,5 +392,76 @@ describe("billing lifecycle service", () => {
       expect.anything()
     );
     expect(mocks.recordAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("exports customer-safe invoice data inside tenant and workspace scope", async () => {
+    const invoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    mocks.dbQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: invoiceId,
+            invoice_number: "6ESK-202606-000004",
+            status: "open",
+            currency: "ZAR",
+            period_start: "2026-06-01T00:00:00.000Z",
+            period_end: "2026-07-01T00:00:00.000Z",
+            subtotal_cent: 69900,
+            usage_cent: 150,
+            adjustment_cent: 0,
+            tax_cent: 10508,
+            total_cent: 80558,
+            amount_due_cent: 80558,
+            due_at: "2026-07-08T00:00:00.000Z",
+            issued_at: "2026-07-01T00:00:00.000Z",
+            paid_at: null,
+            voided_at: null,
+            created_at: "2026-07-01T00:00:00.000Z",
+            plan_id: "standard"
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "line-1",
+            line_type: "usage",
+            module_key: "email",
+            usage_kind: "outbound_email",
+            description: "Email usage: outbound_email",
+            quantity: "30",
+            unit_amount_cent: 5,
+            amount_cent: 150,
+            currency: "ZAR"
+          }
+        ]
+      });
+
+    const invoiceExport = await getCustomerSafeInvoiceExport({
+      tenantId: TENANT_ID,
+      invoiceId
+    });
+
+    expect(invoiceExport).toMatchObject({
+      formatVersion: "workspace-invoice-export.v1",
+      workspaceKey: "primary",
+      invoice: {
+        id: invoiceId,
+        invoiceNumber: "6ESK-202606-000004",
+        planId: "standard",
+        totalCent: 80558,
+        lines: [
+          {
+            lineType: "usage",
+            moduleKey: "email",
+            usageKind: "outbound_email",
+            amountCent: 150
+          }
+        ]
+      }
+    });
+    expect(mocks.dbQuery.mock.calls[0][1]).toEqual([TENANT_ID, "primary", invoiceId]);
+    expect(mocks.dbQuery.mock.calls[1][1]).toEqual([TENANT_ID, "primary", invoiceId]);
+    expect(JSON.stringify(invoiceExport)).not.toContain(TENANT_ID);
   });
 });

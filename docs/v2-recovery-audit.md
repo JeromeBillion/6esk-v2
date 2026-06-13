@@ -69,6 +69,16 @@ Date: 2026-06-06
   - estimated invoices are built from persisted subscription items, tenant-scoped usage events, pending adjustments, and VAT rules
   - internal backoffice billing actions can sync subscriptions, create audited credits/refunds/write-offs/prorations, create duplicate-safe invoice drafts, transition invoice status, and record collection events
   - tenant admins can read current billing lifecycle visibility through the workspace billing API
+- Semantically ported the v1 customer-facing billing/usage export value into v2-native `tenant_id` form:
+  - `src/server/billing/usage-export.ts`
+  - `src/app/api/admin/workspace/usage/export/route.ts`
+  - `src/app/api/admin/workspace/billing/route.ts`
+  - `src/server/module-metering.ts`
+  - `src/app/admin/AdminClient.tsx`
+  - module usage summaries now include daily chart buckets under tenant/workspace scope
+  - tenant admins can export customer-safe usage CSV/JSON with current lifecycle invoice estimates, and customer-safe invoice JSON from persisted invoice lines
+  - export audit events record metadata only, not row payloads, tenant IDs in customer payloads, or raw usage/customer metadata
+  - the runtime tenant query guard now includes the v2 `tenant_billing_*`, `tenant_subscriptions`, `tenant_invoices`, `tenant_invoice_lines`, and `tenant_collection_events` tables
 - Semantically ported AI prompt-safety value without replacing native Dexter:
   - `src/server/ai/prompt-safety.ts`
   - `src/server/ai/knowledge-retrieval.ts`
@@ -187,7 +197,7 @@ Deferred for future semantic port, not lost:
 - Tenant ingress/provider webhook adoption for WhatsApp, Resend, Twilio, and Deepgram/STT core paths is now ported into v2-native `tenant_id` form, including tenant-admin provider-number management. Remaining work in this area is runtime evidence with real provider dashboards/credentials, which is intentionally deferred to deployment validation.
 - Data lifecycle export/delete/offboarding utilities from the wrong-folder work remain intentionally deferred to post-launch per instruction; runtime query-scope enforcement was retained because it is a launch security guard, not lifecycle machinery.
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
-- Billing provider reconciliation and customer-facing export polish: core lifecycle persistence is now ported; provider payment evidence, invoice PDF/export, and chart/export UI polish remain future deploy/runtime work.
+- Billing provider reconciliation and presentation polish: core lifecycle persistence, customer-safe invoice export, and usage chart/export polish are now ported; provider payment evidence, invoice PDF rendering, and deployed finance dashboard evidence remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
 
 ## Verification Expectations
@@ -285,3 +295,8 @@ Before this recovery branch can replace `main`, run:
 - Tenant query guard tests pass in the focused slice:
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
+- Billing usage/export tests pass in the focused slice:
+  - `tests/admin-workspace-usage-api.test.ts`
+  - `tests/admin-workspace-usage-export-api.test.ts`
+  - `tests/admin-workspace-billing-api.test.ts`
+  - `tests/billing-lifecycle.test.ts`

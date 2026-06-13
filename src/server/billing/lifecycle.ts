@@ -145,6 +145,52 @@ type InvoiceRow = {
   created_at: string | Date;
 };
 
+type InvoiceLineRow = {
+  id: string;
+  line_type: BillingEstimateLine["lineType"];
+  module_key: string | null;
+  usage_kind: string | null;
+  description: string;
+  quantity: string | number;
+  unit_amount_cent: string | number;
+  amount_cent: string | number;
+  currency: string;
+};
+
+export type CustomerSafeInvoiceExport = {
+  formatVersion: "workspace-invoice-export.v1";
+  generatedAt: string;
+  workspaceKey: string;
+  invoice: {
+    id: string;
+    invoiceNumber: string;
+    status: InvoiceStatus;
+    planId: string;
+    currency: string;
+    periodStart: string;
+    periodEnd: string;
+    dueAt: string | null;
+    issuedAt: string | null;
+    paidAt: string | null;
+    subtotalCent: number;
+    usageCent: number;
+    adjustmentCent: number;
+    taxCent: number;
+    totalCent: number;
+    amountDueCent: number;
+    lines: Array<{
+      lineType: BillingEstimateLine["lineType"];
+      moduleKey: string | null;
+      usageKind: string | null;
+      description: string;
+      quantity: number;
+      unitAmountCent: number;
+      amountCent: number;
+      currency: string;
+    }>;
+  };
+};
+
 export type BillingLifecycleSnapshot = {
   tenantId: string;
   workspaceKey: string;
@@ -1381,4 +1427,104 @@ export async function recordCollectionEvent(input: {
     }
   });
   return result.rows[0];
+}
+
+function invoiceLineFromRow(row: InvoiceLineRow): CustomerSafeInvoiceExport["invoice"]["lines"][number] {
+  return {
+    lineType: row.line_type,
+    moduleKey: row.module_key,
+    usageKind: row.usage_kind,
+    description: row.description,
+    quantity: toNumber(row.quantity),
+    unitAmountCent: toInt(row.unit_amount_cent),
+    amountCent: toInt(row.amount_cent),
+    currency: row.currency
+  };
+}
+
+export async function getCustomerSafeInvoiceExport(input: {
+  tenantId: string;
+  workspaceKey?: string;
+  invoiceId: string;
+}): Promise<CustomerSafeInvoiceExport> {
+  const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
+  const invoiceResult = await db.query<InvoiceRow & { plan_id: string | null }>(
+    `SELECT i.id,
+            i.invoice_number,
+            i.status,
+            i.currency,
+            i.period_start,
+            i.period_end,
+            i.subtotal_cent,
+            i.usage_cent,
+            i.adjustment_cent,
+            i.tax_cent,
+            i.total_cent,
+            i.amount_due_cent,
+            i.due_at,
+            i.issued_at,
+            i.paid_at,
+            i.voided_at,
+            i.created_at,
+            COALESCE(s.plan_id, t.plan) AS plan_id
+     FROM tenant_invoices i
+     JOIN tenants t
+       ON t.id = i.tenant_id
+     LEFT JOIN tenant_subscriptions s
+       ON s.id = i.subscription_id
+      AND s.tenant_id = i.tenant_id
+      AND s.workspace_key = i.workspace_key
+     WHERE i.tenant_id = $1
+       AND i.workspace_key = $2
+       AND i.id = $3
+     LIMIT 1`,
+    [input.tenantId, workspaceKey, input.invoiceId]
+  );
+  const invoice = invoiceResult.rows[0];
+  if (!invoice) {
+    throw new Error("Invoice not found.");
+  }
+
+  const linesResult = await db.query<InvoiceLineRow>(
+    `SELECT id,
+            line_type,
+            module_key,
+            usage_kind,
+            description,
+            quantity,
+            unit_amount_cent,
+            amount_cent,
+            currency
+     FROM tenant_invoice_lines
+     WHERE tenant_id = $1
+       AND workspace_key = $2
+       AND invoice_id = $3
+     ORDER BY created_at ASC, id ASC`,
+    [input.tenantId, workspaceKey, input.invoiceId]
+  );
+
+  return {
+    formatVersion: "workspace-invoice-export.v1",
+    generatedAt: new Date().toISOString(),
+    workspaceKey,
+    invoice: {
+      id: invoice.id,
+      invoiceNumber: invoice.invoice_number,
+      status: invoice.status,
+      planId: invoice.plan_id ?? "standard",
+      currency: invoice.currency,
+      periodStart: requiredIso(invoice.period_start),
+      periodEnd: requiredIso(invoice.period_end),
+      dueAt: toIso(invoice.due_at),
+      issuedAt: toIso(invoice.issued_at),
+      paidAt: toIso(invoice.paid_at),
+      subtotalCent: toInt(invoice.subtotal_cent),
+      usageCent: toInt(invoice.usage_cent),
+      adjustmentCent: toInt(invoice.adjustment_cent),
+      taxCent: toInt(invoice.tax_cent),
+      totalCent: toInt(invoice.total_cent),
+      amountDueCent: toInt(invoice.amount_due_cent),
+      lines: linesResult.rows.map(invoiceLineFromRow)
+    }
+  };
 }
