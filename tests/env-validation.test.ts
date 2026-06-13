@@ -158,6 +158,22 @@ describe("validateEnv", () => {
     ).toThrow(/TENANT_INGRESS_REQUIRE_SECRETS must not be false in production/);
   });
 
+  it("rejects disabled or invalid configured rate limits in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        RATE_LIMIT_AUTH_LOGIN: "0"
+      })
+    ).toThrow(/RATE_LIMIT_AUTH_LOGIN must be a positive integer in production/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        RATE_LIMIT_ADMIN: "not-a-number"
+      })
+    ).toThrow(/RATE_LIMIT_ADMIN must be a positive integer in production/);
+  });
+
   it("requires Knowledge Base scanner and extractor services in production", () => {
     expect(() =>
       validateEnv({

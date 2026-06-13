@@ -6,6 +6,21 @@ const optionalNonEmptyString = z.string().optional();
 const optionalSecretString = z.union([z.string().min(16), z.literal("")]).optional();
 const optionalBooleanish = z.string().optional();
 
+const RATE_LIMIT_KEYS = [
+  "RATE_LIMIT_ADMIN",
+  "RATE_LIMIT_AGENT",
+  "RATE_LIMIT_AUTH_LOGIN",
+  "RATE_LIMIT_PORTAL_TICKET",
+  "RATE_LIMIT_TICKET_CREATE",
+  "RATE_LIMIT_TICKET_REPLY",
+  "RATE_LIMIT_DRAFT_SEND",
+  "RATE_LIMIT_EMAIL_SEND",
+  "RATE_LIMIT_WHATSAPP_SEND",
+  "RATE_LIMIT_WHATSAPP_RESEND",
+  "RATE_LIMIT_WHATSAPP_INBOUND",
+  "RATE_LIMIT_CALLS_OUTBOUND"
+];
+
 const envSchema = z.object({
   APP_URL: z.string().url(),
   DATABASE_URL: nonEmptyString,
@@ -318,6 +333,19 @@ function addKnowledgeIngestionIssues(source: EnvSource, strictProduction: boolea
   ], issues);
 }
 
+function addRateLimitIssues(source: EnvSource, strictProduction: boolean, issues: string[]) {
+  if (!strictProduction) return;
+
+  for (const key of RATE_LIMIT_KEYS) {
+    const value = readString(source, key);
+    if (!value) continue;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      issues.push(`${key} must be a positive integer in production`);
+    }
+  }
+}
+
 export function validateEnv(source: EnvSource = process.env, options: ValidateEnvOptions = {}) {
   const parsed = envSchema.safeParse(source);
   const issues: string[] = [];
@@ -329,6 +357,7 @@ export function validateEnv(source: EnvSource = process.env, options: ValidateEn
   const strictProduction = options.strictProduction ?? source.NODE_ENV === "production";
   addTenantQueryGuardIssues(source, strictProduction, issues);
   addKnowledgeIngestionIssues(source, strictProduction, issues);
+  addRateLimitIssues(source, strictProduction, issues);
   if (strictProduction) {
     addProductionIssues(source, issues);
   }

@@ -209,6 +209,14 @@ Date: 2026-06-06
   - `.github/workflows/tenant-isolation.yml`
   - `npm run test:ai-safety` remains the AI prompt/tool/output/customer-context local release gate
   - `npm run test:tenant-isolation` now runs the current v2 tenant/auth/provider/billing isolation regression subset without copying v1 tenant-key scripts
+- Semantically ported the v1 central rate-limit/request-correlation middleware into v2-native API routing:
+  - `src/server/rate-limit.ts`
+  - `src/middleware.ts`
+  - rate-limit keys are scoped by profile, tenant/workspace headers, and client IP
+  - production fails closed for rate-limited API routes when Upstash Redis credentials are missing, while local/dev uses an in-memory limiter
+  - production env validation rejects zero, negative, or non-numeric configured rate limits instead of silently disabling a profile
+  - `x-6esk-request-id` is normalized, propagated to route handlers, and returned on middleware responses
+  - focused regression coverage is included in `npm run test:tenant-isolation`
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
