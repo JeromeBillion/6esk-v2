@@ -188,6 +188,11 @@ Date: 2026-06-06
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
   - shared Postgres pool/client queries now inspect tenant-scoped table access for `tenant_id` evidence, production defaults to strict mode, and production env validation rejects `TENANT_QUERY_GUARD_MODE=off`
+- Recovered the v1 release-gate workflow value in v2-native form:
+  - `.github/workflows/ai-safety.yml`
+  - `.github/workflows/tenant-isolation.yml`
+  - `npm run test:ai-safety` remains the AI prompt/tool/output/customer-context local release gate
+  - `npm run test:tenant-isolation` now runs the current v2 tenant/auth/provider/billing isolation regression subset without copying v1 tenant-key scripts
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.
@@ -199,11 +204,14 @@ Deferred for future semantic port, not lost:
 - AI safety/control-plane additions: keep the OpenClaw-inspired gateway/control-plane concepts, but do not replace native Dexter or v2 `src/server/dexter-runtime*`.
 - Billing provider reconciliation and presentation polish: core lifecycle persistence, customer-safe invoice export, and usage chart/export polish are now ported; provider payment evidence, invoice PDF rendering, and deployed finance dashboard evidence remain future deploy/runtime work.
 - Wrong-folder migrations `0035` onward: rejected as-is because they conflict with v2 migration numbering and use the wrong tenant assumptions.
+- The v1 database-backed tenant-isolation audit workflow job was not copied because its script depends on the wrong-folder tenant-key model and deployed audit database credentials. The retained launch value is the v2-native tenant-isolation regression workflow; deployed database audit evidence remains a runtime validation item.
 
 ## Verification Expectations
 Before this recovery branch can replace `main`, run:
 - `npm run typecheck`
 - `npm run lint`
+- `npm run test:ai-safety`
+- `npm run test:tenant-isolation`
 - `npm test`
 - `npm run build`
 - `git diff --check`
