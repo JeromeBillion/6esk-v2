@@ -186,10 +186,45 @@ describe("agent outbox Dexter RAG attachment", () => {
         eventData: { status: "attached", snippetCount: 1 }
       })
     );
-    expect(mocks.processInternalDexterMessage).toHaveBeenCalledWith({
-      ...eventPayload,
-      dexterRagContext: attachedContext
-    });
+    expect(mocks.appendAgentRunEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        runId: RUN_ID,
+        eventType: "agent.customer_context.attached",
+        status: "running",
+        eventData: expect.objectContaining({
+          ambiguityState: "unresolved",
+          hasActiveTicketId: true
+        })
+      })
+    );
+    expect(mocks.processInternalDexterMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...eventPayload,
+        dexterRagContext: attachedContext,
+        customerContext: expect.objectContaining({
+          schemaVersion: "agent-customer-output-context.v1",
+          activeTicketId: TICKET_ID,
+          ambiguityState: "unresolved"
+        }),
+        promptSandbox: expect.objectContaining({
+          schemaVersion: "agent-prompt-sandbox.v1",
+          mode: "draft_only",
+          sections: expect.arrayContaining([
+            expect.objectContaining({
+              id: "customer_privacy_context",
+              trust: "customer_privacy_context",
+              instructionAuthority: true
+            }),
+            expect.objectContaining({
+              id: "retrieved_knowledge",
+              trust: "untrusted_retrieved_knowledge",
+              instructionAuthority: false
+            })
+          ])
+        })
+      })
+    );
     expect(mocks.recordAgentRunStepStarted).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: TENANT_ID,
@@ -238,10 +273,19 @@ describe("agent outbox Dexter RAG attachment", () => {
       payload: eventPayload,
       error: expect.any(Error)
     });
-    expect(mocks.processInternalDexterMessage).toHaveBeenCalledWith({
-      ...eventPayload,
-      dexterRagContext: degradedContext
-    });
+    expect(mocks.processInternalDexterMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...eventPayload,
+        dexterRagContext: degradedContext,
+        customerContext: expect.objectContaining({
+          activeTicketId: TICKET_ID,
+          ambiguityState: "unresolved"
+        }),
+        promptSandbox: expect.objectContaining({
+          schemaVersion: "agent-prompt-sandbox.v1"
+        })
+      })
+    );
     expect(mocks.markAgentRunFailed).not.toHaveBeenCalled();
     expect(mocks.logger.warn).toHaveBeenCalledWith(
       "Dexter runtime knowledge retrieval degraded for agent delivery",

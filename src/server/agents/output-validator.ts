@@ -24,9 +24,11 @@ type AgentOutputValidationResult = {
 };
 
 export type AgentOutputCustomerContextState = "resolved" | "unresolved" | "ambiguous" | "conflicted";
+export type AgentOutputCustomerChannel = "email" | "whatsapp" | "voice" | "webchat" | "unknown";
 
 export type AgentOutputCustomerContext = {
   schemaVersion?: "agent-customer-output-context.v1";
+  channel?: AgentOutputCustomerChannel;
   activeTicketId?: string | null;
   activeThreadId?: string | null;
   currentCustomerId?: string | null;

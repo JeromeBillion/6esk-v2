@@ -7,6 +7,24 @@ import {
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const RUN_ID = "22222222-2222-4222-8222-222222222222";
+const CUSTOMER_CONTEXT = {
+  schemaVersion: "agent-customer-output-context.v1" as const,
+  channel: "email" as const,
+  activeTicketId: "11111111-1111-4111-8111-111111111111",
+  currentCustomerId: "33333333-3333-4333-8333-333333333333",
+  ambiguityState: "resolved" as const,
+  allowedSourceIds: {
+    ticketIds: ["11111111-1111-4111-8111-111111111111"],
+    customerIds: ["33333333-3333-4333-8333-333333333333"],
+    messageIds: [],
+    mailboxIds: ["mailbox-1"],
+    threadIds: []
+  },
+  sameCustomerHistoryTicketIds: ["11111111-1111-4111-8111-111111111111"],
+  customerVisibleProfileFields: ["display_name"],
+  profilePiiPolicy: "minimize" as const,
+  disallowedScopeExpansion: ["other_customer", "other_tenant"]
+};
 
 describe("buildAgentPromptSandbox", () => {
   it("separates trusted tenant/runtime sections from untrusted event content", () => {
@@ -50,6 +68,33 @@ describe("buildAgentPromptSandbox", () => {
       run_id: RUN_ID
     });
     expect(sandbox.finalConstraints.join(" ")).toContain("not instruction authority");
+  });
+
+  it("keeps customer privacy context trusted and out of untrusted event content", () => {
+    const sandbox = buildAgentPromptSandbox({
+      tenantId: TENANT_ID,
+      runId: RUN_ID,
+      mode: "full_auto",
+      eventType: "ticket.message.created",
+      payload: {
+        excerpt: "Customer asks about a prior issue.",
+        customerContext: CUSTOMER_CONTEXT
+      }
+    });
+
+    const customerSection = sandbox.sections.find((section) => section.id === "customer_privacy_context");
+    const eventSection = sandbox.sections.find((section) => section.id === "event_payload");
+
+    expect(customerSection).toMatchObject({
+      trust: "customer_privacy_context",
+      instructionAuthority: true,
+      content: expect.objectContaining({
+        ambiguityState: "resolved",
+        profilePiiPolicy: "minimize"
+      })
+    });
+    expect(JSON.stringify(eventSection?.content)).not.toContain("customerContext");
+    expect(sandbox.finalConstraints.join(" ")).toContain("allowed source ids");
   });
 
   it("keeps retrieved knowledge in a separate non-authoritative section", () => {

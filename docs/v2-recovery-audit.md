@@ -251,6 +251,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-outbox-rag.test.ts`
   - `tests/knowledge-retrieval.test.ts`
   - `tests/agent-outbox-lane.test.ts`
+  - outbox delivery now attaches server-built customer privacy context and prompt sandbox boundaries alongside RAG context before runtime delivery
 - Dexter run replay diagnostics tests pass in the focused slice:
   - `tests/agent-run-replay.test.ts`
   - `tests/admin-agent-run-replay-api.test.ts`
@@ -259,8 +260,10 @@ Before this recovery branch can replace `main`, run:
 - Prompt sandbox/output validator tests pass in the focused slice:
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/agent-output-validator.test.ts`
+  - `tests/agent-customer-context.test.ts`
   - `tests/agent-merge-actions.test.ts`
   - `tests/agent-tool-policy.test.ts`
+  - customer context construction is tenant-scoped and fail-closed for ambiguous/conflicted identity before history/profile disclosure
   - output validation now enforces server-derived customer/source boundaries for customer-facing draft/send replies, including out-of-scope source IDs, conflicted/ambiguous customer history, profile PII overexposure, and cross-customer scope expansion
 - Worker dispatch step-ledger tests pass in the focused slice:
   - `tests/agent-run-ledger.test.ts`
@@ -272,6 +275,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/prompt-safety.test.ts`
   - `tests/agent-tool-policy.test.ts`
   - `tests/agent-output-validator.test.ts`
+  - `tests/agent-customer-context.test.ts`
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/knowledge-retrieval.test.ts`
   - `npm run test:ai-safety` now runs the v2-native local AI safety release-gate subset

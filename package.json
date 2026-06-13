@@ -10,7 +10,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:ai-red-team": "vitest run tests/ai-red-team-regressions.test.ts tests/prompt-safety.test.ts tests/agent-tool-policy.test.ts tests/agent-output-validator.test.ts tests/agent-prompt-sandbox.test.ts tests/knowledge-retrieval.test.ts tests/knowledge-ingestion-worker.test.ts",
+    "test:ai-red-team": "vitest run tests/ai-red-team-regressions.test.ts tests/prompt-safety.test.ts tests/agent-tool-policy.test.ts tests/agent-output-validator.test.ts tests/agent-customer-context.test.ts tests/agent-prompt-sandbox.test.ts tests/knowledge-retrieval.test.ts tests/knowledge-ingestion-worker.test.ts",
     "test:ai-safety": "npm run typecheck && npm run test:ai-red-team",
     "audit:security": "npm audit --audit-level=high",
     "audit:full": "npm audit",

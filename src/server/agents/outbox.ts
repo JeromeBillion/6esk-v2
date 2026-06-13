@@ -5,6 +5,11 @@ import {
   getActiveAgentIntegration,
   getAgentIntegrationById
 } from "@/server/agents/integrations";
+import { buildAgentCustomerContext } from "@/server/agents/customer-context";
+import {
+  buildAgentPromptSandbox,
+  type AgentPromptSandboxMode
+} from "@/server/agents/prompt-sandbox";
 import {
   appendAgentRunEvent,
   completeAgentRunStep,
@@ -22,6 +27,7 @@ import {
   summarizeDexterRagContextForLedger,
   type DexterRagContext
 } from "@/server/ai/dexter-rag-context";
+import type { AgentOutputCustomerContext } from "@/server/agents/output-validator";
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
 import { logger } from "@/server/logger";
@@ -361,16 +367,98 @@ async function recordDexterRagContextAttached({
   }
 }
 
-async function buildDeliveryPayloadWithDexterRag({
+function promptSandboxModeForPolicy(mode: string | null | undefined): AgentPromptSandboxMode {
+  const normalized = mode?.trim().toLowerCase().replace(/-/g, "_");
+  if (normalized === "dry_run" || normalized === "dryrun" || normalized === "audit_only") {
+    return "dry_run";
+  }
+  if (normalized === "draft_only" || normalized === "review_only") {
+    return "draft_only";
+  }
+  if (normalized === "hybrid_review" || normalized === "limited_auto" || normalized === "manual") {
+    return "hybrid_review";
+  }
+  if (normalized === "full_auto" || normalized === "auto" || normalized === "auto_send") {
+    return "full_auto";
+  }
+  return "hybrid_review";
+}
+
+function summarizeCustomerContextForLedger(context: AgentOutputCustomerContext) {
+  return {
+    schemaVersion: context.schemaVersion ?? "agent-customer-output-context.v1",
+    channel: context.channel ?? "unknown",
+    ambiguityState: context.ambiguityState ?? "ambiguous",
+    hasActiveTicketId: Boolean(context.activeTicketId),
+    hasCurrentCustomerId: Boolean(context.currentCustomerId),
+    allowedSourceCounts: {
+      ticketIds: context.allowedSourceIds?.ticketIds?.length ?? 0,
+      customerIds: context.allowedSourceIds?.customerIds?.length ?? 0,
+      messageIds: context.allowedSourceIds?.messageIds?.length ?? 0,
+      mailboxIds: context.allowedSourceIds?.mailboxIds?.length ?? 0,
+      threadIds: context.allowedSourceIds?.threadIds?.length ?? 0,
+      sameCustomerHistoryTicketIds: context.sameCustomerHistoryTicketIds?.length ?? 0
+    },
+    profilePiiPolicy: context.profilePiiPolicy ?? "minimize",
+    disallowedScopeExpansion: context.disallowedScopeExpansion ?? []
+  };
+}
+
+function attachCustomerContextToPayload(
+  payload: Record<string, unknown>,
+  customerContext: AgentOutputCustomerContext
+) {
+  const metadata = readRecord(payload.metadata);
+  return {
+    ...payload,
+    customerContext,
+    metadata: {
+      ...(metadata ?? {}),
+      customerContext: summarizeCustomerContextForLedger(customerContext)
+    }
+  };
+}
+
+async function recordCustomerContextAttached({
+  tenantId,
+  runId,
+  context
+}: {
+  tenantId: string;
+  runId: string;
+  context: AgentOutputCustomerContext;
+}) {
+  try {
+    await appendAgentRunEvent({
+      tenantId,
+      runId,
+      eventType: "agent.customer_context.attached",
+      status: "running",
+      summary: `Customer context ${context.ambiguityState ?? "ambiguous"}`,
+      eventData: summarizeCustomerContextForLedger(context)
+    });
+  } catch (error) {
+    logger.warn("Failed to append agent customer context ledger event", {
+      error,
+      tenantId,
+      runId,
+      ambiguityState: context.ambiguityState ?? "ambiguous"
+    });
+  }
+}
+
+async function buildDeliveryPayload({
   tenantId,
   runId,
   eventType,
-  payload
+  payload,
+  integration
 }: {
   tenantId: string;
   runId: string;
   eventType: string;
   payload: Record<string, unknown>;
+  integration: AgentIntegration;
 }) {
   let context: DexterRagContext;
   try {
@@ -391,7 +479,27 @@ async function buildDeliveryPayloadWithDexterRag({
   }
 
   await recordDexterRagContextAttached({ tenantId, runId, context });
-  return attachDexterRagContextToPayload(payload, context);
+  const payloadWithRag = attachDexterRagContextToPayload(payload, context);
+  const customerContext = await buildAgentCustomerContext({
+    tenantId,
+    eventType,
+    payload
+  });
+  await recordCustomerContextAttached({ tenantId, runId, context: customerContext });
+  const payloadWithCustomerContext = attachCustomerContextToPayload(payloadWithRag, customerContext);
+  const promptSandbox = buildAgentPromptSandbox({
+    tenantId,
+    runId,
+    mode: promptSandboxModeForPolicy(integration.policy_mode),
+    eventType,
+    payload: payloadWithCustomerContext,
+    policy: integration.policy,
+    customerContext
+  });
+  return {
+    ...payloadWithCustomerContext,
+    promptSandbox
+  };
 }
 
 function runtimeTargetForIntegration(integration: AgentIntegration) {
@@ -479,11 +587,12 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         await releaseLanePending(event.id);
         continue;
       }
-      const deliveryPayload = await buildDeliveryPayloadWithDexterRag({
+      const deliveryPayload = await buildDeliveryPayload({
         tenantId: event.tenant_id,
         runId,
         eventType: event.event_type,
-        payload: event.payload
+        payload: event.payload,
+        integration
       });
       deliveryStep = await recordAgentRunStepStarted({
         tenantId: event.tenant_id,
