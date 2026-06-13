@@ -218,6 +218,13 @@ Date: 2026-06-06
   - production env validation rejects zero, negative, or non-numeric configured rate limits instead of silently disabling a profile
   - `x-6esk-request-id` is normalized, propagated to route handlers, and returned on middleware responses
   - focused regression coverage is included in `npm run test:tenant-isolation`
+- Semantically ported entitlement and metering fail-closed posture into v2-native `tenant_id` form:
+  - `src/server/workspace-modules.ts`
+  - `src/server/module-metering.ts`
+  - production and explicit `ENTITLEMENTS_FAIL_CLOSED=true` return disabled module flags when entitlement config is missing or unreadable instead of enabling every module by default
+  - structured entitlement states with suspended/disabled statuses normalize to disabled while active boolean states keep working
+  - production and explicit `MODULE_METERING_FAIL_CLOSED=true` block metering when the module is not entitled and surface usage-write failures instead of silently losing billing evidence
+  - production env validation rejects disabling entitlement or metering fail-closed posture
 
 ## Rejected Or Deferred Wrong-Folder Work
 The wrong-folder tree at `491af65` was not cherry-picked because it would overwrite v2-native systems and replace the tenant model. That tree deletes or supersedes critical v2 paths including native Dexter, server Dexter runtime files, tenant lifecycle/catalog/margin services, backoffice routes, and v2 migration numbering.

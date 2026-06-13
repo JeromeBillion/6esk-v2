@@ -158,6 +158,22 @@ describe("validateEnv", () => {
     ).toThrow(/TENANT_INGRESS_REQUIRE_SECRETS must not be false in production/);
   });
 
+  it("rejects disabled entitlement and metering fail-closed posture in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        ENTITLEMENTS_FAIL_CLOSED: "false"
+      })
+    ).toThrow(/ENTITLEMENTS_FAIL_CLOSED must not be false in production/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        MODULE_METERING_FAIL_CLOSED: "false"
+      })
+    ).toThrow(/MODULE_METERING_FAIL_CLOSED must not be false in production/);
+  });
+
   it("rejects disabled or invalid configured rate limits in production", () => {
     expect(() =>
       validateEnv({

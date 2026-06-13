@@ -35,6 +35,8 @@ const envSchema = z.object({
   AUTH_REQUIRE_MFA_ADMIN: optionalBooleanish,
   AUTH_MFA_ISSUER: optionalNonEmptyString,
   AUTH_OAUTH_LOGIN_ENABLED: optionalBooleanish,
+  ENTITLEMENTS_FAIL_CLOSED: optionalBooleanish,
+  MODULE_METERING_FAIL_CLOSED: optionalBooleanish,
   ADMIN_IP_ALLOWLIST: z.string().optional(),
   AGENT_IP_ALLOWLIST: z.string().optional(),
   SECURITY_ALERT_WEBHOOK: z.union([z.string().url(), z.literal("")]).optional(),
@@ -347,6 +349,17 @@ function addRateLimitIssues(source: EnvSource, strictProduction: boolean, issues
   }
 }
 
+function addEntitlementIssues(source: EnvSource, strictProduction: boolean, issues: string[]) {
+  if (!strictProduction) return;
+
+  if (readString(source, "ENTITLEMENTS_FAIL_CLOSED")?.toLowerCase() === "false") {
+    issues.push("ENTITLEMENTS_FAIL_CLOSED must not be false in production");
+  }
+  if (readString(source, "MODULE_METERING_FAIL_CLOSED")?.toLowerCase() === "false") {
+    issues.push("MODULE_METERING_FAIL_CLOSED must not be false in production");
+  }
+}
+
 export function validateEnv(source: EnvSource = process.env, options: ValidateEnvOptions = {}) {
   const parsed = envSchema.safeParse(source);
   const issues: string[] = [];
@@ -359,6 +372,7 @@ export function validateEnv(source: EnvSource = process.env, options: ValidateEn
   addTenantQueryGuardIssues(source, strictProduction, issues);
   addKnowledgeIngestionIssues(source, strictProduction, issues);
   addRateLimitIssues(source, strictProduction, issues);
+  addEntitlementIssues(source, strictProduction, issues);
   if (strictProduction) {
     addProductionIssues(source, issues);
   }

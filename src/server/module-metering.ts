@@ -2,6 +2,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import {
   DEFAULT_WORKSPACE_KEY,
+  isWorkspaceModuleEnabled,
   type WorkspaceModuleKey
 } from "@/server/workspace-modules";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
@@ -66,6 +67,18 @@ function clampWindowDays(value: number | undefined) {
   return Math.min(90, Math.max(1, Math.trunc(value ?? 30)));
 }
 
+function readBoolean(value: string | undefined | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function moduleMeteringFailClosed() {
+  return readBoolean(process.env.MODULE_METERING_FAIL_CLOSED) ?? process.env.NODE_ENV === "production";
+}
+
 export async function recordModuleUsageEvent({
   tenantId = DEFAULT_TENANT_ID,
   workspaceKey = DEFAULT_WORKSPACE_KEY,
@@ -78,8 +91,13 @@ export async function recordModuleUsageEvent({
   costCent = 0,
   metadata = null
 }: RecordModuleUsageArgs) {
-  if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
+  const failClosed = moduleMeteringFailClosed();
+  if ((process.env.NODE_ENV === "test" || process.env.VITEST === "true") && !failClosed) {
     return;
+  }
+
+  if (failClosed && !(await isWorkspaceModuleEnabled(moduleKey, workspaceKey, tenantId))) {
+    throw new Error(`Module ${moduleKey} is not enabled for this workspace.`);
   }
 
   try {
@@ -110,6 +128,9 @@ export async function recordModuleUsageEvent({
       ]
     );
   } catch (error) {
+    if (failClosed) {
+      throw error;
+    }
     // Best-effort telemetry: never fail user-facing flows.
     logger.error("Metering event insert failed", { error, fn: "recordModuleUsage" });
   }

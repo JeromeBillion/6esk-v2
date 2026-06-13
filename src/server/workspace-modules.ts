@@ -20,6 +20,8 @@ export type WorkspaceModulesConfig = {
   tenantId: string;
   updatedAt: string | null;
   modules: WorkspaceModuleFlags;
+  source?: "persisted" | "default" | "fail_closed";
+  failureReason?: "missing_configuration" | "load_failed";
 };
 
 export const DEFAULT_WORKSPACE_MODULES: WorkspaceModuleFlags = {
@@ -31,30 +33,75 @@ export const DEFAULT_WORKSPACE_MODULES: WorkspaceModuleFlags = {
   vanillaWebchat: true
 };
 
+export const DISABLED_WORKSPACE_MODULES: WorkspaceModuleFlags = {
+  email: false,
+  whatsapp: false,
+  voice: false,
+  aiAutomation: false,
+  dexterOrchestration: false,
+  vanillaWebchat: false
+};
+
 function defaultWorkspaceConfig(workspaceKey: string, tenantId: string): WorkspaceModulesConfig {
   return {
     workspaceKey,
     tenantId,
     updatedAt: null,
-    modules: { ...DEFAULT_WORKSPACE_MODULES }
+    modules: { ...DEFAULT_WORKSPACE_MODULES },
+    source: "default"
   };
 }
 
-function coerceBoolean(value: unknown, fallback: boolean) {
-  return typeof value === "boolean" ? value : fallback;
+function failClosedWorkspaceConfig(
+  workspaceKey: string,
+  tenantId: string,
+  failureReason: WorkspaceModulesConfig["failureReason"]
+): WorkspaceModulesConfig {
+  return {
+    workspaceKey,
+    tenantId,
+    updatedAt: null,
+    modules: { ...DISABLED_WORKSPACE_MODULES },
+    source: "fail_closed",
+    failureReason
+  };
+}
+
+function readBoolean(value: string | undefined | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function entitlementsFailClosed() {
+  return readBoolean(process.env.ENTITLEMENTS_FAIL_CLOSED) ?? process.env.NODE_ENV === "production";
+}
+
+function coerceModuleState(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const enabled = (value as { enabled?: unknown }).enabled;
+    if (typeof enabled !== "boolean") return fallback;
+    if (!enabled) return false;
+    const status = String((value as { status?: unknown }).status ?? "active").toLowerCase();
+    return !["disabled", "inactive", "suspended", "canceled", "cancelled"].includes(status);
+  }
+  return fallback;
 }
 
 export function normalizeWorkspaceModules(input?: Partial<WorkspaceModuleFlags> | null): WorkspaceModuleFlags {
   return {
-    email: coerceBoolean(input?.email, DEFAULT_WORKSPACE_MODULES.email),
-    whatsapp: coerceBoolean(input?.whatsapp, DEFAULT_WORKSPACE_MODULES.whatsapp),
-    voice: coerceBoolean(input?.voice, DEFAULT_WORKSPACE_MODULES.voice),
-    aiAutomation: coerceBoolean(input?.aiAutomation, DEFAULT_WORKSPACE_MODULES.aiAutomation),
-    dexterOrchestration: coerceBoolean(
+    email: coerceModuleState(input?.email, DEFAULT_WORKSPACE_MODULES.email),
+    whatsapp: coerceModuleState(input?.whatsapp, DEFAULT_WORKSPACE_MODULES.whatsapp),
+    voice: coerceModuleState(input?.voice, DEFAULT_WORKSPACE_MODULES.voice),
+    aiAutomation: coerceModuleState(input?.aiAutomation, DEFAULT_WORKSPACE_MODULES.aiAutomation),
+    dexterOrchestration: coerceModuleState(
       input?.dexterOrchestration,
       DEFAULT_WORKSPACE_MODULES.dexterOrchestration
     ),
-    vanillaWebchat: coerceBoolean(input?.vanillaWebchat, DEFAULT_WORKSPACE_MODULES.vanillaWebchat)
+    vanillaWebchat: coerceModuleState(input?.vanillaWebchat, DEFAULT_WORKSPACE_MODULES.vanillaWebchat)
   };
 }
 
@@ -68,7 +115,7 @@ export async function getWorkspaceModules(
   workspaceKey = DEFAULT_WORKSPACE_KEY,
   tenantId = DEFAULT_TENANT_ID
 ): Promise<WorkspaceModulesConfig> {
-  if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
+  if ((process.env.NODE_ENV === "test" || process.env.VITEST === "true") && !entitlementsFailClosed()) {
     return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
@@ -97,12 +144,20 @@ export async function getWorkspaceModules(
       [workspaceKey, tenantId]
     );
   } catch (error) {
+    if (entitlementsFailClosed()) {
+      logger.error("Workspace config load failed, failing closed", { error, workspaceKey, tenantId });
+      return failClosedWorkspaceConfig(workspaceKey, tenantId, "load_failed");
+    }
     logger.error("Workspace config load failed, using defaults", { error, workspaceKey, tenantId });
     return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
   const row = result?.rows?.[0];
   if (!row) {
+    if (entitlementsFailClosed()) {
+      logger.warn("Workspace config missing, failing closed", { workspaceKey, tenantId });
+      return failClosedWorkspaceConfig(workspaceKey, tenantId, "missing_configuration");
+    }
     return defaultWorkspaceConfig(workspaceKey, tenantId);
   }
 
@@ -117,7 +172,8 @@ export async function getWorkspaceModules(
     workspaceKey: row.workspace_key,
     tenantId: row.tenant_id,
     updatedAt,
-    modules: normalizeWorkspaceModules(row.modules)
+    modules: normalizeWorkspaceModules(row.modules),
+    source: "persisted"
   };
 }
 
