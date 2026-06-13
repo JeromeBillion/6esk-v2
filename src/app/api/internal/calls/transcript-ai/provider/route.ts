@@ -5,6 +5,7 @@ import {
   getAiProviderResponsesUrl,
   resolveTenantAiProviderPlan
 } from "@/server/ai/provider-gateway";
+import { validateAgentOutput } from "@/server/agents/output-validator";
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
 export const runtime = "nodejs";
@@ -273,6 +274,19 @@ export async function POST(request: Request) {
     );
   }
 
+  const outputValidation = await validateAgentOutput({
+    tenantId,
+    actionType: "transcript_analysis",
+    resourceType: "call_transcript_ai_jobs",
+    resourceId: parsedJob.jobId,
+    content: parsedAnalysis,
+    metadata: {
+      provider: providerPlan.provider,
+      model: providerPlan.model,
+      callSessionId: parsedJob.callSessionId
+    }
+  });
+
   const usage = body?.usage as any;
   const inputTokens = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
   const outputTokens = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
@@ -295,9 +309,21 @@ export async function POST(request: Request) {
       inputTokens,
       outputTokens,
       jobId: parsedJob.jobId,
-      callSessionId: parsedJob.callSessionId
+      callSessionId: parsedJob.callSessionId,
+      outputValidationDecision: outputValidation.decision,
+      outputValidationRiskLevel: outputValidation.riskLevel
     }
   });
+
+  if (!outputValidation.allowed) {
+    return Response.json(
+      {
+        error: "Global AI transcript analysis returned unsafe output.",
+        reasonCodes: outputValidation.reasonCodes
+      },
+      { status: 502 }
+    );
+  }
 
   return Response.json({
     status: "completed",

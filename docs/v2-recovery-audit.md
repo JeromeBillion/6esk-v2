@@ -276,6 +276,10 @@ Before this recovery branch can replace `main`, run:
 - AI provider gateway tests pass in the focused slice:
   - `tests/ai-provider-gateway.test.ts`
   - `tests/calls-transcript-ai-openai-api.test.ts`
+- Transcript AI provider output validation now passes in the focused slice:
+  - `tests/calls-transcript-ai-openai-api.test.ts`
+  - provider JSON output is schema-checked and then passed through the generated-output validator before response/storage
+  - blocked provider output writes `ai_output_validation_blocked` audit evidence and remains token-metered with output-validation metadata
 - Resend provider-webhook secret adoption tests pass in the focused slice:
   - `tests/email-resend-webhook-api.test.ts`
 - Twilio follow-up callback provider-secret adoption tests pass in the focused slice:
