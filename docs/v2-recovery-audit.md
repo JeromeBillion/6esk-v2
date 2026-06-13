@@ -51,6 +51,7 @@ Date: 2026-06-06
   - password login now respects tenant SSO/domain policy, creates MFA challenges for enrolled privileged users, and gates privileged users into MFA enrollment when required
   - users can list/revoke their own sessions, password resets revoke sessions in place, and tenant admins can read/update tenant security policy
   - focused tests cover policy API access, MFA challenge/enrollment API paths, login policy/MFA boundaries, session revocation, password-reset revocation evidence, and production env validation
+  - recovered tenant security policy unit coverage in v2-native `tenant_id` form for domain normalization, allowlist enforcement, scoped reads/upserts, and invalid SSO/OIDC combinations
 - Semantically ported privileged-access grant workflow into v2-native `tenant_id` form:
   - `db/migrations/0052_privileged_access_grants.sql`
   - `src/server/auth/privileged-access.ts`
