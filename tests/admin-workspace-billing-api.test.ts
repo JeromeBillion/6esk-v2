@@ -90,6 +90,20 @@ describe("workspace billing admin API", () => {
     expect(mocks.getTenantBillingLifecycleSnapshot).toHaveBeenCalledWith({ tenantId: TENANT_ID });
   });
 
+  it("blocks admin-looking billing access without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({
+      id: "user-1",
+      tenant_id: "",
+      role_name: "tenant_admin"
+    });
+
+    const response = await GET(new Request("http://localhost/api/admin/workspace/billing"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.getTenantById).not.toHaveBeenCalled();
+    expect(mocks.getTenantBillingLifecycleSnapshot).not.toHaveBeenCalled();
+  });
+
   it("exports a customer-safe invoice and audits export metadata only", async () => {
     const invoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
     const response = await GET(

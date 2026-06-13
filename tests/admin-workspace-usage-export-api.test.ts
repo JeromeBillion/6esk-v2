@@ -180,4 +180,19 @@ describe("workspace usage export API", () => {
     expect(response.status).toBe(403);
     expect(mocks.getWorkspaceModuleUsageSummary).not.toHaveBeenCalled();
   });
+
+  it("blocks admin-looking usage exports without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({
+      id: USER_ID,
+      tenant_id: "",
+      role_name: "tenant_admin"
+    });
+
+    const response = await GET(new Request("http://localhost/api/admin/workspace/usage/export"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.getWorkspaceModules).not.toHaveBeenCalled();
+    expect(mocks.getWorkspaceModuleUsageSummary).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
+  });
 });

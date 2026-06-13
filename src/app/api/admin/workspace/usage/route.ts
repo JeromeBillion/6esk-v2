@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isTenantAdmin } from "@/server/auth/roles";
 import { getWorkspaceModuleUsageSummary } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 function clampWindowDays(value: string | null) {
@@ -18,10 +17,13 @@ export async function GET(request: Request) {
   if (!isTenantAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user.tenant_id?.trim();
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const days = clampWindowDays(url.searchParams.get("days"));
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   const summary = await getWorkspaceModuleUsageSummary({
     tenantId,
     workspaceKey: DEFAULT_WORKSPACE_KEY,

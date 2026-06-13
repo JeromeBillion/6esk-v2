@@ -7,7 +7,6 @@ import {
   workspaceUsageExportToCsv
 } from "@/server/billing/usage-export";
 import { getWorkspaceModuleUsageSummary } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { DEFAULT_WORKSPACE_KEY, getWorkspaceModules } from "@/server/workspace-modules";
 
 function clampWindowDays(value: string | null) {
@@ -29,11 +28,14 @@ export async function GET(request: Request) {
   if (!isTenantAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user.tenant_id?.trim();
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const days = clampWindowDays(url.searchParams.get("days"));
   const format = url.searchParams.get("format")?.trim().toLowerCase() === "csv" ? "csv" : "json";
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
   const workspaceKey = DEFAULT_WORKSPACE_KEY;
 
   const [modules, usage, billingLifecycle] = await Promise.all([

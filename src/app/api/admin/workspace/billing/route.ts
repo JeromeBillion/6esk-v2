@@ -5,7 +5,6 @@ import { isTenantAdmin } from "@/server/auth/roles";
 import { getTenantById } from "@/server/tenant/lifecycle";
 import { encrypt } from "@/server/security/encryption";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import {
   getCustomerSafeInvoiceExport,
   getTenantBillingLifecycleSnapshot
@@ -27,10 +26,13 @@ export async function GET(request: Request) {
   if (!isTenantAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user?.tenant_id?.trim();
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const invoiceId = url.searchParams.get("invoiceId");
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   if (invoiceId) {
     const parsedInvoiceId = z.string().uuid().safeParse(invoiceId);
     if (!parsedInvoiceId.success) {
@@ -83,6 +85,10 @@ export async function PATCH(request: Request) {
   if (!isTenantAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = user?.tenant_id?.trim();
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -96,7 +102,6 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });

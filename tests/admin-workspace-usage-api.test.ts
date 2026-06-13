@@ -55,6 +55,20 @@ describe("workspace usage admin API", () => {
     expect(body).toMatchObject({ error: "Forbidden" });
   });
 
+  it("returns 403 when an admin session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({
+      ...buildUser("lead_admin"),
+      tenant_id: ""
+    });
+
+    const response = await GET(new Request("http://localhost/api/admin/workspace/usage"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getWorkspaceModuleUsageSummary).not.toHaveBeenCalled();
+  });
+
   it("returns usage summary for lead admins", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
 

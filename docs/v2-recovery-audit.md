@@ -83,6 +83,7 @@ Date: 2026-06-06
   - module usage summaries now include daily chart buckets under tenant/workspace scope
   - tenant admins can export customer-safe usage CSV/JSON with current lifecycle invoice estimates, and customer-safe invoice JSON from persisted invoice lines
   - export audit events record metadata only, not row payloads, tenant IDs in customer payloads, or raw usage/customer metadata
+  - admin billing/usage routes now reject admin-looking sessions that lack tenant scope instead of falling back to `DEFAULT_TENANT_ID`
   - the runtime tenant query guard now includes the v2 `tenant_billing_*`, `tenant_subscriptions`, `tenant_invoices`, `tenant_invoice_lines`, and `tenant_collection_events` tables
 - Semantically ported AI prompt-safety value without replacing native Dexter:
   - `src/server/ai/prompt-safety.ts`
@@ -338,6 +339,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-workspace-usage-export-api.test.ts`
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
+  - billing/usage admin routes now include missing-tenant fail-closed regressions
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

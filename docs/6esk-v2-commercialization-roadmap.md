@@ -291,6 +291,7 @@ Current implementation status:
 - tenant admins can read lifecycle billing visibility through the workspace billing API; internal staff can sync subscriptions, create audited adjustments, create invoice drafts, transition invoices, and record collection events through the backoffice billing API
 - tenant admins can now export customer-safe invoice JSON from persisted `tenant_invoices` / `tenant_invoice_lines` without tenant IDs or raw metadata, with metadata-only audit evidence
 - Admin module usage now includes daily chart buckets, tenant-scoped current-estimate linkage to the lifecycle invoice, and customer-safe CSV/JSON usage exports with metadata-only audit evidence
+- Admin usage, usage export, and billing routes now fail closed when an admin-looking session lacks tenant scope instead of using the legacy default tenant fallback.
 - provider payment collection, real payment-provider reconciliation, invoice PDF rendering, and deployed finance dashboard evidence remain deploy/runtime work
 
 Required page capabilities:
@@ -1050,6 +1051,7 @@ Retained and verified in the current recovery branch:
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
 - v2-native Google/Microsoft auth-login adapter on migration `0053`, including identity-only OAuth scopes, CSRF state/nonce cookie, existing-user mapping, tenant login-domain policy enforcement, managed `oauth` SSO mode, audit events without raw email leakage, OAuth+MFA provider provenance, login-page MFA handling, and production env validation when `AUTH_OAUTH_LOGIN_ENABLED=true`
 - v2-native billing lifecycle persistence on migration `0054`, including tenant billing accounts, subscription/item persistence from the v2 module catalog, proration adjustments, signed credits/refunds/write-offs, duplicate-safe invoice drafts/lines/status transitions, collection/dunning events, tenant-admin billing visibility, internal backoffice billing actions, and focused regression coverage
+- tenant-facing billing/usage APIs reject missing tenant scope before invoice, usage, module, or audit lookups
 - v2-native release gates recovered from the v1 wrong-folder work: `.github/workflows/ai-safety.yml`, `.github/workflows/tenant-isolation.yml`, `npm run test:ai-safety`, and `npm run test:tenant-isolation`
 
 Still outstanding before v2 main can be considered deploy-ready:
