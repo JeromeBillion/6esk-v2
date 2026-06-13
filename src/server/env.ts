@@ -26,6 +26,8 @@ const envSchema = z.object({
   PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
   TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: optionalBooleanish,
   TENANT_PROVIDER_WEBHOOK_SECRETS_JSON: optionalNonEmptyString,
+  TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN: optionalBooleanish,
+  TENANT_PUBLIC_INGRESS_ORIGINS_JSON: optionalNonEmptyString,
   TENANT_QUERY_GUARD_MODE: optionalNonEmptyString,
   INBOUND_ALERT_WEBHOOK: z.union([z.string().url(), z.literal("")]).optional(),
   INBOUND_ALERT_THRESHOLD: z.string().optional(),
@@ -215,6 +217,9 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
   }
   if (isEnabled(source, "CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE")) {
     issues.push("CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE must be false in production");
+  }
+  if (readString(source, "TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN")?.toLowerCase() === "false") {
+    issues.push("TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN must not be false in production");
   }
 
   const callsProvider = readString(source, "CALLS_PROVIDER")?.toLowerCase() ?? "mock";

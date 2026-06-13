@@ -43,6 +43,14 @@ describe("tenant query guard", () => {
     ).toThrow(TenantQueryGuardError);
   });
 
+  it("treats public ingress origin allowlists as tenant-scoped", () => {
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM tenant_public_ingress_origins WHERE origin = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+  });
+
   it("warns instead of blocking in warn mode", () => {
     const logger = { warn: vi.fn() };
     const inspection = enforceTenantQueryGuard("SELECT id FROM customers WHERE id = $1", {

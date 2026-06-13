@@ -71,6 +71,7 @@ export const TENANT_SCOPED_QUERY_TABLES = [
   "tenant_invoice_lines",
   "tenant_invoices",
   "tenant_provider_webhook_secrets",
+  "tenant_public_ingress_origins",
   "tenant_security_policies",
   "tenant_subscription_items",
   "tenant_subscriptions",

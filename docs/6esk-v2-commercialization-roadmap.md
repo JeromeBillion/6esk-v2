@@ -457,6 +457,7 @@ Completed production-readiness slices:
 - agent integration records include tenant ownership so outbox usage can be tied back to a tenant
 - production build and focused transcript AI / agent outbox tests pass after the tenant-boundary changes
 - tenant-scoped agent events now carry tenant identity from ticket, message, call, reply, merge/link, draft, inbound email, WhatsApp, and portal producers
+- public portal/webchat ticket ingress now resolves tenant scope from v2 tenant public-origin allowlists instead of `DEFAULT_TENANT_ID`; production rejects missing, untrusted, or ambiguous public origins before tenant data writes
 - agent outbox enqueue, delivery, failed-event listing, retry, and metrics now select integrations within the event tenant rather than a global active integration
 - agent event payloads include tenant-safe resource correlation, and tenantless events are rejected instead of silently falling into the default integration
 - high-impact merge/link entry points now validate source and target tickets within the caller tenant before executing or publishing agent events
@@ -1041,6 +1042,7 @@ Retained and verified in the current recovery branch:
 - Deepgram/STT callback verification now uses tenant-scoped persisted callback/internal HTTP secrets in strict mode before transcript job dispatch or transcript attachment
 - tenant-admin provider-number management now covers Twilio/provider phone-account ownership records, avoiding manual database edits for inbound voice routing configuration
 - runtime tenant-query enforcement now exists at the shared Postgres boundary for tenant-scoped tables, with `TENANT_QUERY_GUARD_MODE` validated for production
+- v2-native public ingress origin allowlists on migration `0058`, including tenant-admin origin management, production fail-closed origin enforcement, and portal ticket creation scoped to the resolved tenant
 - production env validation for tenant ingress and provider webhook secret encryption keys
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog

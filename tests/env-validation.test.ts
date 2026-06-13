@@ -139,6 +139,15 @@ describe("validateEnv", () => {
     ).toThrow(/TENANT_QUERY_GUARD_MODE must be off, warn, or strict/);
   });
 
+  it("rejects disabled public ingress origin enforcement in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN: "false"
+      })
+    ).toThrow(/TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN must not be false in production/);
+  });
+
   it("requires Knowledge Base scanner and extractor services in production", () => {
     expect(() =>
       validateEnv({

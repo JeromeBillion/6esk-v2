@@ -188,6 +188,13 @@ Date: 2026-06-06
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
   - shared Postgres pool/client queries now inspect tenant-scoped table access for `tenant_id` evidence, production defaults to strict mode, and production env validation rejects `TENANT_QUERY_GUARD_MODE=off`
+- Semantically ported the v1 public-ingress origin allowlist into v2-native `tenant_id` form:
+  - `db/migrations/0058_tenant_public_ingress_origins.sql`
+  - `src/server/tenant-public-ingress.ts`
+  - `src/app/api/admin/tenant/public-ingress-origins/route.ts`
+  - `src/app/api/portal/tickets/route.ts`
+  - portal/webchat ticket creation now resolves tenant scope from trusted origin allowlists instead of always using `DEFAULT_TENANT_ID`
+  - production public ingress fails closed when the origin is missing, untrusted, or ambiguous, and tenant admins can manage origins under their own tenant scope
 - Recovered the v1 release-gate workflow value in v2-native form:
   - `.github/workflows/ai-safety.yml`
   - `.github/workflows/tenant-isolation.yml`
@@ -234,6 +241,10 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-provider-webhook-secrets-api.test.ts`
   - `tests/whatsapp-provider-webhook-secrets-api.test.ts`
   - `tests/env-validation.test.ts`
+- Public ingress origin allowlist tests pass in the focused slice:
+  - `tests/tenant-public-ingress.test.ts`
+  - `tests/admin-public-ingress-origins-api.test.ts`
+  - `tests/portal-tickets-tenant-ingress.test.ts`
 - Auth/session/MFA foundation tests pass in the focused slice:
   - `tests/auth-session-hardening.test.ts`
   - `tests/auth-mfa.test.ts`

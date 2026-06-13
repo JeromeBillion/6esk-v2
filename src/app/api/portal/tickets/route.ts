@@ -13,13 +13,16 @@ import {
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
 import { resolveOrCreateCustomerForInbound } from "@/server/customers";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import {
   integrationError,
   integrationSuccess,
   validateIntegrationApiVersion
 } from "@/server/api-contract";
 import { runInBackground } from "@/server/async";
+import {
+  isTenantPublicIngressError,
+  tenantScopeFromPublicIngressRequest
+} from "@/server/tenant-public-ingress";
 
 const portalSchema = z.object({
   from: z.string().email(),
@@ -78,7 +81,19 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
-  const tenantId = DEFAULT_TENANT_ID;
+  let tenantId: string;
+  try {
+    tenantId = (await tenantScopeFromPublicIngressRequest(request)).tenantId;
+  } catch (error) {
+    if (isTenantPublicIngressError(error)) {
+      return integrationError(request, {
+        status: error.status,
+        code: error.code,
+        message: error.message
+      });
+    }
+    throw error;
+  }
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
     return integrationError(request, {
