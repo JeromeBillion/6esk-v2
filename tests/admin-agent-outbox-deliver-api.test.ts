@@ -27,13 +27,14 @@ vi.mock("@/server/audit", () => ({
 
 import { POST } from "@/app/api/admin/agents/[agentId]/outbox/deliver/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId = DEFAULT_TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -59,6 +60,18 @@ describe("POST /api/admin/agents/[agentId]/outbox/deliver", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+  });
+
+  it("returns 403 for admin sessions without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", ""));
+
+    const response = await POST(new Request("http://localhost/api/admin/agents/agent-1/outbox/deliver", { method: "POST" }), {
+      params: Promise.resolve({ agentId: "agent-1" })
+    });
+
+    expect(response.status).toBe(403);
+    expect(mocks.getAgentIntegrationById).not.toHaveBeenCalled();
+    expect(mocks.deliverPendingAgentEvents).not.toHaveBeenCalled();
   });
 
   it("delivers agent outbox and records audit", async () => {

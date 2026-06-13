@@ -8,9 +8,9 @@ import {
   MAX_STALE_AGENT_RUN_RECOVERY_LIMIT,
   recoverStaleAgentRuns
 } from "@/server/agents/run-ledger";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { runInBackground } from "@/server/async";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function readPositiveInteger(value: string | null, fallback: number, max?: number) {
   const parsed = Number(value);
@@ -27,9 +27,12 @@ export async function POST(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });

@@ -27,14 +27,14 @@ import {
   PATCH
 } from "@/app/api/admin/agents/[agentId]/rollout/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName,
-    tenant_id: TENANT_ID
+    tenant_id: tenantId
   };
 }
 
@@ -81,6 +81,17 @@ describe("admin agent rollout controls API", () => {
 
   it("returns 403 for non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET(new Request("http://localhost/api/admin/agents/agent-1/rollout"), {
+      params: Promise.resolve({ agentId: "agent-1" })
+    });
+
+    expect(response.status).toBe(403);
+    expect(mocks.getAgentIntegrationById).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for admin sessions without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", ""));
 
     const response = await GET(new Request("http://localhost/api/admin/agents/agent-1/rollout"), {
       params: Promise.resolve({ agentId: "agent-1" })

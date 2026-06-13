@@ -1,8 +1,8 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { getAgentIntegrationById } from "@/server/agents/integrations";
 import { listFailedAgentEvents } from "@/server/agents/outbox";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET(
   request: Request,
@@ -12,9 +12,12 @@ export async function GET(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const integration = await getAgentIntegrationById(agentId, tenantId);
   if (!integration) {
     return Response.json({ error: "Not found" }, { status: 404 });

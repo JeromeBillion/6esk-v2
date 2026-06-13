@@ -136,6 +136,9 @@ Date: 2026-06-06
   - replay evidence assembles the run row, ordered run events, steps, tool calls, tool-policy decisions, and Knowledge Base retrieval events for a single run
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
   - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
+- Hardened agent admin control routes so lead-admin role is insufficient without explicit tenant scope:
+  - agent list/detail, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, and stale-run recovery all reject missing tenant scope before agent/runtime state access
+  - focused agent admin tests are now included in `npm run test:tenant-isolation`
 - Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
   - `src/server/agents/prompt-sandbox.ts`
   - `src/server/agents/output-validator.ts`
@@ -286,6 +289,14 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-agent-run-replay-api.test.ts`
   - `tests/admin-agent-run-recover-api.test.ts`
   - `tests/agent-run-ledger.test.ts`
+- Agent admin route tenant-scope tests pass in the focused slice:
+  - `tests/admin-agents-api.test.ts`
+  - `tests/admin-agent-outbox-deliver-api.test.ts`
+  - `tests/admin-agent-outbox-failed-api.test.ts`
+  - `tests/admin-agent-outbox-retry-api.test.ts`
+  - `tests/admin-agent-run-recover-api.test.ts`
+  - `tests/admin-agent-run-replay-api.test.ts`
+  - `tests/admin-agent-rollout-api.test.ts`
 - Prompt sandbox/output validator tests pass in the focused slice:
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/agent-output-validator.test.ts`

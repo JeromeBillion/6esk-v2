@@ -23,13 +23,14 @@ vi.mock("@/server/agents/run-replay", () => ({
 
 import { GET } from "@/app/api/admin/agents/[agentId]/runs/[runId]/replay/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId = DEFAULT_TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -55,6 +56,19 @@ describe("GET /api/admin/agents/[agentId]/runs/[runId]/replay", () => {
 
   it("returns 403 for non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET(
+      new Request(`http://localhost/api/admin/agents/agent-1/runs/${RUN_ID}/replay`),
+      { params: Promise.resolve({ agentId: "agent-1", runId: RUN_ID }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.getAgentIntegrationById).not.toHaveBeenCalled();
+    expect(mocks.getAgentRunReplay).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for admin sessions without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", ""));
 
     const response = await GET(
       new Request(`http://localhost/api/admin/agents/agent-1/runs/${RUN_ID}/replay`),

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import {
   getAgentIntegrationById,
   updateAgentIntegration
 } from "@/server/agents/integrations";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const actionRolloutModeSchema = z.enum([
   "dry_run",
@@ -159,9 +159,12 @@ export async function GET(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const agent = await getAgentIntegrationById(agentId, tenantId);
   if (!agent) {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -185,6 +188,10 @@ export async function PATCH(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -199,7 +206,6 @@ export async function PATCH(
   }
 
   const { agentId } = await params;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
   const existing = await getAgentIntegrationById(agentId, tenantId);
   if (!existing) {
     return Response.json({ error: "Not found" }, { status: 404 });
