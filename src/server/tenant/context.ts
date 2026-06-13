@@ -12,7 +12,6 @@
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
 import type { TenantContext, TenantStatus } from "./types";
-import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG } from "./types";
 
 /**
  * Resolve the tenant context from the current authenticated session.
@@ -26,16 +25,8 @@ export async function getTenantContext(): Promise<TenantContext | null> {
 
   // The user's tenant_id comes from the users table (trusted, server-side).
   // In the v2 auth model, SessionUser includes tenant_id.
-  const tenantId = (user as any).tenant_id as string | undefined;
-
-  if (!tenantId) {
-    // Fallback for v1 compatibility: assume default tenant
-    return {
-      tenantId: DEFAULT_TENANT_ID,
-      tenantSlug: DEFAULT_TENANT_SLUG,
-      tenantStatus: "active",
-    };
-  }
+  const tenantId = user.tenant_id?.trim();
+  if (!tenantId) return null;
 
   const result = await db.query<{
     id: string;

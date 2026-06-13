@@ -27,7 +27,8 @@ const mocks = vi.hoisted(() => ({
   deliverPendingAgentEvents: vi.fn(),
   dbQuery: vi.fn(),
   putObject: vi.fn(),
-  upsertExternalUserLink: vi.fn()
+  upsertExternalUserLink: vi.fn(),
+  resolveTenantIngressRequestScope: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -122,6 +123,17 @@ vi.mock("@/server/storage/r2", () => ({
   putObject: mocks.putObject
 }));
 
+vi.mock("@/server/tenant-ingress-secrets", () => ({
+  resolveTenantIngressRequestScope: mocks.resolveTenantIngressRequestScope,
+  isTenantIngressVerificationError: (error: unknown) =>
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        typeof (error as { code?: unknown }).code === "string" &&
+        (error as { code: string }).code.startsWith("tenant_ingress_")
+    )
+}));
+
 import { POST } from "@/app/api/tickets/create/route";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -179,6 +191,12 @@ describe("POST /api/tickets/create external identity enrichment", () => {
     mocks.dbQuery.mockResolvedValue({ rowCount: 1, rows: [] });
     mocks.putObject.mockResolvedValue("messages/message-1/body.txt");
     mocks.upsertExternalUserLink.mockResolvedValue(undefined);
+    mocks.resolveTenantIngressRequestScope.mockResolvedValue({
+      tenantId: TENANT_ID,
+      workspaceKey: "primary",
+      matchedSecretId: "ingress-secret-1",
+      authMode: "tenant_ingress_secret"
+    });
   });
 
   afterEach(() => {
@@ -227,6 +245,13 @@ describe("POST /api/tickets/create external identity enrichment", () => {
       ticketId: "ticket-1"
     });
     expect(mocks.lookupExternalProfile).not.toHaveBeenCalled();
+    expect(mocks.resolveTenantIngressRequestScope).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        fallbackGlobalSecret: "shared-secret",
+        fallbackTenantId: TENANT_ID
+      })
+    );
     expect(mocks.upsertExternalUserLink).toHaveBeenCalledWith({
       externalSystem: "white-label-webchat",
       profile: expect.objectContaining({
@@ -373,5 +398,38 @@ describe("POST /api/tickets/create external identity enrichment", () => {
         })
       })
     );
+  });
+
+  it("rejects machine creates before writes when tenant ingress verification fails", async () => {
+    mocks.resolveTenantIngressRequestScope.mockRejectedValueOnce(
+      Object.assign(new Error("Tenant ingress tenant header is required"), {
+        code: "tenant_ingress_tenant_required",
+        status: 400
+      })
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/tickets/create", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "shared-secret"
+        },
+        body: JSON.stringify({
+          from: "olivia.parker@brightpath.co",
+          subject: "Help with onboarding",
+          description: "Need someone to confirm the account owner."
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "tenant_ingress_tenant_required",
+      error: "Tenant ingress tenant header is required"
+    });
+    expect(mocks.createTicket).not.toHaveBeenCalled();
+    expect(mocks.resolveOrCreateCustomerForInbound).not.toHaveBeenCalled();
   });
 });

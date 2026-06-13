@@ -35,9 +35,14 @@ Date: 2026-06-06
   - `src/server/provider-webhook-secrets.ts`
   - `src/app/api/admin/tenant/ingress-secrets/route.ts`
   - `src/app/api/admin/tenant/provider-webhook-secrets/route.ts`
+  - unauthenticated machine ticket creation now resolves tenant scope through tenant ingress signing secrets in production instead of silently using `DEFAULT_TENANT_ID`
   - WhatsApp inbound webhook verification now falls back to tenant-scoped persisted Meta app secrets when the global `WHATSAPP_APP_SECRET` does not validate
   - production env validation for persisted secret encryption keys
   - focused tests for tenant-scoped metadata, rotation, env fallback, tenant-admin route access, one-time plaintext return, audit logging, and fail-closed encryption config
+- Hardened the central session and tenant-context boundary:
+  - `src/server/auth/session.ts` now requires a real home tenant join before returning a session user
+  - `src/server/tenant/context.ts` no longer falls back to the default tenant when a session lacks tenant scope
+  - `npm run test:tenant-isolation` now includes the session/context and ticket-create machine-ingress regression coverage
 - Semantically ported the auth/session/MFA foundation into v2-native `tenant_id` form:
   - `db/migrations/0051_auth_security_foundations.sql`
   - tenant security policies for allowed login domains, SSO enforcement flags, admin MFA requirement, session TTL, and planned auth-provider mode
@@ -241,6 +246,10 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-provider-webhook-secrets-api.test.ts`
   - `tests/whatsapp-provider-webhook-secrets-api.test.ts`
   - `tests/env-validation.test.ts`
+- Tenant context and machine-ingress fail-closed tests pass:
+  - `tests/session-user.test.ts`
+  - `tests/tenant-context.test.ts`
+  - `tests/tickets-create-external-profile.test.ts`
 - Public ingress origin allowlist tests pass in the focused slice:
   - `tests/tenant-public-ingress.test.ts`
   - `tests/admin-public-ingress-origins-api.test.ts`

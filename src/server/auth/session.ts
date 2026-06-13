@@ -21,8 +21,8 @@ type SessionUserRow = {
   display_name: string;
   role_id: string | null;
   role_name: string | null;
-  real_tenant_id: string;
-  home_tenant_slug: string;
+  real_tenant_id: string | null;
+  home_tenant_slug: string | null;
   impersonated_tenant_id: string | null;
   impersonated_tenant_slug: string | null;
   impersonation_expires_at: Date | string | null;
@@ -175,7 +175,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN roles r ON r.id = u.role_id
-     LEFT JOIN tenants t ON t.id = u.tenant_id
+     JOIN tenants t ON t.id = u.tenant_id
      LEFT JOIN tenants it ON it.id = s.impersonated_tenant_id
      WHERE s.token_hash = $1
        AND s.expires_at > now()
@@ -187,6 +187,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   const row = result.rows[0];
   if (!row) return null;
+  if (!row.real_tenant_id || !row.home_tenant_slug) return null;
 
   const impersonatedTenantId =
     isInternalSupportRole(row.role_name) && isImpersonationActive(row.impersonation_expires_at)
@@ -197,6 +198,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const effectiveTenantSlug = impersonatedTenantId
     ? row.impersonated_tenant_slug ?? "default"
     : row.home_tenant_slug;
+  if (!effectiveTenantId || !effectiveTenantSlug) return null;
 
   return {
     id: row.id,

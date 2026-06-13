@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "crypto";
 import { db } from "@/server/db";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
@@ -54,8 +54,70 @@ export class TenantIngressSecretConfigurationError extends Error {
   }
 }
 
+export class TenantIngressVerificationError extends Error {
+  code: string;
+  status: number;
+
+  constructor({
+    code,
+    message,
+    status = 401
+  }: {
+    code: string;
+    message: string;
+    status?: number;
+  }) {
+    super(message);
+    this.name = "TenantIngressVerificationError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export type TenantIngressRequestScope = {
+  tenantId: string;
+  workspaceKey: string;
+  matchedSecretId: string | null;
+  authMode: "tenant_ingress_secret" | "global_shared_secret";
+};
+
 function workspaceKeyFor(scope: TenantIngressSecretScope) {
   return scope.workspaceKey?.trim() || DEFAULT_WORKSPACE_KEY;
+}
+
+function readBooleanEnv(key: string) {
+  const value = process.env[key]?.trim().toLowerCase();
+  if (!value) return null;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return null;
+}
+
+export function shouldRequireTenantIngressSigningSecrets() {
+  const configured = readBooleanEnv("TENANT_INGRESS_REQUIRE_SECRETS");
+  if (configured !== null) return configured;
+  return process.env.NODE_ENV === "production";
+}
+
+export function isTenantIngressVerificationError(
+  error: unknown
+): error is TenantIngressVerificationError {
+  return error instanceof TenantIngressVerificationError;
+}
+
+function timingSafeStringEqual(a: string, b: string) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function readHeader(request: Request, ...names: string[]) {
+  for (const name of names) {
+    const value = request.headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return null;
 }
 
 function readEncryptionKey() {
@@ -283,4 +345,71 @@ export async function markTenantIngressSigningSecretUsed(
        AND workspace_key = $3`,
     [secretId, scope.tenantId, workspaceKeyFor(scope)]
   );
+}
+
+export async function resolveTenantIngressRequestScope(
+  request: Request,
+  options: {
+    providedSecret?: string | null;
+    fallbackGlobalSecret?: string | null;
+    fallbackTenantId?: string | null;
+    fallbackWorkspaceKey?: string | null;
+  } = {}
+): Promise<TenantIngressRequestScope> {
+  const providedSecret =
+    options.providedSecret?.trim() || readHeader(request, "x-6esk-secret", "x-ingress-secret");
+  if (!providedSecret) {
+    throw new TenantIngressVerificationError({
+      code: "tenant_ingress_secret_required",
+      message: "Tenant ingress secret is required"
+    });
+  }
+
+  const tenantId = readHeader(request, "x-6esk-tenant-id", "x-6esk-tenant");
+  const workspaceKey =
+    readHeader(request, "x-6esk-workspace-key", "x-6esk-workspace") ||
+    options.fallbackWorkspaceKey?.trim() ||
+    DEFAULT_WORKSPACE_KEY;
+
+  if (tenantId) {
+    const secrets = await listActiveTenantIngressSigningSecrets({ tenantId, workspaceKey });
+    const matched = secrets.find((secret) => timingSafeStringEqual(providedSecret, secret.secret));
+    if (!matched) {
+      throw new TenantIngressVerificationError({
+        code: "tenant_ingress_secret_invalid",
+        message: "Tenant ingress secret is invalid"
+      });
+    }
+    await markTenantIngressSigningSecretUsed(matched.id, { tenantId, workspaceKey });
+    return {
+      tenantId,
+      workspaceKey,
+      matchedSecretId: matched.id,
+      authMode: "tenant_ingress_secret"
+    };
+  }
+
+  if (shouldRequireTenantIngressSigningSecrets()) {
+    throw new TenantIngressVerificationError({
+      code: "tenant_ingress_tenant_required",
+      message: "Tenant ingress tenant header is required",
+      status: 400
+    });
+  }
+
+  const fallbackSecret = options.fallbackGlobalSecret?.trim();
+  const fallbackTenantId = options.fallbackTenantId?.trim();
+  if (!fallbackSecret || !fallbackTenantId || !timingSafeStringEqual(providedSecret, fallbackSecret)) {
+    throw new TenantIngressVerificationError({
+      code: "tenant_ingress_secret_invalid",
+      message: "Tenant ingress secret is invalid"
+    });
+  }
+
+  return {
+    tenantId: fallbackTenantId,
+    workspaceKey,
+    matchedSecretId: null,
+    authMode: "global_shared_secret"
+  };
 }

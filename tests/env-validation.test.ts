@@ -20,6 +20,7 @@ function baseEnv() {
     AUTH_REQUIRE_MFA_ADMIN: "true",
     AUTH_MFA_ISSUER: "6esk",
     TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "b".repeat(64),
+    TENANT_INGRESS_REQUIRE_SECRETS: "true",
     PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "c".repeat(64),
     TENANT_QUERY_GUARD_MODE: "strict",
     CRON_SECRET: "cron-secret",
@@ -146,6 +147,15 @@ describe("validateEnv", () => {
         TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN: "false"
       })
     ).toThrow(/TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN must not be false in production/);
+  });
+
+  it("rejects disabled tenant machine-ingress secret enforcement in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        TENANT_INGRESS_REQUIRE_SECRETS: "false"
+      })
+    ).toThrow(/TENANT_INGRESS_REQUIRE_SECRETS must not be false in production/);
   });
 
   it("requires Knowledge Base scanner and extractor services in production", () => {

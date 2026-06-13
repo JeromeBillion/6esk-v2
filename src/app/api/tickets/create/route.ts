@@ -2,6 +2,10 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import {
+  isTenantIngressVerificationError,
+  resolveTenantIngressRequestScope
+} from "@/server/tenant-ingress-secrets";
+import {
   integrationError,
   validateIntegrationApiVersion
 } from "@/server/api-contract";
@@ -17,7 +21,6 @@ export async function POST(request: Request) {
   }
 
   const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
   const sessionUser = await getSessionUser();
 
   if (sessionUser && !canManageTickets(sessionUser)) {
@@ -28,12 +31,25 @@ export async function POST(request: Request) {
     });
   }
 
-  if (!sessionUser && (!sharedSecret || provided !== sharedSecret)) {
-    return integrationError(request, {
-      status: 401,
-      code: "unauthorized",
-      message: "Unauthorized"
-    });
+  let machineIngressTenantId: string | null = null;
+  if (!sessionUser) {
+    try {
+      const scope = await resolveTenantIngressRequestScope(request, {
+        fallbackGlobalSecret: sharedSecret,
+        fallbackTenantId: DEFAULT_TENANT_ID
+      });
+      machineIngressTenantId = scope.tenantId;
+    } catch (error) {
+      if (isTenantIngressVerificationError(error)) {
+        const unauthorized = error.status === 401;
+        return integrationError(request, {
+          status: error.status,
+          code: unauthorized ? "unauthorized" : error.code,
+          message: unauthorized ? "Unauthorized" : error.message
+        });
+      }
+      throw error;
+    }
   }
 
   let payload: unknown;
@@ -57,7 +73,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const tenantId = sessionUser?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionUser?.tenant_id ?? machineIngressTenantId;
+  if (!tenantId) {
+    return integrationError(request, {
+      status: 401,
+      code: "tenant_required",
+      message: "Tenant context is required"
+    });
+  }
   return processCreateTicket({
     request,
     sessionUser,

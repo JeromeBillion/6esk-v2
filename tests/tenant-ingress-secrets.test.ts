@@ -132,4 +132,77 @@ describe("tenant ingress signing secrets", () => {
       rotateTenantIngressSigningSecret({ scope: { tenantId: TENANT_ID } })
     ).rejects.toBeInstanceOf(TenantIngressSecretConfigurationError);
   });
+
+  it("requires tenant-scoped machine ingress in production", async () => {
+    const { resolveTenantIngressRequestScope } = await import("@/server/tenant-ingress-secrets");
+    process.env.NODE_ENV = "production";
+    process.env.TENANT_INGRESS_REQUIRE_SECRETS = "";
+
+    await expect(
+      resolveTenantIngressRequestScope(
+        new Request("https://app.6esk.example/api/tickets/create", {
+          headers: { "x-6esk-secret": "shared-secret" }
+        }),
+        {
+          fallbackGlobalSecret: "shared-secret",
+          fallbackTenantId: TENANT_ID
+        }
+      )
+    ).rejects.toMatchObject({
+      code: "tenant_ingress_tenant_required",
+      status: 400
+    });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("keeps the global ingress secret as a local-only fallback", async () => {
+    const { resolveTenantIngressRequestScope } = await import("@/server/tenant-ingress-secrets");
+    process.env.NODE_ENV = "development";
+    process.env.TENANT_INGRESS_REQUIRE_SECRETS = "false";
+
+    await expect(
+      resolveTenantIngressRequestScope(
+        new Request("http://localhost/api/tickets/create", {
+          headers: { "x-6esk-secret": "shared-secret" }
+        }),
+        {
+          fallbackGlobalSecret: "shared-secret",
+          fallbackTenantId: TENANT_ID
+        }
+      )
+    ).resolves.toEqual({
+      tenantId: TENANT_ID,
+      workspaceKey: "primary",
+      matchedSecretId: null,
+      authMode: "global_shared_secret"
+    });
+  });
+
+  it("rejects tenant-routed machine ingress without a matching active secret", async () => {
+    const { resolveTenantIngressRequestScope } = await import("@/server/tenant-ingress-secrets");
+    process.env.NODE_ENV = "development";
+    process.env.TENANT_INGRESS_REQUIRE_SECRETS = "false";
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      resolveTenantIngressRequestScope(
+        new Request("http://localhost/api/tickets/create", {
+          headers: {
+            "x-6esk-secret": "wrong-secret",
+            "x-6esk-tenant-id": TENANT_ID
+          }
+        }),
+        {
+          fallbackGlobalSecret: "wrong-secret",
+          fallbackTenantId: "default-tenant"
+        }
+      )
+    ).rejects.toMatchObject({
+      code: "tenant_ingress_secret_invalid"
+    });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE tenant_id = $1"), [
+      TENANT_ID,
+      "primary"
+    ]);
+  });
 });

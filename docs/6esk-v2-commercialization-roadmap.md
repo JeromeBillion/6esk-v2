@@ -217,6 +217,7 @@ Multi-tenant core is closed for the current launch-gate scope:
 - tenant, organization, workspace, entitlement, audit, channel, ticket, customer, outbox, and billing paths have tenant IDs or tenant-derived context in the implemented services
 - tenant lifecycle service now validates provision/suspend/reactivate/close/plan-change operations, preserves lifecycle metadata in tenant settings, audits changes, and treats closed tenants as terminal
 - shared module entitlement checks now fail closed unless the tenant is runtime-active, so suspended/closed tenants cannot create new provider/module usage while historical records remain intact
+- session-derived tenant context now fails closed when the user has no valid home tenant, and unauthenticated machine ticket creation requires tenant-scoped ingress signing secrets in production instead of defaulting to the legacy tenant
 - backoffice tenant APIs expose lifecycle state and controlled plan/status changes for internal staff
 - focused regression tests cover lifecycle transitions, backoffice lifecycle control, and entitlement denial for inactive tenants
 
@@ -1043,6 +1044,7 @@ Retained and verified in the current recovery branch:
 - tenant-admin provider-number management now covers Twilio/provider phone-account ownership records, avoiding manual database edits for inbound voice routing configuration
 - runtime tenant-query enforcement now exists at the shared Postgres boundary for tenant-scoped tables, with `TENANT_QUERY_GUARD_MODE` validated for production
 - v2-native public ingress origin allowlists on migration `0058`, including tenant-admin origin management, production fail-closed origin enforcement, and portal ticket creation scoped to the resolved tenant
+- central session/tenant context and `/api/tickets/create` machine ingress now fail closed for missing tenant scope; production machine-created tickets must present a tenant header plus matching tenant ingress signing secret
 - production env validation for tenant ingress and provider webhook secret encryption keys
 - v2-native auth/session/MFA foundation on migration `0051`, including tenant security policy, session provider/device metadata, revocation evidence, TOTP enrollment/challenge flows, tenant-admin security policy API, user session list/revoke API, password-reset session revocation, and production env validation for MFA secret encryption
 - v2-native privileged-access grants on migration `0052`, including MFA-gated grant request/list/stats APIs, internal-admin approve/revoke/post-event-review actions, impersonation requiring an active tenant-scoped grant, grant expiry capping impersonation duration, grant id recorded on auth sessions, and security readiness counters for active grants/review backlog
@@ -1051,7 +1053,7 @@ Retained and verified in the current recovery branch:
 - v2-native release gates recovered from the v1 wrong-folder work: `.github/workflows/ai-safety.yml`, `.github/workflows/tenant-isolation.yml`, `npm run test:ai-safety`, and `npm run test:tenant-isolation`
 
 Still outstanding before v2 main can be considered deploy-ready:
-- provider call-site adoption for persisted tenant ingress/provider webhook secrets is now complete for WhatsApp, Resend, Twilio, and Deepgram/STT core code paths, including tenant-admin provider-number management; remaining provider evidence is deployment/runtime validation with real credentials and dashboards
+- provider call-site adoption for persisted tenant ingress/provider webhook secrets is now complete for WhatsApp, Resend, Twilio, Deepgram/STT, and unauthenticated machine ticket-create core code paths, including tenant-admin provider-number management; remaining provider evidence is deployment/runtime validation with real credentials and dashboards
 - OAuth runtime evidence: provider app callback registration, staging Google/Microsoft smoke tests, and dashboard credential verification are deploy dependencies rather than additional core code
 - AI follow-through: remaining policy-pipeline stages beyond the current route-level tool policy gate, native/runtime worker step/tool-call ledger population beyond `/api/agent/v1/actions`, deployed scanner/extractor/R2 evidence, post-launch embeddings/vector search, provider-gateway rollout for future Dexter/model call sites, external load/staging rollout evidence, and preserving native Dexter and v2 runtime files; local prompt-injection/customer-bound release coverage now has `npm run test:ai-safety`
 - billing follow-through: customer-safe invoice export and usage chart/export polish are now locally recovered; provider payment/reconciliation wiring, invoice PDF rendering, and deployed finance dashboard evidence remain deployment/runtime work

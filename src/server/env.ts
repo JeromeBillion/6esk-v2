@@ -23,6 +23,7 @@ const envSchema = z.object({
   ADMIN_IP_ALLOWLIST: z.string().optional(),
   AGENT_IP_ALLOWLIST: z.string().optional(),
   TENANT_INGRESS_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
+  TENANT_INGRESS_REQUIRE_SECRETS: optionalBooleanish,
   PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: optionalNonEmptyString,
   TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: optionalBooleanish,
   TENANT_PROVIDER_WEBHOOK_SECRETS_JSON: optionalNonEmptyString,
@@ -220,6 +221,9 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
   }
   if (readString(source, "TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN")?.toLowerCase() === "false") {
     issues.push("TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN must not be false in production");
+  }
+  if (readString(source, "TENANT_INGRESS_REQUIRE_SECRETS")?.toLowerCase() === "false") {
+    issues.push("TENANT_INGRESS_REQUIRE_SECRETS must not be false in production");
   }
 
   const callsProvider = readString(source, "CALLS_PROVIDER")?.toLowerCase() ?? "mock";

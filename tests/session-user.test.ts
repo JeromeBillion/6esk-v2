@@ -55,6 +55,17 @@ describe("getSessionUser", () => {
       real_tenant_id: "tenant-home",
       is_impersonating: false
     });
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("JOIN tenants t ON t.id = u.tenant_id");
+  });
+
+  it("fails closed when the session user has no home tenant", async () => {
+    mocks.dbQuery.mockResolvedValue({
+      rows: [sessionRow({ real_tenant_id: null, home_tenant_slug: null })]
+    });
+
+    const user = await getSessionUser();
+
+    expect(user).toBeNull();
   });
 
   it("uses the impersonated tenant only for internal support roles", async () => {
