@@ -8,6 +8,9 @@ const KNOWLEDGE_INGESTION_RECOVERY_SECONDS = Number(
   process.env.KNOWLEDGE_INGESTION_RECOVERY_SECONDS ?? 300
 );
 const MAX_KNOWLEDGE_INGESTION_ATTEMPTS = Number(process.env.KNOWLEDGE_INGESTION_MAX_ATTEMPTS ?? 5);
+const DEFAULT_MALWARE_SCAN_TIMEOUT_MS = 5_000;
+const DEFAULT_DOCUMENT_EXTRACTOR_TIMEOUT_MS = 15_000;
+const DEFAULT_QUARANTINE_PREFIX = "ai-knowledge/quarantine";
 
 const ALLOWED_FILE_TYPES = [
   {
@@ -39,6 +42,12 @@ const ALLOWED_FILE_TYPES = [
   }
 ] as const;
 
+const EXTRACTABLE_DOCUMENT_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+]);
+
 export type KnowledgeFolderVisibility = "ai_visible" | "admin_only";
 export type KnowledgeDocumentKind =
   | "sop"
@@ -65,6 +74,81 @@ export class KnowledgeBaseError extends Error {
     this.name = "KnowledgeBaseError";
   }
 }
+
+export class KnowledgeIngestionSafetyError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly poison = true,
+    public readonly details: Record<string, unknown> | null = null
+  ) {
+    super(message);
+    this.name = "KnowledgeIngestionSafetyError";
+  }
+}
+
+export type KnowledgeMalwareScanResult = {
+  status: "clean" | "infected" | "unavailable" | "skipped";
+  scanner: string;
+  scannedAt: string;
+  signature?: string | null;
+  detail?: string | null;
+};
+
+export type KnowledgeExtractionResult = {
+  text: string;
+  metadata: Record<string, unknown>;
+};
+
+export type KnowledgeQuarantineEvent = {
+  id: string;
+  tenant_id: string;
+  document_id: string | null;
+  document_version_id: string | null;
+  ingestion_job_id: string | null;
+  original_filename: string;
+  content_type: string;
+  checksum_sha256: string;
+  size_bytes: string | number;
+  reason_code: string;
+  scanner_status: string;
+  scanner: string | null;
+  scanner_signature: string | null;
+  detail: string | null;
+  storage_provider: string | null;
+  storage_bucket: string | null;
+  storage_key: string | null;
+  stored_at: Date | string | null;
+  metadata: Record<string, unknown>;
+  created_at: Date | string;
+};
+
+export type KnowledgeIngestionReadiness = {
+  checkedAt: string;
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  scanner: {
+    status: "configured" | "required_unconfigured" | "optional_disabled";
+    required: boolean;
+    urlConfigured: boolean;
+    timeoutMs: number;
+  };
+  extractor: {
+    status: "configured" | "required_unconfigured";
+    urlConfigured: boolean;
+    timeoutMs: number;
+    supportedContentTypes: string[];
+  };
+  quarantineStorage: {
+    status: "configured" | "required_unconfigured" | "optional_disabled" | "enabled_unconfigured";
+    enabled: boolean;
+    required: boolean;
+    bucketConfigured: boolean;
+    missing: string[];
+    prefix: string;
+  };
+};
 
 export type KnowledgeIngestionJob = {
   id: string;
@@ -133,6 +217,75 @@ function trimOrNull(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function readPositiveIntegerEnv(name: string, fallback: number) {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function normalizeContentType(value: string | null | undefined) {
+  return (value ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
+}
+
+function requiresKnowledgeMalwareScan() {
+  const configured = process.env.AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN;
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
+function getKnowledgeMalwareScannerUrl() {
+  return process.env.AI_KNOWLEDGE_MALWARE_SCAN_URL?.trim() || null;
+}
+
+function getKnowledgeDocumentExtractorUrl() {
+  return process.env.AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL?.trim() || null;
+}
+
+function sanitizeHeaderValue(value: string) {
+  return value.replace(/[\r\n]/g, " ").slice(0, 500);
+}
+
+function sanitizeObjectKeySegment(value: string | null | undefined, fallback: string, maxLength = 160) {
+  const cleaned = (value ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9._=-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return (cleaned || fallback).slice(0, maxLength);
+}
+
+function normalizeQuarantineObjectPrefix() {
+  const rawPrefix = process.env.AI_KNOWLEDGE_QUARANTINE_PREFIX?.trim() || DEFAULT_QUARANTINE_PREFIX;
+  const prefix = rawPrefix
+    .split("/")
+    .map((segment) => sanitizeObjectKeySegment(segment, "", 96))
+    .filter(Boolean)
+    .join("/");
+  return prefix || DEFAULT_QUARANTINE_PREFIX;
+}
+
+function getQuarantineStorageConfig() {
+  const required = process.env.AI_KNOWLEDGE_QUARANTINE_REQUIRE_BLOBS === "true";
+  const enabled = required || process.env.AI_KNOWLEDGE_QUARANTINE_STORE_BLOBS === "true";
+  const bucket = process.env.R2_BUCKET?.trim() || null;
+  const missing: string[] = [];
+  if (!process.env.R2_ENDPOINT?.trim()) missing.push("R2_ENDPOINT");
+  if (!process.env.R2_ACCESS_KEY_ID?.trim()) missing.push("R2_ACCESS_KEY_ID");
+  if (!process.env.R2_SECRET_ACCESS_KEY?.trim()) missing.push("R2_SECRET_ACCESS_KEY");
+  if (!bucket) missing.push("R2_BUCKET");
+  return {
+    enabled,
+    required,
+    bucket,
+    missing,
+    prefix: normalizeQuarantineObjectPrefix()
+  };
+}
+
+function toArrayBuffer(buffer: Buffer) {
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+}
+
 function titleFromFileName(fileName: string) {
   const sanitized = sanitizeFileName(fileName);
   return sanitized.replace(/\.[a-z0-9]+$/i, "").trim() || sanitized;
@@ -147,7 +300,7 @@ function resolveAllowedFile(fileName: string, contentType: string | null | undef
   }
 
   const extension = getExtension(fileName);
-  const normalizedContentType = (contentType ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
+  const normalizedContentType = normalizeContentType(contentType);
   const allowed = ALLOWED_FILE_TYPES.find(
     (type) =>
       type.extensions.includes(extension as never) &&
@@ -162,6 +315,511 @@ function resolveAllowedFile(fileName: string, contentType: string | null | undef
     extension,
     contentType: allowed.normalizedContentType
   };
+}
+
+export function getKnowledgeIngestionReadiness(): KnowledgeIngestionReadiness {
+  const scannerRequired = requiresKnowledgeMalwareScan();
+  const scannerUrlConfigured = Boolean(getKnowledgeMalwareScannerUrl());
+  const scannerStatus = scannerUrlConfigured
+    ? "configured"
+    : scannerRequired
+      ? "required_unconfigured"
+      : "optional_disabled";
+  const extractorUrlConfigured = Boolean(getKnowledgeDocumentExtractorUrl());
+  const extractorStatus = extractorUrlConfigured ? "configured" : "required_unconfigured";
+  const quarantineConfig = getQuarantineStorageConfig();
+  const quarantineStatus = quarantineConfig.enabled
+    ? quarantineConfig.missing.length === 0
+      ? "configured"
+      : quarantineConfig.required
+        ? "required_unconfigured"
+        : "enabled_unconfigured"
+    : "optional_disabled";
+  const blockers = [
+    scannerStatus === "required_unconfigured" ? "malware_scanner_unconfigured" : null,
+    extractorStatus === "required_unconfigured" ? "document_extractor_unconfigured" : null,
+    quarantineStatus === "required_unconfigured" ? "quarantine_storage_unconfigured" : null
+  ].filter((value): value is string => Boolean(value));
+  const warnings = [
+    scannerStatus === "optional_disabled" ? "malware_scanner_optional_disabled" : null,
+    quarantineStatus === "optional_disabled" ? "quarantine_storage_optional_disabled" : null,
+    quarantineStatus === "enabled_unconfigured" ? "quarantine_storage_enabled_unconfigured" : null
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    checkedAt: new Date().toISOString(),
+    ready: blockers.length === 0,
+    blockers,
+    warnings,
+    scanner: {
+      status: scannerStatus,
+      required: scannerRequired,
+      urlConfigured: scannerUrlConfigured,
+      timeoutMs: readPositiveIntegerEnv("AI_KNOWLEDGE_MALWARE_SCAN_TIMEOUT_MS", DEFAULT_MALWARE_SCAN_TIMEOUT_MS)
+    },
+    extractor: {
+      status: extractorStatus,
+      urlConfigured: extractorUrlConfigured,
+      timeoutMs: readPositiveIntegerEnv(
+        "AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_TIMEOUT_MS",
+        DEFAULT_DOCUMENT_EXTRACTOR_TIMEOUT_MS
+      ),
+      supportedContentTypes: Array.from(EXTRACTABLE_DOCUMENT_CONTENT_TYPES).sort()
+    },
+    quarantineStorage: {
+      status: quarantineStatus,
+      enabled: quarantineConfig.enabled,
+      required: quarantineConfig.required,
+      bucketConfigured: Boolean(quarantineConfig.bucket),
+      missing: quarantineConfig.missing,
+      prefix: quarantineConfig.prefix
+    }
+  };
+}
+
+export async function scanKnowledgeUploadForMalware(input: {
+  fileName: string;
+  contentType: string;
+  checksumSha256: string;
+  buffer: Buffer;
+}): Promise<KnowledgeMalwareScanResult> {
+  const scannerUrl = getKnowledgeMalwareScannerUrl();
+  const scannedAt = new Date().toISOString();
+  if (!scannerUrl) {
+    if (requiresKnowledgeMalwareScan()) {
+      throw new KnowledgeIngestionSafetyError(
+        "malware_scanner_unconfigured",
+        "Knowledge uploads require a configured malware scanner in this environment.",
+        true,
+        {
+          malwareScan: {
+            status: "unavailable",
+            scanner: "unconfigured",
+            scannedAt
+          }
+        }
+      );
+    }
+    return {
+      status: "skipped",
+      scanner: "disabled",
+      scannedAt,
+      detail: "Malware scanning is disabled by policy."
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    readPositiveIntegerEnv("AI_KNOWLEDGE_MALWARE_SCAN_TIMEOUT_MS", DEFAULT_MALWARE_SCAN_TIMEOUT_MS)
+  );
+  try {
+    const response = await fetch(scannerUrl, {
+      method: "POST",
+      headers: {
+        "content-type": input.contentType || "application/octet-stream",
+        "x-knowledge-filename": sanitizeHeaderValue(input.fileName),
+        "x-knowledge-checksum-sha256": sanitizeHeaderValue(input.checksumSha256)
+      },
+      body: toArrayBuffer(input.buffer),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new KnowledgeIngestionSafetyError(
+        "malware_scan_unavailable",
+        `Knowledge malware scanner returned HTTP ${response.status}.`,
+        false,
+        {
+          malwareScan: {
+            status: "unavailable",
+            scanner: scannerUrl,
+            scannedAt,
+            detail: `HTTP ${response.status}`
+          }
+        }
+      );
+    }
+
+    const payload = await response.json().catch(() => null) as {
+      status?: string;
+      scanner?: string;
+      signature?: string | null;
+      detail?: string | null;
+    } | null;
+    const status = payload?.status === "clean"
+      ? "clean"
+      : payload?.status === "infected"
+        ? "infected"
+        : "unavailable";
+    const scanResult: KnowledgeMalwareScanResult = {
+      status,
+      scanner: payload?.scanner?.trim() || scannerUrl,
+      scannedAt,
+      signature: payload?.signature ?? null,
+      detail: payload?.detail ?? null
+    };
+    if (scanResult.status !== "clean") {
+      throw new KnowledgeIngestionSafetyError(
+        scanResult.status === "infected" ? "malware_detected" : "malware_scan_unavailable",
+        scanResult.status === "infected"
+          ? "Knowledge upload was rejected by the malware scanner."
+          : "Knowledge malware scanner returned an indeterminate result.",
+        scanResult.status === "infected",
+        { malwareScan: scanResult }
+      );
+    }
+    return scanResult;
+  } catch (error) {
+    if (error instanceof KnowledgeIngestionSafetyError) {
+      throw error;
+    }
+    throw new KnowledgeIngestionSafetyError(
+      "malware_scan_unavailable",
+      "Knowledge malware scanner could not be reached.",
+      false,
+      {
+        malwareScan: {
+          status: "unavailable",
+          scanner: scannerUrl,
+          scannedAt,
+          detail: error instanceof Error ? error.message : "Unknown scanner error"
+        }
+      }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function extractKnowledgeDocumentText(input: {
+  fileName: string;
+  contentType: string;
+  checksumSha256: string;
+  buffer: Buffer;
+}): Promise<KnowledgeExtractionResult> {
+  const normalizedContentType = normalizeContentType(input.contentType);
+  const extractedAt = new Date().toISOString();
+  if (!EXTRACTABLE_DOCUMENT_CONTENT_TYPES.has(normalizedContentType)) {
+    throw new KnowledgeIngestionSafetyError(
+      "knowledge_extractor_unsupported",
+      `Knowledge extractor is not enabled for ${normalizedContentType}.`,
+      true,
+      {
+        extraction: {
+          status: "unsupported",
+          contentType: normalizedContentType,
+          extractedAt
+        }
+      }
+    );
+  }
+
+  const extractorUrl = getKnowledgeDocumentExtractorUrl();
+  if (!extractorUrl) {
+    throw new KnowledgeIngestionSafetyError(
+      "knowledge_extractor_unconfigured",
+      "PDF and Word knowledge uploads require a configured document extractor service.",
+      true,
+      {
+        extraction: {
+          status: "unavailable",
+          extractor: "unconfigured",
+          extractedAt
+        }
+      }
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    readPositiveIntegerEnv("AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_TIMEOUT_MS", DEFAULT_DOCUMENT_EXTRACTOR_TIMEOUT_MS)
+  );
+  try {
+    const response = await fetch(extractorUrl, {
+      method: "POST",
+      headers: {
+        "content-type": normalizedContentType || "application/octet-stream",
+        "x-knowledge-filename": sanitizeHeaderValue(input.fileName),
+        "x-knowledge-checksum-sha256": sanitizeHeaderValue(input.checksumSha256)
+      },
+      body: toArrayBuffer(input.buffer),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new KnowledgeIngestionSafetyError(
+        "knowledge_extractor_unavailable",
+        `Knowledge document extractor returned HTTP ${response.status}.`,
+        response.status < 500,
+        {
+          extraction: {
+            status: "unavailable",
+            extractor: extractorUrl,
+            extractedAt,
+            detail: `HTTP ${response.status}`
+          }
+        }
+      );
+    }
+
+    const payload = await response.json().catch(() => null) as {
+      text?: string | null;
+      title?: string | null;
+      extractor?: string | null;
+      warnings?: unknown;
+      metadata?: unknown;
+    } | null;
+    const text = typeof payload?.text === "string"
+      ? payload.text.replace(/\r\n?/g, "\n").replace(/\u0000/g, "").trim()
+      : "";
+    const extractor = payload?.extractor?.trim() || extractorUrl;
+    const warnings = Array.isArray(payload?.warnings)
+      ? payload.warnings.filter((value): value is string => typeof value === "string").slice(0, 10)
+      : [];
+    const serviceMetadata =
+      payload?.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+        ? payload.metadata as Record<string, unknown>
+        : {};
+
+    if (!text) {
+      throw new KnowledgeIngestionSafetyError(
+        "empty_extracted_text",
+        "No readable text was found in the extracted document.",
+        true,
+        {
+          extraction: {
+            status: "empty",
+            extractor,
+            extractedAt,
+            warnings
+          }
+        }
+      );
+    }
+
+    return {
+      text,
+      metadata: {
+        status: "completed",
+        extractor,
+        contentKind: "document",
+        extractedAt,
+        title: typeof payload?.title === "string" && payload.title.trim() ? payload.title.trim() : null,
+        warnings,
+        serviceMetadata
+      }
+    };
+  } catch (error) {
+    if (error instanceof KnowledgeIngestionSafetyError) {
+      throw error;
+    }
+    throw new KnowledgeIngestionSafetyError(
+      "knowledge_extractor_unavailable",
+      "Knowledge document extractor could not be reached.",
+      false,
+      {
+        extraction: {
+          status: "unavailable",
+          extractor: extractorUrl,
+          extractedAt,
+          detail: error instanceof Error ? error.message : "Unknown extractor error"
+        }
+      }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function extractMalwareScanDetails(error: unknown): KnowledgeMalwareScanResult | null {
+  if (!(error instanceof KnowledgeIngestionSafetyError)) {
+    return null;
+  }
+  const value = error.details?.malwareScan;
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const scan = value as Partial<KnowledgeMalwareScanResult>;
+  if (typeof scan.status !== "string" || typeof scan.scanner !== "string") {
+    return null;
+  }
+  return {
+    status: scan.status === "clean" || scan.status === "infected" || scan.status === "skipped"
+      ? scan.status
+      : "unavailable",
+    scanner: scan.scanner,
+    scannedAt: typeof scan.scannedAt === "string" ? scan.scannedAt : new Date().toISOString(),
+    signature: scan.signature ?? null,
+    detail: scan.detail ?? null
+  };
+}
+
+async function storeKnowledgeQuarantineBlob(input: {
+  tenantId: string;
+  fileName: string;
+  contentType: string;
+  checksumSha256: string;
+  reasonCode: string;
+  buffer?: Buffer | null;
+}) {
+  const config = getQuarantineStorageConfig();
+  if (!config.enabled) {
+    return {
+      status: "disabled",
+      required: false,
+      reason: "AI_KNOWLEDGE_QUARANTINE_STORE_BLOBS is not enabled"
+    };
+  }
+
+  const storedAt = new Date().toISOString();
+  const key = [
+    config.prefix,
+    "tenants",
+    sanitizeObjectKeySegment(input.tenantId, "unknown-tenant", 128),
+    storedAt.slice(0, 10),
+    `${input.checksumSha256.slice(0, 16)}-${randomUUID()}-${sanitizeObjectKeySegment(input.fileName, "upload.bin", 180)}`
+  ].join("/");
+
+  if (!input.buffer) {
+    return {
+      status: "failed",
+      provider: "r2",
+      bucket: config.bucket,
+      key,
+      storedAt,
+      required: config.required,
+      error: "Original bytes unavailable for quarantine storage"
+    };
+  }
+
+  if (config.missing.length > 0 || !config.bucket) {
+    return {
+      status: "failed",
+      provider: "r2",
+      bucket: config.bucket,
+      key,
+      storedAt,
+      required: config.required,
+      error: `Missing quarantine object storage config: ${config.missing.join(", ")}`
+    };
+  }
+
+  try {
+    await putObject({
+      key,
+      body: input.buffer,
+      contentType: input.contentType || "application/octet-stream"
+    });
+    return {
+      status: "stored",
+      provider: "r2",
+      bucket: config.bucket,
+      key,
+      storedAt
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      provider: "r2",
+      bucket: config.bucket,
+      key,
+      storedAt,
+      required: config.required,
+      error: error instanceof Error ? error.message : "Unknown quarantine object storage error"
+    };
+  }
+}
+
+export async function recordKnowledgeQuarantineEvent(input: {
+  tenantId: string;
+  documentId?: string | null;
+  documentVersionId?: string | null;
+  ingestionJobId?: string | null;
+  fileName: string;
+  contentType: string;
+  checksumSha256: string;
+  sizeBytes: number;
+  reasonCode: string;
+  detail?: string | null;
+  malwareScan?: KnowledgeMalwareScanResult | null;
+  buffer?: Buffer | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const quarantineBlob = await storeKnowledgeQuarantineBlob({
+    tenantId: input.tenantId,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    checksumSha256: input.checksumSha256,
+    reasonCode: input.reasonCode,
+    buffer: input.buffer
+  });
+  const storageProvider = quarantineBlob.status === "stored" ? quarantineBlob.provider : null;
+  const storageBucket = quarantineBlob.status === "stored" ? quarantineBlob.bucket : null;
+  const storageKey = quarantineBlob.status === "stored" ? quarantineBlob.key : null;
+  const storedAt = quarantineBlob.status === "stored" ? quarantineBlob.storedAt : null;
+
+  const result = await db.query<KnowledgeQuarantineEvent>(
+    `INSERT INTO knowledge_quarantine_events (
+       tenant_id, document_id, document_version_id, ingestion_job_id,
+       original_filename, content_type, checksum_sha256, size_bytes,
+       reason_code, scanner_status, scanner, scanner_signature, detail,
+       storage_provider, storage_bucket, storage_key, stored_at, metadata
+     )
+     VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8,
+       $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb
+     )
+     RETURNING id, tenant_id, document_id, document_version_id, ingestion_job_id,
+               original_filename, content_type, checksum_sha256, size_bytes,
+               reason_code, scanner_status, scanner, scanner_signature, detail,
+               storage_provider, storage_bucket, storage_key, stored_at, metadata, created_at`,
+    [
+      input.tenantId,
+      input.documentId ?? null,
+      input.documentVersionId ?? null,
+      input.ingestionJobId ?? null,
+      sanitizeFileName(input.fileName),
+      normalizeContentType(input.contentType),
+      input.checksumSha256,
+      input.sizeBytes,
+      input.reasonCode.slice(0, 120),
+      input.malwareScan?.status ?? "not_scanned",
+      input.malwareScan?.scanner ?? null,
+      input.malwareScan?.signature ?? null,
+      input.detail?.slice(0, 1000) ?? null,
+      storageProvider,
+      storageBucket,
+      storageKey,
+      storedAt,
+      JSON.stringify({
+        ...(input.metadata ?? {}),
+        quarantineBlob
+      })
+    ]
+  );
+
+  return result.rows[0];
+}
+
+export async function listKnowledgeQuarantineEvents(
+  tenantId: string,
+  { limit = 25 }: { limit?: number } = {}
+) {
+  const normalizedLimit = Math.min(Math.max(limit, 1), 100);
+  const result = await db.query<KnowledgeQuarantineEvent>(
+    `SELECT id, tenant_id, document_id, document_version_id, ingestion_job_id,
+            original_filename, content_type, checksum_sha256, size_bytes,
+            reason_code, scanner_status, scanner, scanner_signature, detail,
+            storage_provider, storage_bucket, storage_key, stored_at, metadata, created_at
+     FROM knowledge_quarantine_events
+     WHERE tenant_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [tenantId, normalizedLimit]
+  );
+  return result.rows;
 }
 
 function buildObjectKey({
@@ -335,7 +993,8 @@ export async function saveKnowledgeExtractionResult({
   documentVersionId,
   attemptCount,
   extractedTextKey,
-  chunks
+  chunks,
+  metadata
 }: {
   tenantId: string;
   jobId: string;
@@ -343,6 +1002,7 @@ export async function saveKnowledgeExtractionResult({
   attemptCount: number;
   extractedTextKey: string;
   chunks: KnowledgeChunkInput[];
+  metadata?: Record<string, unknown>;
 }) {
   const client = await db.connect();
   try {
@@ -390,6 +1050,7 @@ export async function saveKnowledgeExtractionResult({
         extractedTextKey,
         chunks.length,
         JSON.stringify({
+          ...(metadata ?? {}),
           ingestion: {
             extractionStatus: "indexed",
             indexedAt: new Date().toISOString()

@@ -300,3 +300,15 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-workspace-usage-export-api.test.ts`
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
+- Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
+  - `tests/knowledge-base-service.test.ts`
+  - `tests/knowledge-ingestion-worker.test.ts`
+  - `tests/admin-ai-knowledge-ingestion-api.test.ts`
+  - `tests/env-validation.test.ts`
+  - `tests/tenant-query-guard.test.ts`
+- Recovered value from the v1 reference:
+  - production fail-closed scanner/extractor env stance
+  - bounded malware scanner and document extractor service contracts
+  - tenant-scoped quarantine event ledger with optional R2 blob storage pointer
+  - admin readiness/quarantine diagnostics
+  - prompt-injection poisoning before unsafe uploaded knowledge can be chunked

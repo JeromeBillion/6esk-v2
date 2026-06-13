@@ -52,6 +52,15 @@ const envSchema = z.object({
   DEXTER_RUNTIME_HTTP_URL: optionalUrl,
   DEXTER_RUNTIME_HTTP_SECRET: optionalNonEmptyString,
   DEXTER_RUNTIME_HTTP_TIMEOUT_MS: optionalNonEmptyString,
+  KNOWLEDGE_INGESTION_SECRET: optionalNonEmptyString,
+  AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN: optionalBooleanish,
+  AI_KNOWLEDGE_MALWARE_SCAN_URL: optionalUrl,
+  AI_KNOWLEDGE_MALWARE_SCAN_TIMEOUT_MS: optionalNonEmptyString,
+  AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL: optionalUrl,
+  AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_TIMEOUT_MS: optionalNonEmptyString,
+  AI_KNOWLEDGE_QUARANTINE_STORE_BLOBS: optionalBooleanish,
+  AI_KNOWLEDGE_QUARANTINE_REQUIRE_BLOBS: optionalBooleanish,
+  AI_KNOWLEDGE_QUARANTINE_PREFIX: optionalNonEmptyString,
 
   CALLS_PROVIDER: z.string().optional(),
   CALLS_PROVIDER_HTTP_URL: optionalUrl,
@@ -288,6 +297,18 @@ function addTenantQueryGuardIssues(source: EnvSource, strictProduction: boolean,
   }
 }
 
+function addKnowledgeIngestionIssues(source: EnvSource, strictProduction: boolean, issues: string[]) {
+  if (!strictProduction) return;
+
+  if (readString(source, "AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN")?.toLowerCase() === "false") {
+    issues.push("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN must not be false in production");
+  }
+  requireKeys(source, [
+    "AI_KNOWLEDGE_MALWARE_SCAN_URL",
+    "AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL"
+  ], issues);
+}
+
 export function validateEnv(source: EnvSource = process.env, options: ValidateEnvOptions = {}) {
   const parsed = envSchema.safeParse(source);
   const issues: string[] = [];
@@ -298,6 +319,7 @@ export function validateEnv(source: EnvSource = process.env, options: ValidateEn
 
   const strictProduction = options.strictProduction ?? source.NODE_ENV === "production";
   addTenantQueryGuardIssues(source, strictProduction, issues);
+  addKnowledgeIngestionIssues(source, strictProduction, issues);
   if (strictProduction) {
     addProductionIssues(source, issues);
   }

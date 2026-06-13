@@ -6,6 +6,8 @@ const USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   getKnowledgeIngestionMetrics: vi.fn(),
+  getKnowledgeIngestionReadiness: vi.fn(),
+  listKnowledgeQuarantineEvents: vi.fn(),
   deliverPendingKnowledgeIngestionJobs: vi.fn(),
   recordAuditLog: vi.fn()
 }));
@@ -15,7 +17,9 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 vi.mock("@/server/ai/knowledge-base", () => ({
-  getKnowledgeIngestionMetrics: mocks.getKnowledgeIngestionMetrics
+  getKnowledgeIngestionMetrics: mocks.getKnowledgeIngestionMetrics,
+  getKnowledgeIngestionReadiness: mocks.getKnowledgeIngestionReadiness,
+  listKnowledgeQuarantineEvents: mocks.listKnowledgeQuarantineEvents
 }));
 
 vi.mock("@/server/ai/knowledge-ingestion-worker", () => ({
@@ -30,6 +34,7 @@ import {
   GET,
   POST
 } from "@/app/api/admin/ai/knowledge/ingestion/route";
+import { GET as GET_QUARANTINE_EVENTS } from "@/app/api/admin/ai/knowledge/quarantine-events/route";
 
 function buildUser(roleName: "lead_admin" | "agent") {
   return {
@@ -59,6 +64,22 @@ describe("admin AI knowledge ingestion API", () => {
       failed: 0,
       poison: 0
     });
+    mocks.getKnowledgeIngestionReadiness.mockReturnValue({
+      ready: true,
+      blockers: [],
+      warnings: [],
+      scanner: { status: "configured" },
+      extractor: { status: "configured" },
+      quarantineStorage: { status: "optional_disabled" }
+    });
+    mocks.listKnowledgeQuarantineEvents.mockResolvedValue([
+      {
+        id: "quarantine-1",
+        tenant_id: TENANT_ID,
+        original_filename: "bad.pdf",
+        reason_code: "knowledge_extractor_unconfigured"
+      }
+    ]);
     mocks.deliverPendingKnowledgeIngestionJobs.mockResolvedValue({
       indexed: 1,
       failed: 0,
@@ -78,9 +99,14 @@ describe("admin AI knowledge ingestion API", () => {
       queue: {
         queued: 1,
         indexed24h: 2
+      },
+      readiness: {
+        ready: true,
+        scanner: { status: "configured" }
       }
     });
     expect(mocks.getKnowledgeIngestionMetrics).toHaveBeenCalledWith(TENANT_ID);
+    expect(mocks.getKnowledgeIngestionReadiness).toHaveBeenCalled();
   });
 
   it("returns 403 for non-admin metrics reads", async () => {
@@ -90,6 +116,37 @@ describe("admin AI knowledge ingestion API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.getKnowledgeIngestionMetrics).not.toHaveBeenCalled();
+  });
+
+  it("lists tenant-scoped quarantine events for admins", async () => {
+    const response = await GET_QUARANTINE_EVENTS(
+      new Request("http://localhost/api/admin/ai/knowledge/quarantine-events?limit=7")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      tenantId: TENANT_ID,
+      events: [
+        {
+          id: "quarantine-1",
+          original_filename: "bad.pdf",
+          reason_code: "knowledge_extractor_unconfigured"
+        }
+      ]
+    });
+    expect(mocks.listKnowledgeQuarantineEvents).toHaveBeenCalledWith(TENANT_ID, { limit: 7 });
+  });
+
+  it("returns 403 for non-admin quarantine diagnostics reads", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET_QUARANTINE_EVENTS(
+      new Request("http://localhost/api/admin/ai/knowledge/quarantine-events")
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.listKnowledgeQuarantineEvents).not.toHaveBeenCalled();
   });
 
   it("runs ingestion for only the admin tenant when triggered by an admin", async () => {

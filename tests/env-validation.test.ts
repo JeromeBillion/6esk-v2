@@ -30,6 +30,9 @@ function baseEnv() {
     AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS: "300",
     AGENT_OUTBOX_LANE_RETRY_SECONDS: "10",
     AI_API_KEY: "ai-key",
+    AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN: "true",
+    AI_KNOWLEDGE_MALWARE_SCAN_URL: "https://scanner.6esk.example/scan",
+    AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL: "https://extractor.6esk.example/parse",
     CALLS_PROVIDER: "twilio",
     CALLS_TWILIO_ACCOUNT_SID: "AC123",
     CALLS_TWILIO_AUTH_TOKEN: "twilio-auth",
@@ -134,6 +137,23 @@ describe("validateEnv", () => {
         TENANT_QUERY_GUARD_MODE: "observe"
       })
     ).toThrow(/TENANT_QUERY_GUARD_MODE must be off, warn, or strict/);
+  });
+
+  it("requires Knowledge Base scanner and extractor services in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN: "false"
+      })
+    ).toThrow(/AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN must not be false in production/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        AI_KNOWLEDGE_MALWARE_SCAN_URL: "",
+        AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL: ""
+      })
+    ).toThrow(/AI_KNOWLEDGE_MALWARE_SCAN_URL/);
   });
 
   it("requires bridge configuration when Dexter runtime uses http_bridge mode", () => {

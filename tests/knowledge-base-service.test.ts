@@ -32,15 +32,20 @@ vi.mock("@/server/storage/r2", () => ({
 import {
   archiveKnowledgeDocument,
   createKnowledgeFolder,
+  getKnowledgeIngestionReadiness,
   KnowledgeBaseError,
   listKnowledgeBase,
   publishKnowledgeDocument,
+  recordKnowledgeQuarantineEvent,
+  scanKnowledgeUploadForMalware,
   uploadKnowledgeDocument
 } from "@/server/ai/knowledge-base";
 
 describe("knowledge base service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     mocks.db.connect.mockResolvedValue(mocks.client);
     mocks.putObject.mockResolvedValue("stored-key");
     mocks.deleteObject.mockResolvedValue(undefined);
@@ -185,6 +190,163 @@ describe("knowledge base service", () => {
     ).rejects.toBeInstanceOf(KnowledgeBaseError);
 
     expect(mocks.putObject).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Knowledge Base malware scanning is required but unconfigured", async () => {
+    vi.stubEnv("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN", "true");
+    vi.stubEnv("AI_KNOWLEDGE_MALWARE_SCAN_URL", "");
+
+    await expect(
+      scanKnowledgeUploadForMalware({
+        fileName: "returns.md",
+        contentType: "text/markdown",
+        checksumSha256: "a".repeat(64),
+        buffer: Buffer.from("# Returns")
+      })
+    ).rejects.toMatchObject({
+      code: "malware_scanner_unconfigured",
+      poison: true
+    });
+  });
+
+  it("accepts clean Knowledge Base malware scanner results", async () => {
+    vi.stubEnv("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN", "true");
+    vi.stubEnv("AI_KNOWLEDGE_MALWARE_SCAN_URL", "https://scanner.6esk.example/scan");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "clean", scanner: "clamav" }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await scanKnowledgeUploadForMalware({
+      fileName: "returns.md",
+      contentType: "text/markdown",
+      checksumSha256: "b".repeat(64),
+      buffer: Buffer.from("# Returns")
+    });
+
+    expect(result).toMatchObject({ status: "clean", scanner: "clamav" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://scanner.6esk.example/scan",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-knowledge-checksum-sha256": "b".repeat(64)
+        })
+      })
+    );
+  });
+
+  it("rejects infected Knowledge Base malware scanner results", async () => {
+    vi.stubEnv("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN", "true");
+    vi.stubEnv("AI_KNOWLEDGE_MALWARE_SCAN_URL", "https://scanner.6esk.example/scan");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ status: "infected", scanner: "clamav", signature: "Eicar-Test" }),
+          { status: 200 }
+        )
+      )
+    );
+
+    await expect(
+      scanKnowledgeUploadForMalware({
+        fileName: "returns.md",
+        contentType: "text/markdown",
+        checksumSha256: "c".repeat(64),
+        buffer: Buffer.from("# Returns")
+      })
+    ).rejects.toMatchObject({
+      code: "malware_detected",
+      poison: true,
+      details: {
+        malwareScan: expect.objectContaining({
+          status: "infected",
+          signature: "Eicar-Test"
+        })
+      }
+    });
+  });
+
+  it("reports Knowledge Base ingestion readiness blockers", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN", "true");
+    vi.stubEnv("AI_KNOWLEDGE_MALWARE_SCAN_URL", "");
+    vi.stubEnv("AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL", "");
+    vi.stubEnv("AI_KNOWLEDGE_QUARANTINE_REQUIRE_BLOBS", "true");
+    vi.stubEnv("R2_ENDPOINT", "");
+    vi.stubEnv("R2_ACCESS_KEY_ID", "");
+    vi.stubEnv("R2_SECRET_ACCESS_KEY", "");
+    vi.stubEnv("R2_BUCKET", "");
+
+    const readiness = getKnowledgeIngestionReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toEqual([
+      "malware_scanner_unconfigured",
+      "document_extractor_unconfigured",
+      "quarantine_storage_unconfigured"
+    ]);
+    expect(readiness.quarantineStorage.missing).toEqual([
+      "R2_ENDPOINT",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY",
+      "R2_BUCKET"
+    ]);
+  });
+
+  it("records rejected uploads in tenant-scoped quarantine storage when enabled", async () => {
+    vi.stubEnv("AI_KNOWLEDGE_QUARANTINE_STORE_BLOBS", "true");
+    vi.stubEnv("R2_ENDPOINT", "https://r2.example.test");
+    vi.stubEnv("R2_ACCESS_KEY_ID", "access-key");
+    vi.stubEnv("R2_SECRET_ACCESS_KEY", "secret-key");
+    vi.stubEnv("R2_BUCKET", "knowledge-quarantine");
+    mocks.db.query.mockResolvedValueOnce({
+      rows: [{
+        id: "quarantine-1",
+        tenant_id: TENANT_ID,
+        original_filename: "sop.pdf"
+      }]
+    });
+
+    await recordKnowledgeQuarantineEvent({
+      tenantId: TENANT_ID,
+      documentId: "doc-1",
+      documentVersionId: "version-1",
+      ingestionJobId: "job-1",
+      fileName: "sop.pdf",
+      contentType: "application/pdf",
+      checksumSha256: "d".repeat(64),
+      sizeBytes: 8,
+      reasonCode: "knowledge_extractor_unconfigured",
+      detail: "PDF and Word knowledge uploads require a configured document extractor service.",
+      malwareScan: {
+        status: "skipped",
+        scanner: "disabled",
+        scannedAt: "2026-06-01T00:00:00.000Z"
+      },
+      buffer: Buffer.from("%PDF-1.7")
+    });
+
+    expect(mocks.putObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: expect.stringMatching(
+          /^ai-knowledge\/quarantine\/tenants\/00000000-0000-0000-0000-000000000001\/\d{4}-\d{2}-\d{2}\/d{16}-[0-9a-f-]{36}-sop\.pdf$/
+        ),
+        body: Buffer.from("%PDF-1.7"),
+        contentType: "application/pdf"
+      })
+    );
+    const params = mocks.db.query.mock.calls[0][1] as unknown[];
+    expect(mocks.db.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO knowledge_quarantine_events"),
+      expect.any(Array)
+    );
+    expect(params[0]).toBe(TENANT_ID);
+    expect(params[8]).toBe("knowledge_extractor_unconfigured");
+    expect(params[13]).toBe("r2");
+    expect(params[14]).toBe("knowledge-quarantine");
+    expect(params[15]).toEqual(expect.stringContaining(`/tenants/${TENANT_ID}/`));
   });
 
   it("publishes only the latest indexed version inside the tenant", async () => {

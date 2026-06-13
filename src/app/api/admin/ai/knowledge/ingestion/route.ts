@@ -3,7 +3,10 @@ import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import { runInBackground } from "@/server/async";
 import { deliverPendingKnowledgeIngestionJobs } from "@/server/ai/knowledge-ingestion-worker";
-import { getKnowledgeIngestionMetrics } from "@/server/ai/knowledge-base";
+import {
+  getKnowledgeIngestionMetrics,
+  getKnowledgeIngestionReadiness
+} from "@/server/ai/knowledge-base";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function readLimit(request: Request) {
@@ -21,10 +24,14 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const metrics = await getKnowledgeIngestionMetrics(user.tenant_id);
+  const [metrics, readiness] = await Promise.all([
+    getKnowledgeIngestionMetrics(user.tenant_id),
+    Promise.resolve(getKnowledgeIngestionReadiness())
+  ]);
   return Response.json({
     tenantId: user.tenant_id,
-    queue: metrics
+    queue: metrics,
+    readiness
   });
 }
 

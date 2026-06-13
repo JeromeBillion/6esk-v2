@@ -1,14 +1,23 @@
 import { createHash } from "crypto";
 import { recordAuditLog } from "@/server/audit";
 import {
+  extractKnowledgeDocumentText,
+  extractMalwareScanDetails,
   getKnowledgeIngestionRecoverySeconds,
+  KnowledgeIngestionSafetyError,
   lockPendingKnowledgeIngestionJobs,
   markKnowledgeIngestionJobFailed,
+  recordKnowledgeQuarantineEvent,
   saveKnowledgeExtractionResult,
+  scanKnowledgeUploadForMalware,
   type KnowledgeChunkInput,
-  type KnowledgeIngestionJob
+  type KnowledgeIngestionJob,
+  type KnowledgeMalwareScanResult
 } from "@/server/ai/knowledge-base";
-import { classifyKnowledgeTextSafety } from "@/server/ai/knowledge-safety";
+import {
+  classifyKnowledgeTextSafety,
+  isHighRiskKnowledgeSafety
+} from "@/server/ai/knowledge-safety";
 import { logger } from "@/server/logger";
 import { getObjectBuffer, putObject, deleteObject } from "@/server/storage/r2";
 
@@ -18,20 +27,12 @@ const CHUNK_TARGET_CHARS = Number(process.env.KNOWLEDGE_CHUNK_TARGET_CHARS ?? 14
 const CHUNK_OVERLAP_CHARS = Number(process.env.KNOWLEDGE_CHUNK_OVERLAP_CHARS ?? 180);
 const MAX_CHUNKS_PER_VERSION = Number(process.env.KNOWLEDGE_MAX_CHUNKS_PER_VERSION ?? 500);
 
-class UnsupportedKnowledgeExtractorError extends Error {
-  constructor(contentType: string) {
-    super(`Knowledge extractor is not enabled for ${contentType}.`);
-    this.name = "UnsupportedKnowledgeExtractorError";
-  }
-}
-
 function normalizeContentType(contentType: string | null | undefined) {
   return (contentType ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
 }
 
-function normalizeText(buffer: Buffer) {
-  const text = buffer
-    .toString("utf8")
+function normalizeText(value: Buffer | string) {
+  const text = (typeof value === "string" ? value : value.toString("utf8"))
     .replace(/\u0000/g, "")
     .replace(/\r\n?/g, "\n")
     .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
@@ -59,7 +60,7 @@ function buildExtractedTextKey(job: KnowledgeIngestionJob) {
   return `tenants/${job.tenant_id}/ai-knowledge/${job.document_id}/versions/${job.document_version_id}/extracted.txt`;
 }
 
-function chunkText(text: string): KnowledgeChunkInput[] {
+function chunkText(text: string, extractionMetadata: Record<string, unknown>): KnowledgeChunkInput[] {
   const targetChars = Math.min(Math.max(CHUNK_TARGET_CHARS, 500), 4000);
   const overlapChars = Math.min(Math.max(CHUNK_OVERLAP_CHARS, 0), Math.floor(targetChars / 3));
   const chunks: KnowledgeChunkInput[] = [];
@@ -85,7 +86,7 @@ function chunkText(text: string): KnowledgeChunkInput[] {
         sourceLocator: `chars:${start}-${end}`,
         contentHash: hashText(contentText),
         metadata: {
-          extraction: "plain_text",
+          extraction: extractionMetadata,
           safety: classifyKnowledgeTextSafety(contentText),
           startChar: start,
           endChar: end
@@ -107,7 +108,17 @@ function chunkText(text: string): KnowledgeChunkInput[] {
 }
 
 function shouldPoison(error: unknown) {
-  return error instanceof UnsupportedKnowledgeExtractorError;
+  if (error instanceof KnowledgeIngestionSafetyError) {
+    return error.poison;
+  }
+  return false;
+}
+
+function reasonCodeForError(error: unknown) {
+  if (error instanceof KnowledgeIngestionSafetyError) {
+    return error.code;
+  }
+  return "knowledge_ingestion_failed";
 }
 
 export async function deliverPendingKnowledgeIngestionJobs({
@@ -134,16 +145,54 @@ export async function deliverPendingKnowledgeIngestionJobs({
   for (const job of pending) {
     const attemptCount = job.attempt_count + 1;
     let extractedTextKey: string | null = null;
+    let originalBuffer: Buffer | null = null;
+    let checksumSha256: string | null = null;
+    let malwareScan: KnowledgeMalwareScanResult | null = null;
 
     try {
       const contentType = normalizeContentType(job.content_type);
-      if (!TEXT_CONTENT_TYPES.has(contentType)) {
-        throw new UnsupportedKnowledgeExtractorError(contentType);
+      const { buffer } = await getObjectBuffer(job.object_key);
+      originalBuffer = buffer;
+      checksumSha256 = createHash("sha256").update(buffer).digest("hex");
+      malwareScan = await scanKnowledgeUploadForMalware({
+        fileName: job.original_filename,
+        contentType,
+        checksumSha256,
+        buffer
+      });
+
+      let extractedText: string;
+      let extractionMetadata: Record<string, unknown>;
+      if (TEXT_CONTENT_TYPES.has(contentType)) {
+        extractedText = normalizeText(buffer);
+        extractionMetadata = {
+          status: "completed",
+          extractor: "inline_text",
+          contentKind: "text",
+          extractedAt: new Date().toISOString()
+        };
+      } else {
+        const extraction = await extractKnowledgeDocumentText({
+          fileName: job.original_filename,
+          contentType,
+          checksumSha256,
+          buffer
+        });
+        extractedText = normalizeText(extraction.text);
+        extractionMetadata = extraction.metadata;
       }
 
-      const { buffer } = await getObjectBuffer(job.object_key);
-      const extractedText = normalizeText(buffer);
-      const chunks = chunkText(extractedText);
+      const documentSafety = classifyKnowledgeTextSafety(extractedText);
+      if (isHighRiskKnowledgeSafety(documentSafety)) {
+        throw new KnowledgeIngestionSafetyError(
+          "prompt_injection_detected",
+          "Knowledge document contains unsafe AI-control language and was not indexed.",
+          true,
+          { safety: documentSafety }
+        );
+      }
+
+      const chunks = chunkText(extractedText, extractionMetadata);
       extractedTextKey = buildExtractedTextKey(job);
 
       await putObject({
@@ -159,7 +208,12 @@ export async function deliverPendingKnowledgeIngestionJobs({
           documentVersionId: job.document_version_id,
           attemptCount,
           extractedTextKey,
-          chunks
+          chunks,
+          metadata: {
+            malwareScan,
+            extraction: extractionMetadata,
+            safety: documentSafety
+          }
         });
       } catch (error) {
         try {
@@ -181,6 +235,30 @@ export async function deliverPendingKnowledgeIngestionJobs({
       const poisonFailure = shouldPoison(error);
       if (poisonFailure) {
         poison += 1;
+        try {
+          await recordKnowledgeQuarantineEvent({
+            tenantId: job.tenant_id,
+            documentId: job.document_id,
+            documentVersionId: job.document_version_id,
+            ingestionJobId: job.id,
+            fileName: job.original_filename,
+            contentType: job.content_type,
+            checksumSha256: checksumSha256 ?? hashText(`${job.object_key}:${job.id}`),
+            sizeBytes: originalBuffer?.byteLength ?? 0,
+            reasonCode: reasonCodeForError(error),
+            detail: error instanceof Error ? error.message : "Knowledge ingestion rejected",
+            malwareScan: extractMalwareScanDetails(error) ?? malwareScan,
+            buffer: originalBuffer,
+            metadata: error instanceof KnowledgeIngestionSafetyError ? error.details ?? {} : {}
+          });
+        } catch (quarantineError) {
+          logger.warn("Failed to record knowledge quarantine event", {
+            error: quarantineError,
+            tenantId: job.tenant_id,
+            jobId: job.id,
+            documentVersionId: job.document_version_id
+          });
+        }
       } else {
         failed += 1;
       }
@@ -204,6 +282,7 @@ export async function deliverPendingKnowledgeIngestionJobs({
             documentId: job.document_id,
             contentType: job.content_type,
             poison: poisonFailure,
+            reasonCode: reasonCodeForError(error),
             detail
           }
         });
@@ -226,4 +305,4 @@ export async function deliverPendingKnowledgeIngestionJobs({
   };
 }
 
-export { chunkText, normalizeText, UnsupportedKnowledgeExtractorError };
+export { chunkText, normalizeText };
