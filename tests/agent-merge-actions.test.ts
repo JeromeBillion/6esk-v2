@@ -360,6 +360,47 @@ describe("agent merge actions route", () => {
     );
   });
 
+  it("blocks cross-customer draft output before creating customer-facing drafts", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ used: 0 }] });
+    mocks.getTicketById.mockResolvedValueOnce({
+      ...makeTicket(TICKET_A),
+      customer_id: CUSTOMER_A
+    });
+
+    const { response, body } = await postAction({
+      type: "draft_reply",
+      ticketId: TICKET_A,
+      text: "Another customer named Sarah asked about the same issue yesterday."
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "draft_reply",
+      status: "blocked",
+      data: {
+        errorCode: "ai_output_validation_blocked",
+        reasonCodes: expect.arrayContaining(["cross_customer_scope_expansion"])
+      }
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.recordTicketEvent).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        action: "ai_output_validation_blocked",
+        entityType: "ticket",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          actionType: "draft_reply",
+          customerContext: expect.objectContaining({
+            ambiguityState: "resolved",
+            hasCurrentCustomerId: true
+          })
+        })
+      })
+    );
+  });
+
   it("records tool-call ledger rows for run-aware successful actions", async () => {
     const runId = "55555555-5555-4555-8555-555555555555";
     const ledger = {

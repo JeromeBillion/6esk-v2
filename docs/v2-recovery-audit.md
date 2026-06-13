@@ -261,6 +261,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-output-validator.test.ts`
   - `tests/agent-merge-actions.test.ts`
   - `tests/agent-tool-policy.test.ts`
+  - output validation now enforces server-derived customer/source boundaries for customer-facing draft/send replies, including out-of-scope source IDs, conflicted/ambiguous customer history, profile PII overexposure, and cross-customer scope expansion
 - Worker dispatch step-ledger tests pass in the focused slice:
   - `tests/agent-run-ledger.test.ts`
   - `tests/agent-outbox-rag.test.ts`
@@ -273,6 +274,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-output-validator.test.ts`
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/knowledge-retrieval.test.ts`
+  - `npm run test:ai-safety` now runs the v2-native local AI safety release-gate subset
 - AI provider gateway tests pass in the focused slice:
   - `tests/ai-provider-gateway.test.ts`
   - `tests/calls-transcript-ai-openai-api.test.ts`

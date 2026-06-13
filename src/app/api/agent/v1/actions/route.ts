@@ -2,7 +2,10 @@ import { createHash } from "crypto";
 import { z } from "zod";
 import { getAgentFromRequest } from "@/server/agents/auth";
 import { createDraft } from "@/server/agents/drafts";
-import { validateAgentOutput } from "@/server/agents/output-validator";
+import {
+  validateAgentOutput,
+  type AgentOutputCustomerContext
+} from "@/server/agents/output-validator";
 import { hasMailboxScope } from "@/server/agents/scopes";
 import { isAutoSendAllowed } from "@/server/agents/policy";
 import { evaluateAgentToolPolicy } from "@/server/agents/tool-policy";
@@ -478,6 +481,53 @@ function customerFacingOutputForAction(action: AgentAction) {
     template: action.template ?? null
   };
   return output.subject || output.text || output.html || output.template ? output : null;
+}
+
+function customerOutputContextForAction(
+  action: AgentAction,
+  ticket: Record<string, unknown>
+): AgentOutputCustomerContext {
+  const customerId = readString(ticket.customer_id);
+  const mailboxId = readString(ticket.mailbox_id);
+
+  return {
+    schemaVersion: "agent-customer-output-context.v1",
+    activeTicketId: action.ticketId,
+    currentCustomerId: customerId,
+    ambiguityState: customerId ? "resolved" : "unresolved",
+    allowedSourceIds: {
+      ticketIds: [action.ticketId],
+      customerIds: customerId ? [customerId] : [],
+      messageIds: [],
+      mailboxIds: mailboxId ? [mailboxId] : [],
+      threadIds: []
+    },
+    sameCustomerHistoryTicketIds: [action.ticketId],
+    customerVisibleProfileFields: ["display_name"],
+    profilePiiPolicy: "minimize",
+    disallowedScopeExpansion: [
+      "other_customer",
+      "other_tenant",
+      "other_workspace",
+      "mailbox_wide_history",
+      "analytics_wide_history",
+      "raw_database",
+      "hidden_runtime_state"
+    ]
+  };
+}
+
+function customerOutputSourceMetadataForAction(action: AgentAction, ticket: Record<string, unknown>) {
+  return {
+    ticketId: action.ticketId,
+    customerId: readString(ticket.customer_id),
+    mailboxId: readString(ticket.mailbox_id),
+    sourceTicketId: action.sourceTicketId ?? null,
+    targetTicketId: action.targetTicketId ?? null,
+    sourceCustomerId: action.sourceCustomerId ?? null,
+    targetCustomerId: action.targetCustomerId ?? null,
+    actionMetadata: action.metadata ?? null
+  };
 }
 
 function actionResultFailed(result: ActionResult) {
@@ -1004,6 +1054,8 @@ export async function POST(request: Request) {
         resourceType: "ticket",
         resourceId: action.ticketId,
         content: customerFacingOutput,
+        customerContext: customerOutputContextForAction(action, ticket),
+        sourceMetadata: customerOutputSourceMetadataForAction(action, ticket),
         metadata: {
           route: "/api/agent/v1/actions",
           rolloutMode: actionRolloutMode,
