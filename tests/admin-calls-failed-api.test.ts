@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -15,19 +15,28 @@ vi.mock("@/server/calls/outbox", () => ({
 
 import { GET } from "@/app/api/admin/calls/failed/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
+
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
 describe("GET /api/admin/calls/failed", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env = {
+      ...ORIGINAL_ENV,
+      CALLS_OUTBOX_SECRET: "calls-secret",
+      TENANT_INGRESS_REQUIRE_SECRETS: "false"
+    };
     mocks.listFailedCallOutboxEvents.mockResolvedValue([
       {
         id: "evt-1",
@@ -40,6 +49,10 @@ describe("GET /api/admin/calls/failed", () => {
         }
       }
     ]);
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
   });
 
   it("returns 403 for non-admin users", async () => {
@@ -67,6 +80,31 @@ describe("GET /api/admin/calls/failed", () => {
         fromPhone: "+1555******21"
       }
     });
-    expect(mocks.listFailedCallOutboxEvents).toHaveBeenCalledWith(25, null);
+    expect(mocks.listFailedCallOutboxEvents).toHaveBeenCalledWith(25, TENANT_ID);
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET(new Request("http://localhost/api/admin/calls/failed?limit=25"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.listFailedCallOutboxEvents).not.toHaveBeenCalled();
+  });
+
+  it("returns failed call outbox events for shared-secret callers with explicit tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await GET(
+      new Request("http://localhost/api/admin/calls/failed?limit=25", {
+        headers: {
+          "x-6esk-secret": "calls-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listFailedCallOutboxEvents).toHaveBeenCalledWith(25, TENANT_ID);
   });
 });

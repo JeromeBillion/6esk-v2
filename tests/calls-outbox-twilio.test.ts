@@ -36,13 +36,15 @@ vi.mock("twilio", () => {
 import { deliverPendingCallEvents } from "@/server/calls/outbox";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
 function mockLockedEvents(
   rows: Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>
 ) {
   const query = vi.fn();
+  const scopedRows = rows.map((row) => ({ tenant_id: TENANT_ID, ...row }));
   query.mockResolvedValueOnce(undefined);
-  query.mockResolvedValueOnce({ rows });
+  query.mockResolvedValueOnce({ rows: scopedRows });
   query.mockResolvedValueOnce(undefined);
   const release = vi.fn();
   mocks.dbConnect.mockResolvedValue({ query, release });
@@ -106,7 +108,7 @@ describe("call outbox twilio provider", () => {
       }
     ]);
 
-    const result = await deliverPendingCallEvents({ limit: 1 });
+    const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       delivered: 1,

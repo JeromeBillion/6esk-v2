@@ -87,14 +87,14 @@ describe("deliverPendingTranscriptJobs", () => {
       transcriptText: "Resolved customer billing query."
     });
 
-    const result = await deliverPendingTranscriptJobs({ limit: 1 });
+    const result = await deliverPendingTranscriptJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       delivered: 1,
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.lockPendingTranscriptJobs).toHaveBeenCalledWith(1, 300);
+    expect(mocks.lockPendingTranscriptJobs).toHaveBeenCalledWith(1, 300, TENANT_ID);
     expect(mocks.submitTranscriptJob).toHaveBeenCalledWith(
       "managed_http",
       expect.objectContaining({
@@ -139,7 +139,7 @@ describe("deliverPendingTranscriptJobs", () => {
       providerJobId: "provider-job-2"
     });
 
-    const result = await deliverPendingTranscriptJobs({ limit: 1 });
+    const result = await deliverPendingTranscriptJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       delivered: 1,
@@ -148,6 +148,7 @@ describe("deliverPendingTranscriptJobs", () => {
     });
     expect(mocks.markTranscriptJobSubmitted).toHaveBeenCalledWith({
       jobId: "job-2",
+      tenantId: TENANT_ID,
       attemptCount: 2,
       providerJobId: "provider-job-2"
     });
@@ -182,7 +183,7 @@ describe("deliverPendingTranscriptJobs", () => {
       providerJobId: "provider-job-3"
     });
 
-    const result = await deliverPendingTranscriptJobs({ limit: 1 });
+    const result = await deliverPendingTranscriptJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "managed_http" });
     expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
@@ -202,5 +203,13 @@ describe("deliverPendingTranscriptJobs", () => {
         providerHttpSecret: "tenant-http-secret"
       })
     );
+  });
+
+  it("rejects delivery without tenant scope", async () => {
+    await expect(
+      deliverPendingTranscriptJobs({ limit: 1, tenantId: "" })
+    ).rejects.toThrow("Transcript outbox delivery requires tenantId");
+
+    expect(mocks.lockPendingTranscriptJobs).not.toHaveBeenCalled();
   });
 });

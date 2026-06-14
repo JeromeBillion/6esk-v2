@@ -11,6 +11,7 @@ type NumericLike = number | string | null;
 
 export type CallTranscriptAiJobRow = {
   id: string;
+  tenant_id: string;
   call_session_id: string;
   provider: string;
   provider_job_id: string | null;
@@ -81,6 +82,7 @@ type TranscriptAiRecentFlaggedRow = {
 
 type TranscriptAiFailedRow = {
   id: string;
+  tenant_id: string;
   call_session_id: string;
   status: string;
   attempt_count: number;
@@ -100,6 +102,7 @@ type EnqueueTranscriptAiJobArgs = {
 type RetryTranscriptAiJobInput = {
   limit?: number;
   jobIds?: string[];
+  tenantId: string;
 };
 
 function toNumber(value: NumericLike) {
@@ -123,6 +126,14 @@ function getProcessingRecoverySeconds() {
     return DEFAULT_RECOVERY_SECONDS;
   }
   return Math.floor(configured);
+}
+
+function requireTenantId(value: string | null | undefined, operation: string) {
+  const tenantId = value?.trim();
+  if (!tenantId) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return tenantId;
 }
 
 export async function enqueueCallTranscriptAiJob({
@@ -246,7 +257,11 @@ export async function enqueueCallTranscriptAiJob({
   };
 }
 
-async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeconds: number) {
+async function lockPendingTranscriptAiJobs(
+  limit: number,
+  processingRecoverySeconds: number,
+  tenantId: string
+) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -259,6 +274,8 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
          SELECT id
          FROM call_transcript_ai_jobs
          WHERE
+           tenant_id = $3
+           AND
            (
              (status = 'queued' AND next_attempt_at <= now())
              OR (
@@ -271,7 +288,7 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, call_session_id, provider, transcript_r2_key, metadata, attempt_count`,
-      [limit, processingRecoverySeconds]
+      [limit, processingRecoverySeconds, tenantId]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -285,6 +302,7 @@ async function lockPendingTranscriptAiJobs(limit: number, processingRecoverySeco
 
 export async function markTranscriptAiJobCompleted({
   jobId,
+  tenantId,
   attemptCount,
   providerJobId,
   qaStatus,
@@ -295,6 +313,7 @@ export async function markTranscriptAiJobCompleted({
   rawResponse
 }: {
   jobId: string;
+  tenantId: string;
   attemptCount: number;
   providerJobId?: string | null;
   qaStatus: CallTranscriptQaStatus;
@@ -318,7 +337,8 @@ export async function markTranscriptAiJobCompleted({
          submitted_at = COALESCE(submitted_at, now()),
          completed_at = now(),
          updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1
+       AND tenant_id = $10`,
     [
       jobId,
       attemptCount,
@@ -328,17 +348,20 @@ export async function markTranscriptAiJobCompleted({
       resolutionNote,
       JSON.stringify(qaFlags),
       JSON.stringify(actionItems),
-      rawResponse ? JSON.stringify(rawResponse) : null
+      rawResponse ? JSON.stringify(rawResponse) : null,
+      tenantId
     ]
   );
 }
 
 export async function markTranscriptAiJobFailed({
   jobId,
+  tenantId,
   attemptCount,
   errorMessage
 }: {
   jobId: string;
+  tenantId: string;
   attemptCount: number;
   errorMessage: string;
 }) {
@@ -351,14 +374,16 @@ export async function markTranscriptAiJobFailed({
          last_error = $4,
          next_attempt_at = $5,
          updated_at = now()
-     WHERE id = $1`,
-    [jobId, status, attemptCount, errorMessage.slice(0, 500), nextAttempt]
+     WHERE id = $1
+       AND tenant_id = $6`,
+    [jobId, status, attemptCount, errorMessage.slice(0, 500), nextAttempt, tenantId]
   );
 }
 
-export async function getTranscriptAiJobMetrics(limit = 8) {
+export async function getTranscriptAiJobMetrics(limit = 8, tenantId?: string | null) {
   const provider = getTranscriptAiProvider();
   const normalizedLimit = Math.min(Math.max(limit, 1), 25);
+  const scopedTenantId = tenantId?.trim() || null;
 
   const [summaryResult, errorResult, analysisResult, recentFlaggedResult] = await Promise.all([
     db.query<TranscriptAiJobSummaryRow>(
@@ -374,15 +399,19 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
          MIN(next_attempt_at) FILTER (WHERE status = 'queued') AS next_attempt_at,
          MAX(completed_at) AS last_completed_at,
          MAX(updated_at) FILTER (WHERE status = 'failed') AS last_failed_at
-       FROM call_transcript_ai_jobs`
+       FROM call_transcript_ai_jobs
+       ${scopedTenantId ? "WHERE tenant_id = $1" : ""}`,
+      scopedTenantId ? [scopedTenantId] : []
     ),
     db.query<TranscriptAiErrorRow>(
       `SELECT last_error
        FROM call_transcript_ai_jobs
        WHERE status = 'failed'
+         ${scopedTenantId ? "AND tenant_id = $1" : ""}
          AND last_error IS NOT NULL
        ORDER BY updated_at DESC
-       LIMIT 1`
+       LIMIT 1`,
+      scopedTenantId ? [scopedTenantId] : []
     ),
     db.query<TranscriptAiAnalysisSummaryRow>(
       `SELECT
@@ -421,7 +450,9 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
            WHERE status = 'completed'
              AND completed_at >= now() - interval '24 hours'
          ), 0)::int AS total_action_items_24h
-       FROM call_transcript_ai_jobs`
+       FROM call_transcript_ai_jobs
+       ${scopedTenantId ? "WHERE tenant_id = $1" : ""}`,
+      scopedTenantId ? [scopedTenantId] : []
     ),
     db.query<TranscriptAiRecentFlaggedRow>(
       `SELECT
@@ -435,15 +466,18 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
          job.action_items,
          job.completed_at
        FROM call_transcript_ai_jobs job
-       JOIN call_sessions session ON session.id = job.call_session_id
+       JOIN call_sessions session
+         ON session.id = job.call_session_id
+        AND session.tenant_id = job.tenant_id
        WHERE job.status = 'completed'
+         ${scopedTenantId ? "AND job.tenant_id = $2" : ""}
          AND (
            job.qa_status IN ('watch', 'review')
            OR jsonb_array_length(job.qa_flags) > 0
          )
        ORDER BY job.completed_at DESC NULLS LAST
        LIMIT $1`,
-      [normalizedLimit]
+      scopedTenantId ? [normalizedLimit, scopedTenantId] : [normalizedLimit]
     )
   ]);
 
@@ -503,7 +537,8 @@ export async function getTranscriptAiJobMetrics(limit = 8) {
   };
 }
 
-export async function listFailedTranscriptAiJobs(limit = 30) {
+export async function listFailedTranscriptAiJobs(limit = 30, tenantId: string) {
+  const scopedTenantId = requireTenantId(tenantId, "Failed transcript AI job listing");
   const normalizedLimit = Math.min(Math.max(limit, 1), 100);
   const result = await db.query<TranscriptAiFailedRow>(
     `SELECT
@@ -517,9 +552,10 @@ export async function listFailedTranscriptAiJobs(limit = 30) {
        updated_at
      FROM call_transcript_ai_jobs
      WHERE status = 'failed'
+       AND tenant_id = $2
      ORDER BY updated_at DESC
      LIMIT $1`,
-    [normalizedLimit]
+    [normalizedLimit, scopedTenantId]
   );
 
   return result.rows.map((row) => ({
@@ -534,7 +570,8 @@ export async function listFailedTranscriptAiJobs(limit = 30) {
   }));
 }
 
-export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInput = {}) {
+export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInput) {
+  const tenantId = requireTenantId(input.tenantId, "Transcript AI job retry");
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const jobIds = Array.from(
     new Set((input.jobIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -550,15 +587,17 @@ export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInp
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE status = 'failed'
+               AND tenant_id = $2
                AND id::text = ANY($1::text[])
              RETURNING id`,
-            [jobIds]
+            [jobIds, tenantId]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM call_transcript_ai_jobs
                WHERE status = 'failed'
+                 AND tenant_id = $2
                ORDER BY updated_at ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -569,8 +608,9 @@ export async function retryFailedTranscriptAiJobs(input: RetryTranscriptAiJobInp
                  updated_at = now()
              FROM failed
              WHERE job.id = failed.id
+               AND job.tenant_id = $2
              RETURNING job.id`,
-            [normalizedLimit]
+            [normalizedLimit, tenantId]
           );
     await client.query("COMMIT");
     return {

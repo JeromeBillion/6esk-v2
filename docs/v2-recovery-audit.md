@@ -206,6 +206,13 @@ Date: 2026-06-06
   - `src/app/api/admin/calls/provider-numbers/route.ts`
   - `tests/admin-calls-provider-numbers-api.test.ts`
   - tenant admins can list, create, update, and soft-disable Twilio/provider phone-account ownership records under their v2 tenant scope, with normalized phone numbers and audit logging
+- Hardened call outbox, transcript, and transcript-AI operational state into v2-native `tenant_id` form:
+  - `src/server/calls/outbox.ts`
+  - `src/server/calls/transcript-jobs.ts`
+  - `src/server/calls/transcript-ai-jobs.ts`
+  - `src/app/api/admin/calls/**`
+  - call delivery/retry/failed listing now requires explicit tenant scope, transcript/transcript-AI job locks and retry/listing SQL include tenant predicates, admin maintenance routes reject tenantless sessions, and machine maintenance calls require an explicit tenant header or tenant ingress scope
+  - standalone call/transcript maintenance scripts now send `x-6esk-tenant-id`, and production env validation requires `CALLS_OUTBOX_TENANT_ID`
 - Semantically ported the v1 runtime tenant query guard into v2-native `tenant_id` form:
   - `src/server/tenant-query-guard.ts`
   - `src/server/db.ts`
@@ -412,6 +419,19 @@ Before this recovery branch can replace `main`, run:
   - `tests/whatsapp-outbox-tenant-isolation.test.ts`
   - `tests/channel-module-guards-api.test.ts`
   - WhatsApp provider settings, templates, direct sends, failed-event listing, retry, and outbox delivery now require explicit tenant scope; maintenance scripts send tenant headers and global metrics queries are explicitly marked as internal-only
+- Call outbox/transcript maintenance tenant-scope tests pass in the focused slice:
+  - `tests/admin-calls-outbox-api.test.ts`
+  - `tests/admin-calls-retry-api.test.ts`
+  - `tests/admin-calls-failed-api.test.ts`
+  - `tests/admin-calls-transcript-outbox-api.test.ts`
+  - `tests/admin-calls-transcript-ai-api.test.ts`
+  - `tests/admin-calls-transcript-ai-failed-api.test.ts`
+  - `tests/admin-calls-transcript-ai-retry-api.test.ts`
+  - `tests/calls-outbox-failure.test.ts`
+  - `tests/call-transcript-worker.test.ts`
+  - `tests/call-transcript-ai-worker.test.ts`
+  - `tests/call-transcript-jobs-tenant-isolation.test.ts`
+  - call delivery/retry and transcript/transcript-AI maintenance now require explicit tenant scope; standalone maintenance scripts and the combined jobs runner send tenant headers
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

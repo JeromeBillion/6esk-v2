@@ -25,10 +25,12 @@ vi.mock("@/server/audit", () => ({
 import { deliverPendingCallEvents, retryFailedCallOutboxEvents } from "@/server/calls/outbox";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
 function mockDeliveryBatch(count: number, attemptCount: number = 0) {
   const events = Array.from({ length: count }, (_, i) => ({
     id: `evt-${i + 1}`,
+    tenant_id: TENANT_ID,
     payload: { callSessionId: `call-${i + 1}` },
     attempt_count: attemptCount
   }));
@@ -59,7 +61,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("processes 50 concurrent queued events without errors", async () => {
       mockDeliveryBatch(50);
 
-      const result = await deliverPendingCallEvents({ limit: 50 });
+      const result = await deliverPendingCallEvents({ limit: 50, tenantId: TENANT_ID });
 
       expect(result.delivered).toBe(50);
       expect(result.skipped).toBe(0);
@@ -74,7 +76,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       const batchSize = 25;
       for (let i = 0; i < 4; i++) {
         mockDeliveryBatch(batchSize);
-        await deliverPendingCallEvents({ limit: batchSize });
+        await deliverPendingCallEvents({ limit: batchSize, tenantId: TENANT_ID });
       }
 
       expect(mocks.updateCallSessionStatus).toHaveBeenCalledTimes(100);
@@ -83,7 +85,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("respects configured delivery limit and does not exceed it", async () => {
       mockDeliveryBatch(25);
 
-      const result = await deliverPendingCallEvents({ limit: 25 });
+      const result = await deliverPendingCallEvents({ limit: 25, tenantId: TENANT_ID });
 
       expect(result.delivered).toBeLessThanOrEqual(25);
       // Query should only be called once (dbConnect)
@@ -94,7 +96,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       mockDeliveryBatch(100);
 
       const start = performance.now();
-      await deliverPendingCallEvents({ limit: 100 });
+      await deliverPendingCallEvents({ limit: 100, tenantId: TENANT_ID });
       const duration = performance.now() - start;
 
       // Should complete within 1 second (mock implementation)
@@ -106,7 +108,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("handles max attempt count without exceeding database write limits", async () => {
       mockDeliveryBatch(50, 4); // All at attempt 4 (terminal)
 
-      const result = await deliverPendingCallEvents({ limit: 50 });
+      const result = await deliverPendingCallEvents({ limit: 50, tenantId: TENANT_ID });
 
       // With mock provider, will deliver successfully
       expect(result.delivered + result.skipped).toBe(50);
@@ -124,7 +126,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const result = await deliverPendingCallEvents({ limit: 10 });
+      const result = await deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
 
       expect(result.delivered).toBe(0);
       expect(result.skipped).toBe(0);
@@ -132,7 +134,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       expect(query).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining("make_interval(secs => $2::int)"),
-        [10, 30]
+        [10, 30, TENANT_ID]
       );
     });
 
@@ -140,6 +142,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       const events = [
         {
           id: "evt-1",
+          tenant_id: TENANT_ID,
           payload: { callSessionId: "call-1" },
           attempt_count: 3,
           last_error: "Temporary network failure" // Simulates growing error message
@@ -151,7 +154,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const result = await deliverPendingCallEvents({ limit: 1 });
+      const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
       // With mock provider, will deliver successfully despite error history
       expect(result.delivered).toBe(1);
@@ -171,7 +174,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
       try {
-        await deliverPendingCallEvents({ limit: 10 });
+        await deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
       } catch (error) {
         // Connection error should propagate or retry
         expect(error).toBeInstanceOf(Error);
@@ -182,7 +185,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       process.env.CALLS_PROVIDER = "twilio"; // Unconfigured (simulates error)
       mockDeliveryBatch(5, 0);
 
-      const result = await deliverPendingCallEvents({ limit: 5 });
+      const result = await deliverPendingCallEvents({ limit: 5, tenantId: TENANT_ID });
 
       // All should fail permanently (unconfigured provider) or be skipped
       expect(result.delivered + result.skipped).toBe(5);
@@ -193,6 +196,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("preserves event order during concurrent delivery failures", async () => {
       const events = Array.from({ length: 10 }, (_, i) => ({
         id: `evt-${String(i + 1).padStart(2, "0")}`,
+        tenant_id: TENANT_ID,
         payload: { callSessionId: `call-${i + 1}` },
         attempt_count: 0
       }));
@@ -202,7 +206,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const result = await deliverPendingCallEvents({ limit: 10 });
+      const result = await deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
 
       // Verify all events processed
       expect(result.delivered).toBe(10);
@@ -217,12 +221,12 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       // Simulate idempotency key deduplication
       mockDeliveryBatch(5);
 
-      const result1 = await deliverPendingCallEvents({ limit: 5 });
+      const result1 = await deliverPendingCallEvents({ limit: 5, tenantId: TENANT_ID });
       expect(result1.delivered).toBe(5);
 
       // Attempt delivery again with same events (simulated replay)
       mockDeliveryBatch(5);
-      const result2 = await deliverPendingCallEvents({ limit: 5 });
+      const result2 = await deliverPendingCallEvents({ limit: 5, tenantId: TENANT_ID });
 
       // Should recognize duplicates and skip them if already marked "sent"
       expect(result2.skipped).toBeGreaterThanOrEqual(0);
@@ -237,7 +241,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const retryResult = await retryFailedCallOutboxEvents(50);
+      const retryResult = await retryFailedCallOutboxEvents({ limit: 50, tenantId: TENANT_ID });
 
       // Should be capped at 100
       expect(retryResult.requested).toBeLessThanOrEqual(100);
@@ -253,7 +257,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const result = await retryFailedCallOutboxEvents(50);
+      const result = await retryFailedCallOutboxEvents({ limit: 50, tenantId: TENANT_ID });
 
       expect(result.retried).toBe(20);
       // Verify UPDATE query resets failed events to queued
@@ -272,7 +276,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      const result = await retryFailedCallOutboxEvents(100);
+      const result = await retryFailedCallOutboxEvents({ limit: 100, tenantId: TENANT_ID });
 
       expect(result.retried).toBe(0);
     });
@@ -283,7 +287,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       mockDeliveryBatch(25);
 
       const start = performance.now();
-      await deliverPendingCallEvents({ limit: 25 });
+      await deliverPendingCallEvents({ limit: 25, tenantId: TENANT_ID });
       const duration = performance.now() - start;
 
       // Audit logging should not materially slow delivery (< 500ms for 25 events)
@@ -293,9 +297,9 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("tracks delivery metrics across multiple provider invocations", async () => {
       mockDeliveryBatch(10);
 
-      const result1 = await deliverPendingCallEvents({ limit: 10 });
+      const result1 = await deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
       mockDeliveryBatch(10);
-      const result2 = await deliverPendingCallEvents({ limit: 10 });
+      const result2 = await deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
 
       expect(result1.delivered + result2.delivered).toBe(20);
       expect(result1.provider).toBe("mock");
@@ -305,7 +309,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
     it("includes timing information in delivery results", async () => {
       mockDeliveryBatch(5);
 
-      const result = await deliverPendingCallEvents({ limit: 5 });
+      const result = await deliverPendingCallEvents({ limit: 5, tenantId: TENANT_ID });
 
       // Result should be structured with metrics
       expect(result).toHaveProperty("delivered");
@@ -354,7 +358,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
 
       // Simulate concurrent webhook processing
       const promises = Array.from({ length: 5 }, () =>
-        deliverPendingCallEvents({ limit: 1 })
+        deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID })
       );
 
       const results = await Promise.all(promises);
@@ -377,7 +381,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       query.mockResolvedValueOnce(undefined); // COMMIT
       mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-      await retryFailedCallOutboxEvents(1);
+      await retryFailedCallOutboxEvents({ limit: 1, tenantId: TENANT_ID });
 
       // Should schedule next retry with exponential backoff
       expect(query).toHaveBeenCalledWith(
@@ -390,7 +394,7 @@ describe("VOICE-074: Load and Capacity Tests", () => {
       process.env.CALLS_PROVIDER = "twilio"; // Unconfigured
       mockDeliveryBatch(1, 5); // Attempt 5 (should be terminal)
 
-      const result = await deliverPendingCallEvents({ limit: 1 });
+      const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
       // With unconfigured provider, should skip/fail
       expect(result.skipped).toBeGreaterThanOrEqual(0);

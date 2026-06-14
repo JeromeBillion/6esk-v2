@@ -1526,7 +1526,7 @@ export async function POST(request: Request) {
               selectedCandidateId: resolved.selectedCandidateId
             }
           });
-          runInBackground(deliverPendingCallEvents({ limit: 5 }), "Call outbox delivery failed", {
+          runInBackground(deliverPendingCallEvents({ limit: 5, tenantId }), "Call outbox delivery failed", {
             route: "/api/agent/v1/actions",
             tenantId,
             actionType: action.type,

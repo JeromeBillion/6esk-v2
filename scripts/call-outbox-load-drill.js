@@ -1,11 +1,19 @@
-const { APP_URL, CALLS_OUTBOX_SECRET, INBOUND_SHARED_SECRET } = process.env;
+const {
+  APP_URL,
+  CALLS_OUTBOX_SECRET,
+  CALLS_OUTBOX_TENANT_ID,
+  JOBS_RUNNER_TENANT_ID,
+  INBOUND_SHARED_SECRET,
+  INBOUND_TENANT_ID
+} = process.env;
 
 const secret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
+const tenantId = CALLS_OUTBOX_TENANT_ID || JOBS_RUNNER_TENANT_ID || INBOUND_TENANT_ID || "";
 const loops = Math.max(1, Math.min(Number(process.env.CALLS_OUTBOX_DRILL_LOOPS || "20"), 500));
 const limit = Math.max(1, Math.min(Number(process.env.CALLS_OUTBOX_DRILL_LIMIT || "25"), 100));
 
-if (!APP_URL || !secret) {
-  console.error("APP_URL and CALLS_OUTBOX_SECRET (or INBOUND_SHARED_SECRET) are required");
+if (!APP_URL || !secret || !tenantId) {
+  console.error("APP_URL, CALLS_OUTBOX_SECRET (or INBOUND_SHARED_SECRET), and CALLS_OUTBOX_TENANT_ID (or JOBS_RUNNER_TENANT_ID/INBOUND_TENANT_ID) are required");
   process.exit(1);
 }
 
@@ -19,7 +27,8 @@ async function main() {
     const response = await fetch(`${baseUrl}/api/admin/calls/outbox?limit=${limit}`, {
       method: "POST",
       headers: {
-        "x-6esk-secret": secret
+        "x-6esk-secret": secret,
+        "x-6esk-tenant-id": tenantId
       }
     });
     const payload = await response.json().catch(() => ({}));
@@ -34,7 +43,8 @@ async function main() {
 
   const failedResponse = await fetch(`${baseUrl}/api/admin/calls/failed?limit=50`, {
     headers: {
-      "x-6esk-secret": secret
+      "x-6esk-secret": secret,
+      "x-6esk-tenant-id": tenantId
     }
   });
   const failedPayload = await failedResponse.json().catch(() => ({}));

@@ -21,21 +21,27 @@ vi.mock("@/server/audit", () => ({
 import { POST } from "@/app/api/admin/calls/retry/route";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
 describe("POST /api/admin/calls/retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env = { ...ORIGINAL_ENV, CALLS_OUTBOX_SECRET: "calls-secret" };
+    process.env = {
+      ...ORIGINAL_ENV,
+      CALLS_OUTBOX_SECRET: "calls-secret",
+      TENANT_INGRESS_REQUIRE_SECRETS: "false"
+    };
     mocks.retryFailedCallOutboxEvents.mockResolvedValue({
       requested: 10,
       retried: 3,
@@ -69,8 +75,33 @@ describe("POST /api/admin/calls/retry", () => {
     expect(mocks.retryFailedCallOutboxEvents).toHaveBeenCalledWith({
       limit: 10,
       eventIds: [],
-      tenantId: null
+      tenantId: TENANT_ID
     });
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await POST(new Request("http://localhost/api/admin/calls/retry", { method: "POST" }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.retryFailedCallOutboxEvents).not.toHaveBeenCalled();
+  });
+
+  it("requires tenant header for shared-secret callers", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/calls/retry", {
+        method: "POST",
+        headers: { "x-6esk-secret": "calls-secret" }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ error: "Tenant header is required" });
+    expect(mocks.retryFailedCallOutboxEvents).not.toHaveBeenCalled();
   });
 
   it("returns 500 and records failure audit when retry execution throws", async () => {

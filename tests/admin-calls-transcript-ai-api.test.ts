@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -25,20 +25,28 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/calls/transcripts/ai/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
+
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
 describe("/api/admin/calls/transcripts/ai", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CALLS_OUTBOX_SECRET = "calls-secret";
+    process.env = {
+      ...ORIGINAL_ENV,
+      CALLS_OUTBOX_SECRET: "calls-secret",
+      TENANT_INGRESS_REQUIRE_SECRETS: "false"
+    };
     mocks.getTranscriptAiJobMetrics.mockResolvedValue({
       provider: "managed_http",
       queue: { queued: 1, dueNow: 1, processing: 0, failed: 0, completed24h: 5, nextAttemptAt: null, lastCompletedAt: null, lastFailedAt: null, lastError: null },
@@ -51,6 +59,10 @@ describe("/api/admin/calls/transcripts/ai", () => {
       provider: "managed_http"
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
   });
 
   it("GET returns 403 for non-admin users", async () => {
@@ -70,11 +82,25 @@ describe("/api/admin/calls/transcripts/ai", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.getTranscriptAiJobMetrics).toHaveBeenCalledWith(12);
+    expect(mocks.getTranscriptAiJobMetrics).toHaveBeenCalledWith(12, TENANT_ID);
     expect(body).toMatchObject({
       provider: "managed_http",
       analysis: { analyzed24h: 5, flagged24h: 2 }
     });
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const getResponse = await GET(new Request("http://localhost/api/admin/calls/transcripts/ai"));
+    const postResponse = await POST(
+      new Request("http://localhost/api/admin/calls/transcripts/ai?limit=25", { method: "POST" })
+    );
+
+    expect(getResponse.status).toBe(403);
+    expect(postResponse.status).toBe(403);
+    expect(mocks.getTranscriptAiJobMetrics).not.toHaveBeenCalled();
+    expect(mocks.deliverPendingTranscriptAiJobs).not.toHaveBeenCalled();
   });
 
   it("POST runs transcript QA outbox for admins", async () => {
@@ -92,6 +118,39 @@ describe("/api/admin/calls/transcripts/ai", () => {
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.deliverPendingTranscriptAiJobs).toHaveBeenCalledWith({ limit: 25 });
+    expect(mocks.deliverPendingTranscriptAiJobs).toHaveBeenCalledWith({ limit: 25, tenantId: TENANT_ID });
+  });
+
+  it("requires tenant header for shared-secret callers", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/calls/transcripts/ai?limit=25", {
+        method: "POST",
+        headers: { "x-6esk-secret": "calls-secret" }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ error: "Tenant header is required" });
+    expect(mocks.deliverPendingTranscriptAiJobs).not.toHaveBeenCalled();
+  });
+
+  it("runs transcript QA outbox for shared-secret callers with explicit tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/calls/transcripts/ai?limit=8", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "calls-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.deliverPendingTranscriptAiJobs).toHaveBeenCalledWith({ limit: 8, tenantId: TENANT_ID });
   });
 });

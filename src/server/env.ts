@@ -95,6 +95,7 @@ const envSchema = z.object({
   CALLS_WEBHOOK_ALLOW_UNAUTHENTICATED: optionalBooleanish,
   CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE: optionalBooleanish,
   CALLS_OUTBOX_SECRET: optionalNonEmptyString,
+  CALLS_OUTBOX_TENANT_ID: optionalNonEmptyString,
   CALLS_STT_PROVIDER: z.string().optional(),
   CALLS_STT_PROVIDER_HTTP_URL: optionalUrl,
   CALLS_STT_PROVIDER_HTTP_SECRET: optionalNonEmptyString,
@@ -186,7 +187,8 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
     "WHATSAPP_APP_SECRET",
     "WHATSAPP_OUTBOX_SECRET",
     "CALLS_WEBHOOK_SECRET",
-    "CALLS_OUTBOX_SECRET"
+    "CALLS_OUTBOX_SECRET",
+    "CALLS_OUTBOX_TENANT_ID"
   ], issues);
 
   requireOneOf(source, ["AI_API_KEY", "OPENAI_API_KEY"], issues, "AI_API_KEY|OPENAI_API_KEY");

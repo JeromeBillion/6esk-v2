@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -27,20 +27,28 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/calls/outbox/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
+
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
 describe("/api/admin/calls/outbox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CALLS_OUTBOX_SECRET = "calls-secret";
+    process.env = {
+      ...ORIGINAL_ENV,
+      CALLS_OUTBOX_SECRET: "calls-secret",
+      TENANT_INGRESS_REQUIRE_SECRETS: "false"
+    };
     mocks.getCallOutboxMetrics.mockResolvedValue({
       provider: "mock",
       queue: {
@@ -67,6 +75,10 @@ describe("/api/admin/calls/outbox", () => {
       provider: "mock"
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
   });
 
   it("GET returns 403 for non-admin users", async () => {
@@ -96,6 +108,21 @@ describe("/api/admin/calls/outbox", () => {
         maxSkewSeconds: 300
       }
     });
+    expect(mocks.getCallOutboxMetrics).toHaveBeenCalledWith(TENANT_ID);
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const getResponse = await GET();
+    const postResponse = await POST(
+      new Request("http://localhost/api/admin/calls/outbox?limit=25", { method: "POST" })
+    );
+
+    expect(getResponse.status).toBe(403);
+    expect(postResponse.status).toBe(403);
+    expect(mocks.getCallOutboxMetrics).not.toHaveBeenCalled();
+    expect(mocks.deliverPendingCallEvents).not.toHaveBeenCalled();
   });
 
   it("POST returns 401 for non-admin users without valid secret", async () => {
@@ -128,11 +155,52 @@ describe("/api/admin/calls/outbox", () => {
     });
     expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({
       limit: 25,
-      tenantId: null
+      tenantId: TENANT_ID
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         action: "call_outbox_triggered"
+      })
+    );
+  });
+
+  it("requires tenant header for shared-secret callers", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/calls/outbox?limit=25", {
+        method: "POST",
+        headers: { "x-6esk-secret": "calls-secret" }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ error: "Tenant header is required" });
+    expect(mocks.deliverPendingCallEvents).not.toHaveBeenCalled();
+  });
+
+  it("runs call outbox for shared-secret callers with explicit tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/calls/outbox?limit=8", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "calls-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({ limit: 8, tenantId: TENANT_ID });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        actorUserId: null,
+        data: expect.objectContaining({ authMode: "shared_secret" })
       })
     );
   });

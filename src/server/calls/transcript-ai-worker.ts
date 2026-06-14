@@ -9,9 +9,19 @@ import {
   markTranscriptAiJobFailed
 } from "@/server/calls/transcript-ai-jobs";
 
-export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: number } = {}) {
+export async function deliverPendingTranscriptAiJobs({
+  limit = 5,
+  tenantId
+}: {
+  limit?: number;
+  tenantId: string;
+}) {
   const provider = getTranscriptAiProvider();
-  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds());
+  const scopedTenantId = tenantId.trim();
+  if (!scopedTenantId) {
+    throw new Error("Transcript AI outbox delivery requires tenantId");
+  }
+  const pending = await lockPendingTranscriptAiJobs(limit, getProcessingRecoverySeconds(), scopedTenantId);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -39,6 +49,7 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
 
       await markTranscriptAiJobCompleted({
         jobId: job.id,
+        tenantId: job.tenant_id,
         attemptCount: job.attempt_count + 1,
         providerJobId: result.providerJobId,
         qaStatus: result.qaStatus,
@@ -54,6 +65,7 @@ export async function deliverPendingTranscriptAiJobs({ limit = 5 }: { limit?: nu
       const detail = error instanceof Error ? error.message : "Transcript AI dispatch failed";
       await markTranscriptAiJobFailed({
         jobId: job.id,
+        tenantId: job.tenant_id,
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });

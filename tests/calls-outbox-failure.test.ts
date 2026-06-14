@@ -20,13 +20,15 @@ vi.mock("@/server/calls/service", () => ({
 import { deliverPendingCallEvents, retryFailedCallOutboxEvents } from "@/server/calls/outbox";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
 function mockLockedEvents(
   rows: Array<{ id: string; payload: Record<string, unknown>; attempt_count: number }>
 ) {
   const query = vi.fn();
+  const scopedRows = rows.map((row) => ({ tenant_id: TENANT_ID, ...row }));
   query.mockResolvedValueOnce(undefined); // BEGIN
-  query.mockResolvedValueOnce({ rows }); // lock + return rows
+  query.mockResolvedValueOnce({ rows: scopedRows }); // lock + return rows
   query.mockResolvedValueOnce(undefined); // COMMIT
   const release = vi.fn();
   mocks.dbConnect.mockResolvedValue({ query, release });
@@ -57,11 +59,12 @@ describe("call outbox hardening", () => {
       }
     ]);
 
-    const result = await deliverPendingCallEvents({ limit: 1 });
+    const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "mock" });
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("SET status = 'sent'"), [
-      "evt-1"
+      "evt-1",
+      TENANT_ID
     ]);
     expect(mocks.updateCallSessionStatus).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -74,7 +77,7 @@ describe("call outbox hardening", () => {
     expect(lock.query).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("status = 'processing'"),
-      [1, 300]
+      [1, 300, TENANT_ID]
     );
   });
 
@@ -83,29 +86,34 @@ describe("call outbox hardening", () => {
     process.env.CALLS_OUTBOX_PROCESSING_RECOVERY_SECONDS = "90";
     const lock = mockLockedEvents([]);
 
-    await deliverPendingCallEvents({ limit: 2 });
+    await deliverPendingCallEvents({ limit: 2, tenantId: TENANT_ID });
 
     expect(lock.query).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("make_interval(secs => $2::int)"),
-      [2, 90]
+      [2, 90, TENANT_ID]
     );
   });
 
-  it("applies tenant-scoped locking when tenantId is provided", async () => {
+  it("applies tenant-scoped locking", async () => {
     process.env.CALLS_PROVIDER = "mock";
     const lock = mockLockedEvents([]);
 
-    await deliverPendingCallEvents({
-      limit: 1,
-      tenantId: "33333333-3333-3333-3333-333333333333"
-    });
+    await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
     expect(lock.query).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("AND e.tenant_id = $3"),
-      [1, 300, "33333333-3333-3333-3333-333333333333"]
+      [1, 300, TENANT_ID]
     );
+  });
+
+  it("rejects delivery without tenant scope", async () => {
+    await expect(
+      deliverPendingCallEvents({ limit: 1, tenantId: "" })
+    ).rejects.toThrow("Call outbox delivery requires tenantId");
+
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
   });
 
   it("requeues failed delivery attempts before terminal threshold", async () => {
@@ -118,7 +126,7 @@ describe("call outbox hardening", () => {
       }
     ]);
 
-    const result = await deliverPendingCallEvents({ limit: 1 });
+    const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({ delivered: 0, skipped: 1, provider: "twilio" });
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
@@ -128,6 +136,7 @@ describe("call outbox hardening", () => {
     expect(call[1][1]).toBe(2);
     expect(call[1][2]).toContain("required");
     expect(call[1][4]).toBe("evt-1");
+    expect(call[1][5]).toBe(TENANT_ID);
     expect(mocks.updateCallSessionStatus).not.toHaveBeenCalled();
   });
 
@@ -141,7 +150,7 @@ describe("call outbox hardening", () => {
       }
     ]);
 
-    const result = await deliverPendingCallEvents({ limit: 1 });
+    const result = await deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({ delivered: 0, skipped: 1, provider: "twilio" });
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
@@ -164,7 +173,7 @@ describe("call outbox hardening", () => {
     query.mockResolvedValueOnce(undefined); // COMMIT
     mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
 
-    const result = await retryFailedCallOutboxEvents({ limit: 500 });
+    const result = await retryFailedCallOutboxEvents({ limit: 500, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       requested: 100,
@@ -174,7 +183,7 @@ describe("call outbox hardening", () => {
     expect(query).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("UPDATE call_outbox_events evt"),
-      [100]
+      [100, TENANT_ID]
     );
   });
 });

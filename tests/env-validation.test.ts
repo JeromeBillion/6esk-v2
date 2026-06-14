@@ -42,6 +42,7 @@ function baseEnv() {
     CALLS_TWILIO_FROM_NUMBER: "+27110000000",
     CALLS_WEBHOOK_SECRET: "calls-webhook-secret",
     CALLS_OUTBOX_SECRET: "calls-outbox-secret",
+    CALLS_OUTBOX_TENANT_ID: "22222222-2222-4222-8222-222222222222",
     CALLS_STT_PROVIDER: "managed_http",
     CALLS_STT_PROVIDER_HTTP_URL: "https://app.6esk.example/api/internal/calls/stt/deepgram",
     CALLS_STT_PROVIDER_HTTP_SECRET: "stt-provider-secret",
@@ -63,6 +64,7 @@ describe("validateEnv", () => {
     const env = {
       ...baseEnv(),
       CALLS_PROVIDER: "mock",
+      CALLS_OUTBOX_TENANT_ID: "",
       CRON_SECRET: "",
       AUTH_MFA_SECRET_ENCRYPTION_KEY: "",
       TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "",
@@ -78,6 +80,7 @@ describe("validateEnv", () => {
     expect(() => validateEnv(env)).toThrow(/PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/AI_API_KEY\|OPENAI_API_KEY/);
     expect(() => validateEnv(env)).toThrow(/CALLS_PROVIDER must not be mock/);
+    expect(() => validateEnv(env)).toThrow(/CALLS_OUTBOX_TENANT_ID/);
     expect(() => validateEnv(env)).toThrow(/UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN/);
   });
 

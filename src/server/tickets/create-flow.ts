@@ -313,7 +313,7 @@ export async function processCreateTicket({
         actorUserId: sessionUser.id,
         metadata: data.metadata ?? null
       });
-      runInBackground(deliverPendingCallEvents({ limit: 5 }), "Call outbox delivery failed", {
+      runInBackground(deliverPendingCallEvents({ limit: 5, tenantId }), "Call outbox delivery failed", {
         route: "/api/tickets/create",
         tenantId,
         channel: "voice",

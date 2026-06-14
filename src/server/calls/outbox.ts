@@ -23,7 +23,7 @@ export type FailedCallOutboxEvent = {
 
 type DeliverCallOutboxArgs = {
   limit?: number;
-  tenantId?: string | null;
+  tenantId: string;
 };
 
 type CallOutboxSummaryRow = {
@@ -66,19 +66,22 @@ function getProcessingRecoverySeconds() {
   return Math.floor(configured);
 }
 
+function requireTenantId(value: string | null | undefined, operation: string) {
+  const tenantId = value?.trim();
+  if (!tenantId) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return tenantId;
+}
+
 async function lockPendingEvents(
   limit: number,
   processingRecoverySeconds: number,
-  tenantId?: string | null
+  tenantId: string
 ): Promise<CallOutboxEventRow[]> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const values: Array<number | string> = [limit, processingRecoverySeconds];
-    const tenantClause = tenantId ? "AND e.tenant_id = $3" : "";
-    if (tenantId) {
-      values.push(tenantId);
-    }
     const result = await client.query<CallOutboxEventRow>(
       `UPDATE call_outbox_events
        SET status = 'processing',
@@ -91,7 +94,7 @@ async function lockPendingEvents(
            FROM call_outbox_events e
            JOIN workspace_modules wm ON wm.tenant_id = e.tenant_id AND wm.workspace_key = 'primary'
            WHERE e.direction = 'outbound'
-             ${tenantClause}
+             AND e.tenant_id = $3
              AND (wm.modules->>'voice')::boolean = true
              AND (
                (e.status = 'queued' AND e.next_attempt_at <= now())
@@ -107,7 +110,7 @@ async function lockPendingEvents(
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, payload, attempt_count`,
-      values
+      [limit, processingRecoverySeconds, tenantId]
     );
     await client.query("COMMIT");
     return result.rows;
@@ -121,11 +124,13 @@ async function lockPendingEvents(
 
 async function markDelivered({
   eventId,
+  tenantId,
   callSessionId,
   provider,
   providerCallId
 }: {
   eventId: string;
+  tenantId: string;
   callSessionId: string | null;
   provider: string;
   providerCallId: string | null;
@@ -134,8 +139,9 @@ async function markDelivered({
     `UPDATE call_outbox_events
      SET status = 'sent',
          updated_at = now()
-     WHERE id = $1`,
-    [eventId]
+     WHERE id = $1
+       AND tenant_id = $2`,
+    [eventId, tenantId]
   );
 
   if (!callSessionId) {
@@ -157,11 +163,13 @@ async function markDelivered({
 
 async function markFailed({
   eventId,
+  tenantId,
   attemptCount,
   errorMessage,
   callSessionId
 }: {
   eventId: string;
+  tenantId: string;
   attemptCount: number;
   errorMessage: string;
   callSessionId: string | null;
@@ -176,8 +184,9 @@ async function markFailed({
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId]
+     WHERE id = $5
+       AND tenant_id = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, eventId, tenantId]
   );
 
   if (status === "failed" && callSessionId) {
@@ -196,10 +205,11 @@ async function markFailed({
 
 export async function deliverPendingCallEvents({
   limit = 5,
-  tenantId = null
-}: DeliverCallOutboxArgs = {}) {
+  tenantId
+}: DeliverCallOutboxArgs) {
+  const scopedTenantId = requireTenantId(tenantId, "Call outbox delivery");
   const provider = getCallProvider();
-  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), tenantId);
+  const pending = await lockPendingEvents(limit, getProcessingRecoverySeconds(), scopedTenantId);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -213,6 +223,7 @@ export async function deliverPendingCallEvents({
       const { providerCallId } = await sendOutboundCall(provider, event.id, payload);
       await markDelivered({
         eventId: event.id,
+        tenantId: event.tenant_id,
         callSessionId,
         provider,
         providerCallId
@@ -234,6 +245,7 @@ export async function deliverPendingCallEvents({
       const message = error instanceof Error ? error.message : "Call delivery failed";
       await markFailed({
         eventId: event.id,
+        tenantId: event.tenant_id,
         attemptCount: event.attempt_count + 1,
         errorMessage: message,
         callSessionId
@@ -309,13 +321,9 @@ export async function getCallOutboxMetrics(tenantId?: string | null) {
   };
 }
 
-export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string | null) {
+export async function listFailedCallOutboxEvents(limit = 50, tenantId: string) {
+  const scopedTenantId = requireTenantId(tenantId, "Failed call outbox listing");
   const normalizedLimit = Math.min(Math.max(limit, 1), 200);
-  const values: Array<number | string> = [normalizedLimit];
-  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
-  if (tenantId) {
-    values.push(tenantId);
-  }
   const result = await db.query<FailedCallOutboxEvent>(
     `SELECT
        id,
@@ -328,11 +336,11 @@ export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string |
        payload
      FROM call_outbox_events
      WHERE direction = 'outbound'
-       ${tenantClause}
+       AND tenant_id = $2
        AND status = 'failed'
      ORDER BY updated_at DESC
      LIMIT $1`,
-    values
+    [normalizedLimit, scopedTenantId]
   );
   return result.rows;
 }
@@ -340,10 +348,11 @@ export async function listFailedCallOutboxEvents(limit = 50, tenantId?: string |
 type RetryFailedCallOutboxInput = {
   limit?: number;
   eventIds?: string[];
-  tenantId?: string | null;
+  tenantId: string;
 };
 
-export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxInput = {}) {
+export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxInput) {
+  const tenantId = requireTenantId(input.tenantId, "Call outbox retry");
   const normalizedLimit = Math.min(Math.max(input.limit ?? 25, 1), 100);
   const eventIds = Array.from(
     new Set((input.eventIds ?? []).map((value) => value.trim()).filter(Boolean))
@@ -359,18 +368,18 @@ export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxIn
                  next_attempt_at = now(),
                  updated_at = now()
              WHERE direction = 'outbound'
-               ${input.tenantId ? "AND tenant_id = $2" : ""}
+               AND tenant_id = $2
                AND status = 'failed'
                AND id::text = ANY($1::text[])
              RETURNING id`,
-            input.tenantId ? [eventIds, input.tenantId] : [eventIds]
+            [eventIds, tenantId]
           )
         : await client.query<{ id: string }>(
             `WITH failed AS (
                SELECT id
                FROM call_outbox_events
                WHERE direction = 'outbound'
-                 ${input.tenantId ? "AND tenant_id = $2" : ""}
+                 AND tenant_id = $2
                  AND status = 'failed'
                ORDER BY updated_at ASC
                LIMIT $1
@@ -382,8 +391,9 @@ export async function retryFailedCallOutboxEvents(input: RetryFailedCallOutboxIn
                  updated_at = now()
              FROM failed
              WHERE evt.id = failed.id
+               AND evt.tenant_id = $2
              RETURNING evt.id`,
-            input.tenantId ? [normalizedLimit, input.tenantId] : [normalizedLimit]
+            [normalizedLimit, tenantId]
           );
     await client.query("COMMIT");
     return {

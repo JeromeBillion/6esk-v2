@@ -7,6 +7,7 @@ This runbook covers operational checks, replay validation, outbox retry handling
 ```env
 APP_URL=https://<your-6esk-domain>
 CALLS_OUTBOX_SECRET=<maintenance-secret>
+CALLS_OUTBOX_TENANT_ID=<tenant_uuid_for_maintenance_scope>
 CALLS_WEBHOOK_SECRET=<webhook-hmac-secret>
 CALLS_WEBHOOK_MAX_SKEW_SECONDS=300
 CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false
@@ -26,6 +27,7 @@ Notes:
 - `6esk` now owns the real Twilio hookup and Twilio webhook relay layer directly.
 - `6esk` owns durable call artifact storage. Recordings and transcripts must land in `6esk` Cloudflare R2, not in `6ex`.
 - Keep `CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE=false` outside migration windows.
+- Outbox, transcript, transcript-QA, retry, and load-drill maintenance calls require tenant scope. Use `CALLS_OUTBOX_TENANT_ID` for standalone scripts or send `x-6esk-tenant-id` with machine-triggered admin requests.
 - Keep consent/retention wording aligned with `docs/privacy-retention-policy.md`.
 
 ## Daily Health Checks
@@ -124,6 +126,7 @@ Purpose: exercise outbox trigger and failed-event inspection under repeated runs
 ```powershell
 $env:APP_URL="https://<your-6esk-domain>"
 $env:CALLS_OUTBOX_SECRET="<maintenance-secret>"
+$env:CALLS_OUTBOX_TENANT_ID="<tenant_uuid_for_staging>"
 $env:CALLS_OUTBOX_DRILL_LOOPS="20"
 $env:CALLS_OUTBOX_DRILL_LIMIT="25"
 npm run calls:load-drill
@@ -131,11 +134,12 @@ npm run calls:load-drill
 
 If failed events remain:
 ```powershell
-Invoke-RestMethod -Method POST -Uri "https://<your-6esk-domain>/api/admin/calls/retry?limit=25" -Headers @{ "x-6esk-secret" = "<maintenance-secret>" }
+Invoke-RestMethod -Method POST -Uri "https://<your-6esk-domain>/api/admin/calls/retry?limit=25" -Headers @{ "x-6esk-secret" = "<maintenance-secret>"; "x-6esk-tenant-id" = "<tenant_uuid_for_staging>" }
 ```
 
 Then re-run:
 ```powershell
+$env:CALLS_OUTBOX_TENANT_ID="<tenant_uuid_for_staging>"
 npm run calls:outbox
 ```
 

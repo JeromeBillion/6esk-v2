@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
 const mocks = vi.hoisted(() => ({
   dbQuery: vi.fn(),
@@ -76,7 +77,7 @@ describe("voice call load and failure injection", () => {
           provider: "mock"
         });
 
-        const result: any = await mocks.deliverPendingCallEvents({ limit: 1 });
+        const result: any = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
         expect(result.skipped).toBe(1);
       }
@@ -89,10 +90,10 @@ describe("voice call load and failure injection", () => {
         provider: "pending"
       });
 
-      const result: any = mocks.deliverPendingCallEvents({ limit: 5 });
+      const result: any = mocks.deliverPendingCallEvents({ limit: 5, tenantId: TENANT_ID });
 
       expect(result).toBeDefined;
-      expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({ limit: 5 });
+      expect(mocks.deliverPendingCallEvents).toHaveBeenCalledWith({ limit: 5, tenantId: TENANT_ID });
     });
 
     it("respects idempotency keys to prevent duplicate call initiation", async () => {
@@ -104,7 +105,7 @@ describe("voice call load and failure injection", () => {
         provider: "mock"
       });
 
-      const result = await mocks.deliverPendingCallEvents({ limit: 1 });
+      const result = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
       expect(result.delivered).toBe(1);
     });
@@ -185,8 +186,8 @@ describe("voice call load and failure injection", () => {
         provider: "mock"
       });
 
-      const result1 = await mocks.deliverPendingCallEvents({ limit: 1 });
-      const result2 = await mocks.deliverPendingCallEvents({ limit: 1 });
+      const result1 = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
+      const result2 = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
       expect(result1.delivered + result2.delivered).toBeLessThanOrEqual(2);
     });
@@ -198,7 +199,7 @@ describe("voice call load and failure injection", () => {
         return result;
       });
 
-      const result = await mocks.deliverPendingCallEvents({ limit: 1 });
+      const result = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
 
       expect(result).toMatchObject({
         delivered: expect.any(Number),
@@ -212,7 +213,7 @@ describe("voice call load and failure injection", () => {
     it("tracks delivery latency for SLA monitoring", async () => {
       const startTime = Date.now();
       
-      await mocks.deliverPendingCallEvents({ limit: 10 });
+      await mocks.deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
       
       const latency = Date.now() - startTime;
       expect(latency).toBeLessThan(10000); // Should complete within 10 seconds
@@ -225,7 +226,7 @@ describe("voice call load and failure injection", () => {
         provider: "mock"
       });
 
-      const result = await mocks.deliverPendingCallEvents({ limit: 10 });
+      const result = await mocks.deliverPendingCallEvents({ limit: 10, tenantId: TENANT_ID });
       const successRate = (result.delivered / (result.delivered + result.skipped)) * 100;
 
       expect(successRate).toBe(80);
@@ -262,7 +263,7 @@ describe("voice call load and failure injection", () => {
         provider: "mock"
       });
 
-      const result = await mocks.deliverPendingCallEvents({ limit: 1 });
+      const result = await mocks.deliverPendingCallEvents({ limit: 1, tenantId: TENANT_ID });
       expect(result.delivered).toBeGreaterThanOrEqual(0);
     });
 

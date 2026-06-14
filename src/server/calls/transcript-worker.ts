@@ -63,9 +63,19 @@ async function getScopedProviderSecret({
   return null;
 }
 
-export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: number } = {}) {
+export async function deliverPendingTranscriptJobs({
+  limit = 5,
+  tenantId
+}: {
+  limit?: number;
+  tenantId: string;
+}) {
   const provider = getTranscriptProvider();
-  const pending = await lockPendingTranscriptJobs(limit, getProcessingRecoverySeconds());
+  const scopedTenantId = tenantId.trim();
+  if (!scopedTenantId) {
+    throw new Error("Transcript outbox delivery requires tenantId");
+  }
+  const pending = await lockPendingTranscriptJobs(limit, getProcessingRecoverySeconds(), scopedTenantId);
   if (!pending.length) {
     return { delivered: 0, skipped: 0, provider };
   }
@@ -129,6 +139,7 @@ export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: numb
       } else {
         await markTranscriptJobSubmitted({
           jobId: job.id,
+          tenantId: job.tenant_id,
           attemptCount: job.attempt_count + 1,
           providerJobId: result.providerJobId
         });
@@ -139,6 +150,7 @@ export async function deliverPendingTranscriptJobs({ limit = 5 }: { limit?: numb
       const detail = error instanceof Error ? error.message : "Transcript dispatch failed";
       await markTranscriptJobFailed({
         jobId: job.id,
+        tenantId: job.tenant_id,
         attemptCount: job.attempt_count + 1,
         errorMessage: detail
       });

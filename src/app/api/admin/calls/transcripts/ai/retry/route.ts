@@ -1,18 +1,16 @@
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
+import { resolveAdminMaintenanceScope } from "@/server/admin-maintenance-scope";
 import { runInBackground } from "@/server/async";
 import { retryFailedTranscriptAiJobs } from "@/server/calls/transcript-ai-jobs";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
-  const sharedSecret =
-    process.env.CALLS_OUTBOX_SECRET ?? process.env.INBOUND_SHARED_SECRET ?? "";
-  const provided = request.headers.get("x-6esk-secret");
-
-  if (!isLeadAdmin(user) && (!sharedSecret || provided !== sharedSecret)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const scope = await resolveAdminMaintenanceScope(request, user, {
+    sharedSecrets: [process.env.CALLS_OUTBOX_SECRET, process.env.INBOUND_SHARED_SECRET]
+  });
+  if (!scope.ok) {
+    return scope.response;
   }
 
   const url = new URL(request.url);
@@ -22,30 +20,36 @@ export async function POST(request: Request) {
   try {
     const result = await retryFailedTranscriptAiJobs({
       limit,
-      jobIds: Array.isArray(body.jobIds) ? body.jobIds : undefined
+      jobIds: Array.isArray(body.jobIds) ? body.jobIds : undefined,
+      tenantId: scope.tenantId
     });
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "call_transcript_ai_retry_triggered",
       entityType: "call_transcript_ai_jobs",
-      data: result
+      data: {
+        authMode: scope.authMode,
+        limit,
+        ...result
+      }
     });
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to retry transcript AI jobs";
     runInBackground(recordAuditLog({
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "call_transcript_ai_retry_failed",
       entityType: "call_transcript_ai_jobs",
       data: {
+        authMode: scope.authMode,
         limit,
         detail
       }
     }), "Failed to record transcript AI retry failure audit event", {
-      tenantId: user?.tenant_id ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       limit
     });
     return Response.json(

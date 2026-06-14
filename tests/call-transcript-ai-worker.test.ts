@@ -33,6 +33,8 @@ vi.mock("@/server/audit", () => ({
 
 import { deliverPendingTranscriptAiJobs } from "@/server/calls/transcript-ai-worker";
 
+const TENANT_ID = "33333333-3333-4333-8333-333333333333";
+
 describe("deliverPendingTranscriptAiJobs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -50,7 +52,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-1",
-        tenant_id: "33333333-3333-3333-3333-333333333333",
+        tenant_id: TENANT_ID,
         call_session_id: "11111111-1111-1111-1111-111111111111",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -87,14 +89,14 @@ describe("deliverPendingTranscriptAiJobs", () => {
       rawResponse: { provider: "openai" }
     });
 
-    const result = await deliverPendingTranscriptAiJobs({ limit: 1 });
+    const result = await deliverPendingTranscriptAiJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       delivered: 1,
       skipped: 0,
       provider: "managed_http"
     });
-    expect(mocks.lockPendingTranscriptAiJobs).toHaveBeenCalledWith(1, 300);
+    expect(mocks.lockPendingTranscriptAiJobs).toHaveBeenCalledWith(1, 300, TENANT_ID);
     expect(mocks.submitTranscriptAiJob).toHaveBeenCalledWith(
       "managed_http",
       expect.objectContaining({
@@ -104,13 +106,14 @@ describe("deliverPendingTranscriptAiJobs", () => {
         transcriptText: "Customer asked for a refund and escalation.",
         metadata: {
           ticketId: "ticket-1",
-          tenantId: "33333333-3333-3333-3333-333333333333"
+          tenantId: TENANT_ID
         }
       })
     );
     expect(mocks.markTranscriptAiJobCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: "job-1",
+        tenantId: TENANT_ID,
         qaStatus: "review",
         summary: "Customer asked for a refund and escalation."
       })
@@ -122,7 +125,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
       {
         id: "job-2",
-        tenant_id: "33333333-3333-3333-3333-333333333333",
+        tenant_id: TENANT_ID,
         call_session_id: "22222222-2222-2222-2222-222222222222",
         provider: "managed_http",
         transcript_r2_key: "messages/msg/transcript.txt",
@@ -136,7 +139,7 @@ describe("deliverPendingTranscriptAiJobs", () => {
     });
     mocks.submitTranscriptAiJob.mockRejectedValue(new Error("provider unavailable"));
 
-    const result = await deliverPendingTranscriptAiJobs({ limit: 1 });
+    const result = await deliverPendingTranscriptAiJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toMatchObject({
       delivered: 0,
@@ -145,15 +148,24 @@ describe("deliverPendingTranscriptAiJobs", () => {
     });
     expect(mocks.markTranscriptAiJobFailed).toHaveBeenCalledWith({
       jobId: "job-2",
+      tenantId: TENANT_ID,
       attemptCount: 3,
       errorMessage: "provider unavailable"
     });
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: "33333333-3333-3333-3333-333333333333",
+        tenantId: TENANT_ID,
         action: "call_transcript_ai_job_failed",
         entityId: "job-2"
       })
     );
+  });
+
+  it("rejects delivery without tenant scope", async () => {
+    await expect(
+      deliverPendingTranscriptAiJobs({ limit: 1, tenantId: "" })
+    ).rejects.toThrow("Transcript AI outbox delivery requires tenantId");
+
+    expect(mocks.lockPendingTranscriptAiJobs).not.toHaveBeenCalled();
   });
 });
