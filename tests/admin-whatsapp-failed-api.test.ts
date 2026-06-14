@@ -17,14 +17,14 @@ import { GET } from "@/app/api/admin/whatsapp/failed/route";
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName,
-    tenant_id: TENANT_ID
+    tenant_id: tenantId
   };
 }
 
@@ -70,5 +70,16 @@ describe("GET /api/admin/whatsapp/failed", () => {
       }
     });
     expect(mocks.listFailedWhatsAppOutboxEvents).toHaveBeenCalledWith(25, TENANT_ID);
+  });
+
+  it("returns 403 when a lead admin session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET(new Request("http://localhost/api/admin/whatsapp/failed"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.listFailedWhatsAppOutboxEvents).not.toHaveBeenCalled();
   });
 });

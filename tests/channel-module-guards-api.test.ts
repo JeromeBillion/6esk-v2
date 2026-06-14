@@ -108,14 +108,14 @@ import { POST as postWhatsAppSend } from "@/app/api/whatsapp/send/route";
 import { POST as postCallOutbound } from "@/app/api/calls/outbound/route";
 import { POST as postTicketReply } from "@/app/api/tickets/[ticketId]/replies/route";
 
-function buildUser() {
+function buildUser(tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: "agent@6ex.co.za",
     display_name: "Agent",
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: "agent",
-    tenant_id: TENANT_ID
+    tenant_id: tenantId
   };
 }
 
@@ -209,6 +209,26 @@ describe("channel module guards", () => {
       code: "module_disabled",
       module: "whatsapp"
     });
+    expect(mocks.queueWhatsAppSend).not.toHaveBeenCalled();
+  });
+
+  it("blocks /api/whatsapp/send when the session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser(null));
+
+    const response = await postWhatsAppSend(
+      new Request("http://localhost/api/whatsapp/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ticketId: "11111111-1111-1111-1111-111111111111",
+          to: "+27123456789",
+          text: "Hello"
+        })
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.isWorkspaceModuleEnabled).not.toHaveBeenCalled();
     expect(mocks.queueWhatsAppSend).not.toHaveBeenCalled();
   });
 

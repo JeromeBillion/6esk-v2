@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { decryptSecret, encryptSecret } from "@/server/agents/secret";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const payloadSchema = z.object({
   provider: z.string().min(1),
@@ -21,7 +21,10 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const result = await db.query(
     `SELECT id, provider, phone_number, waba_id, access_token, verify_token, status, created_at, updated_at
      FROM whatsapp_accounts
@@ -70,7 +73,10 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const existing = await db.query(
     `SELECT id FROM whatsapp_accounts WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [tenantId]

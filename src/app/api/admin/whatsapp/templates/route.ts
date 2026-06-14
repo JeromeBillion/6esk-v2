@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const templateSchema = z.object({
   provider: z.string().min(1).default("meta"),
@@ -20,7 +20,10 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const result = await db.query(
     `SELECT id, provider, name, language, category, status, components, created_at, updated_at
      FROM whatsapp_templates
@@ -53,7 +56,10 @@ export async function POST(request: Request) {
   const data = parsed.data;
   const status = data.status ?? "active";
 
-  const tenantId = user?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const result = await db.query(
     `INSERT INTO whatsapp_templates (provider, name, language, category, status, components, tenant_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)

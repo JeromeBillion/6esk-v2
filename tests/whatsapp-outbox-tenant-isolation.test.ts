@@ -29,6 +29,7 @@ vi.mock("@/server/module-metering", () => ({
 }));
 
 import {
+  deliverPendingWhatsAppEvents,
   listFailedWhatsAppOutboxEvents,
   retryFailedWhatsAppEvents
 } from "@/server/whatsapp/outbox";
@@ -54,6 +55,34 @@ describe("WhatsApp outbox tenant isolation", () => {
     );
   });
 
+  it("rejects failed-event listing without tenant scope", async () => {
+    await expect(listFailedWhatsAppOutboxEvents(25, "")).rejects.toThrow(
+      "List failed WhatsApp outbox events requires tenantId"
+    );
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("scopes delivery locking to the requested tenant", async () => {
+    await deliverPendingWhatsAppEvents({ limit: 10, tenantId: TENANT_ID });
+
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(1, "BEGIN");
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("AND e.tenant_id = $3"),
+      [10, 300, TENANT_ID]
+    );
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(3, "COMMIT");
+  });
+
+  it("rejects delivery without tenant scope", async () => {
+    await expect(deliverPendingWhatsAppEvents({ limit: 10, tenantId: "" })).rejects.toThrow(
+      "Deliver WhatsApp outbox events requires tenantId"
+    );
+
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+  });
+
   it("scopes retry-by-id updates to the requested tenant", async () => {
     await retryFailedWhatsAppEvents({ eventIds: ["wa-event-1"], tenantId: TENANT_ID });
 
@@ -64,6 +93,14 @@ describe("WhatsApp outbox tenant isolation", () => {
       [["wa-event-1"], TENANT_ID]
     );
     expect(mocks.clientQuery).toHaveBeenNthCalledWith(3, "COMMIT");
+  });
+
+  it("rejects retry without tenant scope", async () => {
+    await expect(retryFailedWhatsAppEvents({ eventIds: ["wa-event-1"], tenantId: "" })).rejects.toThrow(
+      "Retry failed WhatsApp outbox events requires tenantId"
+    );
+
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
   });
 
   it("scopes metrics queries to the requested tenant", async () => {
@@ -88,6 +125,31 @@ describe("WhatsApp outbox tenant isolation", () => {
       3,
       expect.stringContaining("AND tenant_id = $1"),
       [TENANT_ID]
+    );
+  });
+
+  it("marks global metrics as internal guard-suppressed", async () => {
+    mocks.dbQuery
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await getWhatsAppOutboxMetrics(null);
+
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("tenant-query-guard: ignore internal-global-whatsapp-outbox-metrics"),
+      []
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("tenant-query-guard: ignore internal-global-whatsapp-outbox-metrics"),
+      []
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("tenant-query-guard: ignore internal-global-whatsapp-outbox-metrics"),
+      []
     );
   });
 });

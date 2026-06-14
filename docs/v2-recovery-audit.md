@@ -403,6 +403,15 @@ Before this recovery branch can replace `main`, run:
   - `tests/email-outbox.test.ts`
   - `tests/email-send-route.test.ts`
   - email enqueue/delivery now requires explicit tenant scope, queued message and attachment reads are tenant-pinned, and the combined maintenance runner sends an explicit tenant header
+- WhatsApp send/outbox tenant-scope tests pass in the focused slice:
+  - `tests/admin-whatsapp-config-api.test.ts`
+  - `tests/admin-whatsapp-templates-api.test.ts`
+  - `tests/admin-whatsapp-outbox-api.test.ts`
+  - `tests/admin-whatsapp-retry-api.test.ts`
+  - `tests/admin-whatsapp-failed-api.test.ts`
+  - `tests/whatsapp-outbox-tenant-isolation.test.ts`
+  - `tests/channel-module-guards-api.test.ts`
+  - WhatsApp provider settings, templates, direct sends, failed-event listing, retry, and outbox delivery now require explicit tenant scope; maintenance scripts send tenant headers and global metrics queries are explicitly marked as internal-only
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const payloadSchema = z.object({
   ticketId: z.string().uuid().optional().nullable(),
@@ -40,7 +40,10 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (!(await checkModuleEntitlement("whatsapp", tenantId))) {
     return Response.json(
       {

@@ -3,7 +3,6 @@ import { db } from "@/server/db";
 import { sanitizeFilename } from "@/server/email/normalize";
 import { putObject } from "@/server/storage/r2";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type SendWhatsAppArgs = {
   tenantId?: string | null;
@@ -25,6 +24,14 @@ type SendWhatsAppArgs = {
 
 function formatContact(contact: string) {
   return contact.replace(/\s+/g, "").trim();
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
 }
 
 async function getActiveAccount(tenantId: string) {
@@ -52,7 +59,7 @@ export async function queueWhatsAppSend({
   aiMeta,
   messageMetadata
 }: SendWhatsAppArgs) {
-  let effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
+  let effectiveTenantId = requireTenantId(tenantId, "Queue WhatsApp send");
   const attachmentList = attachments ?? [];
   if (attachmentList.length > 1) {
     throw new Error("WhatsApp supports one attachment per message.");

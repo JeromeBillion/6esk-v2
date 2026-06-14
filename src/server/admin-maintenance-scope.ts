@@ -21,6 +21,11 @@ export type AdminMaintenanceScope =
       response: Response;
     };
 
+type AdminMaintenanceScopeOptions = {
+  sharedSecrets?: Array<string | null | undefined>;
+  tenantIngressFallbackGlobalSecret?: string | null;
+};
+
 function readTenantHeader(request: Request) {
   return (
     request.headers.get("x-6esk-tenant-id")?.trim() ||
@@ -29,9 +34,18 @@ function readTenantHeader(request: Request) {
   );
 }
 
+function firstConfiguredSecret(values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
 export async function resolveAdminMaintenanceScope(
   request: Request,
-  user: SessionUser | null
+  user: SessionUser | null,
+  options: AdminMaintenanceScopeOptions = {}
 ): Promise<AdminMaintenanceScope> {
   if (isLeadAdmin(user)) {
     const tenantId = sessionTenantId(user);
@@ -49,7 +63,9 @@ export async function resolveAdminMaintenanceScope(
   if (shouldRequireTenantIngressSigningSecrets()) {
     try {
       const scope = await resolveTenantIngressRequestScope(request, {
-        fallbackGlobalSecret: process.env.INBOUND_SHARED_SECRET,
+        fallbackGlobalSecret:
+          options.tenantIngressFallbackGlobalSecret ??
+          firstConfiguredSecret(options.sharedSecrets ?? [process.env.INBOUND_SHARED_SECRET]),
         fallbackTenantId: readTenantHeader(request)
       });
       return {
@@ -69,7 +85,7 @@ export async function resolveAdminMaintenanceScope(
     }
   }
 
-  const sharedSecret = process.env.INBOUND_SHARED_SECRET ?? "";
+  const sharedSecret = firstConfiguredSecret(options.sharedSecrets ?? [process.env.INBOUND_SHARED_SECRET]);
   const provided = request.headers.get("x-6esk-secret")?.trim() ?? "";
   if (!sharedSecret || provided !== sharedSecret) {
     return { ok: false, response: Response.json({ error: "Unauthorized" }, { status: 401 }) };

@@ -34,10 +34,13 @@ function toIso(value: Date | null | undefined) {
 }
 
 export async function getWhatsAppOutboxMetrics(tenantId?: string | null) {
-  const values = tenantId ? [tenantId] : [];
-  const tenantClause = tenantId ? "AND tenant_id = $1" : "";
+  const scopedTenantId = tenantId?.trim() || null;
+  const values = scopedTenantId ? [scopedTenantId] : [];
+  const tenantClause = scopedTenantId ? "AND tenant_id = $1" : "";
+  const guardComment = scopedTenantId ? "" : "/* tenant-query-guard: ignore internal-global-whatsapp-outbox-metrics */";
   const accountResult = await db.query<WhatsAppAccountRow>(
-    `SELECT id, provider, phone_number, status, updated_at
+    `${guardComment}
+     SELECT id, provider, phone_number, status, updated_at
      FROM whatsapp_accounts
      WHERE 1 = 1
        ${tenantClause}
@@ -47,7 +50,8 @@ export async function getWhatsAppOutboxMetrics(tenantId?: string | null) {
   );
 
   const summaryResult = await db.query<WhatsAppOutboxSummaryRow>(
-    `SELECT
+    `${guardComment}
+     SELECT
        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
        COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at <= now())::int AS due_now,
        COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
@@ -67,7 +71,8 @@ export async function getWhatsAppOutboxMetrics(tenantId?: string | null) {
   );
 
   const errorResult = await db.query<WhatsAppOutboxErrorRow>(
-    `SELECT last_error
+    `${guardComment}
+     SELECT last_error
      FROM whatsapp_events
      WHERE direction = 'outbound'
        ${tenantClause}
