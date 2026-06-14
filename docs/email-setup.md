@@ -13,6 +13,8 @@ RESEND_FROM_DOMAIN=6ex.co.za
 SUPPORT_ADDRESS=support@6ex.co.za
 INBOUND_SHARED_SECRET=<random_long_secret>
 INBOUND_TENANT_ID=<tenant_uuid_for_inbound_maintenance_jobs>
+JOBS_RUNNER_SECRET=<tenant_ingress_or_maintenance_secret>
+JOBS_RUNNER_TENANT_ID=<tenant_uuid_for_combined_maintenance_runner>
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=<r2_access_key>
 R2_SECRET_ACCESS_KEY=<r2_secret>
@@ -94,6 +96,13 @@ for that tenant as the value sent in `x-6esk-secret`; the global shared-secret f
 only a development/test compatibility path when tenant ingress signing secrets are not required.
 The tenant header is intentionally not inferred for machine maintenance jobs.
 
+The combined maintenance runner (`npm run jobs:runner`) also sends outbound email queue
+work through `POST /api/admin/email/outbox`, so it must set `JOBS_RUNNER_TENANT_ID`
+or `INBOUND_TENANT_ID`. Use `JOBS_RUNNER_SECRET` when the selected jobs share one
+maintenance credential; otherwise run separate tenant/job-specific runners so each endpoint
+receives the correct secret. Outbound email delivery no longer falls back to the default
+tenant for enqueue, retry, metrics, or queue state transitions.
+
 Note: this repo currently includes worker code only. Add your own Wrangler project files (`wrangler.toml`, package manager config) before `wrangler deploy`.
 
 ## DNS Setup
@@ -138,6 +147,8 @@ Outbound test:
 Useful env vars:
 ```env
 INBOUND_TENANT_ID=<tenant_uuid_for_inbound_maintenance_jobs>
+JOBS_RUNNER_SECRET=<tenant_ingress_or_maintenance_secret>
+JOBS_RUNNER_TENANT_ID=<tenant_uuid_for_combined_maintenance_runner>
 INBOUND_RETRY_LIMIT=25
 INBOUND_ALERT_EVERY_RUN=true
 INBOUND_JOB_INTERVAL_SECONDS=0

@@ -398,6 +398,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/inbound-alerts.test.ts`
   - `tests/inbound-tenant-isolation.test.ts`
   - `npm run test:tenant-isolation` now includes the inbound admin alert/metrics/retry and alert-service regressions
+- Outbound email queue tenant-scope tests pass in the focused slice:
+  - `tests/admin-email-outbox-api.test.ts`
+  - `tests/email-outbox.test.ts`
+  - `tests/email-send-route.test.ts`
+  - email enqueue/delivery now requires explicit tenant scope, queued message and attachment reads are tenant-pinned, and the combined maintenance runner sends an explicit tenant header
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

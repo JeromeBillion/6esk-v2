@@ -143,6 +143,29 @@ describe("POST /api/email/send", () => {
     );
   });
 
+  it("rejects users without tenant scope before queueing email", async () => {
+    mocks.getSessionUser.mockResolvedValue({ ...buildUser(), tenant_id: null });
+
+    const { POST } = await import("@/app/api/email/send/route");
+    const response = await POST(
+      new Request("http://localhost/api/email/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          from: "jerome.choma@6ex.co.za",
+          to: ["customer@example.com"],
+          subject: "No tenant",
+          text: "This should not queue."
+        })
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.isWorkspaceModuleEnabled).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+    expect(mocks.enqueueEmailOutboxEvent).not.toHaveBeenCalled();
+  });
+
   it("creates a queued local thread for non-reply compose sends", async () => {
     const { POST } = await import("@/app/api/email/send/route");
     const response = await POST(

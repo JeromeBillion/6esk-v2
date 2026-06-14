@@ -1,6 +1,9 @@
 const {
   APP_URL,
+  JOBS_RUNNER_SECRET,
+  JOBS_RUNNER_TENANT_ID,
   INBOUND_SHARED_SECRET,
+  INBOUND_TENANT_ID,
   CALLS_OUTBOX_SECRET,
   JOBS_RUNNER_INTERVAL_SECONDS,
   JOBS_RUNNER_ENABLE_INBOUND,
@@ -12,10 +15,11 @@ const {
   JOBS_RUNNER_ENABLE_METERING_SYNC
 } = process.env;
 
-const secret = CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
+const secret = JOBS_RUNNER_SECRET || CALLS_OUTBOX_SECRET || INBOUND_SHARED_SECRET || "";
+const tenantId = JOBS_RUNNER_TENANT_ID || INBOUND_TENANT_ID || "";
 
-if (!APP_URL || !secret) {
-  console.error("APP_URL and CALLS_OUTBOX_SECRET (or INBOUND_SHARED_SECRET) are required");
+if (!APP_URL || !secret || !tenantId) {
+  console.error("APP_URL, JOBS_RUNNER_SECRET (or CALLS_OUTBOX_SECRET/INBOUND_SHARED_SECRET), and JOBS_RUNNER_TENANT_ID (or INBOUND_TENANT_ID) are required");
   process.exit(1);
 }
 
@@ -104,7 +108,8 @@ async function callMaintenanceEndpoint(pathname) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method: "POST",
     headers: {
-      "x-6esk-secret": secret
+      "x-6esk-secret": secret,
+      "x-6esk-tenant-id": tenantId
     }
   });
 

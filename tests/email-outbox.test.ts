@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   getObjectBuffer: vi.fn()
 }));
 
+const TENANT_ID = "22222222-2222-2222-2222-222222222222";
+
 vi.mock("@/server/db", () => ({
   db: {
     query: mocks.query,
@@ -28,6 +30,7 @@ describe("email outbox", () => {
           rows: [
             {
               id: "evt-1",
+              tenant_id: TENANT_ID,
               payload: {
                 messageRecordId: "msg-1",
                 from: "jerome.choma@6ex.co.za",
@@ -81,7 +84,7 @@ describe("email outbox", () => {
   it("delivers queued email events and marks the message sent", async () => {
     const { deliverPendingEmailOutboxEvents } = await import("@/server/email/outbox");
 
-    const result = await deliverPendingEmailOutboxEvents({ limit: 5 });
+    const result = await deliverPendingEmailOutboxEvents({ limit: 5, tenantId: TENANT_ID });
 
     expect(result).toEqual({ delivered: 1, skipped: 0 });
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
@@ -98,24 +101,45 @@ describe("email outbox", () => {
       text: "Hello queued world"
     });
     expect(mocks.query).toHaveBeenCalledWith(
-      expect.stringContaining("SET external_message_id = $1"),
-      ["provider-msg-1", "msg-1"]
+      expect.stringContaining("WHERE id = $3"),
+      ["provider-msg-1", "resend", "msg-1", TENANT_ID]
+    );
+    expect(mocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM messages"),
+      ["msg-1", TENANT_ID]
+    );
+    expect(mocks.query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM attachments"),
+      ["msg-1", TENANT_ID]
     );
   });
 
-  it("applies tenant-scoped locking when tenantId is provided", async () => {
+  it("rejects delivery without tenant scope", async () => {
+    const { deliverPendingEmailOutboxEvents, enqueueEmailOutboxEvent } = await import("@/server/email/outbox");
+
+    await expect(deliverPendingEmailOutboxEvents({ limit: 5, tenantId: "" })).rejects.toThrow(
+      "Deliver email outbox events requires tenantId"
+    );
+    await expect(enqueueEmailOutboxEvent({ messageRecordId: "msg-1" }, "")).rejects.toThrow(
+      "Enqueue email outbox event requires tenantId"
+    );
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it("applies tenant-scoped locking", async () => {
     const { deliverPendingEmailOutboxEvents } = await import("@/server/email/outbox");
 
     await deliverPendingEmailOutboxEvents({
       limit: 2,
-      tenantId: "22222222-2222-2222-2222-222222222222"
+      tenantId: TENANT_ID
     });
     const client = await mocks.connect.mock.results.at(-1)?.value;
 
     expect(client.query).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("AND e.tenant_id = $3"),
-      [2, 300, "22222222-2222-2222-2222-222222222222"]
+      [2, 300, TENANT_ID]
     );
   });
 });

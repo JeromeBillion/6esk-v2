@@ -32,7 +32,7 @@ CRM_CALLS_AGENT_EVENTS_URL=https://<agent-host>/api/<events-endpoint>
 CRM_CALLS_AGENT_EVENTS_TOKEN=<optional-bearer-token>
 
 # Optional local verification of event sequencing via DB:
-CRM_CALLS_TENANT_ID=00000000-0000-0000-0000-000000000001
+CRM_CALLS_TENANT_ID=<staging_tenant_uuid>
 DATABASE_URL=postgres://...
 ```
 
