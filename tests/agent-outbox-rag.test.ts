@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 const INTEGRATION_ID = "11111111-1111-4111-8111-111111111111";
 const OUTBOX_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
@@ -246,6 +246,14 @@ describe("agent outbox Dexter RAG attachment", () => {
           runtimeTarget: "internal"
         })
       })
+    );
+    expect(mocks.db.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'delivered'"),
+      [OUTBOX_ID, TENANT_ID]
+    );
+    expect(mocks.db.query).toHaveBeenCalledWith(
+      expect.stringContaining("AND tenant_id = $2"),
+      [OUTBOX_ID, TENANT_ID]
     );
     expect(mocks.markAgentRunCompleted).toHaveBeenCalledWith({
       tenantId: TENANT_ID,

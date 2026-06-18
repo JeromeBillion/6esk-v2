@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 const INTEGRATION_ID = "11111111-1111-4111-8111-111111111111";
 const OUTBOX_ID = "22222222-2222-4222-8222-222222222222";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
@@ -141,7 +141,20 @@ describe("agent outbox lane reservation", () => {
     expect(mocks.completeAgentRunStep).not.toHaveBeenCalled();
     expect(mocks.db.query).toHaveBeenCalledWith(
       expect.stringContaining("next_attempt_at = now() + make_interval"),
-      [OUTBOX_ID, 10]
+      [OUTBOX_ID, 10, TENANT_ID]
     );
+    expect(mocks.db.query).toHaveBeenCalledWith(
+      expect.stringContaining("AND tenant_id = $3"),
+      [OUTBOX_ID, 10, TENANT_ID]
+    );
+  });
+
+  it("rejects delivery without tenant scope", async () => {
+    await expect(deliverPendingAgentEvents({ limit: 5, tenantId: "" })).rejects.toThrow(
+      "Deliver agent outbox events requires tenantId"
+    );
+
+    expect(mocks.getActiveAgentIntegration).not.toHaveBeenCalled();
+    expect(mocks.db.connect).not.toHaveBeenCalled();
   });
 });

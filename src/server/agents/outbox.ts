@@ -31,7 +31,6 @@ import type { AgentOutputCustomerContext } from "@/server/agents/output-validato
 import { resolveDeliveryLimit } from "@/server/agents/throughput";
 import { processInternalDexterMessage } from "@/server/dexter-runtime";
 import { logger } from "@/server/logger";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 import { recordModuleUsageEvent } from "@/server/module-metering";
 
@@ -118,6 +117,14 @@ function resolveEventTenantId(tenantId: unknown, payload: Record<string, unknown
     readTenantId(resource?.tenantId) ??
     readTenantId(resource?.tenant_id)
   );
+}
+
+function requireTenantId(value: unknown) {
+  const tenantId = readTenantId(value);
+  if (!tenantId) {
+    throw new Error("Deliver agent outbox events requires tenantId");
+  }
+  return tenantId;
 }
 
 function tenantScopedPayload(payload: Record<string, unknown>, tenantId: string) {
@@ -236,16 +243,17 @@ async function lockPendingEvents(
   }
 }
 
-async function markDelivered(id: string) {
+async function markDelivered(id: string, tenantId: string) {
   await db.query(
     `UPDATE agent_outbox
      SET status = 'delivered', updated_at = now()
-     WHERE id = $1`,
-    [id]
+     WHERE id = $1
+       AND tenant_id = $2`,
+    [id, tenantId]
   );
 }
 
-async function markFailed(id: string, attemptCount: number, errorMessage: string) {
+async function markFailed(id: string, tenantId: string, attemptCount: number, errorMessage: string) {
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
   const status = attemptCount >= MAX_AGENT_OUTBOX_ATTEMPTS ? "failed" : "pending";
   await db.query(
@@ -255,20 +263,22 @@ async function markFailed(id: string, attemptCount: number, errorMessage: string
          last_error = $3,
          next_attempt_at = $4,
          updated_at = now()
-     WHERE id = $5`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, id]
+     WHERE id = $5
+       AND tenant_id = $6`,
+    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, id, tenantId]
   );
 }
 
-async function releaseLanePending(id: string) {
+async function releaseLanePending(id: string, tenantId: string) {
   await db.query(
     `UPDATE agent_outbox
      SET status = 'pending',
          next_attempt_at = now() + make_interval(secs => $2::int),
          updated_at = now()
      WHERE id = $1
-       AND status = 'processing'`,
-    [id, getLaneRetrySeconds()]
+       AND status = 'processing'
+       AND tenant_id = $3`,
+    [id, getLaneRetrySeconds(), tenantId]
   );
 }
 
@@ -540,7 +550,7 @@ async function completeDeliveryStepBestEffort({
 }
 
 export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
-  const effectiveTenantId = readTenantId(tenantId) ?? DEFAULT_TENANT_ID;
+  const effectiveTenantId = requireTenantId(tenantId);
   const integration = integrationId
     ? await getAgentIntegrationById(integrationId, effectiveTenantId)
     : await getActiveAgentIntegration(effectiveTenantId);
@@ -584,7 +594,7 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         attemptCount: event.attempt_count + 1
       });
       if (!reserved) {
-        await releaseLanePending(event.id);
+        await releaseLanePending(event.id, event.tenant_id);
         continue;
       }
       const deliveryPayload = await buildDeliveryPayload({
@@ -621,7 +631,7 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         },
         errorMessage: message
       });
-      await markFailed(event.id, attempts, message);
+      await markFailed(event.id, event.tenant_id, attempts, message);
       if (runId) {
         await markAgentRunFailed({
           tenantId: event.tenant_id,
@@ -647,7 +657,7 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
     });
 
     try {
-      await markDelivered(event.id);
+      await markDelivered(event.id, event.tenant_id);
       await markAgentRunCompleted({
         tenantId: event.tenant_id,
         runId

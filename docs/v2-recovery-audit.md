@@ -155,8 +155,11 @@ Date: 2026-06-06
 - Extended v2-native run ledger evidence into the Dexter outbox worker dispatch path:
   - `src/server/agents/run-ledger.ts`
   - `src/server/agents/outbox.ts`
+  - `src/app/api/agent/v1/outbox/deliver/route.ts`
   - generic `recordAgentRunStepStarted` and `completeAgentRunStep` helpers now write durable non-tool worker steps into `agent_run_steps`
   - outbox delivery records a `runtime:deliver_event` step before dispatching to native/http/external Dexter targets and marks it completed or failed with bounded summary metadata
+  - machine-triggered outbox delivery now requires explicit tenant scope instead of falling back to `DEFAULT_TENANT_ID`
+  - delivered, failed, and lane-release status updates include tenant predicates so runtime bookkeeping cannot cross tenant boundaries
   - accepted delivery does not become retryable solely because local step-completion bookkeeping failed; the failure is logged and later delivery bookkeeping/replay evidence remains available
 - Recovered and adapted the wrong-folder fixture-driven AI red-team regression value into v2-native modules:
   - `tests/fixtures/ai-red-team-cases.ts`
