@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const TENANT_ID = "33333333-3333-3333-3333-333333333333";
+const TENANT_ID = "33333333-3333-4333-8333-333333333333";
 
 const mocks = vi.hoisted(() => ({
   KnowledgeIngestionSafetyError: class KnowledgeIngestionSafetyError extends Error {
@@ -201,6 +201,14 @@ describe("deliverPendingKnowledgeIngestionJobs", () => {
     );
   });
 
+  it("rejects delivery without tenant scope", async () => {
+    await expect(deliverPendingKnowledgeIngestionJobs({ limit: 3, tenantId: "" })).rejects.toThrow(
+      "Deliver knowledge ingestion jobs requires tenantId"
+    );
+
+    expect(mocks.lockPendingKnowledgeIngestionJobs).not.toHaveBeenCalled();
+  });
+
   it("marks PDF and Word formats as poison until dedicated extractors exist", async () => {
     const error = new mocks.KnowledgeIngestionSafetyError(
       "knowledge_extractor_unconfigured",
@@ -212,7 +220,7 @@ describe("deliverPendingKnowledgeIngestionJobs", () => {
     ]);
     mocks.extractKnowledgeDocumentText.mockRejectedValueOnce(error);
 
-    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1 });
+    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toEqual({ indexed: 0, failed: 0, poison: 1, total: 1 });
     expect(mocks.getObjectBuffer).toHaveBeenCalled();
@@ -257,7 +265,7 @@ describe("deliverPendingKnowledgeIngestionJobs", () => {
       }
     });
 
-    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1 });
+    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toEqual({ indexed: 1, failed: 0, poison: 0, total: 1 });
     expect(mocks.extractKnowledgeDocumentText).toHaveBeenCalledWith(
@@ -289,7 +297,7 @@ describe("deliverPendingKnowledgeIngestionJobs", () => {
     mocks.lockPendingKnowledgeIngestionJobs.mockResolvedValue([buildJob()]);
     mocks.saveKnowledgeExtractionResult.mockRejectedValue(new Error("db unavailable"));
 
-    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1 });
+    const result = await deliverPendingKnowledgeIngestionJobs({ limit: 1, tenantId: TENANT_ID });
 
     expect(result).toEqual({ indexed: 0, failed: 1, poison: 0, total: 1 });
     expect(mocks.deleteObject).toHaveBeenCalledWith(

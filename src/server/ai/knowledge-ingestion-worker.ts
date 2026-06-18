@@ -121,6 +121,14 @@ function reasonCodeForError(error: unknown) {
   return "knowledge_ingestion_failed";
 }
 
+function requireTenantId(value: string | null | undefined) {
+  const tenantId = value?.trim();
+  if (!tenantId) {
+    throw new Error("Deliver knowledge ingestion jobs requires tenantId");
+  }
+  return tenantId;
+}
+
 export async function deliverPendingKnowledgeIngestionJobs({
   limit = 5,
   tenantId
@@ -128,9 +136,10 @@ export async function deliverPendingKnowledgeIngestionJobs({
   limit?: number;
   tenantId?: string | null;
 } = {}) {
+  const scopedTenantId = requireTenantId(tenantId);
   const pending = await lockPendingKnowledgeIngestionJobs({
     limit,
-    tenantId,
+    tenantId: scopedTenantId,
     processingRecoverySeconds: getKnowledgeIngestionRecoverySeconds()
   });
 

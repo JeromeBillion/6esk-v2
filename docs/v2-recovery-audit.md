@@ -105,6 +105,13 @@ Date: 2026-06-06
   - RAG attachment is recorded in `agent_run_events` as `agent.rag.context_attached` with citation IDs, document version/chunk IDs, confidence, safety summary, and retrieval filters
   - retrieval failures degrade to empty/error context and do not block core ticket/call/chat delivery
   - focused regression coverage proves bounded snippet shaping, no-query behavior, prompt-safety denials, compact metadata attachment, outbox delivery attachment, and graceful degradation
+- Hardened Knowledge Base ingestion maintenance into v2-native `tenant_id` form:
+  - `src/app/api/admin/ai/knowledge/ingestion/route.ts`
+  - `src/server/ai/knowledge-ingestion-worker.ts`
+  - `src/server/ai/knowledge-base.ts`
+  - admin metrics/triggers reject tenantless sessions instead of passing null/default tenant scope
+  - shared-secret worker triggers require an explicit tenant header through the same maintenance-scope helper used by other operational jobs
+  - direct worker delivery and ingestion job locking fail closed without `tenantId`, and the lock query always filters by `tenant_id`
 - Semantically ported Dexter control-plane command envelope value without replacing native Dexter:
   - `src/server/agents/command-envelope.ts`
   - `src/server/agents/run-ledger.ts`

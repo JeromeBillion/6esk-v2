@@ -35,6 +35,7 @@ import {
   getKnowledgeIngestionReadiness,
   KnowledgeBaseError,
   listKnowledgeBase,
+  lockPendingKnowledgeIngestionJobs,
   publishKnowledgeDocument,
   recordKnowledgeQuarantineEvent,
   scanKnowledgeUploadForMalware,
@@ -176,6 +177,37 @@ describe("knowledge base service", () => {
     );
     expect(mocks.client.query).toHaveBeenNthCalledWith(5, "COMMIT");
     expect(mocks.client.release).toHaveBeenCalled();
+  });
+
+  it("rejects ingestion job locking without tenant scope", async () => {
+    await expect(lockPendingKnowledgeIngestionJobs({ limit: 5, tenantId: "" })).rejects.toThrow(
+      "Lock pending knowledge ingestion jobs requires tenantId"
+    );
+
+    expect(mocks.db.connect).not.toHaveBeenCalled();
+  });
+
+  it("locks ingestion jobs only inside the requested tenant", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(undefined);
+
+    const result = await lockPendingKnowledgeIngestionJobs({
+      limit: 7,
+      processingRecoverySeconds: 180,
+      tenantId: TENANT_ID,
+      lockedBy: "worker-test"
+    });
+
+    expect(result).toEqual([]);
+    expect(mocks.client.query).toHaveBeenNthCalledWith(1, "BEGIN");
+    expect(mocks.client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("AND tenant_id = $3::uuid"),
+      [7, 180, TENANT_ID, "worker-test"]
+    );
+    expect(mocks.client.query).toHaveBeenNthCalledWith(3, "COMMIT");
   });
 
   it("rejects unsupported file types before object storage", async () => {

@@ -920,6 +920,10 @@ export async function lockPendingKnowledgeIngestionJobs({
   lockedBy?: string;
 } = {}) {
   const normalizedLimit = Math.min(Math.max(limit, 1), 50);
+  const scopedTenantId = tenantId?.trim();
+  if (!scopedTenantId) {
+    throw new Error("Lock pending knowledge ingestion jobs requires tenantId");
+  }
   const client = await db.connect();
   try {
     await client.query("BEGIN");
@@ -933,9 +937,9 @@ export async function lockPendingKnowledgeIngestionJobs({
              OR (
                status = 'running'
                AND updated_at <= now() - make_interval(secs => $2::int)
-             )
            )
-           AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+           )
+           AND tenant_id = $3::uuid
          ORDER BY created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
@@ -975,7 +979,7 @@ export async function lockPendingKnowledgeIngestionJobs({
          ON version.tenant_id = job.tenant_id
         AND version.id = job.document_version_id
        ORDER BY version.created_at ASC`,
-      [normalizedLimit, processingRecoverySeconds, tenantId ?? null, lockedBy.slice(0, 120)]
+      [normalizedLimit, processingRecoverySeconds, scopedTenantId, lockedBy.slice(0, 120)]
     );
     await client.query("COMMIT");
     return result.rows;

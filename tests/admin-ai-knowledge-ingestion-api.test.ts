@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 const USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const mocks = vi.hoisted(() => ({
@@ -36,16 +36,16 @@ import {
 } from "@/app/api/admin/ai/knowledge/ingestion/route";
 import { GET as GET_QUARANTINE_EVENTS } from "@/app/api/admin/ai/knowledge/quarantine-events/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: USER_ID,
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName,
-    tenant_id: TENANT_ID,
+    tenant_id: tenantId,
     tenant_slug: "default",
-    real_tenant_id: TENANT_ID,
+    real_tenant_id: tenantId,
     is_impersonating: false
   };
 }
@@ -53,8 +53,9 @@ function buildUser(roleName: "lead_admin" | "agent") {
 describe("admin AI knowledge ingestion API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.KNOWLEDGE_INGESTION_SECRET;
-    delete process.env.CRON_SECRET;
+    vi.stubEnv("KNOWLEDGE_INGESTION_SECRET", "");
+    vi.stubEnv("CRON_SECRET", "");
+    vi.stubEnv("TENANT_INGRESS_REQUIRE_SECRETS", "false");
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
     mocks.getKnowledgeIngestionMetrics.mockResolvedValue({
       queued: 1,
@@ -87,6 +88,10 @@ describe("admin AI knowledge ingestion API", () => {
       total: 1
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("returns tenant-scoped ingestion metrics for admins", async () => {
@@ -172,8 +177,21 @@ describe("admin AI knowledge ingestion API", () => {
     );
   });
 
-  it("allows secret-based worker triggers across tenants", async () => {
-    process.env.KNOWLEDGE_INGESTION_SECRET = "knowledge-secret";
+  it("returns 403 for admin ingestion triggers without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/ai/knowledge/ingestion", {
+        method: "POST"
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.deliverPendingKnowledgeIngestionJobs).not.toHaveBeenCalled();
+  });
+
+  it("requires a tenant header for secret-based worker triggers", async () => {
+    vi.stubEnv("KNOWLEDGE_INGESTION_SECRET", "knowledge-secret");
     mocks.getSessionUser.mockResolvedValue(null);
 
     const response = await POST(
@@ -183,11 +201,37 @@ describe("admin AI knowledge ingestion API", () => {
       })
     );
 
+    expect(response.status).toBe(400);
+    expect(mocks.deliverPendingKnowledgeIngestionJobs).not.toHaveBeenCalled();
+  });
+
+  it("runs ingestion for the explicit worker tenant", async () => {
+    vi.stubEnv("KNOWLEDGE_INGESTION_SECRET", "knowledge-secret");
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/ai/knowledge/ingestion?limit=3", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "knowledge-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
+      })
+    );
+
     expect(response.status).toBe(200);
     expect(mocks.deliverPendingKnowledgeIngestionJobs).toHaveBeenCalledWith({
       limit: 3,
-      tenantId: null
+      tenantId: TENANT_ID
     });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        actorUserId: null,
+        action: "knowledge_ingestion_triggered",
+        data: expect.objectContaining({ authMode: "shared_secret" })
+      })
+    );
   });
 
   it("rejects unauthenticated worker triggers without a valid secret", async () => {

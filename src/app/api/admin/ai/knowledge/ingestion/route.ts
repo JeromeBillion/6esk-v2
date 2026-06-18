@@ -1,21 +1,18 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { runInBackground } from "@/server/async";
+import { resolveAdminMaintenanceScope } from "@/server/admin-maintenance-scope";
 import { deliverPendingKnowledgeIngestionJobs } from "@/server/ai/knowledge-ingestion-worker";
 import {
   getKnowledgeIngestionMetrics,
   getKnowledgeIngestionReadiness
 } from "@/server/ai/knowledge-base";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function readLimit(request: Request) {
   const url = new URL(request.url);
   return Math.min(Math.max(Number(url.searchParams.get("limit") ?? 10) || 10, 1), 50);
-}
-
-function readWorkerSecret() {
-  return process.env.KNOWLEDGE_INGESTION_SECRET ?? process.env.CRON_SECRET ?? "";
 }
 
 export async function GET() {
@@ -23,13 +20,17 @@ export async function GET() {
   if (!user || !isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const [metrics, readiness] = await Promise.all([
-    getKnowledgeIngestionMetrics(user.tenant_id),
+    getKnowledgeIngestionMetrics(tenantId),
     Promise.resolve(getKnowledgeIngestionReadiness())
   ]);
   return Response.json({
-    tenantId: user.tenant_id,
+    tenantId,
     queue: metrics,
     readiness
   });
@@ -37,32 +38,33 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
-  const secret = readWorkerSecret();
-  const provided = request.headers.get("x-6esk-secret");
-  const isAdminTrigger = Boolean(user && isLeadAdmin(user));
-  const isWorkerTrigger = Boolean(secret && provided === secret);
-
-  if (!isAdminTrigger && !isWorkerTrigger) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const scope = await resolveAdminMaintenanceScope(request, user, {
+    sharedSecrets: [
+      process.env.KNOWLEDGE_INGESTION_SECRET,
+      process.env.CRON_SECRET,
+      process.env.JOBS_RUNNER_SECRET
+    ]
+  });
+  if (!scope.ok) {
+    return scope.response;
   }
 
   const limit = readLimit(request);
-  const tenantId = isAdminTrigger ? user!.tenant_id : null;
 
   try {
     const result = await deliverPendingKnowledgeIngestionJobs({
       limit,
-      tenantId
+      tenantId: scope.tenantId
     });
 
     await recordAuditLog({
-      tenantId: tenantId ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "knowledge_ingestion_triggered",
       entityType: "knowledge_ingestion_jobs",
       data: {
+        authMode: scope.authMode,
         limit,
-        tenantScoped: Boolean(tenantId),
         ...result
       }
     });
@@ -71,20 +73,20 @@ export async function POST(request: Request) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to run knowledge ingestion";
     runInBackground(recordAuditLog({
-      tenantId: tenantId ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       action: "knowledge_ingestion_trigger_failed",
       entityType: "knowledge_ingestion_jobs",
       data: {
+        authMode: scope.authMode,
         limit,
-        tenantScoped: Boolean(tenantId),
         detail
       }
     }), "Failed to record knowledge ingestion trigger failure audit event", {
-      tenantId: tenantId ?? DEFAULT_TENANT_ID,
-      actorUserId: user?.id ?? null,
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorUserId,
       limit,
-      tenantScoped: Boolean(tenantId)
+      authMode: scope.authMode
     });
     return Response.json(
       { error: "Failed to run knowledge ingestion", detail },
