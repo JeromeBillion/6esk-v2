@@ -1,5 +1,4 @@
 import { db } from "@/server/db";
-import { recordAuditLog } from "@/server/audit";
 import { getTenantById } from "@/server/tenant/lifecycle";
 
 export interface MeteringProvider {
@@ -24,7 +23,22 @@ class MockMeteringProvider implements MeteringProvider {
   }
 }
 
-export async function syncPendingMeteringEvents(limit = 100) {
+function requireTenantId(value: string) {
+  const tenantId = value.trim();
+  if (!tenantId) {
+    throw new Error("Sync pending metering events requires tenantId");
+  }
+  return tenantId;
+}
+
+export async function syncPendingMeteringEvents({
+  limit = 100,
+  tenantId
+}: {
+  limit?: number;
+  tenantId: string;
+}) {
+  const scopedTenantId = requireTenantId(tenantId);
   const provider = new MockMeteringProvider();
   
   const client = await db.connect();
@@ -43,10 +57,11 @@ export async function syncPendingMeteringEvents(limit = 100) {
       `SELECT id, tenant_id, workspace_key, module_key, usage_kind, quantity, created_at
        FROM workspace_module_usage_events
        WHERE sync_status = 'pending'
+         AND tenant_id = $2
        ORDER BY created_at ASC
        LIMIT $1
        FOR UPDATE SKIP LOCKED`,
-      [limit]
+      [limit, scopedTenantId]
     );
 
     if (pendingResult.rows.length === 0) {
@@ -63,8 +78,8 @@ export async function syncPendingMeteringEvents(limit = 100) {
         if (!tenant || tenant.status !== "active") {
           // If tenant doesn't exist or is closed, mark as failed so we don't block the queue
           await client.query(
-            `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1`,
-            [event.id]
+            `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1 AND tenant_id = $2`,
+            [event.id, scopedTenantId]
           );
           failed++;
           continue;
@@ -82,21 +97,21 @@ export async function syncPendingMeteringEvents(limit = 100) {
 
         if (success) {
           await client.query(
-            `UPDATE workspace_module_usage_events SET sync_status = 'synced', synced_at = now() WHERE id = $1`,
-            [event.id]
+            `UPDATE workspace_module_usage_events SET sync_status = 'synced', synced_at = now() WHERE id = $1 AND tenant_id = $2`,
+            [event.id, scopedTenantId]
           );
           synced++;
         } else {
           await client.query(
-            `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1`,
-            [event.id]
+            `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1 AND tenant_id = $2`,
+            [event.id, scopedTenantId]
           );
           failed++;
         }
       } catch (err) {
         await client.query(
-          `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1`,
-          [event.id]
+          `UPDATE workspace_module_usage_events SET sync_status = 'failed', synced_at = now() WHERE id = $1 AND tenant_id = $2`,
+          [event.id, scopedTenantId]
         );
         failed++;
       }

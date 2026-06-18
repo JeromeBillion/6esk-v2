@@ -245,9 +245,12 @@ Date: 2026-06-06
 - Semantically ported entitlement and metering fail-closed posture into v2-native `tenant_id` form:
   - `src/server/workspace-modules.ts`
   - `src/server/module-metering.ts`
+  - `src/server/billing/metering-sync.ts`
+  - `src/app/api/admin/metering/sync/route.ts`
   - production and explicit `ENTITLEMENTS_FAIL_CLOSED=true` return disabled module flags when entitlement config is missing or unreadable instead of enabling every module by default
   - structured entitlement states with suspended/disabled statuses normalize to disabled while active boolean states keep working
   - production and explicit `MODULE_METERING_FAIL_CLOSED=true` block metering when the module is not entitled and surface usage-write failures instead of silently losing billing evidence
+  - metering sync maintenance now requires explicit tenant scope, filters pending usage-event locks by `tenant_id`, and scopes synced/failed status updates to the same tenant
   - production env validation rejects disabling entitlement or metering fail-closed posture
 
 ## Rejected Or Deferred Wrong-Folder Work

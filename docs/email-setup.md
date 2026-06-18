@@ -97,11 +97,12 @@ only a development/test compatibility path when tenant ingress signing secrets a
 The tenant header is intentionally not inferred for machine maintenance jobs.
 
 The combined maintenance runner (`npm run jobs:runner`) also sends outbound email queue
-work through `POST /api/admin/email/outbox`, so it must set `JOBS_RUNNER_TENANT_ID`
-or `INBOUND_TENANT_ID`. Use `JOBS_RUNNER_SECRET` when the selected jobs share one
+work through `POST /api/admin/email/outbox` and usage sync work through
+`POST /api/admin/metering/sync`, so it must set `JOBS_RUNNER_TENANT_ID` or
+`INBOUND_TENANT_ID`. Use `JOBS_RUNNER_SECRET` when the selected jobs share one
 maintenance credential; otherwise run separate tenant/job-specific runners so each endpoint
-receives the correct secret. Outbound email delivery no longer falls back to the default
-tenant for enqueue, retry, metrics, or queue state transitions.
+receives the correct secret. Outbound email delivery and metering sync no longer fall back
+to the default tenant for enqueue, retry, metrics, sync, or queue state transitions.
 
 Note: this repo currently includes worker code only. Add your own Wrangler project files (`wrangler.toml`, package manager config) before `wrangler deploy`.
 
