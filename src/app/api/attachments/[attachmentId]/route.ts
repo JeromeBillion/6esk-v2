@@ -1,10 +1,10 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { resolveMockAttachment } from "@/app/lib/mock-attachments";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET(
   request: Request,
@@ -25,7 +25,10 @@ export async function GET(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const result = await db.query(
     `SELECT a.id, a.filename, a.content_type, a.r2_key, m.mailbox_id, m.ticket_id
      FROM attachments a

@@ -59,14 +59,14 @@ vi.mock("@/server/db", () => ({
 
 import { GET, PATCH } from "@/app/api/tickets/[ticketId]/route";
 
-function buildUser() {
+function buildUser(tenantId: string | null = TENANT_A) {
   return {
     id: USER_ID,
     email: "tenant-admin@example.com",
     display_name: "Tenant Admin",
     role_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     role_name: "tenant_admin",
-    tenant_id: TENANT_A
+    tenant_id: tenantId
   };
 }
 
@@ -136,6 +136,16 @@ describe("ticket detail tenant isolation", () => {
     expect(mocks.listLinkedTickets).not.toHaveBeenCalled();
   });
 
+  it("rejects ticket reads when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser(null));
+
+    const { response, body } = await getTicketDetail();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
+  });
+
   it("loads the ticket object graph with the session tenant boundary", async () => {
     const { response, body } = await getTicketDetail();
 
@@ -173,5 +183,16 @@ describe("ticket detail tenant isolation", () => {
         eventType: "status_updated"
       })
     );
+  });
+
+  it("rejects ticket updates when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser(null));
+
+    const { response, body } = await patchTicket({ status: "solved" });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

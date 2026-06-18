@@ -28,16 +28,16 @@ vi.mock("@/server/db", () => ({
   }
 }));
 
-import { PATCH } from "@/app/api/messages/[messageId]/route";
+import { GET, PATCH } from "@/app/api/messages/[messageId]/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName,
-    tenant_id: TENANT_ID
+    tenant_id: tenantId
   };
 }
 
@@ -62,6 +62,13 @@ async function patchMessage(payload: Record<string, unknown>) {
   return { response, body };
 }
 
+async function getMessageDetail() {
+  const request = new Request(`http://localhost/api/messages/${MESSAGE_ID}`);
+  const response = await GET(request, { params: Promise.resolve({ messageId: MESSAGE_ID }) });
+  const body = await response.json();
+  return { response, body };
+}
+
 describe("PATCH /api/messages/[messageId]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,6 +89,27 @@ describe("PATCH /api/messages/[messageId]", () => {
     expect(response.status).toBe(401);
     expect(body).toMatchObject({ error: "Unauthorized" });
     expect(mocks.getMessageById).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for message reads when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const { response, body } = await getMessageDetail();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getMessageById).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for message updates when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const { response, body } = await patchMessage({ isRead: true });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getMessageById).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("returns 403 when non-admin user has no mailbox access", async () => {

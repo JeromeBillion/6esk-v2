@@ -445,6 +445,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/call-transcript-ai-worker.test.ts`
   - `tests/call-transcript-jobs-tenant-isolation.test.ts`
   - call delivery/retry and transcript/transcript-AI maintenance now require explicit tenant scope; standalone maintenance scripts and the combined jobs runner send tenant headers
+- Customer conversation-data route tenant-scope tests pass in the focused slice:
+  - `tests/ticket-detail-tenant-isolation-api.test.ts`
+  - `tests/messages-route-api.test.ts`
+  - `tests/attachment-route-tenant-isolation-api.test.ts`
+  - ticket detail/update, message detail/update, and attachment download now reject tenantless sessions before customer conversation SQL/object-store access
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

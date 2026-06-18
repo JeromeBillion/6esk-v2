@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import {
   getAttachmentsForMessage,
   getMessageById,
@@ -8,7 +9,6 @@ import {
 } from "@/server/messages";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { db } from "@/server/db";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function GET(
   _request: Request,
@@ -18,7 +18,10 @@ export async function GET(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { messageId } = await params;
   const message = await getMessageById(messageId, tenantId);
@@ -230,7 +233,10 @@ export async function PATCH(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { messageId } = await params;
   const message = await getMessageById(messageId, tenantId);

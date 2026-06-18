@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import {
   getTicketById,
@@ -13,7 +14,6 @@ import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/ou
 import { listDraftsForTicket } from "@/server/agents/drafts";
 import { listAuditLogsForTicket } from "@/server/audit";
 import { listLinkedTickets } from "@/server/merges";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { runInBackground } from "@/server/async";
 
 const updateSchema = z.object({
@@ -34,7 +34,10 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -68,7 +71,10 @@ export async function PATCH(
   }
 
   const { ticketId } = await params;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });
