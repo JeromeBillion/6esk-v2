@@ -18,7 +18,8 @@ import {
   attachCustomerToTicket,
   getCustomerById,
   listCustomerHistory,
-  listCustomerIdentities
+  listCustomerIdentities,
+  resolveOrCreateCustomerForInbound
 } from "@/server/customers";
 import { reopenTicketIfNeeded } from "@/server/tickets";
 
@@ -93,6 +94,17 @@ describe("customer service tenant isolation", () => {
     );
     expect(mocks.dbQuery.mock.calls[0][0]).toContain("FROM customers c");
     expect(mocks.dbQuery.mock.calls[0][0]).toContain("c.tenant_id = $3");
+  });
+
+  it("rejects customer resolution with identity data but no tenant scope", async () => {
+    await expect(
+      resolveOrCreateCustomerForInbound({
+        tenantId: "",
+        inboundEmail: "customer@example.com"
+      })
+    ).rejects.toThrow("Resolve or create customer requires tenantId");
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("reopens tickets only inside the supplied tenant", async () => {

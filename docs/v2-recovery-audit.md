@@ -44,6 +44,12 @@ Date: 2026-06-06
   - session creation, logout, user-session revocation, password-reset revocation, and backoffice impersonation session updates now include tenant-derived SQL evidence so production tenant-query guard strict mode does not block core auth flows or allow cookie-hash-only break-glass mutation
   - `src/server/tenant/context.ts` no longer falls back to the default tenant when a session lacks tenant scope
   - `npm run test:tenant-isolation` now includes the session/context and ticket-create machine-ingress regression coverage
+- Hardened core customer/ticket service writes against legacy tenant fallback:
+  - `src/server/customers.ts`
+  - `src/server/tickets.ts`
+  - `src/server/tickets/outbound-email.ts`
+  - customer resolution, ticket creation, ticket event writes, and outbound email ticket creation now reject missing tenant scope before database or mailbox side effects
+  - inbound message reference resolution returns no ticket without tenant scope instead of querying `DEFAULT_TENANT_ID`
 - Semantically ported the auth/session/MFA foundation into v2-native `tenant_id` form:
   - `db/migrations/0051_auth_security_foundations.sql`
   - tenant security policies for allowed login domains, SSO enforcement flags, admin MFA requirement, session TTL, and planned auth-provider mode
@@ -411,6 +417,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
   - billing/usage admin routes and module metering services now include missing-tenant fail-closed regressions
+- Core CRM customer/ticket service tenant-scope tests pass in the focused slice:
+  - `tests/customer-service-tenant-isolation.test.ts`
+  - `tests/tickets-server.test.ts`
+  - `tests/outbound-email-ticket-service.test.ts`
+  - direct service calls now cover missing-tenant customer resolution, ticket creation, ticket events, inbound reference resolution, and outbound email ticket composition
 - Inbound email operational-state tenant-scope tests pass in the focused slice:
   - `tests/inbound-admin-scope.test.ts`
   - `tests/admin-inbound-alerts-api.test.ts`

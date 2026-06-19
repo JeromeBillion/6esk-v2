@@ -2,7 +2,6 @@ import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type TicketRecord = {
   id: string;
@@ -34,11 +33,28 @@ export function formatTicketDisplayId(ticketNumber: number | null | undefined) {
   return `#${ticketNumber}`;
 }
 
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = normalizeTenantId(tenantId);
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
+
 export async function resolveTicketIdForInbound(
   references: string[],
-  tenantId = DEFAULT_TENANT_ID
+  tenantId?: string | null
 ) {
   if (references.length === 0) {
+    return null;
+  }
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
     return null;
   }
 
@@ -49,14 +65,14 @@ export async function resolveTicketIdForInbound(
        AND tenant_id = $2
        AND ticket_id IS NOT NULL
      LIMIT 1`,
-    [references, tenantId]
+    [references, scopedTenantId]
   );
 
   return result.rows[0]?.ticket_id ?? null;
 }
 
 export async function createTicket({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   mailboxId,
   customerId,
   requesterEmail,
@@ -64,7 +80,7 @@ export async function createTicket({
   category,
   metadata
 }: {
-  tenantId?: string;
+  tenantId?: string | null;
   mailboxId: string;
   customerId?: string | null;
   requesterEmail: string;
@@ -72,11 +88,12 @@ export async function createTicket({
   category?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Create ticket");
   const result = await db.query<{ id: string }>(
     `INSERT INTO tickets (tenant_id, mailbox_id, customer_id, requester_email, subject, category, metadata)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [tenantId, mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
+    [scopedTenantId, mailboxId, customerId ?? null, requesterEmail, subject ?? null, category ?? null, metadata ?? {}]
   );
 
   return result.rows[0].id;
@@ -124,22 +141,23 @@ export function appendMergedFromMetadata(
 }
 
 export async function recordTicketEvent({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   ticketId,
   eventType,
   actorUserId,
   data
 }: {
-  tenantId?: string;
+  tenantId?: string | null;
   ticketId: string;
   eventType: string;
   actorUserId?: string | null;
   data?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Record ticket event");
   await db.query(
     `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
      VALUES ($1, $2, $3, $4, $5)`,
-    [tenantId, ticketId, eventType, actorUserId ?? null, data ?? null]
+    [scopedTenantId, ticketId, eventType, actorUserId ?? null, data ?? null]
   );
 }
 

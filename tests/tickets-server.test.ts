@@ -10,7 +10,12 @@ vi.mock("@/server/db", () => ({
   }
 }));
 
-import { listTicketsForUser } from "@/server/tickets";
+import {
+  createTicket,
+  listTicketsForUser,
+  recordTicketEvent,
+  resolveTicketIdForInbound
+} from "@/server/tickets";
 
 describe("listTicketsForUser", () => {
   const tenantId = "99999999-9999-4999-8999-999999999999";
@@ -52,6 +57,38 @@ describe("listTicketsForUser", () => {
     const result = await listTicketsForUser(user, {});
 
     expect(result).toEqual([]);
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve inbound ticket references without tenant scope", async () => {
+    const result = await resolveTicketIdForInbound(["<message@example.com>"], "");
+
+    expect(result).toBeNull();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects ticket creation without tenant scope", async () => {
+    await expect(
+      createTicket({
+        tenantId: "",
+        mailboxId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        requesterEmail: "customer@example.com",
+        subject: "Missing tenant"
+      })
+    ).rejects.toThrow("Create ticket requires tenantId");
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects ticket events without tenant scope", async () => {
+    await expect(
+      recordTicketEvent({
+        tenantId: "",
+        ticketId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        eventType: "ticket_created"
+      })
+    ).rejects.toThrow("Record ticket event requires tenantId");
+
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

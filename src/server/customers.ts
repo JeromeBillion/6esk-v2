@@ -5,7 +5,6 @@ import {
   type ExternalProfile
 } from "@/server/integrations/external-profile";
 import { normalizeLinkEmail, normalizeLinkPhone } from "@/server/integrations/external-user-links";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { deleteObject } from "@/server/storage/r2";
 
 export type CustomerKind = "registered" | "unregistered";
@@ -74,6 +73,14 @@ export class CustomerIdentityConflictError extends Error {
 type Queryable = {
   query: typeof db.query;
 };
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
 
 async function upsertCustomerIdentity({
   customerId,
@@ -347,14 +354,14 @@ async function promoteCustomerWithProfile({
 }
 
 export async function resolveOrCreateCustomerForInbound({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   externalSystem = DEFAULT_EXTERNAL_PROFILE_SYSTEM,
   profile,
   inboundEmail,
   inboundPhone,
   displayName
 }: {
-  tenantId?: string;
+  tenantId?: string | null;
   externalSystem?: string;
   profile?: ExternalProfile | null;
   inboundEmail?: string | null;
@@ -367,6 +374,7 @@ export async function resolveOrCreateCustomerForInbound({
   if (!profile && !normalizedEmail && !normalizedPhone) {
     return null;
   }
+  tenantId = requireTenantId(tenantId, "Resolve or create customer");
 
   let customerId: string;
   let kind: CustomerKind;

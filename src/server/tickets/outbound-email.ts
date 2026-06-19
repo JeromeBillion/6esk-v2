@@ -5,7 +5,6 @@ import { syncVoiceConsentFromMetadata } from "@/server/calls/consent";
 import { sendTicketReply } from "@/server/email/replies";
 import { buildAgentEvent } from "@/server/agents/events";
 import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/outbox";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { runInBackground } from "@/server/async";
 
 type OutboundEmailAttachment = {
@@ -16,7 +15,7 @@ type OutboundEmailAttachment = {
 };
 
 export type CreateOutboundEmailTicketArgs = {
-  tenantId?: string;
+  tenantId?: string | null;
   actorUserId: string;
   toEmail: string;
   subject: string;
@@ -48,8 +47,16 @@ function toPlainText(text?: string | null, html?: string | null) {
   return html?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() ?? "";
 }
 
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
+
 export async function createOutboundEmailTicket({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   actorUserId,
   toEmail,
   subject,
@@ -63,6 +70,7 @@ export async function createOutboundEmailTicket({
   contextRoute = "/api/tickets/create",
   deliverAgentEvents = true
 }: CreateOutboundEmailTicketArgs) {
+  const scopedTenantId = requireTenantId(tenantId, "Create outbound email ticket");
   const supportAddress = getSupportAddress();
   if (!supportAddress) {
     throw new Error("Support address not configured");
@@ -73,8 +81,8 @@ export async function createOutboundEmailTicket({
     throw new Error("Description is required");
   }
 
-  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, tenantId);
-  if (mailbox.tenant_id !== tenantId) {
+  const mailbox = await getOrCreateMailbox(supportAddress, supportAddress, scopedTenantId);
+  if (mailbox.tenant_id !== scopedTenantId) {
     throw new Error("Support mailbox belongs to another tenant.");
   }
   const inferredTags = (tags?.length ? tags : inferTagsFromText({ subject, text: plainText || null }))
@@ -84,7 +92,7 @@ export async function createOutboundEmailTicket({
   const resolvedCategory = category?.toLowerCase().trim() ?? normalizedTags[0]?.toLowerCase() ?? null;
   const resolvedCustomerId =
     customerId ??
-    (await resolveOrCreateCustomerForInbound({ tenantId, inboundEmail: toEmail }))?.customerId ??
+    (await resolveOrCreateCustomerForInbound({ tenantId: scopedTenantId, inboundEmail: toEmail }))?.customerId ??
     null;
 
   await syncVoiceConsentFromMetadata({
@@ -104,7 +112,7 @@ export async function createOutboundEmailTicket({
   });
 
   const ticketId = await createTicket({
-    tenantId,
+    tenantId: scopedTenantId,
     mailboxId: mailbox.id,
     customerId: resolvedCustomerId,
     requesterEmail: toEmail,
@@ -114,7 +122,7 @@ export async function createOutboundEmailTicket({
   });
 
   await recordTicketEvent({
-    tenantId,
+    tenantId: scopedTenantId,
     ticketId,
     eventType: "ticket_created",
     actorUserId
@@ -123,7 +131,7 @@ export async function createOutboundEmailTicket({
   if (normalizedTags.length > 0) {
     await addTagsToTicket(ticketId, normalizedTags);
     await recordTicketEvent({
-      tenantId,
+      tenantId: scopedTenantId,
       ticketId,
       eventType: "tags_assigned",
       actorUserId,
@@ -132,7 +140,7 @@ export async function createOutboundEmailTicket({
   }
 
   const sendResult = await sendTicketReply({
-    tenantId,
+    tenantId: scopedTenantId,
     ticketId,
     subject,
     text: plainText || null,
@@ -149,12 +157,12 @@ export async function createOutboundEmailTicket({
     eventType: "ticket.created",
     ticketId,
     mailboxId: mailbox.id,
-    tenantId,
+    tenantId: scopedTenantId,
     actorUserId,
     excerpt: previewText || subject,
     threadId
   });
-  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId });
+  await enqueueAgentEvent({ eventType: "ticket.created", payload: ticketEvent, tenantId: scopedTenantId });
 
   if (messageId) {
     const messageEvent = buildAgentEvent({
@@ -162,18 +170,18 @@ export async function createOutboundEmailTicket({
       ticketId,
       messageId,
       mailboxId: mailbox.id,
-      tenantId,
+      tenantId: scopedTenantId,
       actorUserId,
       excerpt: previewText || subject,
       threadId
     });
-    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId });
+    await enqueueAgentEvent({ eventType: "ticket.message.created", payload: messageEvent, tenantId: scopedTenantId });
   }
 
   if (deliverAgentEvents) {
-    runInBackground(deliverPendingAgentEvents({ tenantId }), "Agent outbox delivery failed", {
+    runInBackground(deliverPendingAgentEvents({ tenantId: scopedTenantId }), "Agent outbox delivery failed", {
       fn: "createOutboundEmailTicket",
-      tenantId,
+      tenantId: scopedTenantId,
       ticketId
     });
   }
