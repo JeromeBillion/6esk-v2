@@ -97,6 +97,7 @@ Date: 2026-06-06
   - export audit events record metadata only, not row payloads, tenant IDs in customer payloads, or raw usage/customer metadata
   - admin billing/usage routes now reject admin-looking sessions that lack tenant scope instead of falling back to `DEFAULT_TENANT_ID`
   - admin mailbox, SLA, and spam-rule configuration routes now reject admin-looking sessions without tenant scope instead of falling back to `DEFAULT_TENANT_ID`
+  - platform mailbox lookup now requires explicit tenant scope before reading platform mailbox records
   - mailbox owner/member joins and mailbox membership mutations are scoped through the mailbox tenant, cross-tenant mailbox address conflicts return 409 instead of mutating another tenant, and spam-rule create/update/delete writes include tenant predicates
   - the runtime tenant query guard now includes the v2 `tenant_billing_*`, `tenant_subscriptions`, `tenant_invoices`, `tenant_invoice_lines`, and `tenant_collection_events` tables
 - Semantically ported AI prompt-safety value without replacing native Dexter:
@@ -500,7 +501,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/tickets-route-api.test.ts`
   - `tests/tickets-server.test.ts`
   - customer profile/history, spam, WhatsApp resend, bulk email, tags, AI drafts, call options, mailbox listing, mailbox drafts, and mailbox message reads now reject tenantless sessions before route side effects
-  - mailbox listing services return no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
+  - mailbox listing services return no data without tenant scope, platform mailbox lookup returns no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
   - broad ticket listing rejects tenantless sessions at the route and service layers before support queue SQL
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`

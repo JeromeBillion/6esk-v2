@@ -10,7 +10,7 @@ vi.mock("@/server/db", () => ({
   }
 }));
 
-import { listInboxMailboxesForUser } from "@/server/mailboxes";
+import { getPlatformMailbox, listInboxMailboxesForUser } from "@/server/mailboxes";
 
 describe("listInboxMailboxesForUser", () => {
   const tenantId = "99999999-9999-4999-8999-999999999999";
@@ -71,5 +71,44 @@ describe("listInboxMailboxesForUser", () => {
 
     expect(result).toEqual([]);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("getPlatformMailbox", () => {
+  const tenantId = "99999999-9999-4999-8999-999999999999";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.dbQuery.mockResolvedValue({
+      rows: [
+        {
+          id: "mailbox-platform-1",
+          address: "support@example.com",
+          type: "platform",
+          provider: "resend",
+          delivery_mode: "managed"
+        }
+      ]
+    });
+  });
+
+  it("fails closed without tenant scope", async () => {
+    await expect(getPlatformMailbox("")).resolves.toBeNull();
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("reads platform mailbox only inside the supplied tenant", async () => {
+    const result = await getPlatformMailbox(tenantId);
+
+    expect(result).toMatchObject({
+      id: "mailbox-platform-1",
+      address: "support@example.com",
+      type: "platform"
+    });
+    const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(sql).toContain("WHERE type = 'platform'");
+    expect(sql).toContain("tenant_id = $1");
+    expect(values).toEqual([tenantId]);
   });
 });

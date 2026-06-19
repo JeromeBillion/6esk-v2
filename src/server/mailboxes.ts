@@ -2,7 +2,6 @@ import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type MailboxSummary = {
   id: string;
@@ -73,7 +72,11 @@ export async function listInboxMailboxesForUser(user: SessionUser) {
 }
 
 export async function getPlatformMailbox(tenantId?: string | null) {
-  const effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
+  const effectiveTenantId = tenantId?.trim();
+  if (!effectiveTenantId) {
+    return null;
+  }
+
   const result = await db.query<MailboxSummary>(
     `SELECT id, address, type, provider::text,
             CASE
