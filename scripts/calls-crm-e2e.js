@@ -74,7 +74,8 @@ function agentHeaders() {
   return {
     "content-type": "application/json",
     "x-6esk-agent-id": SIXESK_AGENT_ID,
-    "x-6esk-agent-key": SIXESK_AGENT_KEY
+    "x-6esk-agent-key": SIXESK_AGENT_KEY,
+    "x-6esk-tenant-id": CRM_CALLS_TENANT_ID
   };
 }
 

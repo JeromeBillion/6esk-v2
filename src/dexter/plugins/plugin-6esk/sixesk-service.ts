@@ -71,6 +71,7 @@ export class SixeskService extends Service {
     service.sixeskConfig = {
       baseUrl: (runtime.getSetting('SIXESK_BASE_URL') as string) || '',
       agentKey: (runtime.getSetting('SIXESK_AGENT_KEY') as string) || '',
+      tenantId: asTrimmedString(runtime.getSetting('SIXESK_TENANT_ID')),
       sharedSecret: (runtime.getSetting('SIXESK_SHARED_SECRET') as string) || '',
       policyMode: ((runtime.getSetting('SIXESK_POLICY_MODE') as string) || 'draft_only') as
         | 'draft_only'
@@ -186,10 +187,14 @@ export class SixeskService extends Service {
   }
 
   private buildAgentHeaders(): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'x-6esk-agent-key': this.sixeskConfig.agentKey,
       'Content-Type': 'application/json',
     };
+    if (this.sixeskConfig.tenantId) {
+      headers['x-6esk-tenant-id'] = this.sixeskConfig.tenantId;
+    }
+    return headers;
   }
 
   private resolveCanonicalTicketId(ticketId: string): string {

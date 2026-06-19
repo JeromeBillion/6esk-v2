@@ -133,6 +133,7 @@ const isCrmEnabled = isExplicitlyEnabled(process.env.DEXTER_ENABLE_CRM_AGENT);
 const hasSixeskCredentials = !!(
   process.env.SIXESK_BASE_URL?.trim() &&
   process.env.SIXESK_AGENT_KEY?.trim() &&
+  process.env.SIXESK_TENANT_ID?.trim() &&
   process.env.SIXESK_SHARED_SECRET?.trim()
 );
 

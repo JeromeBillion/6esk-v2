@@ -15,6 +15,7 @@ APP_URL=https://<your-6esk-domain>
 CALLS_WEBHOOK_SECRET=<webhook-hmac-secret>
 SIXESK_AGENT_ID=<agent_integration_id>
 SIXESK_AGENT_KEY=<agent_shared_secret>
+CRM_CALLS_TENANT_ID=<staging_tenant_uuid>
 CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 ```
 
@@ -32,14 +33,13 @@ CRM_CALLS_AGENT_EVENTS_URL=https://<agent-host>/api/<events-endpoint>
 CRM_CALLS_AGENT_EVENTS_TOKEN=<optional-bearer-token>
 
 # Optional local verification of event sequencing via DB:
-CRM_CALLS_TENANT_ID=<staging_tenant_uuid>
 DATABASE_URL=postgres://...
 ```
 
 Notes:
 - Provide either `CRM_CALLS_CANDIDATE_ID` or `CRM_CALLS_TO_PHONE` if call options require explicit selection.
+- `CRM_CALLS_TENANT_ID` is required for agent API tenant scope and also scopes optional local outbox checks.
 - `DATABASE_URL` is only needed for local sequence checks against `agent_outbox`.
-- `CRM_CALLS_TENANT_ID` scopes the local outbox check to the staging tenant.
 - `CRM_CALLS_AGENT_EVENTS_URL` is optional; when unset, downstream event observation checks are skipped.
 
 ## What It Verifies

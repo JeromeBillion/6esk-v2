@@ -187,6 +187,7 @@ export interface SixeskAction {
 export interface SixeskConfig {
   baseUrl: string;
   agentKey: string;
+  tenantId: string | null;
   sharedSecret: string;
   policyMode: 'draft_only' | 'auto_send';
   allowDirectMergeActions: boolean;

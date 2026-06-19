@@ -19,6 +19,7 @@ CALLS_TWILIO_BRIDGE_TARGET=<pstn_or_client_identity>
 CALLS_TWILIO_ALLOWED_CALLER_IDS=<optional_comma_separated_list>
 SIXESK_AGENT_ID=<agent_integration_id>
 SIXESK_AGENT_KEY=<agent_shared_secret>
+SIXESK_TENANT_ID=<tenant_uuid_for_agent_scope>
 CRM_CALLS_TICKET_ID=<ticket_uuid_for_staging>
 ```
 
@@ -178,13 +179,13 @@ $env:APP_URL="https://<your-6esk-domain>"
 $env:CALLS_WEBHOOK_SECRET="<webhook-hmac-secret>"
 $env:SIXESK_AGENT_ID="<agent_integration_id>"
 $env:SIXESK_AGENT_KEY="<agent_shared_secret>"
+$env:CRM_CALLS_TENANT_ID="<tenant_uuid_for_staging>"
 $env:CRM_CALLS_TICKET_ID="<ticket_uuid_for_staging>"
 npm run calls:crm-e2e
 ```
 
 Optional:
 - set `DATABASE_URL` to validate local `ticket.call.*` sequence metadata from `agent_outbox`.
-- set `CRM_CALLS_TENANT_ID` to scope local `agent_outbox` checks to the staging tenant.
 - set `CRM_CALLS_AGENT_EVENTS_URL` (and optional `CRM_CALLS_AGENT_EVENTS_TOKEN`) to verify downstream agent event observation.
 
 ## Incident Triage

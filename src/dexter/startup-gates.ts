@@ -102,7 +102,7 @@ const runReadinessChecks = (): StartupGateResult => {
   );
 
   if (crmEnabled) {
-    const required = ['SIXESK_BASE_URL', 'SIXESK_AGENT_KEY', 'SIXESK_SHARED_SECRET'];
+    const required = ['SIXESK_BASE_URL', 'SIXESK_AGENT_KEY', 'SIXESK_TENANT_ID', 'SIXESK_SHARED_SECRET'];
     const missing = missingEnv(required);
     if (missing.length) {
       addIssue(

@@ -174,6 +174,15 @@ Date: 2026-06-06
   - machine-triggered outbox delivery now requires explicit tenant scope instead of falling back to `DEFAULT_TENANT_ID`
   - delivered, failed, and lane-release status updates include tenant predicates so runtime bookkeeping cannot cross tenant boundaries
   - accepted delivery does not become retryable solely because local step-completion bookkeeping failed; the failure is logged and later delivery bookkeeping/replay evidence remains available
+- Hardened agent API authentication and integration lookup against legacy tenant fallback:
+  - `src/server/agents/auth.ts`
+  - `src/server/agents/integrations.ts`
+  - `src/dexter/plugins/plugin-6esk/sixesk-service.ts`
+  - `src/dexter/startup-gates.ts`
+  - `scripts/calls-crm-e2e.js`
+  - agent API machine calls now require `x-6esk-tenant-id` / `x-6esk-tenant` before integration lookup
+  - agent integration listing, active lookup, id lookup, creation, and update no longer read or write under `DEFAULT_TENANT_ID` when tenant scope is missing
+  - Dexter CRM plugin startup/config now requires `SIXESK_TENANT_ID`, and the staging CRM calls harness sends the tenant header to agent APIs
 - Recovered and adapted the wrong-folder fixture-driven AI red-team regression value into v2-native modules:
   - `tests/fixtures/ai-red-team-cases.ts`
   - `tests/ai-red-team-regressions.test.ts`
@@ -375,6 +384,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-outbox-rag.test.ts`
   - `tests/agent-outbox-lane.test.ts`
   - `tests/agent-run-replay.test.ts`
+- Agent auth/integration tenant-scope tests pass in the focused slice:
+  - `tests/agent-auth-tenant-scope.test.ts`
+  - `tests/agent-integrations-tenant-scope.test.ts`
+  - `tests/calls-crm-e2e-script.test.ts`
+  - machine agent auth and agent integration services no longer resolve a default active agent without tenant scope
 - Fixture-driven AI red-team regression tests pass in the focused slice:
   - `tests/ai-red-team-regressions.test.ts`
   - `tests/prompt-safety.test.ts`
