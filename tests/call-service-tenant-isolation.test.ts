@@ -213,8 +213,7 @@ describe("call service tenant isolation", () => {
     );
   });
 
-  it("requires an explicit fallback tenant for unscoped production ingress", async () => {
-    process.env.NODE_ENV = "production";
+  it("requires an explicit fallback tenant for unscoped ingress", async () => {
     delete process.env.CALLS_TENANT_ID;
 
     await expect(

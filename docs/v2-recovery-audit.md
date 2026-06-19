@@ -247,6 +247,7 @@ Date: 2026-06-06
   - `src/app/api/admin/calls/**`
   - call delivery/retry/failed listing now requires explicit tenant scope, transcript/transcript-AI job locks and retry/listing SQL include tenant predicates, admin maintenance routes reject tenantless sessions, and machine maintenance calls require an explicit tenant header or tenant ingress scope
   - standalone call/transcript maintenance scripts now send `x-6esk-tenant-id`, and production env validation requires `CALLS_OUTBOX_TENANT_ID`
+  - inbound call ingress no longer falls back to `DEFAULT_TENANT_ID` in any environment; unscoped ingress must provide `CALLS_TENANT_ID`
 - Semantically ported the v1 runtime tenant query guard into v2-native `tenant_id` form:
   - `src/server/tenant-query-guard.ts`
   - `src/server/db.ts`
@@ -489,7 +490,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/call-transcript-worker.test.ts`
   - `tests/call-transcript-ai-worker.test.ts`
   - `tests/call-transcript-jobs-tenant-isolation.test.ts`
-  - call delivery/retry and transcript/transcript-AI maintenance now require explicit tenant scope; standalone maintenance scripts and the combined jobs runner send tenant headers
+  - call delivery/retry and transcript/transcript-AI maintenance now require explicit tenant scope; inbound call ingress requires explicit tenant scope or `CALLS_TENANT_ID`; standalone maintenance scripts and the combined jobs runner send tenant headers
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

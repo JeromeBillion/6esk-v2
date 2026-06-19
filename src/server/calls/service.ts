@@ -21,7 +21,6 @@ import {
   reopenTicketIfNeeded
 } from "@/server/tickets";
 import { attachCustomerToTicket, resolveOrCreateCustomerForInbound } from "@/server/customers";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 import { runInBackground } from "@/server/async";
 import { logger } from "@/server/logger";
@@ -872,10 +871,7 @@ function getFallbackCallTenantId() {
   if (configured) {
     return configured;
   }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("CALLS_TENANT_ID is required for tenant-scoped call ingress.");
-  }
-  return DEFAULT_TENANT_ID;
+  throw new Error("CALLS_TENANT_ID is required for tenant-scoped call ingress.");
 }
 
 function getRecordingFetchTimeoutMs() {
