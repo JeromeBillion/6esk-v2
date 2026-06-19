@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSixeskActionIdempotencyKey,
+  buildSixeskActionRuntimeMetadata,
   resolveReplyActionType,
   validateSixeskRuntimePayload
 } from "../src/dexter/plugins/plugin-6esk/sixesk-routes";
 import { sixeskTicketProvider } from "../src/dexter/plugins/plugin-6esk/sixesk-provider";
 
 const TICKET_ID = "44444444-4444-4444-8444-444444444444";
+const RUN_ID = "55555555-5555-4555-8555-555555555555";
 
 function promptSandbox(mode: "draft_only" | "full_auto" = "full_auto") {
   return {
@@ -13,6 +16,14 @@ function promptSandbox(mode: "draft_only" | "full_auto" = "full_auto") {
     mode,
     sections: [
       { id: "system_constraints", instructionAuthority: true },
+      {
+        id: "runtime_context",
+        instructionAuthority: true,
+        content: {
+          run_id: RUN_ID,
+          mode
+        }
+      },
       { id: "customer_privacy_context", instructionAuthority: true },
       { id: "event_payload", instructionAuthority: false }
     ],
@@ -124,6 +135,28 @@ describe("Dexter 6esk runtime policy boundary", () => {
       )
     ).toBe("draft_reply");
     expect(resolveReplyActionType("draft_only", eventPayload())).toBe("draft_reply");
+  });
+
+  it("builds run-aware action metadata and deterministic idempotency keys", () => {
+    expect(buildSixeskActionRuntimeMetadata(eventPayload())).toMatchObject({
+      sourceEventId: "evt-1",
+      sourceEventType: "ticket.message.created",
+      runId: RUN_ID,
+      promptSandboxMode: "full_auto",
+      runtimePromptSafety: {
+        decision: "allow",
+        riskLevel: "none",
+        toolPolicy: expect.objectContaining({ mode: "normal" })
+      }
+    });
+    expect(
+      buildSixeskActionIdempotencyKey({
+        runtime: {} as any,
+        ticketId: TICKET_ID,
+        payload: eventPayload(),
+        actionType: "send_reply"
+      })
+    ).toBe(`sixesk:send_reply:${TICKET_ID}:evt-1`);
   });
 
   it("keeps provider context inside server customer and RAG boundaries", async () => {

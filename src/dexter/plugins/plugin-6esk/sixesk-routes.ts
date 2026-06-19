@@ -175,6 +175,7 @@ const readString = (value: unknown): string | null => {
 };
 
 const PROMPT_SANDBOX_MODES = new Set(['dry_run', 'draft_only', 'hybrid_review', 'full_auto']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function readPromptSandbox(payload: SixeskWebhookPayload): Record<string, unknown> | null {
   const record = payload as unknown as Record<string, unknown>;
@@ -212,6 +213,21 @@ function hasPromptSandboxSection(
     const record = asRecord(section);
     return record?.id === id && record.instructionAuthority === instructionAuthority;
   });
+}
+
+function readPromptSandboxRuntimeContext(payload: SixeskWebhookPayload): Record<string, unknown> | null {
+  const sections = readPromptSandbox(payload)?.sections;
+  if (!Array.isArray(sections)) return null;
+  const runtimeSection = sections
+    .map((section) => asRecord(section))
+    .find((section) => section?.id === 'runtime_context');
+  return asRecord(runtimeSection?.content);
+}
+
+function readRuntimeRunId(payload: SixeskWebhookPayload) {
+  const runtimeContext = readPromptSandboxRuntimeContext(payload);
+  const runId = readString(runtimeContext?.run_id) ?? readString(runtimeContext?.runId);
+  return runId && UUID_PATTERN.test(runId) ? runId : null;
 }
 
 export function validateSixeskRuntimePayload(payload: SixeskWebhookPayload):
@@ -268,6 +284,7 @@ export function validateSixeskRuntimePayload(payload: SixeskWebhookPayload):
 
   if (
     !hasPromptSandboxSection(promptSandbox, 'system_constraints', true) ||
+    !hasPromptSandboxSection(promptSandbox, 'runtime_context', true) ||
     !hasPromptSandboxSection(promptSandbox, 'event_payload', false) ||
     !hasPromptSandboxSection(promptSandbox, 'customer_privacy_context', true)
   ) {
@@ -277,6 +294,15 @@ export function validateSixeskRuntimePayload(payload: SixeskWebhookPayload):
       code: 'INVALID_RUNTIME_CONTRACT',
       error: 'Prompt sandbox is missing required trust-boundary sections.',
       field: 'promptSandbox.sections'
+    };
+  }
+  if (!readRuntimeRunId(payload)) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'INVALID_RUNTIME_CONTRACT',
+      error: 'Prompt sandbox runtime context must include a valid run ID.',
+      field: 'promptSandbox.runtime_context.run_id'
     };
   }
 
@@ -295,6 +321,43 @@ export function validateSixeskRuntimePayload(payload: SixeskWebhookPayload):
   }
 
   return { ok: true };
+}
+
+export function buildSixeskActionRuntimeMetadata(payload: SixeskWebhookPayload) {
+  const runtimePromptSafety = readRuntimePromptSafety(payload);
+  return {
+    sourceEventId: readString(payload.event_id) ?? null,
+    sourceEventType: readString(payload.event_type) ?? null,
+    runId: readRuntimeRunId(payload),
+    promptSandboxMode: readPromptSandboxMode(payload),
+    runtimePromptSafety: runtimePromptSafety
+      ? {
+          decision: readString(runtimePromptSafety.decision) ?? null,
+          riskLevel: readString(runtimePromptSafety.riskLevel) ?? null,
+          toolPolicy: asRecord(runtimePromptSafety.toolPolicy)
+        }
+      : null
+  };
+}
+
+export function buildSixeskActionIdempotencyKey({
+  runtime,
+  ticketId,
+  payload,
+  actionType
+}: {
+  runtime: IAgentRuntime;
+  ticketId: string;
+  payload: SixeskWebhookPayload;
+  actionType: SixeskActionType;
+}) {
+  const seed = [
+    'sixesk',
+    actionType,
+    ticketId,
+    readString(payload.event_id) ?? readString(payload.occurred_at) ?? 'event'
+  ].join(':');
+  return seed.length <= 200 ? seed : createUniqueUuid(runtime, seed);
 }
 
 export function resolveReplyActionType(
@@ -619,6 +682,7 @@ async function handleCallTranscriptReady(
 
   const metadata = {
     source: 'DEXTER_call_summary',
+    ...buildSixeskActionRuntimeMetadata(payload),
     callSessionId: callContext.callSessionId,
     status: callContext.status ?? null,
     direction: callContext.direction ?? null,
@@ -636,6 +700,12 @@ async function handleCallTranscriptReady(
       {
         type: 'request_human_review',
         ticketId,
+        idempotencyKey: buildSixeskActionIdempotencyKey({
+          runtime,
+          ticketId,
+          payload,
+          actionType: 'request_human_review'
+        }),
         metadata,
       },
     ]);
@@ -806,6 +876,13 @@ async function processWebhookEvent(
                 ticketId,
                 text: response.text,
                 confidence,
+                idempotencyKey: buildSixeskActionIdempotencyKey({
+                  runtime,
+                  ticketId,
+                  payload,
+                  actionType
+                }),
+                metadata: buildSixeskActionRuntimeMetadata(payload),
               },
             ],
             { allowDirectMergeActions: service.allowDirectMergeActions }
