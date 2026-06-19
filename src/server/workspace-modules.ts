@@ -1,6 +1,5 @@
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export const DEFAULT_WORKSPACE_KEY = "primary";
 
@@ -67,6 +66,19 @@ function failClosedWorkspaceConfig(
   };
 }
 
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = normalizeTenantId(tenantId);
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
+
 function readBoolean(value: string | undefined | null) {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return null;
@@ -107,16 +119,19 @@ export function normalizeWorkspaceModules(input?: Partial<WorkspaceModuleFlags> 
 
 /**
  * Get workspace module flags for a tenant's workspace.
- *
- * v2: queries are tenant-scoped. tenantId defaults to DEFAULT_TENANT_ID
- * during the migration period for backward compatibility.
  */
 export async function getWorkspaceModules(
   workspaceKey = DEFAULT_WORKSPACE_KEY,
-  tenantId = DEFAULT_TENANT_ID
+  tenantId?: string | null
 ): Promise<WorkspaceModulesConfig> {
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
+    logger.warn("Workspace config missing tenant scope, failing closed", { workspaceKey });
+    return failClosedWorkspaceConfig(workspaceKey, "", "missing_configuration");
+  }
+
   if ((process.env.NODE_ENV === "test" || process.env.VITEST === "true") && !entitlementsFailClosed()) {
-    return defaultWorkspaceConfig(workspaceKey, tenantId);
+    return defaultWorkspaceConfig(workspaceKey, scopedTenantId);
   }
 
   let result:
@@ -141,24 +156,24 @@ export async function getWorkspaceModules(
        FROM workspace_modules
        WHERE workspace_key = $1 AND tenant_id = $2
        LIMIT 1`,
-      [workspaceKey, tenantId]
+      [workspaceKey, scopedTenantId]
     );
   } catch (error) {
     if (entitlementsFailClosed()) {
-      logger.error("Workspace config load failed, failing closed", { error, workspaceKey, tenantId });
-      return failClosedWorkspaceConfig(workspaceKey, tenantId, "load_failed");
+      logger.error("Workspace config load failed, failing closed", { error, workspaceKey, tenantId: scopedTenantId });
+      return failClosedWorkspaceConfig(workspaceKey, scopedTenantId, "load_failed");
     }
-    logger.error("Workspace config load failed, using defaults", { error, workspaceKey, tenantId });
-    return defaultWorkspaceConfig(workspaceKey, tenantId);
+    logger.error("Workspace config load failed, using defaults", { error, workspaceKey, tenantId: scopedTenantId });
+    return defaultWorkspaceConfig(workspaceKey, scopedTenantId);
   }
 
   const row = result?.rows?.[0];
   if (!row) {
     if (entitlementsFailClosed()) {
-      logger.warn("Workspace config missing, failing closed", { workspaceKey, tenantId });
-      return failClosedWorkspaceConfig(workspaceKey, tenantId, "missing_configuration");
+      logger.warn("Workspace config missing, failing closed", { workspaceKey, tenantId: scopedTenantId });
+      return failClosedWorkspaceConfig(workspaceKey, scopedTenantId, "missing_configuration");
     }
-    return defaultWorkspaceConfig(workspaceKey, tenantId);
+    return defaultWorkspaceConfig(workspaceKey, scopedTenantId);
   }
 
   const updatedAt =
@@ -183,8 +198,9 @@ export async function getWorkspaceModules(
 export async function saveWorkspaceModules(
   modules: Partial<WorkspaceModuleFlags>,
   workspaceKey = DEFAULT_WORKSPACE_KEY,
-  tenantId = DEFAULT_TENANT_ID
+  tenantId?: string | null
 ): Promise<WorkspaceModulesConfig> {
+  const scopedTenantId = requireTenantId(tenantId, "Save workspace modules");
   const normalized = normalizeWorkspaceModules(modules);
   const result = await db.query<{
     workspace_key: string;
@@ -197,7 +213,7 @@ export async function saveWorkspaceModules(
      ON CONFLICT (tenant_id, workspace_key)
      DO UPDATE SET modules = EXCLUDED.modules, updated_at = now()
      RETURNING workspace_key, tenant_id, modules, updated_at`,
-    [workspaceKey, tenantId, JSON.stringify(normalized)]
+    [workspaceKey, scopedTenantId, JSON.stringify(normalized)]
   );
 
   return {
@@ -245,11 +261,15 @@ async function isTenantRuntimeActiveForModules(tenantId: string) {
 export async function isWorkspaceModuleEnabled(
   moduleKey: WorkspaceModuleKey,
   workspaceKey = DEFAULT_WORKSPACE_KEY,
-  tenantId = DEFAULT_TENANT_ID
+  tenantId?: string | null
 ) {
-  if (!(await isTenantRuntimeActiveForModules(tenantId))) {
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
     return false;
   }
-  const config = await getWorkspaceModules(workspaceKey, tenantId);
+  if (!(await isTenantRuntimeActiveForModules(scopedTenantId))) {
+    return false;
+  }
+  const config = await getWorkspaceModules(workspaceKey, scopedTenantId);
   return config.modules[moduleKey] === true;
 }

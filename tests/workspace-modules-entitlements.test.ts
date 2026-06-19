@@ -13,7 +13,8 @@ vi.mock("@/server/db", () => ({
 import {
   getWorkspaceModules,
   isWorkspaceModuleEnabled,
-  normalizeWorkspaceModules
+  normalizeWorkspaceModules,
+  saveWorkspaceModules
 } from "@/server/workspace-modules";
 
 const originalEntitlementsFailClosed = process.env.ENTITLEMENTS_FAIL_CLOSED;
@@ -47,6 +48,36 @@ describe("workspace module entitlements", () => {
       dexterOrchestration: false,
       vanillaWebchat: false
     });
+  });
+
+  it("fails closed without tenant scope before loading entitlement configuration", async () => {
+    const config = await getWorkspaceModules("workspace-a", "");
+
+    expect(config.source).toBe("fail_closed");
+    expect(config.failureReason).toBe("missing_configuration");
+    expect(config.modules).toEqual({
+      email: false,
+      whatsapp: false,
+      voice: false,
+      aiAutomation: false,
+      dexterOrchestration: false,
+      vanillaWebchat: false
+    });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects entitlement writes without tenant scope", async () => {
+    await expect(saveWorkspaceModules({ email: true }, "workspace-a", "")).rejects.toThrow(
+      "Save workspace modules requires tenantId"
+    );
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns disabled module access without tenant scope", async () => {
+    await expect(isWorkspaceModuleEnabled("email", "workspace-a", "")).resolves.toBe(false);
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("fails closed when the entitlement store cannot be read", async () => {

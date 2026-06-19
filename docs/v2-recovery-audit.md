@@ -283,6 +283,7 @@ Date: 2026-06-06
   - `src/server/billing/metering-sync.ts`
   - `src/app/api/admin/metering/sync/route.ts`
   - production and explicit `ENTITLEMENTS_FAIL_CLOSED=true` return disabled module flags when entitlement config is missing or unreadable instead of enabling every module by default
+  - workspace module reads fail closed without tenant scope, workspace module writes reject without tenant scope, and admin module routes reject tenantless lead-admin-shaped sessions before service calls
   - structured entitlement states with suspended/disabled statuses normalize to disabled while active boolean states keep working
   - production and explicit `MODULE_METERING_FAIL_CLOSED=true` block metering when the module is not entitled and surface usage-write failures instead of silently losing billing evidence
   - module usage writes now require explicit tenant scope instead of falling back to the legacy default tenant, and tenantless usage-summary reads return empty summaries without querying default-tenant data
@@ -442,12 +443,15 @@ Before this recovery branch can replace `main`, run:
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
 - Billing usage/export tests pass in the focused slice:
+  - `tests/workspace-modules-entitlements.test.ts`
+  - `tests/workspace-modules-lifecycle-gate.test.ts`
+  - `tests/admin-workspace-modules-api.test.ts`
   - `tests/module-metering-fail-closed.test.ts`
   - `tests/admin-workspace-usage-api.test.ts`
   - `tests/admin-workspace-usage-export-api.test.ts`
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
-  - billing/usage admin routes and module metering services now include missing-tenant fail-closed regressions
+  - billing/usage admin routes, workspace module service/routes, and module metering services now include missing-tenant fail-closed regressions
 - Core CRM customer/ticket service tenant-scope tests pass in the focused slice:
   - `tests/customer-service-tenant-isolation.test.ts`
   - `tests/tickets-server.test.ts`

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import {
   getWorkspaceModules,
@@ -23,8 +24,11 @@ export async function GET() {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // v2: tenant-scoped workspace modules
-  const tenantId = user?.tenant_id;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const config = await getWorkspaceModules("primary", tenantId);
   return Response.json({ config });
 }
@@ -47,8 +51,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  // v2: tenant-scoped save
-  const tenantId = user?.tenant_id;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const config = await saveWorkspaceModules(parsed.data as WorkspaceModuleFlags, "primary", tenantId);
   await recordAuditLog({
     tenantId,

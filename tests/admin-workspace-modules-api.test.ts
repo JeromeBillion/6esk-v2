@@ -22,14 +22,14 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/workspace/modules/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = "00000000-0000-0000-0000-000000000001") {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     role_name: roleName,
-    tenant_id: "00000000-0000-0000-0000-000000000001"
+    tenant_id: tenantId
   };
 }
 
@@ -74,6 +74,17 @@ describe("workspace modules admin API", () => {
     expect(body).toMatchObject({ config: CONFIG });
   });
 
+  it("GET rejects lead admins without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getWorkspaceModules).not.toHaveBeenCalled();
+  });
+
   it("POST persists workspace modules and records audit", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
 
@@ -100,5 +111,23 @@ describe("workspace modules admin API", () => {
         entityId: "primary"
       })
     );
+  });
+
+  it("POST rejects lead admins without tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/workspace/modules", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(CONFIG.modules)
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.saveWorkspaceModules).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
   });
 });
