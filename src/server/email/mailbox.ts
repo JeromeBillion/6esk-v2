@@ -43,18 +43,28 @@ export async function getOrCreateMailbox(
      ON CONFLICT (address) DO UPDATE SET
        address = EXCLUDED.address,
        owner_user_id = COALESCE(mailboxes.owner_user_id, EXCLUDED.owner_user_id)
+     WHERE mailboxes.tenant_id = EXCLUDED.tenant_id
      RETURNING id, tenant_id, type, address, owner_user_id`,
     [tenantId, mailboxType, address, ownerUserId]
   );
 
   const mailbox = result.rows[0];
+  if (!mailbox) {
+    throw new Error("Mailbox address belongs to another tenant.");
+  }
 
   if (ownerUserId) {
+    if (mailbox.tenant_id !== tenantId) {
+      throw new Error("Mailbox belongs to another tenant.");
+    }
+
     await db.query(
-      `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-       VALUES ($1, $2, 'owner')
-       ON CONFLICT (mailbox_id, user_id) DO NOTHING`,
-      [mailbox.id, ownerUserId]
+      `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
+       VALUES ($1, $2, $3, 'owner')
+       ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         access_level = EXCLUDED.access_level`,
+      [tenantId, mailbox.id, ownerUserId]
     );
   }
 

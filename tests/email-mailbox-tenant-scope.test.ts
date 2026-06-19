@@ -51,6 +51,8 @@ describe("email mailbox tenant scope", () => {
 
     expect(mailbox).toMatchObject({ id: "mailbox-1", tenant_id: TENANT_ID });
     const [, insertValues] = mocks.dbQuery.mock.calls[1] ?? [];
+    const [insertSql] = mocks.dbQuery.mock.calls[1] ?? [];
+    expect(insertSql).toContain("WHERE mailboxes.tenant_id = EXCLUDED.tenant_id");
     expect(insertValues[0]).toBe(TENANT_ID);
   });
 
@@ -78,6 +80,23 @@ describe("email mailbox tenant scope", () => {
     const [, insertValues] = mocks.dbQuery.mock.calls[1] ?? [];
     expect(insertValues[0]).toBe(TENANT_ID);
     expect(insertValues[3]).toBe("user-1");
+    const [membershipSql, membershipValues] = mocks.dbQuery.mock.calls[2] ?? [];
+    expect(membershipSql).toContain("INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)");
+    expect(membershipValues).toEqual([TENANT_ID, "mailbox-1", "user-1"]);
+  });
+
+  it("rejects mailbox address conflicts outside the resolved tenant", async () => {
+    mocks.dbQuery
+      .mockResolvedValueOnce({
+        rows: [{ id: "user-1", tenant_id: TENANT_ID }]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(getOrCreateMailbox("agent@example.com", "support@example.com")).rejects.toThrow(
+      "Mailbox address belongs to another tenant."
+    );
+
+    expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
   });
 
   it("resolves support-address inbound only from an existing mailbox", async () => {

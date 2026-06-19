@@ -60,8 +60,10 @@ describe("message service tenant isolation", () => {
     await hasMailboxAccess(USER_ID, MAILBOX_ID, TENANT_ID);
 
     expect(mocks.dbQuery).toHaveBeenCalledWith(
-      expect.stringContaining("AND m.tenant_id = $3"),
+      expect.stringContaining("AND mm.tenant_id = $3"),
       [MAILBOX_ID, USER_ID, TENANT_ID]
     );
+    const [sql] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(sql).toContain("JOIN users u ON u.id = mm.user_id AND u.tenant_id = mm.tenant_id");
   });
 });

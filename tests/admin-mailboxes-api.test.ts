@@ -87,6 +87,7 @@ describe("admin mailboxes API", () => {
       TENANT_ID
     ]);
     expect(mocks.dbQuery.mock.calls[0][0]).toContain("owner.tenant_id = m.tenant_id");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("mm.tenant_id = m.tenant_id");
     expect(mocks.dbQuery.mock.calls[0][0]).toContain("member.tenant_id = m.tenant_id");
   });
 
@@ -159,9 +160,15 @@ describe("admin mailboxes API", () => {
     );
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       4,
-      expect.stringContaining("m.tenant_id = $2"),
+      expect.stringContaining("mm.tenant_id = $2"),
       ["mailbox-1", TENANT_ID]
     );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      5,
+      expect.stringContaining("INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)"),
+      ["mailbox-1", "user-1", TENANT_ID]
+    );
+    expect(mocks.dbQuery.mock.calls[4][0]).toContain("JOIN users u ON u.id = $2 AND u.tenant_id = $3");
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: TENANT_ID,

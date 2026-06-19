@@ -42,7 +42,7 @@ export async function GET() {
         ) AS members
      FROM mailboxes m
      LEFT JOIN users owner ON owner.id = m.owner_user_id AND owner.tenant_id = m.tenant_id
-     LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
+     LEFT JOIN mailbox_memberships mm ON mm.mailbox_id = m.id AND mm.tenant_id = m.tenant_id
      LEFT JOIN users member ON member.id = mm.user_id AND member.tenant_id = m.tenant_id
      WHERE m.tenant_id = $1
      GROUP BY m.id, owner.email
@@ -134,17 +134,22 @@ export async function POST(request: Request) {
     `DELETE FROM mailbox_memberships mm
      USING mailboxes m
      WHERE mm.mailbox_id = $1
+       AND mm.tenant_id = $2
        AND mm.mailbox_id = m.id
        AND m.tenant_id = $2`,
     [mailbox.id, tenantId]
   );
   for (const member of resolvedMembers) {
     await db.query(
-      `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-       SELECT $1, $2, 'member'
+      `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
+       SELECT $3, m.id, u.id, 'member'
        FROM mailboxes m
+       JOIN users u ON u.id = $2 AND u.tenant_id = $3
        WHERE m.id = $1
-         AND m.tenant_id = $3`,
+         AND m.tenant_id = $3
+       ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         access_level = EXCLUDED.access_level`,
       [mailbox.id, member.id, tenantId]
     );
   }

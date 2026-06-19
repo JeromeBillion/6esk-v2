@@ -38,9 +38,10 @@ export async function listMailboxesForUser(user: SessionUser) {
               ELSE 'connected'
             END AS delivery_mode
      FROM mailboxes m
-     JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
+     JOIN mailbox_memberships mm ON mm.mailbox_id = m.id AND mm.tenant_id = m.tenant_id
      WHERE mm.user_id = $1
        AND m.tenant_id = $2
+       AND mm.tenant_id = $2
      ORDER BY m.type, m.address`,
     [user.id, tenantId]
   );
@@ -60,9 +61,10 @@ export async function listInboxMailboxesForUser(user: SessionUser) {
               ELSE 'connected'
             END AS delivery_mode
      FROM mailboxes m
-     JOIN mailbox_memberships mm ON mm.mailbox_id = m.id
+     JOIN mailbox_memberships mm ON mm.mailbox_id = m.id AND mm.tenant_id = m.tenant_id
      WHERE mm.user_id = $1
        AND m.tenant_id = $2
+       AND mm.tenant_id = $2
        AND m.type = 'personal'
      ORDER BY m.address`,
     [user.id, tenantId]

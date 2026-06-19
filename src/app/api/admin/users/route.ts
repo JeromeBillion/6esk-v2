@@ -75,6 +75,14 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid role" }, { status: 400 });
   }
 
+  const existingMailbox = await db.query<{ tenant_id: string }>(
+    "SELECT tenant_id FROM mailboxes WHERE address = $1 LIMIT 1",
+    [emailLower]
+  );
+  if (existingMailbox.rows[0] && existingMailbox.rows[0].tenant_id !== tenantId) {
+    return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
+  }
+
   const existing = await db.query(
     "SELECT id, role_id FROM users WHERE email = $1 AND tenant_id = $2 LIMIT 1",
     [emailLower, tenantId]
@@ -99,20 +107,27 @@ export async function POST(request: Request) {
     return Response.json({ error: "Email belongs to another tenant" }, { status: 409 });
   }
 
-  await db.query(
+  const mailboxResult = await db.query<{ id: string }>(
     `INSERT INTO mailboxes (type, address, owner_user_id, tenant_id)
      VALUES ('personal', $1, $2, $3)
      ON CONFLICT (address) DO UPDATE SET
-       owner_user_id = EXCLUDED.owner_user_id,
-       tenant_id = EXCLUDED.tenant_id`,
+       owner_user_id = EXCLUDED.owner_user_id
+     WHERE mailboxes.tenant_id = EXCLUDED.tenant_id
+     RETURNING id`,
     [created.email, created.id, tenantId]
   );
+  const mailbox = mailboxResult.rows[0];
+  if (!mailbox) {
+    return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
+  }
 
   await db.query(
-    `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-     SELECT id, $1, 'owner' FROM mailboxes WHERE address = $2 AND tenant_id = $3
-     ON CONFLICT (mailbox_id, user_id) DO NOTHING`,
-    [created.id, created.email, tenantId]
+    `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
+     VALUES ($3, $2, $1, 'owner')
+     ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
+       tenant_id = EXCLUDED.tenant_id,
+       access_level = EXCLUDED.access_level`,
+    [created.id, mailbox.id, tenantId]
   );
 
   if (existingUser) {

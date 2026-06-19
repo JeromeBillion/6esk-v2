@@ -192,9 +192,12 @@ export async function GET(request: NextRequest) {
 
         if (type === "personal") {
           await client.query(
-            `INSERT INTO mailbox_memberships (mailbox_id, user_id, access_level)
-             VALUES ($1, $2, 'owner')`,
-            [mailboxId, state.userId]
+            `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
+             VALUES ($1, $2, $3, 'owner')
+             ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
+               tenant_id = EXCLUDED.tenant_id,
+               access_level = EXCLUDED.access_level`,
+            [state.tenantId, mailboxId, state.userId]
           );
         }
       }

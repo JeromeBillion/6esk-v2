@@ -557,6 +557,14 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-merge-actions.test.ts`
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - linked-case rows are tenant-owned, ambiguous historical links fail migration instead of being silently assigned, pair uniqueness is tenant-scoped, linked-ticket listing requires tenant scope and filters link/ticket/message predicates, and ticket-link preflight/write callers pass the resolved session/agent/review tenant into the service boundary
+- Mailbox membership authorization tenant-scope closure is now recovered into v2-native form:
+  - migration `0067_mailbox_memberships_tenant_scope.sql`
+  - `tests/mailboxes-server.test.ts`
+  - `tests/admin-mailboxes-api.test.ts`
+  - `tests/admin-users-roles-api.test.ts`
+  - `tests/email-mailbox-tenant-scope.test.ts`
+  - `tests/message-service-tenant-isolation.test.ts`
+  - mailbox membership rows are tenant-owned, ambiguous historical mailbox/user tenant mismatches fail migration instead of receiving a default tenant, list/access/admin/OAuth/user-creation writers include direct membership tenant evidence, and mailbox address conflict paths cannot update a mailbox owned by another tenant
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`
@@ -568,12 +576,12 @@ Before this recovery branch can replace `main`, run:
   - `tests/tickets-route-api.test.ts`
   - `tests/tickets-server.test.ts`
   - customer profile/history, spam, WhatsApp resend, bulk email, tags, AI drafts, call options, mailbox listing, mailbox drafts, and mailbox message reads now reject tenantless sessions before route side effects
-  - mailbox listing services return no data without tenant scope, platform mailbox lookup returns no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
+  - mailbox listing services return no data without tenant scope, mailbox membership joins require direct membership tenant evidence, platform mailbox lookup returns no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
   - broad ticket listing rejects tenantless sessions at the route and service layers before support queue SQL
 - Email mailbox creation/resolution tenant-scope tests pass in the focused slice:
   - `tests/email-mailbox-tenant-scope.test.ts`
   - `src/server/email/mailbox.ts`
-  - platform/support mailbox creation now requires an explicit tenant, personal mailbox creation derives tenant scope from the owner user, and inbound support-address resolution uses an existing mailbox-owned tenant instead of auto-creating a default-tenant mailbox
+  - platform/support mailbox creation now requires an explicit tenant, personal mailbox creation derives tenant scope from the owner user, cross-tenant mailbox-address conflicts cannot update existing mailbox ownership, and inbound support-address resolution uses an existing mailbox-owned tenant instead of auto-creating a default-tenant mailbox
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

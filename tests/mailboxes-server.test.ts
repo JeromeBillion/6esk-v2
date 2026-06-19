@@ -52,7 +52,8 @@ describe("listInboxMailboxesForUser", () => {
       }
     ]);
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
-    expect(sql).toContain("JOIN mailbox_memberships mm ON mm.mailbox_id = m.id");
+    expect(sql).toContain("JOIN mailbox_memberships mm ON mm.mailbox_id = m.id AND mm.tenant_id = m.tenant_id");
+    expect(sql).toContain("mm.tenant_id = $2");
     expect(sql).toContain("m.type = 'personal'");
     expect(values).toEqual([user.id, tenantId]);
   });

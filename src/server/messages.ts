@@ -76,9 +76,11 @@ export async function hasMailboxAccess(userId: string, mailboxId: string, tenant
   const result = await db.query(
     `SELECT 1
      FROM mailbox_memberships mm
-     JOIN mailboxes m ON m.id = mm.mailbox_id
+     JOIN mailboxes m ON m.id = mm.mailbox_id AND m.tenant_id = mm.tenant_id
+     JOIN users u ON u.id = mm.user_id AND u.tenant_id = mm.tenant_id
      WHERE mm.mailbox_id = $1
        AND mm.user_id = $2
+       AND mm.tenant_id = $3
        AND m.tenant_id = $3
      LIMIT 1`,
     [mailboxId, userId, tenantId]
