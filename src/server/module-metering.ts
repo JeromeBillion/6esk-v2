@@ -5,13 +5,12 @@ import {
   isWorkspaceModuleEnabled,
   type WorkspaceModuleKey
 } from "@/server/workspace-modules";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type ModuleUsageActorType = "human" | "ai" | "system";
 export type ModuleUsageProviderMode = "managed" | "byo" | "none";
 
 export type RecordModuleUsageArgs = {
-  tenantId?: string;
+  tenantId?: string | null;
   workspaceKey?: string;
   moduleKey: WorkspaceModuleKey;
   usageKind: string;
@@ -79,8 +78,52 @@ function moduleMeteringFailClosed() {
   return readBoolean(process.env.MODULE_METERING_FAIL_CLOSED) ?? process.env.NODE_ENV === "production";
 }
 
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function emptyDailyModules(): Record<WorkspaceModuleKey, number> {
+  return {
+    email: 0,
+    whatsapp: 0,
+    voice: 0,
+    aiAutomation: 0,
+    dexterOrchestration: 0,
+    vanillaWebchat: 0
+  };
+}
+
+function buildEmptyModuleSummaries(): WorkspaceModuleUsageSummary["modules"] {
+  return MODULE_KEYS.map((moduleKey) => ({
+    moduleKey,
+    totalQuantity: 0,
+    eventCount: 0,
+    actorBreakdown: {
+      human: 0,
+      ai: 0,
+      system: 0
+    },
+    lastSeenAt: null,
+    usageKinds: []
+  }));
+}
+
+function buildEmptyUsageSummary(input: {
+  workspaceKey: string;
+  windowDays: number;
+}): WorkspaceModuleUsageSummary {
+  return {
+    workspaceKey: input.workspaceKey,
+    windowDays: input.windowDays,
+    generatedAt: new Date().toISOString(),
+    daily: [],
+    modules: buildEmptyModuleSummaries()
+  };
+}
+
 export async function recordModuleUsageEvent({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   workspaceKey = DEFAULT_WORKSPACE_KEY,
   moduleKey,
   usageKind,
@@ -92,11 +135,26 @@ export async function recordModuleUsageEvent({
   metadata = null
 }: RecordModuleUsageArgs) {
   const failClosed = moduleMeteringFailClosed();
+  const scopedTenantId = normalizeTenantId(tenantId);
+
+  if (!scopedTenantId) {
+    const error = new Error("Module usage tenantId is required.");
+    if (failClosed) {
+      throw error;
+    }
+    logger.warn("Skipping module usage event without tenant scope", {
+      moduleKey,
+      usageKind,
+      fn: "recordModuleUsage"
+    });
+    return;
+  }
+
   if ((process.env.NODE_ENV === "test" || process.env.VITEST === "true") && !failClosed) {
     return;
   }
 
-  if (failClosed && !(await isWorkspaceModuleEnabled(moduleKey, workspaceKey, tenantId))) {
+  if (failClosed && !(await isWorkspaceModuleEnabled(moduleKey, workspaceKey, scopedTenantId))) {
     throw new Error(`Module ${moduleKey} is not enabled for this workspace.`);
   }
 
@@ -115,7 +173,7 @@ export async function recordModuleUsageEvent({
           metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
       [
-        tenantId,
+        scopedTenantId,
         workspaceKey,
         moduleKey,
         usageKind,
@@ -137,13 +195,17 @@ export async function recordModuleUsageEvent({
 }
 
 export async function getWorkspaceModuleUsageSummary(input?: {
-  tenantId?: string;
+  tenantId?: string | null;
   workspaceKey?: string;
   windowDays?: number;
 }): Promise<WorkspaceModuleUsageSummary> {
-  const tenantId = input?.tenantId ?? DEFAULT_TENANT_ID;
+  const tenantId = normalizeTenantId(input?.tenantId);
   const workspaceKey = input?.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const windowDays = clampWindowDays(input?.windowDays);
+
+  if (!tenantId) {
+    return buildEmptyUsageSummary({ workspaceKey, windowDays });
+  }
 
   const result = await db.query<{
     module_key: WorkspaceModuleKey;
@@ -251,17 +313,6 @@ export async function getWorkspaceModuleUsageSummary(input?: {
       modules: Record<WorkspaceModuleKey, number>;
     }
   >();
-
-  function emptyDailyModules(): Record<WorkspaceModuleKey, number> {
-    return {
-      email: 0,
-      whatsapp: 0,
-      voice: 0,
-      aiAutomation: 0,
-      dexterOrchestration: 0,
-      vanillaWebchat: 0
-    };
-  }
 
   for (const row of dailyResult.rows) {
     if (!MODULE_KEYS.includes(row.module_key)) continue;

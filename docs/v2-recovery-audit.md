@@ -260,6 +260,7 @@ Date: 2026-06-06
   - production and explicit `ENTITLEMENTS_FAIL_CLOSED=true` return disabled module flags when entitlement config is missing or unreadable instead of enabling every module by default
   - structured entitlement states with suspended/disabled statuses normalize to disabled while active boolean states keep working
   - production and explicit `MODULE_METERING_FAIL_CLOSED=true` block metering when the module is not entitled and surface usage-write failures instead of silently losing billing evidence
+  - module usage writes now require explicit tenant scope instead of falling back to the legacy default tenant, and tenantless usage-summary reads return empty summaries without querying default-tenant data
   - metering sync maintenance now requires explicit tenant scope, filters pending usage-event locks by `tenant_id`, and scopes synced/failed status updates to the same tenant
   - production env validation rejects disabling entitlement or metering fail-closed posture
 
@@ -404,11 +405,12 @@ Before this recovery branch can replace `main`, run:
   - `tests/tenant-query-guard.test.ts`
   - `tests/env-validation.test.ts`
 - Billing usage/export tests pass in the focused slice:
+  - `tests/module-metering-fail-closed.test.ts`
   - `tests/admin-workspace-usage-api.test.ts`
   - `tests/admin-workspace-usage-export-api.test.ts`
   - `tests/admin-workspace-billing-api.test.ts`
   - `tests/billing-lifecycle.test.ts`
-  - billing/usage admin routes now include missing-tenant fail-closed regressions
+  - billing/usage admin routes and module metering services now include missing-tenant fail-closed regressions
 - Inbound email operational-state tenant-scope tests pass in the focused slice:
   - `tests/inbound-admin-scope.test.ts`
   - `tests/admin-inbound-alerts-api.test.ts`

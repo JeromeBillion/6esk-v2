@@ -10,7 +10,10 @@ vi.mock("@/server/db", () => ({
   }
 }));
 
-import { recordModuleUsageEvent } from "@/server/module-metering";
+import {
+  getWorkspaceModuleUsageSummary,
+  recordModuleUsageEvent
+} from "@/server/module-metering";
 
 const originalEntitlementsFailClosed = process.env.ENTITLEMENTS_FAIL_CLOSED;
 const originalModuleMeteringFailClosed = process.env.MODULE_METERING_FAIL_CLOSED;
@@ -51,6 +54,39 @@ describe("module metering fail-closed posture", () => {
         metadata: { route: "/api/tickets/[ticketId]/replies" }
       })
     ).rejects.toThrow("Module email is not enabled");
+  });
+
+  it("rejects usage recording without tenant scope in fail-closed mode", async () => {
+    await expect(
+      recordModuleUsageEvent({
+        tenantId: "",
+        workspaceKey: "primary",
+        moduleKey: "email",
+        usageKind: "reply_sent",
+        actorType: "human",
+        providerMode: "managed",
+        metadata: { route: "/api/tickets/[ticketId]/replies" }
+      })
+    ).rejects.toThrow("Module usage tenantId is required");
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("does not read default-tenant usage when summary tenant scope is missing", async () => {
+    const summary = await getWorkspaceModuleUsageSummary({
+      tenantId: "",
+      workspaceKey: "primary",
+      windowDays: 45
+    });
+
+    expect(summary).toMatchObject({
+      workspaceKey: "primary",
+      windowDays: 45,
+      daily: []
+    });
+    expect(summary.modules).toHaveLength(6);
+    expect(summary.modules.every((module) => module.totalQuantity === 0)).toBe(true);
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("surfaces usage write failures when entitlements allow recording", async () => {
