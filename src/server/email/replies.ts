@@ -5,7 +5,6 @@ import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { getCustomerById } from "@/server/customers";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 type SendReplyArgs = {
   tenantId?: string | null;
@@ -52,6 +51,19 @@ type ResendResponse = {
   messageId?: string;
 };
 
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = normalizeTenantId(tenantId);
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
+
 export async function sendTicketReply({
   tenantId,
   ticketId,
@@ -65,12 +77,12 @@ export async function sendTicketReply({
   aiMeta,
   recipient
 }: SendReplyArgs) {
-  const lookupTenantId = tenantId ?? DEFAULT_TENANT_ID;
+  const lookupTenantId = requireTenantId(tenantId, "Send ticket reply");
   const ticket = await getTicketById(ticketId, lookupTenantId);
   if (!ticket) {
     throw new Error("Ticket not found");
   }
-  const effectiveTenantId = ticket.tenant_id;
+  const effectiveTenantId = normalizeTenantId(ticket.tenant_id) ?? lookupTenantId;
 
   const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id, effectiveTenantId) : null;
   const requestedEmailRecipient = normalizeEmailRecipient(recipient);
@@ -299,8 +311,8 @@ export async function sendTicketReply({
   await db.query(
     `UPDATE messages
      SET r2_key_text = $1, r2_key_html = $2, size_bytes = $3
-     WHERE id = $4`,
-    [textKey, htmlKey, sizeBytes || null, messageId]
+     WHERE id = $4 AND tenant_id = $5`,
+    [textKey, htmlKey, sizeBytes || null, messageId, effectiveTenantId]
   );
 
   await recordTicketEvent({

@@ -48,8 +48,10 @@ Date: 2026-06-06
   - `src/server/customers.ts`
   - `src/server/tickets.ts`
   - `src/server/tickets/outbound-email.ts`
+  - `src/server/email/replies.ts`
   - customer resolution, ticket creation, ticket event writes, and outbound email ticket creation now reject missing tenant scope before database or mailbox side effects
   - inbound message reference resolution returns no ticket without tenant scope instead of querying `DEFAULT_TENANT_ID`
+  - ticket reply sending now rejects missing tenant scope before ticket lookup and scopes post-send message body-key updates by tenant
 - Semantically ported the auth/session/MFA foundation into v2-native `tenant_id` form:
   - `db/migrations/0051_auth_security_foundations.sql`
   - tenant security policies for allowed login domains, SSO enforcement flags, admin MFA requirement, session TTL, and planned auth-provider mode
@@ -462,7 +464,9 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-email-outbox-api.test.ts`
   - `tests/email-outbox.test.ts`
   - `tests/email-send-route.test.ts`
+  - `tests/email-replies-tenant-scope.test.ts`
   - email enqueue/delivery now requires explicit tenant scope, queued message and attachment reads are tenant-pinned, and the combined maintenance runner sends an explicit tenant header
+  - direct reply sending rejects tenantless calls before ticket lookup and scopes post-send message body-key updates by tenant
 - WhatsApp send/outbox tenant-scope tests pass in the focused slice:
   - `tests/admin-whatsapp-config-api.test.ts`
   - `tests/admin-whatsapp-templates-api.test.ts`
