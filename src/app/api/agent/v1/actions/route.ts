@@ -1313,7 +1313,7 @@ export async function POST(request: Request) {
               }
             });
             if (escalation.tag) {
-              await addTagsToTicket(action.ticketId, [escalation.tag]);
+              await addTagsToTicket(tenantId, action.ticketId, [escalation.tag]);
               await recordTicketEvent({
                 tenantId,
                 ticketId: action.ticketId,
@@ -1611,7 +1611,7 @@ export async function POST(request: Request) {
           results.push(idempotencyFailure);
           break;
         }
-        await addTagsToTicket(action.ticketId, tags);
+        await addTagsToTicket(tenantId, action.ticketId, tags);
         await recordTicketEvent({
           tenantId,
           ticketId: action.ticketId,

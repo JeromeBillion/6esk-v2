@@ -59,10 +59,10 @@ export async function PATCH(
     .filter(Boolean);
 
   if (addTags.length) {
-    await addTagsToTicket(ticketId, addTags);
+    await addTagsToTicket(tenantId, ticketId, addTags);
   }
   if (removeTags.length) {
-    await removeTagsFromTicket(ticketId, removeTags);
+    await removeTagsFromTicket(tenantId, ticketId, removeTags);
   }
 
   await recordTicketEvent({

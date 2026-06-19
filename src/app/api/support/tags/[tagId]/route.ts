@@ -54,13 +54,14 @@ export async function PATCH(
     return Response.json({ error: "No changes provided" }, { status: 400 });
   }
 
-  values.push(tagId);
+  values.push(tagId, tenantId);
 
   try {
     const result = await db.query(
       `UPDATE tags
        SET ${fields.join(", ")}
-       WHERE id = $${index}
+       WHERE id = $${index++}
+         AND tenant_id = $${index}
        RETURNING id, name, description`,
       values
     );
@@ -96,7 +97,10 @@ export async function DELETE(
   }
 
   const { tagId } = await params;
-  const result = await db.query("DELETE FROM tags WHERE id = $1 RETURNING id", [tagId]);
+  const result = await db.query(
+    "DELETE FROM tags WHERE id = $1 AND tenant_id = $2 RETURNING id",
+    [tagId, tenantId]
+  );
   if (result.rows.length === 0) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

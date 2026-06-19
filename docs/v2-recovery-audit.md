@@ -501,8 +501,12 @@ Before this recovery branch can replace `main`, run:
   - `tests/audit-ticket-logs.test.ts`
   - `src/server/audit.ts`
   - tenant audit writes and ticket audit reads now reject missing tenant scope, actor joins are tenant-pinned, and tenantless auth/security events must use the explicit platform-audit helper instead of silently falling back to the default tenant
-- Support tag catalog data-model tenantization remains a residual blocker:
-  - route-level tenantless rejection is present, but `tags` / `ticket_tags` are still globally keyed and need a v2-native tenant-owned migration, helper updates, and regression coverage before launch readiness
+- Support tag catalog data-model tenantization is now closed for core code:
+  - migration `0060_tenant_scoped_tags.sql`
+  - `tests/support-tags-tenant-scope-api.test.ts`
+  - `tests/analytics-performance-tenant-scope-api.test.ts`
+  - `tests/tickets-server.test.ts`
+  - `tags` and `ticket_tags` are tenant-owned, tag helpers reject missing tenant scope, support tag CRUD/listing is tenant-filtered, and ticket list/detail, merge, inbound, portal, agent, bulk, and analytics tag paths use tenant-pinned joins/writes
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

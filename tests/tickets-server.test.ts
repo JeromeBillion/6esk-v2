@@ -11,9 +11,11 @@ vi.mock("@/server/db", () => ({
 }));
 
 import {
+  addTagsToTicket,
   createTicket,
   listTicketsForUser,
   recordTicketEvent,
+  removeTagsFromTicket,
   resolveTicketIdForInbound
 } from "@/server/tickets";
 
@@ -90,5 +92,50 @@ describe("listTicketsForUser", () => {
     ).rejects.toThrow("Record ticket event requires tenantId");
 
     expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("writes ticket tags under the supplied tenant scope", async () => {
+    mocks.dbQuery
+      .mockResolvedValueOnce({
+        rows: [{ id: "11111111-1111-4111-8111-111111111111" }]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await addTagsToTicket(tenantId, "22222222-2222-4222-8222-222222222222", [
+      "VIP",
+      " vip "
+    ]);
+
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("INSERT INTO tags (tenant_id, name)"),
+      [tenantId, ["vip"]]
+    );
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO ticket_tags (tenant_id, ticket_id, tag_id)"),
+      [tenantId, "22222222-2222-4222-8222-222222222222", ["11111111-1111-4111-8111-111111111111"]]
+    );
+  });
+
+  it("rejects ticket tag writes without tenant scope", async () => {
+    await expect(
+      addTagsToTicket("", "22222222-2222-4222-8222-222222222222", ["vip"])
+    ).rejects.toThrow("Add tags to ticket requires tenantId");
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("removes ticket tags under the supplied tenant scope", async () => {
+    mocks.dbQuery.mockResolvedValue({ rows: [] });
+
+    await removeTagsFromTicket(tenantId, "22222222-2222-4222-8222-222222222222", [
+      "VIP"
+    ]);
+
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE tenant_id = $1"),
+      [tenantId, "22222222-2222-4222-8222-222222222222", ["vip"]]
+    );
   });
 });

@@ -297,6 +297,7 @@ export async function preflightTicketMerge({
   try {
     const ticketResult = await client.query<{
       id: string;
+      tenant_id: string;
       customer_id: string | null;
       merged_into_ticket_id: string | null;
       subject: string | null;
@@ -307,6 +308,7 @@ export async function preflightTicketMerge({
     }>(
       `SELECT
          id,
+         tenant_id,
          customer_id,
          merged_into_ticket_id,
          subject,
@@ -328,6 +330,10 @@ export async function preflightTicketMerge({
     if (!source || !target) {
       throw new MergeError("not_found", "Source or target ticket was not found.");
     }
+    if (source.tenant_id !== target.tenant_id) {
+      throw new MergeError("invalid_input", "Source and target tickets must belong to the same tenant.");
+    }
+    const tenantId = source.tenant_id;
 
     const [sourceChannel, targetChannel] = await Promise.all([
       getTicketChannel(client, sourceTicketId),
@@ -347,17 +353,19 @@ export async function preflightTicketMerge({
          (SELECT COUNT(*) FROM replies WHERE ticket_id = $1) AS replies_count,
          (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1) AS events_count,
          (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1) AS drafts_count,
-         (SELECT COUNT(*) FROM ticket_tags WHERE ticket_id = $1) AS source_tag_count,
+         (SELECT COUNT(*) FROM ticket_tags WHERE ticket_id = $1 AND tenant_id = $3) AS source_tag_count,
          (
            SELECT COUNT(*)
            FROM ticket_tags source_tags
            LEFT JOIN ticket_tags target_tags
              ON target_tags.ticket_id = $2
+            AND target_tags.tenant_id = $3
             AND target_tags.tag_id = source_tags.tag_id
            WHERE source_tags.ticket_id = $1
+             AND source_tags.tenant_id = $3
              AND target_tags.tag_id IS NULL
          ) AS new_tag_count`,
-      [sourceTicketId, targetTicketId]
+      [sourceTicketId, targetTicketId, tenantId]
     );
 
     const counts = countsResult.rows[0];
@@ -783,8 +791,9 @@ export async function mergeTickets({
          (SELECT COUNT(*) FROM messages WHERE ticket_id = $1) AS messages_count,
          (SELECT COUNT(*) FROM replies WHERE ticket_id = $1) AS replies_count,
          (SELECT COUNT(*) FROM ticket_events WHERE ticket_id = $1) AS events_count,
-         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1) AS drafts_count`,
-      [sourceTicketId]
+         (SELECT COUNT(*) FROM agent_drafts WHERE ticket_id = $1) AS drafts_count,
+         (SELECT COUNT(*) FROM ticket_tags WHERE ticket_id = $1 AND tenant_id = $2) AS source_tag_count`,
+      [sourceTicketId, tenantId]
     );
     const sourceMoveCounts = moveCountResult.rows[0];
     const moveRowTotal =
@@ -829,18 +838,20 @@ export async function mergeTickets({
     );
 
     await client.query(
-      `INSERT INTO ticket_tags (ticket_id, tag_id)
-       SELECT $1, tag_id
+      `INSERT INTO ticket_tags (tenant_id, ticket_id, tag_id)
+       SELECT $3, $1, tag_id
        FROM ticket_tags
        WHERE ticket_id = $2
-       ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-      [targetTicketId, sourceTicketId]
+         AND tenant_id = $3
+       ON CONFLICT (tenant_id, ticket_id, tag_id) DO NOTHING`,
+      [targetTicketId, sourceTicketId, tenantId]
     );
 
     await client.query(
       `DELETE FROM ticket_tags
-       WHERE ticket_id = $1`,
-      [sourceTicketId]
+       WHERE ticket_id = $1
+         AND tenant_id = $2`,
+      [sourceTicketId, tenantId]
     );
 
     const summary = {

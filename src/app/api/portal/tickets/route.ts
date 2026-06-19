@@ -145,7 +145,7 @@ export async function POST(request: Request) {
   await recordTicketEvent({ tenantId, ticketId, eventType: "ticket_created" });
 
   if (inferredTags.length) {
-    await addTagsToTicket(ticketId, inferredTags);
+    await addTagsToTicket(tenantId, ticketId, inferredTags);
     await recordTicketEvent({
       tenantId,
       ticketId,

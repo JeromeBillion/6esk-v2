@@ -185,7 +185,8 @@ export async function reopenTicketIfNeeded(ticketId: string, tenantId: string) {
   }
 }
 
-export async function ensureTags(tagNames: string[]) {
+export async function ensureTags(tenantId: string | null | undefined, tagNames: string[]) {
+  const scopedTenantId = requireTenantId(tenantId, "Ensure tags");
   const clean = Array.from(new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean)));
   if (clean.length === 0) {
     return [];
@@ -193,31 +194,41 @@ export async function ensureTags(tagNames: string[]) {
 
   // Batch upsert all tags in a single query using UNNEST
   const result = await db.query<{ id: string }>(
-    `INSERT INTO tags (name)
-     SELECT unnest($1::text[])
-     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+    `INSERT INTO tags (tenant_id, name)
+     SELECT $1, unnest($2::text[])
+     ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
      RETURNING id`,
-    [clean]
+    [scopedTenantId, clean]
   );
   return result.rows.map((row) => row.id);
 }
 
-export async function addTagsToTicket(ticketId: string, tagNames: string[]) {
-  const tagIds = await ensureTags(tagNames);
+export async function addTagsToTicket(
+  tenantId: string | null | undefined,
+  ticketId: string,
+  tagNames: string[]
+) {
+  const scopedTenantId = requireTenantId(tenantId, "Add tags to ticket");
+  const tagIds = await ensureTags(scopedTenantId, tagNames);
   if (tagIds.length === 0) {
     return;
   }
 
   // Batch insert all ticket-tag associations in a single query
   await db.query(
-    `INSERT INTO ticket_tags (ticket_id, tag_id)
-     SELECT $1, unnest($2::uuid[])
-     ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-    [ticketId, tagIds]
+    `INSERT INTO ticket_tags (tenant_id, ticket_id, tag_id)
+     SELECT $1, $2, unnest($3::uuid[])
+     ON CONFLICT (tenant_id, ticket_id, tag_id) DO NOTHING`,
+    [scopedTenantId, ticketId, tagIds]
   );
 }
 
-export async function removeTagsFromTicket(ticketId: string, tagNames: string[]) {
+export async function removeTagsFromTicket(
+  tenantId: string | null | undefined,
+  ticketId: string,
+  tagNames: string[]
+) {
+  const scopedTenantId = requireTenantId(tenantId, "Remove tags from ticket");
   const clean = Array.from(
     new Set(tagNames.map((tag) => tag.toLowerCase().trim()).filter(Boolean))
   );
@@ -227,11 +238,12 @@ export async function removeTagsFromTicket(ticketId: string, tagNames: string[])
 
   await db.query(
     `DELETE FROM ticket_tags
-     WHERE ticket_id = $1
+     WHERE tenant_id = $1
+       AND ticket_id = $2
        AND tag_id IN (
-         SELECT id FROM tags WHERE name = ANY($2)
+         SELECT id FROM tags WHERE tenant_id = $1 AND name = ANY($3)
        )`,
-    [ticketId, clean]
+    [scopedTenantId, ticketId, clean]
   );
 }
 
@@ -331,7 +343,10 @@ export async function listTicketsForUser(
         SELECT 1
         FROM ticket_tags ttf
         JOIN tags tagf ON tagf.id = ttf.tag_id
-        WHERE ttf.ticket_id = t.id AND tagf.name = $${values.length}
+          AND tagf.tenant_id = t.tenant_id
+        WHERE ttf.ticket_id = t.id
+          AND ttf.tenant_id = t.tenant_id
+          AND tagf.name = $${values.length}
       )`
     );
   }
@@ -424,8 +439,8 @@ export async function listTicketsForUser(
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
-     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
-     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_id = t.tenant_id
+     LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_id = t.tenant_id
      ${whereClause}
      GROUP BY t.id
      ORDER BY t.created_at DESC
@@ -454,8 +469,8 @@ export async function getTicketById(ticketId: string, tenantId: string) {
               WHERE msg.ticket_id = t.id AND msg.tenant_id = t.tenant_id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
-     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
-     LEFT JOIN tags tag ON tag.id = tt.tag_id
+     LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_id = t.tenant_id
+     LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_id = t.tenant_id
      WHERE t.id = $1
        ${tenantClause}
      GROUP BY t.id`,

@@ -182,10 +182,10 @@ export async function PATCH(request: Request) {
 
     if (addTags.length > 0 || removeTags.length > 0) {
       if (addTags.length > 0) {
-        await addTagsToTicket(ticketId, addTags);
+        await addTagsToTicket(tenantId, ticketId, addTags);
       }
       if (removeTags.length > 0) {
-        await removeTagsFromTicket(ticketId, removeTags);
+        await removeTagsFromTicket(tenantId, ticketId, removeTags);
       }
       await recordTicketEvent({
         tenantId,

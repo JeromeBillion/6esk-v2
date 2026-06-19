@@ -129,7 +129,7 @@ export async function createOutboundEmailTicket({
   });
 
   if (normalizedTags.length > 0) {
-    await addTagsToTicket(ticketId, normalizedTags);
+    await addTagsToTicket(scopedTenantId, ticketId, normalizedTags);
     await recordTicketEvent({
       tenantId: scopedTenantId,
       ticketId,

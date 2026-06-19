@@ -15,11 +15,17 @@ export async function GET() {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const result = await db.query(
     `SELECT id, name, description
      FROM tags
-     ORDER BY name`
+     WHERE tenant_id = $1
+     ORDER BY name`,
+    [tenantId]
   );
 
   return Response.json({ tags: result.rows });
@@ -48,17 +54,19 @@ export async function POST(request: Request) {
   }
 
   const { name, description } = parsed.data;
-  const existing = await db.query("SELECT id FROM tags WHERE name = $1 LIMIT 1", [
-    name.toLowerCase()
+  const normalizedName = name.toLowerCase();
+  const existing = await db.query("SELECT id FROM tags WHERE tenant_id = $1 AND name = $2 LIMIT 1", [
+    tenantId,
+    normalizedName
   ]);
   const existed = existing.rowCount && existing.rowCount > 0;
 
   const result = await db.query(
-    `INSERT INTO tags (name, description)
-     VALUES ($1, $2)
-     ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+    `INSERT INTO tags (tenant_id, name, description)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (tenant_id, name) DO UPDATE SET description = EXCLUDED.description
      RETURNING id, name, description`,
-    [name.toLowerCase(), description ?? null]
+    [tenantId, normalizedName, description ?? null]
   );
 
   const created = result.rows[0];

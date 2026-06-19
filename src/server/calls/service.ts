@@ -1807,7 +1807,7 @@ export async function createOrUpdateInboundCall({
     createdTicket = true;
     await recordTicketEvent({ tenantId, ticketId: resolvedTicketId, eventType: "ticket_created" });
     if (inferredTags.length) {
-      await addTagsToTicket(resolvedTicketId, inferredTags);
+      await addTagsToTicket(tenantId, resolvedTicketId, inferredTags);
       await recordTicketEvent({
         tenantId,
         ticketId: resolvedTicketId,

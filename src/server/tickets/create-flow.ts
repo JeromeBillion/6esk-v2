@@ -294,7 +294,7 @@ export async function processCreateTicket({
       });
 
       if (inferredTags.length) {
-        await addTagsToTicket(ticketId, inferredTags);
+        await addTagsToTicket(tenantId, ticketId, inferredTags);
         await recordTicketEvent({
           tenantId,
           ticketId,
@@ -420,7 +420,7 @@ export async function processCreateTicket({
       });
 
       if (inferredTags.length) {
-        await addTagsToTicket(ticketId, inferredTags);
+        await addTagsToTicket(tenantId, ticketId, inferredTags);
         await recordTicketEvent({
           tenantId,
           ticketId,
@@ -608,7 +608,7 @@ export async function processCreateTicket({
   await recordTicketEvent({ tenantId, ticketId, eventType: "ticket_created" });
 
   if (inferredTags.length) {
-    await addTagsToTicket(ticketId, inferredTags);
+    await addTagsToTicket(tenantId, ticketId, inferredTags);
     await recordTicketEvent({
       tenantId,
       ticketId,

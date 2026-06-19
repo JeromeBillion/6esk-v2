@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
 
@@ -12,6 +13,10 @@ export async function GET(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const groupByParam = url.searchParams.get("groupBy");
@@ -22,8 +27,8 @@ export async function GET(request: Request) {
   const priority = url.searchParams.get("priority");
   const tag = url.searchParams.get("tag");
 
-  const values: Array<string | Date> = [start, end];
-  const conditions: string[] = ["t.created_at >= $1", "t.created_at < $2"];
+  const values: Array<string | Date> = [start, end, tenantId];
+  const conditions: string[] = ["t.created_at >= $1", "t.created_at < $2", "t.tenant_id = $3"];
 
   if (agentId) {
     values.push(agentId);
@@ -54,12 +59,13 @@ export async function GET(request: Request) {
         AVG(EXTRACT(EPOCH FROM (r.first_response - t.created_at))) AS avg_first_response_seconds,
         AVG(EXTRACT(EPOCH FROM (t.solved_at - t.created_at))) AS avg_resolution_seconds
       FROM tickets t
-      JOIN users u ON u.id = t.assigned_user_id
-      ${shouldJoinTags ? "LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id LEFT JOIN tags tag ON tag.id = tt.tag_id" : ""}
+      JOIN users u ON u.id = t.assigned_user_id AND u.tenant_id = t.tenant_id
+      ${shouldJoinTags ? "LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_id = t.tenant_id LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_id = t.tenant_id" : ""}
       LEFT JOIN LATERAL (
         SELECT MIN(sent_at) AS first_response
         FROM messages m
         WHERE m.ticket_id = t.id
+          AND m.tenant_id = t.tenant_id
           AND m.direction = 'outbound'
           AND m.sent_at IS NOT NULL
       ) r ON true
@@ -81,12 +87,13 @@ export async function GET(request: Request) {
         AVG(EXTRACT(EPOCH FROM (r.first_response - t.created_at))) AS avg_first_response_seconds,
         AVG(EXTRACT(EPOCH FROM (t.solved_at - t.created_at))) AS avg_resolution_seconds
       FROM tickets t
-      JOIN ticket_tags tt ON tt.ticket_id = t.id
-      JOIN tags tag ON tag.id = tt.tag_id
+      JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_id = t.tenant_id
+      JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_id = t.tenant_id
       LEFT JOIN LATERAL (
         SELECT MIN(sent_at) AS first_response
         FROM messages m
         WHERE m.ticket_id = t.id
+          AND m.tenant_id = t.tenant_id
           AND m.direction = 'outbound'
           AND m.sent_at IS NOT NULL
       ) r ON true
@@ -108,11 +115,12 @@ export async function GET(request: Request) {
         AVG(EXTRACT(EPOCH FROM (r.first_response - t.created_at))) AS avg_first_response_seconds,
         AVG(EXTRACT(EPOCH FROM (t.solved_at - t.created_at))) AS avg_resolution_seconds
       FROM tickets t
-      ${shouldJoinTags ? "LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id LEFT JOIN tags tag ON tag.id = tt.tag_id" : ""}
+      ${shouldJoinTags ? "LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.tenant_id = t.tenant_id LEFT JOIN tags tag ON tag.id = tt.tag_id AND tag.tenant_id = t.tenant_id" : ""}
       LEFT JOIN LATERAL (
         SELECT MIN(sent_at) AS first_response
         FROM messages m
         WHERE m.ticket_id = t.id
+          AND m.tenant_id = t.tenant_id
           AND m.direction = 'outbound'
           AND m.sent_at IS NOT NULL
       ) r ON true

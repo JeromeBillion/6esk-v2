@@ -402,12 +402,17 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
         const cleanTags = Array.from(new Set(inferredTags.map((t) => t.toLowerCase().trim()).filter(Boolean)));
         for (const tag of cleanTags) {
           const tagResult = await client.query<{ id: string }>(
-            `INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-            [tag]
+            `INSERT INTO tags (tenant_id, name)
+             VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, tag]
           );
           await client.query(
-            `INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2) ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
-            [ticketId, tagResult.rows[0].id]
+            `INSERT INTO ticket_tags (tenant_id, ticket_id, tag_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (tenant_id, ticket_id, tag_id) DO NOTHING`,
+            [tenantId, ticketId, tagResult.rows[0].id]
           );
         }
         await client.query(

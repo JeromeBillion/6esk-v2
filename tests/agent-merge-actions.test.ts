@@ -1319,7 +1319,7 @@ describe("agent merge actions route", () => {
         bodyText: "Follow-up response"
       })
     );
-    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_A, ["urgent"]);
+    expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TENANT_ID, TICKET_A, ["urgent"]);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "ai_reply_escalated_out_of_hours",
