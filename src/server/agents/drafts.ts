@@ -1,7 +1,7 @@
 import { db } from "@/server/db";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 
 export type AgentDraft = {
   id: string;
@@ -30,6 +30,19 @@ export type DraftQueueItem = AgentDraft & {
   has_voice: boolean;
 };
 
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = normalizeTenantId(tenantId);
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
+
 export async function getDraftById({
   draftId,
   ticketId,
@@ -39,32 +52,38 @@ export async function getDraftById({
   ticketId: string;
   tenantId?: string | null;
 }) {
-  const values = tenantId ? [draftId, ticketId, tenantId] : [draftId, ticketId];
-  const tenantClause = tenantId ? "AND tenant_id = $3" : "";
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
+    return null;
+  }
+
   const result = await db.query<AgentDraft>(
     `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
             metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE id = $1 AND ticket_id = $2
-       ${tenantClause}
+       AND tenant_id = $3
      LIMIT 1`,
-    values
+    [draftId, ticketId, scopedTenantId]
   );
   return result.rows[0] ?? null;
 }
 
 export async function listDraftsForTicket(ticketId: string, tenantId?: string | null) {
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId ? "AND tenant_id = $2" : "";
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
+    return [];
+  }
+
   const result = await db.query<AgentDraft>(
     `SELECT id, tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence,
             metadata, status, created_at, updated_at
      FROM agent_drafts
      WHERE ticket_id = $1
-       ${tenantClause}
+       AND tenant_id = $2
        AND status = 'pending'
      ORDER BY created_at DESC`,
-    values
+    [ticketId, scopedTenantId]
   );
   return result.rows;
 }
@@ -78,7 +97,14 @@ export async function listPendingDraftsForUser(
   }
 ) {
   const values: Array<string> = [];
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return [];
+  }
   const conditions: string[] = ["d.status = 'pending'"];
+  values.push(tenantId);
+  conditions.push(`d.tenant_id = $${values.length}`);
+  conditions.push("t.tenant_id = d.tenant_id");
 
   const isAdmin = user.role_name === LEAD_ADMIN_ROLE;
   if (!isAdmin) {
@@ -108,7 +134,9 @@ export async function listPendingDraftsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id
+              AND channel_msg.tenant_id = d.tenant_id
+              AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -124,7 +152,9 @@ export async function listPendingDraftsForUser(
           EXISTS (
             SELECT 1
             FROM messages channel_msg
-            WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${placeholder}
+            WHERE channel_msg.ticket_id = t.id
+              AND channel_msg.tenant_id = d.tenant_id
+              AND channel_msg.channel = ${placeholder}
           )
           OR t.requester_email ILIKE ${requesterPlaceholder}
         )`
@@ -143,14 +173,18 @@ export async function listPendingDraftsForUser(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${whatsappPlaceholder}
+          WHERE channel_msg.ticket_id = t.id
+            AND channel_msg.tenant_id = d.tenant_id
+            AND channel_msg.channel = ${whatsappPlaceholder}
         )`
       );
       conditions.push(
         `NOT EXISTS (
           SELECT 1
           FROM messages channel_msg
-          WHERE channel_msg.ticket_id = t.id AND channel_msg.channel = ${voicePlaceholder}
+          WHERE channel_msg.ticket_id = t.id
+            AND channel_msg.tenant_id = d.tenant_id
+            AND channel_msg.channel = ${voicePlaceholder}
         )`
       );
       conditions.push(`t.requester_email NOT ILIKE ${whatsappRequesterPlaceholder}`);
@@ -170,11 +204,11 @@ export async function listPendingDraftsForUser(
             t.assigned_user_id,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'whatsapp'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = d.tenant_id AND msg.channel = 'whatsapp'
             ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
             EXISTS (
               SELECT 1 FROM messages msg
-              WHERE msg.ticket_id = t.id AND msg.channel = 'voice'
+              WHERE msg.ticket_id = t.id AND msg.tenant_id = d.tenant_id AND msg.channel = 'voice'
             ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM agent_drafts d
      JOIN tickets t ON t.id = d.ticket_id
@@ -188,7 +222,7 @@ export async function listPendingDraftsForUser(
 }
 
 export async function createDraft({
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
   integrationId,
   ticketId,
   subject,
@@ -197,7 +231,7 @@ export async function createDraft({
   confidence,
   metadata
 }: {
-  tenantId?: string;
+  tenantId?: string | null;
   integrationId: string;
   ticketId: string;
   subject?: string | null;
@@ -206,13 +240,14 @@ export async function createDraft({
   confidence?: number | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Create agent draft");
   const result = await db.query<AgentDraft>(
     `INSERT INTO agent_drafts (tenant_id, integration_id, ticket_id, subject, body_text, body_html, confidence, metadata)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
     [
-      tenantId,
+      scopedTenantId,
       integrationId,
       ticketId,
       subject ?? null,
@@ -236,17 +271,20 @@ export async function updateDraftStatus({
   status: DraftStatus;
   tenantId?: string | null;
 }) {
-  const values = tenantId ? [status, draftId, ticketId, tenantId] : [status, draftId, ticketId];
-  const tenantClause = tenantId ? "AND tenant_id = $4" : "";
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
+    return null;
+  }
+
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET status = $1, updated_at = now()
      WHERE id = $2 AND ticket_id = $3
-       ${tenantClause}
+       AND tenant_id = $4
        AND status = 'pending'
      RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
-    values
+    [status, draftId, ticketId, scopedTenantId]
   );
   return result.rows[0] ?? null;
 }
@@ -256,24 +294,31 @@ export async function updateDraftContent({
   ticketId,
   subject,
   bodyText,
-  bodyHtml
+  bodyHtml,
+  tenantId
 }: {
   draftId: string;
   ticketId: string;
   subject: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  tenantId?: string | null;
 }) {
+  const scopedTenantId = normalizeTenantId(tenantId);
+  if (!scopedTenantId) {
+    return null;
+  }
+
   const result = await db.query<AgentDraft>(
     `UPDATE agent_drafts
      SET subject = $1,
          body_text = $2,
          body_html = $3,
          updated_at = now()
-     WHERE id = $4 AND ticket_id = $5 AND status = 'pending'
-     RETURNING id, integration_id, ticket_id, subject, body_text, body_html,
+     WHERE id = $4 AND ticket_id = $5 AND tenant_id = $6 AND status = 'pending'
+     RETURNING id, tenant_id, integration_id, ticket_id, subject, body_text, body_html,
                confidence, metadata, status, created_at, updated_at`,
-    [subject, bodyText, bodyHtml, draftId, ticketId]
+    [subject, bodyText, bodyHtml, draftId, ticketId, scopedTenantId]
   );
   return result.rows[0] ?? null;
 }

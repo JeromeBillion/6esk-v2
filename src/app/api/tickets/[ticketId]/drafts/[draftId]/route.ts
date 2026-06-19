@@ -69,7 +69,7 @@ export async function PATCH(
     parsed.data.bodyHtml !== undefined;
 
   if (hasContentUpdate) {
-    const existing = await getDraftById({ draftId, ticketId });
+    const existing = await getDraftById({ draftId, ticketId, tenantId });
     if (!existing) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
@@ -79,7 +79,8 @@ export async function PATCH(
       ticketId,
       subject: parsed.data.subject !== undefined ? parsed.data.subject : existing.subject,
       bodyText: parsed.data.bodyText !== undefined ? parsed.data.bodyText : existing.body_text,
-      bodyHtml: parsed.data.bodyHtml !== undefined ? parsed.data.bodyHtml : existing.body_html
+      bodyHtml: parsed.data.bodyHtml !== undefined ? parsed.data.bodyHtml : existing.body_html,
+      tenantId
     });
 
     if (!updatedContent) {
@@ -88,12 +89,14 @@ export async function PATCH(
 
     updated = updatedContent;
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType: "ai_draft_updated",
       actorUserId: user.id,
       data: { draftId }
     });
     await recordAuditLog({
+      tenantId,
       actorUserId: user.id,
       action: "ai_draft_updated",
       entityType: "agent_draft",
@@ -106,7 +109,8 @@ export async function PATCH(
     const updatedStatus = await updateDraftStatus({
       draftId,
       ticketId,
-      status: parsed.data.status
+      status: parsed.data.status,
+      tenantId
     });
 
     if (!updatedStatus) {
@@ -116,11 +120,13 @@ export async function PATCH(
     updated = updatedStatus;
     const eventType = parsed.data.status === "used" ? "ai_draft_used" : "ai_draft_dismissed";
     await recordTicketEvent({
+      tenantId,
       ticketId,
       eventType,
       actorUserId: user.id
     });
     await recordAuditLog({
+      tenantId,
       actorUserId: user.id,
       action: eventType,
       entityType: "agent_draft",

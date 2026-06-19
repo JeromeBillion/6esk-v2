@@ -183,6 +183,12 @@ Date: 2026-06-06
   - agent API machine calls now require `x-6esk-tenant-id` / `x-6esk-tenant` before integration lookup
   - agent integration listing, active lookup, id lookup, creation, and update no longer read or write under `DEFAULT_TENANT_ID` when tenant scope is missing
   - Dexter CRM plugin startup/config now requires `SIXESK_TENANT_ID`, and the staging CRM calls harness sends the tenant header to agent APIs
+- Hardened agent draft queue and update paths against legacy tenant fallback:
+  - `src/server/agents/drafts.ts`
+  - `src/app/api/tickets/[ticketId]/drafts/[draftId]/route.ts`
+  - draft lookup, queue listing, status updates, content updates, and creation now require explicit tenant scope or return no data/fail closed before database side effects
+  - pending draft queue SQL pins both `agent_drafts` and `tickets` to the session tenant and scopes channel-detection subqueries by tenant
+  - draft route ticket events and audit logs now carry the same session tenant used to authorize the ticket and mutate the draft
 - Recovered and adapted the wrong-folder fixture-driven AI red-team regression value into v2-native modules:
   - `tests/fixtures/ai-red-team-cases.ts`
   - `tests/ai-red-team-regressions.test.ts`
@@ -389,6 +395,13 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-integrations-tenant-scope.test.ts`
   - `tests/calls-crm-e2e-script.test.ts`
   - machine agent auth and agent integration services no longer resolve a default active agent without tenant scope
+- Agent draft tenant-scope tests pass in the focused slice:
+  - `tests/agent-drafts-tenant-scope.test.ts`
+  - `tests/ai-drafts-route-api.test.ts`
+  - `tests/ticket-detail-tenant-isolation-api.test.ts`
+  - `tests/crm-route-tenant-session-boundary.test.ts`
+  - `tests/agent-merge-actions.test.ts`
+  - draft services return no data or reject writes without tenant scope, and the route carries tenant scope through draft mutations, ticket events, and audit logs
 - Fixture-driven AI red-team regression tests pass in the focused slice:
   - `tests/ai-red-team-regressions.test.ts`
   - `tests/prompt-safety.test.ts`
