@@ -11,6 +11,11 @@ import {
   type AgentPromptSandboxMode
 } from "@/server/agents/prompt-sandbox";
 import {
+  evaluatePromptSafety,
+  promptSafetyTelemetry,
+  type PromptSafetyDecision
+} from "@/server/ai/prompt-safety";
+import {
   appendAgentRunEvent,
   completeAgentRunStep,
   createAgentRunForOutbox,
@@ -64,6 +69,18 @@ const DEFAULT_PROCESSING_RECOVERY_SECONDS = 300;
 const DEFAULT_LANE_RETRY_SECONDS = 10;
 const MAX_AGENT_OUTBOX_ATTEMPTS = 5;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+class AgentDeliveryPolicyBlockedError extends Error {
+  promptSafety: PromptSafetyDecision;
+
+  constructor(promptSafety: PromptSafetyDecision) {
+    const reasonCodes =
+      promptSafety.flags.map((flag) => flag.code).join(", ") || "prompt_safety_denied";
+    super(`Runtime prompt safety blocked agent delivery: ${reasonCodes}`);
+    this.name = "AgentDeliveryPolicyBlockedError";
+    this.promptSafety = promptSafety;
+  }
+}
 
 function getProcessingRecoverySeconds() {
   const configured = Number(process.env.AGENT_OUTBOX_PROCESSING_RECOVERY_SECONDS ?? "300");
@@ -253,9 +270,18 @@ async function markDelivered(id: string, tenantId: string) {
   );
 }
 
-async function markFailed(id: string, tenantId: string, attemptCount: number, errorMessage: string) {
+async function markFailed(
+  id: string,
+  tenantId: string,
+  attemptCount: number,
+  errorMessage: string,
+  terminal = attemptCount >= MAX_AGENT_OUTBOX_ATTEMPTS
+) {
+  const effectiveAttemptCount = terminal
+    ? Math.max(attemptCount, MAX_AGENT_OUTBOX_ATTEMPTS)
+    : attemptCount;
   const nextAttempt = new Date(Date.now() + Math.min(attemptCount, 5) * 60000);
-  const status = attemptCount >= MAX_AGENT_OUTBOX_ATTEMPTS ? "failed" : "pending";
+  const status = terminal ? "failed" : "pending";
   await db.query(
     `UPDATE agent_outbox
      SET status = $1,
@@ -265,7 +291,7 @@ async function markFailed(id: string, tenantId: string, attemptCount: number, er
          updated_at = now()
      WHERE id = $5
        AND tenant_id = $6`,
-    [status, attemptCount, errorMessage.slice(0, 500), nextAttempt, id, tenantId]
+    [status, effectiveAttemptCount, errorMessage.slice(0, 500), nextAttempt, id, tenantId]
   );
 }
 
@@ -394,6 +420,93 @@ function promptSandboxModeForPolicy(mode: string | null | undefined): AgentPromp
   return "hybrid_review";
 }
 
+function collectPromptSafetyFragments(value: unknown, fragments: string[], depth = 0) {
+  if (fragments.length >= 80 || depth > 5 || value == null) return;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      fragments.push(trimmed);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectPromptSafetyFragments(item, fragments, depth + 1);
+      if (fragments.length >= 80) break;
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (fragments.length >= 80) break;
+      fragments.push(key);
+      collectPromptSafetyFragments(item, fragments, depth + 1);
+    }
+  }
+}
+
+function serializeRuntimePromptSafetyInput(eventType: string, payload: Record<string, unknown>) {
+  const fragments = [eventType];
+  collectPromptSafetyFragments(payload, fragments);
+  return fragments.join("\n").slice(0, 8000);
+}
+
+function promptSandboxModeForRuntimeSafety(
+  baseMode: AgentPromptSandboxMode,
+  promptSafety: PromptSafetyDecision
+): AgentPromptSandboxMode {
+  if (
+    promptSafety.toolPolicy.mode === "read_only" ||
+    promptSafety.toolPolicy.mode === "no_tools"
+  ) {
+    return baseMode === "dry_run" ? "dry_run" : "draft_only";
+  }
+  return baseMode;
+}
+
+function attachRuntimePromptSafetyToPayload(
+  payload: Record<string, unknown>,
+  promptSafety: PromptSafetyDecision
+) {
+  const metadata = readRecord(payload.metadata);
+  return {
+    ...payload,
+    metadata: {
+      ...(metadata ?? {}),
+      runtimePromptSafety: promptSafetyTelemetry(promptSafety)
+    }
+  };
+}
+
+async function evaluateRuntimeDeliveryPromptSafety({
+  tenantId,
+  runId,
+  eventType,
+  payload
+}: {
+  tenantId: string;
+  runId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}) {
+  const promptSafety = evaluatePromptSafety({
+    text: serializeRuntimePromptSafetyInput(eventType, payload),
+    source: "agent_outbox_event"
+  });
+  await appendAgentRunEvent({
+    tenantId,
+    runId,
+    eventType: "agent.prompt_safety.evaluated",
+    status: promptSafety.decision === "deny" ? "failed" : "running",
+    summary: `Runtime prompt safety ${promptSafety.decision}`,
+    eventData: promptSafetyTelemetry(promptSafety)
+  });
+  if (promptSafety.decision === "deny") {
+    throw new AgentDeliveryPolicyBlockedError(promptSafety);
+  }
+  return promptSafety;
+}
+
 function summarizeCustomerContextForLedger(context: AgentOutputCustomerContext) {
   return {
     schemaVersion: context.schemaVersion ?? "agent-customer-output-context.v1",
@@ -470,6 +583,12 @@ async function buildDeliveryPayload({
   payload: Record<string, unknown>;
   integration: AgentIntegration;
 }) {
+  const runtimePromptSafety = await evaluateRuntimeDeliveryPromptSafety({
+    tenantId,
+    runId,
+    eventType,
+    payload
+  });
   let context: DexterRagContext;
   try {
     context = await buildDexterRagContextForEvent({
@@ -496,11 +615,17 @@ async function buildDeliveryPayload({
     payload
   });
   await recordCustomerContextAttached({ tenantId, runId, context: customerContext });
-  const payloadWithCustomerContext = attachCustomerContextToPayload(payloadWithRag, customerContext);
+  const payloadWithCustomerContext = attachRuntimePromptSafetyToPayload(
+    attachCustomerContextToPayload(payloadWithRag, customerContext),
+    runtimePromptSafety
+  );
   const promptSandbox = buildAgentPromptSandbox({
     tenantId,
     runId,
-    mode: promptSandboxModeForPolicy(integration.policy_mode),
+    mode: promptSandboxModeForRuntimeSafety(
+      promptSandboxModeForPolicy(integration.policy_mode),
+      runtimePromptSafety
+    ),
     eventType,
     payload: payloadWithCustomerContext,
     policy: integration.policy,
@@ -621,6 +746,9 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
     } catch (error) {
       const message = error instanceof Error ? error.message : "Delivery failed";
       const attempts = event.attempt_count + 1;
+      const terminal =
+        error instanceof AgentDeliveryPolicyBlockedError ||
+        attempts >= MAX_AGENT_OUTBOX_ATTEMPTS;
       await completeDeliveryStepBestEffort({
         ledger: deliveryStep,
         status: "failed",
@@ -631,13 +759,13 @@ export async function deliverPendingAgentEvents({ integrationId, tenantId, limit
         },
         errorMessage: message
       });
-      await markFailed(event.id, event.tenant_id, attempts, message);
+      await markFailed(event.id, event.tenant_id, attempts, message, terminal);
       if (runId) {
         await markAgentRunFailed({
           tenantId: event.tenant_id,
           runId,
           errorMessage: message,
-          terminal: attempts >= MAX_AGENT_OUTBOX_ATTEMPTS,
+          terminal,
           attemptCount: attempts
         });
       }

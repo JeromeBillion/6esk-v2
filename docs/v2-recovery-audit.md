@@ -111,6 +111,7 @@ Date: 2026-06-06
   - `src/server/ai/dexter-rag-context.ts`
   - `src/server/agents/outbox.ts`
   - after a Dexter outbox run reserves its tenant/resource lane, delivery builds a bounded `dexter_rag_context.v1` payload from published tenant KB snippets, excludes unsafe chunks, carries redacted prompt-safety telemetry, and marks tenant-uploaded SOPs as untrusted context that cannot grant permissions or override platform policy
+  - outbox delivery now evaluates the central prompt-safety guard before RAG retrieval, customer-context construction, prompt sandboxing, runtime step creation, or native/http dispatch; high-risk queued event content is terminally blocked with redacted `agent.prompt_safety.evaluated` run evidence, while medium-risk content is forced into `draft_only` sandbox delivery with read-only/no-external-action telemetry
   - RAG attachment is recorded in `agent_run_events` as `agent.rag.context_attached` with citation IDs, document version/chunk IDs, confidence, safety summary, and retrieval filters
   - retrieval failures degrade to empty/error context and do not block core ticket/call/chat delivery
   - focused regression coverage proves bounded snippet shaping, no-query behavior, prompt-safety denials, compact metadata attachment, outbox delivery attachment, and graceful degradation
@@ -368,7 +369,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-outbox-rag.test.ts`
   - `tests/knowledge-retrieval.test.ts`
   - `tests/agent-outbox-lane.test.ts`
-  - outbox delivery now attaches server-built customer privacy context and prompt sandbox boundaries alongside RAG context before runtime delivery
+  - outbox delivery now blocks high-risk runtime prompt-safety events before RAG/runtime delivery, downgrades medium-risk content to draft-only sandbox delivery, and attaches server-built customer privacy context plus prompt sandbox boundaries alongside RAG context before runtime delivery
 - Dexter run replay diagnostics tests pass in the focused slice:
   - `tests/agent-run-replay.test.ts`
   - `tests/admin-agent-run-replay-api.test.ts`
