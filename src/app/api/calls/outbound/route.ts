@@ -122,6 +122,7 @@ export async function POST(request: Request) {
 
   const maxCallsPerHour = Number(process.env.RATE_LIMIT_CALLS_OUTBOUND ?? "0");
   const consentState = await getLatestVoiceConsentState({
+    tenantId,
     customerId: ticket.customer_id ?? null,
     phone: resolved.phone,
     email: requesterEmailForConsent(ticket.requester_email)

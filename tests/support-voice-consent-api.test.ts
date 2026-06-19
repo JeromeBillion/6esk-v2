@@ -1,17 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
+
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
+  sessionTenantId: vi.fn(),
   canManageTickets: vi.fn(),
   normalizeVoiceConsentEmail: vi.fn(),
   normalizeVoiceConsentPhone: vi.fn(),
   recordVoiceConsentEvent: vi.fn(),
   resolveExistingCustomerIdForVoiceConsent: vi.fn(),
-  getLatestVoiceConsentState: vi.fn()
+  getLatestVoiceConsentState: vi.fn(),
+  isTenantPublicIngressError: vi.fn(),
+  tenantScopeFromPublicIngressRequest: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser
+}));
+
+vi.mock("@/server/auth/tenant-session", () => ({
+  sessionTenantId: mocks.sessionTenantId
 }));
 
 vi.mock("@/server/auth/roles", () => ({
@@ -26,15 +35,27 @@ vi.mock("@/server/calls/consent", () => ({
   getLatestVoiceConsentState: mocks.getLatestVoiceConsentState
 }));
 
+vi.mock("@/server/tenant-public-ingress", () => ({
+  isTenantPublicIngressError: mocks.isTenantPublicIngressError,
+  tenantScopeFromPublicIngressRequest: mocks.tenantScopeFromPublicIngressRequest
+}));
+
 import { POST } from "@/app/api/support/voice-consent/route";
 
 describe("POST /api/support/voice-consent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue(null);
+    mocks.sessionTenantId.mockReturnValue(TENANT_ID);
     mocks.canManageTickets.mockReturnValue(false);
     mocks.normalizeVoiceConsentEmail.mockImplementation((value: string | null) => value);
     mocks.normalizeVoiceConsentPhone.mockImplementation((value: string | null) => value);
+    mocks.tenantScopeFromPublicIngressRequest.mockResolvedValue({
+      tenantId: TENANT_ID,
+      tenantKey: "acme",
+      origin: "http://localhost"
+    });
+    mocks.isTenantPublicIngressError.mockReturnValue(false);
     mocks.resolveExistingCustomerIdForVoiceConsent.mockResolvedValue("customer-1");
     mocks.recordVoiceConsentEvent.mockResolvedValue(undefined);
     mocks.getLatestVoiceConsentState.mockResolvedValue({
@@ -72,9 +93,16 @@ describe("POST /api/support/voice-consent", () => {
     });
     expect(mocks.recordVoiceConsentEvent).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         decision: "revoked",
         customerId: "customer-1"
       })
+    );
+    expect(mocks.resolveExistingCustomerIdForVoiceConsent).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT_ID })
+    );
+    expect(mocks.getLatestVoiceConsentState).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT_ID })
     );
   });
 

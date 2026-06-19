@@ -409,6 +409,7 @@ export async function getTicketCallOptions(
     null;
   const requesterEmail = extractRequesterEmail(ticket.requester_email);
   const consent = await getLatestVoiceConsentState({
+    tenantId,
     customerId: ticket.customer_id,
     phone: defaultCandidatePhone,
     email: requesterEmail

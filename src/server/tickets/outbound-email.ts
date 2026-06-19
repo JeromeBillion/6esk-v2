@@ -96,6 +96,7 @@ export async function createOutboundEmailTicket({
     null;
 
   await syncVoiceConsentFromMetadata({
+    tenantId: scopedTenantId,
     metadata: metadata ?? null,
     customerId: resolvedCustomerId,
     fallbackEmail: toEmail,

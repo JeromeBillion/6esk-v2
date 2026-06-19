@@ -237,6 +237,7 @@ export async function processCreateTicket({
         inboundPhone: toPhone
       });
       await syncVoiceConsentFromMetadata({
+        tenantId,
         metadata: callTicketMetadata,
         customerId: customerResolution?.customerId ?? null,
         fallbackPhone: toPhone,
@@ -249,6 +250,7 @@ export async function processCreateTicket({
         }
       });
       const consentState = await getLatestVoiceConsentState({
+        tenantId,
         customerId: customerResolution?.customerId ?? null,
         phone: toPhone
       });
@@ -390,6 +392,7 @@ export async function processCreateTicket({
         ...(data.metadata ?? {})
       } as Record<string, unknown>;
       await syncVoiceConsentFromMetadata({
+        tenantId,
         metadata: whatsappTicketMetadata,
         customerId: customerResolution?.customerId ?? null,
         fallbackPhone: toPhone,
@@ -583,6 +586,7 @@ export async function processCreateTicket({
     enrichedMetadata = applyIdentityConflictMetadata(enrichedMetadata, customerResolution.conflict);
   }
   await syncVoiceConsentFromMetadata({
+    tenantId,
     metadata: enrichedMetadata,
     customerId: customerResolution?.customerId ?? null,
     fallbackEmail: fromEmail,

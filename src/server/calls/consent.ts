@@ -25,6 +25,14 @@ type VoiceConsentMetadataSnapshot = {
   identityPhone: string | null;
 };
 
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId.`);
+  }
+  return normalized;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -232,12 +240,15 @@ export function extractVoiceConsentFromMetadata(
 }
 
 export async function resolveExistingCustomerIdForVoiceConsent({
+  tenantId,
   email,
   phone
 }: {
+  tenantId?: string | null;
   email?: string | null;
   phone?: string | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Resolve voice consent customer");
   const normalizedEmail = normalizeVoiceConsentEmail(email);
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   if (!normalizedEmail && !normalizedPhone) {
@@ -249,13 +260,15 @@ export async function resolveExistingCustomerIdForVoiceConsent({
      FROM customer_identities ci
      JOIN customers c ON c.id = ci.customer_id
      WHERE c.merged_into_customer_id IS NULL
+       AND c.tenant_id = $3
+       AND ci.tenant_id = c.tenant_id
        AND (
          ($1::text IS NOT NULL AND ci.identity_type = 'email' AND ci.identity_value = $1::text)
          OR ($2::text IS NOT NULL AND ci.identity_type = 'phone' AND ci.identity_value = $2::text)
        )
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
      LIMIT 1`,
-    [normalizedEmail, normalizedPhone]
+    [normalizedEmail, normalizedPhone, scopedTenantId]
   );
   if (byIdentity.rows[0]?.id) {
     return byIdentity.rows[0].id;
@@ -265,18 +278,20 @@ export async function resolveExistingCustomerIdForVoiceConsent({
     `SELECT c.id
      FROM customers c
      WHERE c.merged_into_customer_id IS NULL
+       AND c.tenant_id = $3
        AND (
          ($1::text IS NOT NULL AND lower(c.primary_email) = $1::text)
          OR ($2::text IS NOT NULL AND c.primary_phone = $2::text)
        )
      ORDER BY CASE c.kind WHEN 'registered' THEN 0 ELSE 1 END, c.created_at ASC
      LIMIT 1`,
-    [normalizedEmail, normalizedPhone]
+    [normalizedEmail, normalizedPhone, scopedTenantId]
   );
   return byPrimary.rows[0]?.id ?? null;
 }
 
 export async function recordVoiceConsentEvent({
+  tenantId,
   decision,
   customerId,
   phone,
@@ -287,6 +302,7 @@ export async function recordVoiceConsentEvent({
   occurredAt,
   metadata
 }: {
+  tenantId?: string | null;
   decision: VoiceConsentDecision;
   customerId?: string | null;
   phone?: string | null;
@@ -297,6 +313,7 @@ export async function recordVoiceConsentEvent({
   occurredAt?: Date | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Record voice consent event");
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   const normalizedEmail = normalizeVoiceConsentEmail(email);
   const normalizedCallbackPhone = normalizeVoiceConsentPhone(callbackPhone) ?? normalizedPhone;
@@ -312,8 +329,23 @@ export async function recordVoiceConsentEvent({
     throw new Error("Consent source is required.");
   }
 
+  if (customerId) {
+    const customer = await db.query(
+      `SELECT 1
+       FROM customers
+       WHERE id = $1
+         AND tenant_id = $2
+       LIMIT 1`,
+      [customerId, scopedTenantId]
+    );
+    if ((customer.rowCount ?? 0) === 0) {
+      throw new Error("Voice consent customer must belong to the same tenant.");
+    }
+  }
+
   await db.query(
     `INSERT INTO voice_consent_events (
+      tenant_id,
       customer_id,
       identity_type,
       identity_value,
@@ -324,9 +356,10 @@ export async function recordVoiceConsentEvent({
       event_at,
       metadata
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
     )`,
     [
+      scopedTenantId,
       customerId ?? null,
       identityType,
       identityValue,
@@ -341,6 +374,7 @@ export async function recordVoiceConsentEvent({
 }
 
 export async function syncVoiceConsentFromMetadata({
+  tenantId,
   metadata,
   customerId,
   fallbackPhone,
@@ -349,6 +383,7 @@ export async function syncVoiceConsentFromMetadata({
   consentTermsVersion,
   context
 }: {
+  tenantId?: string | null;
   metadata: Record<string, unknown> | null | undefined;
   customerId?: string | null;
   fallbackPhone?: string | null;
@@ -357,6 +392,7 @@ export async function syncVoiceConsentFromMetadata({
   consentTermsVersion?: string | null;
   context?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Sync voice consent from metadata");
   const snapshot = extractVoiceConsentFromMetadata(metadata);
   if (!snapshot) {
     return false;
@@ -369,6 +405,7 @@ export async function syncVoiceConsentFromMetadata({
   }
 
   await recordVoiceConsentEvent({
+    tenantId: scopedTenantId,
     decision: snapshot.state,
     customerId: customerId ?? null,
     phone,
@@ -387,18 +424,21 @@ export async function syncVoiceConsentFromMetadata({
 }
 
 export async function getLatestVoiceConsentState({
+  tenantId,
   customerId,
   phone,
   email
 }: {
+  tenantId?: string | null;
   customerId?: string | null;
   phone?: string | null;
   email?: string | null;
 }): Promise<VoiceConsentStateSnapshot> {
+  const scopedTenantId = requireTenantId(tenantId, "Get latest voice consent state");
   const normalizedPhone = normalizeVoiceConsentPhone(phone);
   const normalizedEmail = normalizeVoiceConsentEmail(email);
 
-  const values: Array<string> = [];
+  const values: Array<string> = [scopedTenantId];
   const conditions: string[] = [];
 
   if (customerId) {
@@ -451,7 +491,8 @@ export async function getLatestVoiceConsentState({
        source,
        event_at
      FROM voice_consent_events
-     WHERE ${conditions.join(" OR ")}
+     WHERE tenant_id = $1
+       AND (${conditions.join(" OR ")})
      ORDER BY event_at DESC, created_at DESC
      LIMIT 1`,
     values

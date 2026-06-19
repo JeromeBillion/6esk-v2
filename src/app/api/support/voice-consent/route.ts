@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { canManageTickets } from "@/server/auth/roles";
 import {
   getLatestVoiceConsentState,
@@ -8,6 +9,10 @@ import {
   recordVoiceConsentEvent,
   resolveExistingCustomerIdForVoiceConsent
 } from "@/server/calls/consent";
+import {
+  isTenantPublicIngressError,
+  tenantScopeFromPublicIngressRequest
+} from "@/server/tenant-public-ingress";
 
 const voiceConsentSchema = z.object({
   action: z.enum(["grant", "revoke"]),
@@ -57,6 +62,21 @@ export async function POST(request: Request) {
     );
   }
 
+  let tenantId = sessionUser ? sessionTenantId(sessionUser) : null;
+  if (canManage && !tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!tenantId) {
+    try {
+      tenantId = (await tenantScopeFromPublicIngressRequest(request)).tenantId;
+    } catch (error) {
+      if (isTenantPublicIngressError(error)) {
+        return Response.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
+    }
+  }
+
   const email = normalizeVoiceConsentEmail(data.email ?? null);
   const phone = normalizeVoiceConsentPhone(data.phone ?? null);
   const callbackPhone = normalizeVoiceConsentPhone(data.callbackPhone ?? null) ?? phone;
@@ -71,6 +91,7 @@ export async function POST(request: Request) {
   const customerId =
     data.customerId ??
     (await resolveExistingCustomerIdForVoiceConsent({
+      tenantId,
       email,
       phone: callbackPhone ?? phone
     }));
@@ -82,6 +103,7 @@ export async function POST(request: Request) {
   const termsVersion = data.termsVersion ?? process.env.CALLS_CONSENT_TERMS_VERSION ?? null;
 
   await recordVoiceConsentEvent({
+    tenantId,
     decision: data.action === "grant" ? "granted" : "revoked",
     customerId,
     email,
@@ -99,6 +121,7 @@ export async function POST(request: Request) {
   });
 
   const consent = await getLatestVoiceConsentState({
+    tenantId,
     customerId,
     phone: callbackPhone ?? phone,
     email

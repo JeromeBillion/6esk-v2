@@ -521,6 +521,17 @@ Before this recovery branch can replace `main`, run:
   - `tests/password-reset-api.test.ts`
   - `tests/analytics-sla-api.test.ts`
   - support macros and saved views reject tenantless sessions and include tenant predicates, password reset rows carry direct tenant ownership from request through consumption, and SLA analytics uses tenant-scoped config/ticket/message compliance data
+- Voice consent tenant-scope closure is now recovered into v2-native form:
+  - migration `0063_voice_consent_events_tenant_scope.sql`
+  - `tests/voice-consent-tenant-scope.test.ts`
+  - `tests/support-voice-consent-api.test.ts`
+  - `tests/calls-outbound-api.test.ts`
+  - `tests/agent-voice-actions.test.ts`
+  - `tests/support-tickets-route-api.test.ts`
+  - `tests/tickets-create-call-policy.test.ts`
+  - `tests/tickets-create-external-profile.test.ts`
+  - `tests/outbound-email-ticket-service.test.ts`
+  - voice consent event writes require tenant scope, customer IDs are ownership-validated before insertion, latest-consent reads filter by `tenant_id`, and public revocation resolves tenant scope through the public-ingress boundary instead of global consent history
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`
