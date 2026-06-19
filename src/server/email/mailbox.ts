@@ -1,5 +1,4 @@
 import { db } from "@/server/db";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type MailboxRecord = {
   id: string;
@@ -8,6 +7,19 @@ export type MailboxRecord = {
   address: string;
   owner_user_id: string | null;
 };
+
+function normalizeTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  return normalized || null;
+}
+
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = normalizeTenantId(tenantId);
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId`);
+  }
+  return normalized;
+}
 
 export async function getOrCreateMailbox(
   address: string,
@@ -20,7 +32,10 @@ export async function getOrCreateMailbox(
     [address]
   );
   const ownerUserId = ownerResult.rows[0]?.id ?? null;
-  const tenantId = tenantIdOverride ?? ownerResult.rows[0]?.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = requireTenantId(
+    normalizeTenantId(tenantIdOverride) ?? normalizeTenantId(ownerResult.rows[0]?.tenant_id),
+    "Create mailbox"
+  );
 
   const result = await db.query<MailboxRecord>(
     `INSERT INTO mailboxes (tenant_id, type, address, owner_user_id)
@@ -56,7 +71,7 @@ export async function findMailbox(address: string) {
 
 export async function resolveInboundMailbox(address: string, supportAddress: string) {
   if (address === supportAddress) {
-    return getOrCreateMailbox(address, supportAddress);
+    return findMailbox(address);
   }
 
   const existing = await findMailbox(address);

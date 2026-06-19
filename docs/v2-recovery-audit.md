@@ -508,6 +508,10 @@ Before this recovery branch can replace `main`, run:
   - customer profile/history, spam, WhatsApp resend, bulk email, tags, AI drafts, call options, mailbox listing, mailbox drafts, and mailbox message reads now reject tenantless sessions before route side effects
   - mailbox listing services return no data without tenant scope, platform mailbox lookup returns no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
   - broad ticket listing rejects tenantless sessions at the route and service layers before support queue SQL
+- Email mailbox creation/resolution tenant-scope tests pass in the focused slice:
+  - `tests/email-mailbox-tenant-scope.test.ts`
+  - `src/server/email/mailbox.ts`
+  - platform/support mailbox creation now requires an explicit tenant, personal mailbox creation derives tenant scope from the owner user, and inbound support-address resolution uses an existing mailbox-owned tenant instead of auto-creating a default-tenant mailbox
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`
