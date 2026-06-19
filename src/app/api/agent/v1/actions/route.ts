@@ -1924,6 +1924,7 @@ export async function POST(request: Request) {
 
         try {
           const reviewTask = await createMergeReviewTask({
+            tenantId,
             proposalType: reviewProposalType,
             ticketId: action.ticketId,
             sourceTicketId,

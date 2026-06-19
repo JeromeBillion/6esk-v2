@@ -155,6 +155,7 @@ describe("PATCH /api/merge-reviews/[reviewId]", () => {
       mergeResult: { sourceTicketId: "source", targetTicketId: "target" }
     });
     expect(mocks.resolveMergeReviewTask).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       reviewId: REVIEW_ID,
       decision: "approve",
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

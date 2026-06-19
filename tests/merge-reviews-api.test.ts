@@ -15,13 +15,16 @@ vi.mock("@/server/merge-reviews", () => ({
 
 import { GET } from "@/app/api/merge-reviews/route";
 
-function buildUser(roleName: "lead_admin" | "agent" | "viewer") {
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
+
+function buildUser(roleName: "lead_admin" | "agent" | "viewer", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -43,6 +46,16 @@ describe("GET /api/merge-reviews", () => {
 
   it("returns 403 for viewer role", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("viewer"));
+    const response = await GET(new Request("http://localhost/api/merge-reviews"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.listMergeReviewTasksForUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 before listing when session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("agent", null));
     const response = await GET(new Request("http://localhost/api/merge-reviews"));
     const body = await response.json();
 

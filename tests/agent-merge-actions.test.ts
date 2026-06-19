@@ -1014,6 +1014,7 @@ describe("agent merge actions route", () => {
     });
     expect(mocks.createMergeReviewTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         proposalType: "customer",
         sourceCustomerId: CUSTOMER_A,
         targetCustomerId: CUSTOMER_B
@@ -1067,6 +1068,7 @@ describe("agent merge actions route", () => {
     expect(body.results[0]).toMatchObject({ type: "propose_merge", status: "ok" });
     expect(mocks.createMergeReviewTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         proposalType: "ticket",
         sourceTicketId: TICKET_A,
         targetTicketId: TICKET_B,
@@ -1106,6 +1108,7 @@ describe("agent merge actions route", () => {
     });
     expect(mocks.createMergeReviewTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: TENANT_ID,
         proposalType: "linked_case",
         sourceTicketId: TICKET_A,
         targetTicketId: TICKET_B

@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import {
   listMergeReviewTasksForUser,
   type MergeReviewStatus
@@ -12,6 +13,9 @@ export async function GET(request: Request) {
   }
 
   if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!sessionTenantId(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

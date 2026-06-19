@@ -507,6 +507,13 @@ Before this recovery branch can replace `main`, run:
   - `tests/analytics-performance-tenant-scope-api.test.ts`
   - `tests/tickets-server.test.ts`
   - `tags` and `ticket_tags` are tenant-owned, tag helpers reject missing tenant scope, support tag CRUD/listing is tenant-filtered, and ticket list/detail, merge, inbound, portal, agent, bulk, and analytics tag paths use tenant-pinned joins/writes
+- Merge-review task and analytics overview tenant-scope closure is now recovered into v2-native form:
+  - migration `0061_merge_review_tasks_tenant_id.sql`
+  - `tests/merge-reviews-tenant-scope.test.ts`
+  - `tests/merge-reviews-api.test.ts`
+  - `tests/merge-review-decision-api.test.ts`
+  - `tests/analytics-overview-api.test.ts`
+  - merge-review tasks are tenant-owned, create/list/detail/resolve paths reject missing tenant scope, task ticket/customer references are validated under the caller tenant, resolution updates carry tenant predicates, and analytics overview no longer aggregates tickets/messages/calls/transcript jobs/merge metrics globally
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

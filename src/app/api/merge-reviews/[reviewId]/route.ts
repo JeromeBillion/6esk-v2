@@ -52,6 +52,7 @@ export async function PATCH(
 
   try {
     const result = await resolveMergeReviewTask({
+      tenantId,
       reviewId,
       decision: parsed.data.decision,
       actorUserId: user.id,

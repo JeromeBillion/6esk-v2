@@ -28,14 +28,16 @@ const START = new Date("2026-02-01T00:00:00.000Z");
 const END = new Date("2026-02-08T00:00:00.000Z");
 const TODAY_START = new Date("2026-02-07T00:00:00.000Z");
 const TODAY_END = new Date("2026-02-08T00:00:00.000Z");
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
-function buildUser() {
+function buildUser(tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: "admin@6ex.co.za",
     display_name: "Admin",
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: "lead_admin"
+    role_name: "lead_admin",
+    tenant_id: tenantId
   };
 }
 
@@ -55,6 +57,17 @@ describe("GET /api/analytics/overview", () => {
 
     expect(response.status).toBe(401);
     expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 before analytics SQL when the session has no tenant", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser(null));
+
+    const response = await GET(new Request("http://localhost/api/analytics/overview"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
@@ -151,5 +164,10 @@ describe("GET /api/analytics/overview", () => {
       totalFlags: 3,
       totalActionItems: 2
     });
+    expect(mocks.dbQuery.mock.calls.every(([, values]) => Array.isArray(values) && values.includes(TENANT_ID))).toBe(
+      true
+    );
+    expect(mocks.dbQuery.mock.calls[0]?.[0]).toContain("tenant_id = $3");
+    expect(mocks.dbQuery.mock.calls[1]?.[0]).toContain("tenant_id = $1");
   });
 });
