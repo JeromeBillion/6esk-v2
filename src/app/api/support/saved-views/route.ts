@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 
 const filtersSchema = z
@@ -31,13 +32,18 @@ export async function GET() {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const result = await db.query<SavedViewRow>(
     `SELECT id, name, filters, created_at, updated_at
      FROM support_saved_views
-     WHERE user_id = $1
+     WHERE tenant_id = $1
+       AND user_id = $2
      ORDER BY updated_at DESC, created_at DESC`,
-    [user.id]
+    [tenantId, user.id]
   );
 
   return Response.json({
@@ -56,6 +62,10 @@ export async function POST(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let payload: unknown;
   try {
@@ -71,10 +81,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await db.query<SavedViewRow>(
-      `INSERT INTO support_saved_views (user_id, name, filters)
-       VALUES ($1, $2, $3::jsonb)
+      `INSERT INTO support_saved_views (tenant_id, user_id, name, filters)
+       VALUES ($1, $2, $3, $4::jsonb)
        RETURNING id, name, filters, created_at, updated_at`,
-      [user.id, parsed.data.name, JSON.stringify(parsed.data.filters)]
+      [tenantId, user.id, parsed.data.name, JSON.stringify(parsed.data.filters)]
     );
     const row = result.rows[0];
     return Response.json({

@@ -221,4 +221,24 @@ describe("admin users and roles tenant scope", () => {
     expect(response.status).toBe(403);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
+
+  it("creates password reset tokens under the admin tenant", async () => {
+    mocks.dbQuery
+      .mockResolvedValueOnce({ rows: [{ id: "target-user", email: "target@example.com" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const response = await postPasswordReset(new Request("https://desk.example.com"), {
+      params: Promise.resolve({ userId: "target-user" })
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ status: "created" });
+    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO password_resets (tenant_id, user_id, token_hash, expires_at)"),
+      ["target-user", expect.any(String), expect.any(Date), TENANT_ID]
+    );
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT_ID }));
+  });
 });

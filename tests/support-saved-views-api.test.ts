@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const VIEW_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -30,7 +31,8 @@ function buildUser() {
     email: "agent@6ex.co.za",
     display_name: "Agent",
     role_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
-    role_name: "agent"
+    role_name: "agent",
+    tenant_id: TENANT_ID
   };
 }
 
@@ -78,8 +80,20 @@ describe("support saved views API", () => {
     ]);
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("FROM support_saved_views"),
-      [USER_ID]
+      [TENANT_ID, USER_ID]
     );
+    expect(mocks.dbQuery.mock.calls[0]?.[0]).toContain("tenant_id = $1");
+  });
+
+  it("GET rejects tenantless sessions before saved-view reads", async () => {
+    mocks.getSessionUser.mockResolvedValue({ ...buildUser(), tenant_id: null });
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("POST creates a saved view", async () => {
@@ -112,6 +126,10 @@ describe("support saved views API", () => {
       id: VIEW_ID,
       name: "Urgent Queue"
     });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO support_saved_views (tenant_id, user_id, name, filters)"),
+      [TENANT_ID, USER_ID, "Urgent Queue", JSON.stringify({ priority: "urgent", assigned: "mine" })]
+    );
   });
 
   it("PATCH updates a saved view", async () => {
@@ -144,6 +162,10 @@ describe("support saved views API", () => {
       id: VIEW_ID,
       name: "Voice Queue"
     });
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("AND tenant_id = $5"),
+      ["Voice Queue", JSON.stringify({ channel: "voice", assigned: "mine" }), VIEW_ID, USER_ID, TENANT_ID]
+    );
   });
 
   it("DELETE removes a saved view", async () => {
@@ -159,7 +181,8 @@ describe("support saved views API", () => {
     expect(body).toMatchObject({ status: "deleted" });
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("DELETE FROM support_saved_views"), [
       VIEW_ID,
-      USER_ID
+      USER_ID,
+      TENANT_ID
     ]);
   });
 });

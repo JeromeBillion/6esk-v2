@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
 
@@ -7,6 +8,10 @@ export async function GET(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
@@ -14,9 +19,11 @@ export async function GET(request: Request) {
   const slaResult = await db.query(
     `SELECT first_response_target_minutes, resolution_target_minutes
      FROM sla_configs
-     WHERE is_active = true
+     WHERE tenant_id = $1
+       AND is_active = true
      ORDER BY created_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenantId]
   );
 
   const sla = slaResult.rows[0] ?? {
@@ -35,12 +42,14 @@ export async function GET(request: Request) {
        SELECT MIN(sent_at) AS first_response
        FROM messages m
        WHERE m.ticket_id = t.id
+         AND m.tenant_id = t.tenant_id
          AND m.direction = 'outbound'
          AND m.sent_at IS NOT NULL
      ) r ON true
      WHERE t.created_at >= $1 AND t.created_at < $2
+       AND t.tenant_id = $4
        AND r.first_response IS NOT NULL`,
-    [start, end, sla.first_response_target_minutes]
+    [start, end, sla.first_response_target_minutes, tenantId]
   );
 
   const resolutionResult = await db.query(
@@ -51,8 +60,9 @@ export async function GET(request: Request) {
         )::int AS compliant
      FROM tickets t
      WHERE t.solved_at IS NOT NULL
-       AND t.solved_at >= $1 AND t.solved_at < $2`,
-    [start, end, sla.resolution_target_minutes]
+       AND t.solved_at >= $1 AND t.solved_at < $2
+       AND t.tenant_id = $4`,
+    [start, end, sla.resolution_target_minutes, tenantId]
   );
 
   const firstResponseTotal = firstResponseResult.rows[0]?.total ?? 0;

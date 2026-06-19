@@ -24,10 +24,10 @@ export async function POST(request: Request) {
 
   const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
   const resetResult = await db.query(
-    `SELECT pr.id, pr.user_id, pr.expires_at, pr.used_at, u.tenant_id
+    `SELECT pr.id, pr.user_id, pr.tenant_id, pr.expires_at, pr.used_at
      FROM password_resets pr
-     JOIN users u ON u.id = pr.user_id
      WHERE pr.token_hash = $1
+       AND pr.tenant_id IS NOT NULL
      ORDER BY pr.created_at DESC
      LIMIT 1`,
     [tokenHash]
@@ -57,12 +57,10 @@ export async function POST(request: Request) {
       reset.tenant_id
     ]);
     await client.query(
-      `UPDATE password_resets pr
+      `UPDATE password_resets
        SET used_at = now()
-       FROM users u
-       WHERE pr.id = $1
-         AND pr.user_id = u.id
-         AND u.tenant_id = $2`,
+       WHERE id = $1
+         AND tenant_id = $2`,
       [reset.id, reset.tenant_id]
     );
     const revoked = await client.query(

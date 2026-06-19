@@ -74,8 +74,16 @@ describe("POST /api/auth/password-reset", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT pr.id, pr.user_id, pr.tenant_id"),
+      [expect.any(String)]
+    );
     expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("revoke_reason = 'password_reset'"), [
       "user-1",
+      "tenant-1"
+    ]);
+    expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE id = $1\n         AND tenant_id = $2"), [
+      "reset-1",
       "tenant-1"
     ]);
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(

@@ -514,6 +514,13 @@ Before this recovery branch can replace `main`, run:
   - `tests/merge-review-decision-api.test.ts`
   - `tests/analytics-overview-api.test.ts`
   - merge-review tasks are tenant-owned, create/list/detail/resolve paths reject missing tenant scope, task ticket/customer references are validated under the caller tenant, resolution updates carry tenant predicates, and analytics overview no longer aggregates tickets/messages/calls/transcript jobs/merge metrics globally
+- Support config and password reset tenant-scope closure is now recovered into v2-native form:
+  - migration `0062_support_auth_config_tenant_scope.sql`
+  - `tests/support-macros-api.test.ts`
+  - `tests/support-saved-views-api.test.ts`
+  - `tests/password-reset-api.test.ts`
+  - `tests/analytics-sla-api.test.ts`
+  - support macros and saved views reject tenantless sessions and include tenant predicates, password reset rows carry direct tenant ownership from request through consumption, and SLA analytics uses tenant-scoped config/ticket/message compliance data
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

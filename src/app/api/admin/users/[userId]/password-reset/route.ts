@@ -32,8 +32,8 @@ export async function POST(
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
   await db.query(
-    `INSERT INTO password_resets (user_id, token_hash, expires_at)
-     SELECT id, $2, $3
+    `INSERT INTO password_resets (tenant_id, user_id, token_hash, expires_at)
+     SELECT tenant_id, id, $2, $3
      FROM users
      WHERE id = $1
        AND tenant_id = $4`,
