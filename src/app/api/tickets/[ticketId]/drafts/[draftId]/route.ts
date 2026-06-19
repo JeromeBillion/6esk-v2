@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftContent, updateDraftStatus } from "@/server/agents/drafts";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
@@ -34,7 +35,10 @@ export async function PATCH(
   }
 
   const { ticketId, draftId } = await params;
-  const tenantId = user.tenant_id ?? "";
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });

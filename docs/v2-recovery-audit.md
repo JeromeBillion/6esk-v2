@@ -450,6 +450,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/messages-route-api.test.ts`
   - `tests/attachment-route-tenant-isolation-api.test.ts`
   - ticket detail/update, message detail/update, and attachment download now reject tenantless sessions before customer conversation SQL/object-store access
+- Authenticated CRM/mailbox route tenant-scope tests pass in the focused slice:
+  - `tests/crm-route-tenant-session-boundary.test.ts`
+  - `tests/mailboxes-server.test.ts`
+  - customer profile/history, spam, WhatsApp resend, bulk email, tags, AI drafts, call options, mailbox listing, mailbox drafts, and mailbox message reads now reject tenantless sessions before route side effects
+  - mailbox listing services return no data without tenant scope, and mailbox message SQL includes `m.tenant_id = $2` plus tenant-scoped attachment existence checks after mailbox authorization
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

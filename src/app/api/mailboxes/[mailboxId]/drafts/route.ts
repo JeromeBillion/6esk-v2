@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { listInboxMailboxesForUser } from "@/server/mailboxes";
 import { upsertMailDraft } from "@/server/email/drafts";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const mailboxDraftSchema = z.object({
   draftId: z.string().uuid().optional().nullable(),
@@ -26,7 +26,10 @@ export async function POST(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const mailboxes = await listInboxMailboxesForUser(user);
   const mailbox = mailboxes.find((entry) => entry.id === mailboxId);

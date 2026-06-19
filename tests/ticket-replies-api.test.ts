@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const TICKET_ID = "11111111-1111-1111-1111-111111111111";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const OTHER_AGENT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
@@ -30,13 +31,18 @@ vi.mock("@/server/workspace-modules", async (importOriginal) => ({
 
 import { POST } from "@/app/api/tickets/[ticketId]/replies/route";
 
-function buildUser(roleName: "lead_admin" | "agent" | "viewer", userId = AGENT_ID) {
+function buildUser(
+  roleName: "lead_admin" | "agent" | "viewer",
+  userId = AGENT_ID,
+  tenantId: string | null = TENANT_ID
+) {
   return {
     id: userId,
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -87,6 +93,17 @@ describe("POST /api/tickets/[ticketId]/replies", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("agent", AGENT_ID, null));
+
+    const { response, body } = await postReply({ text: "Need update" });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
     expect(mocks.sendTicketReply).not.toHaveBeenCalled();
   });
 

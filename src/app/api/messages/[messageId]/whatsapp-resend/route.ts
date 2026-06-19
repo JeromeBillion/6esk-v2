@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
@@ -7,7 +8,6 @@ import { getObjectBuffer } from "@/server/storage/r2";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function normalizeContact(value: string | null | undefined) {
   if (!value) return "";
@@ -29,7 +29,10 @@ export async function POST(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { getTicketById } from "@/server/tickets";
 import { MergeError, mergeTickets } from "@/server/merges";
 import { MERGE_IRREVERSIBLE_ACK_TEXT } from "@/lib/merge/constants";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const mergeSchema = z.object({
   sourceTicketId: z.string().uuid(),
@@ -39,7 +39,10 @@ export async function POST(request: Request) {
   }
 
   const { sourceTicketId, targetTicketId, reason } = parsed.data;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (sourceTicketId === targetTicketId) {
     return Response.json(
       {

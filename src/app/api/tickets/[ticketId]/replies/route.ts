@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const replySchema = z.object({
   text: z.string().optional().nullable(),
@@ -66,7 +66,10 @@ export async function POST(
   }
 
   const { ticketId } = await params;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });

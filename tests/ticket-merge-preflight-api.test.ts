@@ -35,14 +35,16 @@ import { POST } from "@/app/api/tickets/merge/preflight/route";
 
 const SOURCE_TICKET_ID = "11111111-1111-1111-1111-111111111111";
 const TARGET_TICKET_ID = "22222222-2222-2222-2222-222222222222";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
-function buildAgentUser() {
+function buildAgentUser(tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: "agent@6ex.co.za",
     display_name: "Support Agent",
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: "agent"
+    role_name: "agent",
+    tenant_id: tenantId
   };
 }
 
@@ -151,6 +153,20 @@ describe("POST /api/tickets/merge/preflight", () => {
 
     expect(response.status).toBe(401);
     expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(mocks.preflightTicketMerge).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildAgentUser(null));
+
+    const { response, body } = await postPreflight({
+      sourceTicketId: SOURCE_TICKET_ID,
+      targetTicketId: TARGET_TICKET_ID
+    });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getTicketById).not.toHaveBeenCalled();
     expect(mocks.preflightTicketMerge).not.toHaveBeenCalled();
   });
 

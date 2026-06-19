@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getMessageById, getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { recordAuditLog } from "@/server/audit";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const schema = z.object({
   isSpam: z.boolean(),
@@ -22,7 +22,10 @@ export async function PATCH(
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { messageId } = await params;
   const message = await getMessageById(messageId, tenantId);

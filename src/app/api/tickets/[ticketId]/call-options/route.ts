@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { getTicketById } from "@/server/tickets";
 import { getTicketCallOptions } from "@/server/calls/service";
 
@@ -16,7 +17,10 @@ export async function GET(
   }
 
   const { ticketId } = await params;
-  const tenantId = user.tenant_id ?? "";
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });

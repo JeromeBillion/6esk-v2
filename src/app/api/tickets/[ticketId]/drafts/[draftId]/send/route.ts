@@ -1,12 +1,12 @@
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { getDraftById, updateDraftStatus } from "@/server/agents/drafts";
 import { sendTicketReply } from "@/server/email/replies";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { recordModuleUsageEvent, resolveAiProviderMode } from "@/server/module-metering";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function inferDraftReplyModule(input: {
   requesterEmail: string | null | undefined;
@@ -32,7 +32,10 @@ export async function POST(
   }
 
   const { ticketId, draftId } = await params;
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const ticket = await getTicketById(ticketId, tenantId);
   if (!ticket) {
     return Response.json({ error: "Not found" }, { status: 404 });

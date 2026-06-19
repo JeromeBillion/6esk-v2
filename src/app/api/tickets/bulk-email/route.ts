@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { normalizeAddressList } from "@/server/email/normalize";
@@ -10,7 +11,6 @@ import { deliverPendingAgentEvents } from "@/server/agents/outbox";
 import { createOutboundEmailTicket } from "@/server/tickets/outbound-email";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 import { runInBackground } from "@/server/async";
 
 const bulkEmailSchema = z.object({
@@ -71,7 +71,10 @@ export async function POST(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (!(await checkModuleEntitlement("email", tenantId))) {
     return Response.json(
       {

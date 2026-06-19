@@ -1,7 +1,7 @@
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { listInboxMailboxesForUser } from "@/server/mailboxes";
 import { deleteMailDraft } from "@/server/email/drafts";
-import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export async function DELETE(
   _request: Request,
@@ -12,7 +12,10 @@ export async function DELETE(
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const mailboxes = await listInboxMailboxesForUser(user);
   const mailbox = mailboxes.find((entry) => entry.id === mailboxId);

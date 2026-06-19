@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { listInboxMailboxesForUser } from "@/server/mailboxes";
 
 export async function GET(
@@ -10,6 +11,10 @@ export async function GET(
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const mailboxes = await listInboxMailboxesForUser(user);
@@ -35,9 +40,10 @@ export async function GET(
               NULLIF(m.metadata->>'draft_saved_at', '')::timestamptz,
               m.created_at
             ) AS sort_at,
-            EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments
+            EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.tenant_id = $2) AS has_attachments
      FROM messages m
      WHERE m.mailbox_id = $1
+       AND m.tenant_id = $2
      ORDER BY COALESCE(
               m.received_at,
               m.sent_at,
@@ -45,7 +51,7 @@ export async function GET(
               m.created_at
             ) DESC
      LIMIT 200`,
-    [mailboxId]
+    [mailboxId, tenantId]
   );
 
   return Response.json({ messages: result.rows });

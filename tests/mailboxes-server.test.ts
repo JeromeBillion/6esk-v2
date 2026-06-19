@@ -13,6 +13,8 @@ vi.mock("@/server/db", () => ({
 import { listInboxMailboxesForUser } from "@/server/mailboxes";
 
 describe("listInboxMailboxesForUser", () => {
+  const tenantId = "99999999-9999-4999-8999-999999999999";
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dbQuery.mockResolvedValue({
@@ -34,7 +36,8 @@ describe("listInboxMailboxesForUser", () => {
       email: "jerome.choma@6ex.co.za",
       display_name: "Jerome",
       role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-      role_name: "lead_admin"
+      role_name: "lead_admin",
+      tenant_id: tenantId
     };
 
     const result = await listInboxMailboxesForUser(user);
@@ -51,6 +54,22 @@ describe("listInboxMailboxesForUser", () => {
     const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
     expect(sql).toContain("JOIN mailbox_memberships mm ON mm.mailbox_id = m.id");
     expect(sql).toContain("m.type = 'personal'");
-    expect(values).toEqual([user.id, "00000000-0000-0000-0000-000000000001"]);
+    expect(values).toEqual([user.id, tenantId]);
+  });
+
+  it("fails closed without tenant scope", async () => {
+    const user = {
+      id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      email: "jerome.choma@6ex.co.za",
+      display_name: "Jerome",
+      role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      role_name: "lead_admin",
+      tenant_id: null
+    };
+
+    const result = await listInboxMailboxesForUser(user);
+
+    expect(result).toEqual([]);
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

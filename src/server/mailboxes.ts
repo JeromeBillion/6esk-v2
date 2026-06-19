@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type MailboxSummary = {
@@ -12,7 +13,10 @@ export type MailboxSummary = {
 };
 
 export async function listMailboxesForUser(user: SessionUser) {
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return [];
+  }
   if (user.role_name === LEAD_ADMIN_ROLE) {
     const result = await db.query<MailboxSummary>(
       `SELECT id, address, type, provider::text,
@@ -46,7 +50,10 @@ export async function listMailboxesForUser(user: SessionUser) {
 }
 
 export async function listInboxMailboxesForUser(user: SessionUser) {
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return [];
+  }
   const result = await db.query<MailboxSummary>(
     `SELECT m.id, m.address, m.type, m.provider::text,
             CASE
