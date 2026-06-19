@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { recordAuditLog } from "@/server/audit";
 
@@ -15,6 +16,10 @@ export async function PATCH(
 ) {
   const user = await getSessionUser();
   if (!isLeadAdmin(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -64,6 +69,7 @@ export async function PATCH(
     }
     const updated = result.rows[0];
     await recordAuditLog({
+      tenantId,
       actorUserId: user?.id ?? null,
       action: "tag_updated",
       entityType: "tag",
@@ -84,6 +90,10 @@ export async function DELETE(
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { tagId } = await params;
   const result = await db.query("DELETE FROM tags WHERE id = $1 RETURNING id", [tagId]);
@@ -91,6 +101,7 @@ export async function DELETE(
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   await recordAuditLog({
+    tenantId,
     actorUserId: user?.id ?? null,
     action: "tag_deleted",
     entityType: "tag",

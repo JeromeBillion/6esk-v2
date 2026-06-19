@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   buildDeskOperatorDialTwiML: vi.fn(),
   buildHoldAndRetryTwiML: vi.fn(),
   buildUnavailableTwiML: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("@/server/calls/service", () => ({
@@ -46,7 +47,8 @@ vi.mock("@/server/calls/twilio-queue", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 vi.mock("@/server/provider-webhook-secrets", () => {
@@ -105,6 +107,7 @@ describe("POST /api/calls/webhooks/twilio/voice", () => {
     mocks.buildHoldAndRetryTwiML.mockReturnValue("<Response><Pause length=\"5\" /></Response>");
     mocks.buildUnavailableTwiML.mockReturnValue("<Response><Hangup /></Response>");
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -205,7 +208,7 @@ describe("POST /api/calls/webhooks/twilio/voice", () => {
     expect(mocks.validateTwilioWebhookForTenant).not.toHaveBeenCalled();
     expect(mocks.createOrUpdateInboundCall).not.toHaveBeenCalled();
     expect(mocks.reserveNextVoiceDeskOperatorForCall).not.toHaveBeenCalled();
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordPlatformAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "call_webhook_rejected",
         data: expect.objectContaining({

@@ -15,7 +15,7 @@ import {
   buildUnavailableTwiML,
   buildVoiceResponse
 } from "@/server/calls/twilio-queue";
-import { recordAuditLog } from "@/server/audit";
+import { recordPlatformAuditLog } from "@/server/audit";
 import {
   integrationError,
   validateIntegrationApiVersion
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (isInboundCallProviderRoutingError(error)) {
-      runInBackground(recordAuditLog({
+      runInBackground(recordPlatformAuditLog({
         action: "call_webhook_rejected",
         entityType: "call_webhook",
         data: {
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
   }
 
   if (!routedScope && shouldRequireTenantProviderWebhookSecrets()) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -143,7 +143,7 @@ export async function POST(request: Request) {
   }
 
   if (!verification.valid) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {

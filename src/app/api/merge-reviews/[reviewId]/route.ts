@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { recordTicketEvent } from "@/server/tickets";
 import {
@@ -24,6 +25,10 @@ export async function PATCH(
   }
 
   if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -59,6 +64,7 @@ export async function PATCH(
         : "merge_review_rejected";
 
     await recordAuditLog({
+      tenantId,
       actorUserId: user.id,
       action: actionName,
       entityType: "merge_review_task",
@@ -74,6 +80,7 @@ export async function PATCH(
 
     if (task.ticket_id) {
       await recordTicketEvent({
+        tenantId,
         ticketId: task.ticket_id,
         eventType:
           parsed.data.decision === "approve"

@@ -486,6 +486,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-calls-outbox-api.test.ts`
   - `tests/admin-calls-retry-api.test.ts`
   - `tests/admin-calls-failed-api.test.ts`
+  - `tests/admin-calls-dead-letter-tenant-scope.test.ts`
   - `tests/admin-calls-transcript-outbox-api.test.ts`
   - `tests/admin-calls-transcript-ai-api.test.ts`
   - `tests/admin-calls-transcript-ai-failed-api.test.ts`
@@ -495,6 +496,13 @@ Before this recovery branch can replace `main`, run:
   - `tests/call-transcript-ai-worker.test.ts`
   - `tests/call-transcript-jobs-tenant-isolation.test.ts`
   - call delivery/retry and transcript/transcript-AI maintenance now require explicit tenant scope; inbound call ingress requires explicit tenant scope or `CALLS_TENANT_ID`; standalone maintenance scripts and the combined jobs runner send tenant headers
+  - the v1 dead-letter tenant-scope regression was recovered in v2-native form: dead-letter list/recover/quarantine/discard/batch-recover operations reject tenantless admin sessions, filter `call_outbox_events` by `tenant_id`, and write audit evidence with the same tenant
+- Audit helper tenant-scope tests pass in the focused slice:
+  - `tests/audit-ticket-logs.test.ts`
+  - `src/server/audit.ts`
+  - tenant audit writes and ticket audit reads now reject missing tenant scope, actor joins are tenant-pinned, and tenantless auth/security events must use the explicit platform-audit helper instead of silently falling back to the default tenant
+- Support tag catalog data-model tenantization remains a residual blocker:
+  - route-level tenantless rejection is present, but `tags` / `ticket_tags` are still globally keyed and need a v2-native tenant-owned migration, helper updates, and regression coverage before launch readiness
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

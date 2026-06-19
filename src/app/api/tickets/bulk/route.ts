@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { addTagsToTicket, recordTicketEvent, removeTagsFromTicket } from "@/server/tickets";
@@ -26,6 +27,7 @@ const bulkPatchSchema = z
 
 type TicketSummaryRow = {
   id: string;
+  tenant_id: string;
   status: "new" | "open" | "pending" | "solved" | "closed";
   priority: "low" | "normal" | "high" | "urgent";
   assigned_user_id: string | null;
@@ -37,6 +39,10 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -61,11 +67,12 @@ export async function PATCH(request: Request) {
     .filter(Boolean);
 
   const ticketsResult = await db.query<TicketSummaryRow>(
-    `SELECT id, status, priority, assigned_user_id
+    `SELECT id, tenant_id, status, priority, assigned_user_id
      FROM tickets
      WHERE id = ANY($1::uuid[])
+       AND tenant_id = $2
        AND merged_into_ticket_id IS NULL`,
-    [uniqueTicketIds]
+    [uniqueTicketIds, tenantId]
   );
   const rows = ticketsResult.rows;
 
@@ -120,10 +127,12 @@ export async function PATCH(request: Request) {
 
   if (updates.length > 0) {
     values.push(uniqueTicketIds);
+    values.push(tenantId);
     await db.query(
       `UPDATE tickets
        SET ${updates.join(", ")}, updated_at = now()
-       WHERE id = ANY($${index}::uuid[])`,
+       WHERE id = ANY($${index++}::uuid[])
+         AND tenant_id = $${index}`,
       values
     );
   }
@@ -134,6 +143,7 @@ export async function PATCH(request: Request) {
 
     if (Object.prototype.hasOwnProperty.call(parsed.data, "status") && parsed.data.status !== row.status) {
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "status_updated",
         actorUserId: user.id,
@@ -144,6 +154,7 @@ export async function PATCH(request: Request) {
 
     if (Object.prototype.hasOwnProperty.call(parsed.data, "priority") && parsed.data.priority !== row.priority) {
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "priority_updated",
         actorUserId: user.id,
@@ -157,6 +168,7 @@ export async function PATCH(request: Request) {
       parsed.data.assignedUserId !== row.assigned_user_id
     ) {
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "assignment_updated",
         actorUserId: user.id,
@@ -176,6 +188,7 @@ export async function PATCH(request: Request) {
         await removeTagsFromTicket(ticketId, removeTags);
       }
       await recordTicketEvent({
+        tenantId,
         ticketId,
         eventType: "tags_updated",
         actorUserId: user.id,
@@ -185,6 +198,7 @@ export async function PATCH(request: Request) {
 
     if (Object.keys(auditChanges).length > 0 || addTags.length > 0 || removeTags.length > 0) {
       await recordAuditLog({
+        tenantId,
         actorUserId: user.id,
         action: "ticket_bulk_updated",
         entityType: "ticket",

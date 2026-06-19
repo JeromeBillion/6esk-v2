@@ -1,11 +1,12 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
-import { recordAuditLog } from "@/server/audit";
 
 export type DeadLetterEvent = {
   id: string;
+  tenant_id: string;
   call_session_id: string | null;
   direction: "inbound" | "outbound";
   status: "failed" | "poison" | "quarantined";
@@ -46,6 +47,10 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const action = url.searchParams.get("action") ?? "list";
@@ -57,6 +62,7 @@ export async function GET(request: Request) {
   let query = `
     SELECT
       id,
+      tenant_id,
       call_session_id,
       direction,
       status,
@@ -71,10 +77,11 @@ export async function GET(request: Request) {
       next_attempt_at,
       EXTRACT(EPOCH FROM (now() - created_at)) / 60.0 AS age_minutes
     FROM call_outbox_events
-    WHERE (status = 'failed' OR last_error IS NOT NULL)
+    WHERE tenant_id = $1
+      AND (status = 'failed' OR last_error IS NOT NULL)
   `;
 
-  const params: (string | number)[] = [];
+  const params: (string | number)[] = [tenantId];
 
   if (statusFilter !== "all") {
     query += ` AND status = $${params.length + 1}`;
@@ -109,8 +116,10 @@ export async function GET(request: Request) {
     }>(
       `SELECT status, COUNT(*)::int AS count
        FROM call_outbox_events
-       WHERE (status = 'failed' OR last_error IS NOT NULL)
-       GROUP BY status`
+       WHERE tenant_id = $1
+         AND (status = 'failed' OR last_error IS NOT NULL)
+       GROUP BY status`,
+      [tenantId]
     );
 
     // Count by error code
@@ -120,10 +129,12 @@ export async function GET(request: Request) {
     }>(
       `SELECT last_error_code AS code, COUNT(*)::int AS count
        FROM call_outbox_events
-       WHERE (status = 'failed' OR last_error IS NOT NULL)
+       WHERE tenant_id = $1
+         AND (status = 'failed' OR last_error IS NOT NULL)
        GROUP BY last_error_code
        ORDER BY count DESC
-       LIMIT 10`
+       LIMIT 10`,
+      [tenantId]
     );
 
     // Find oldest event
@@ -135,9 +146,11 @@ export async function GET(request: Request) {
       `SELECT id, created_at,
               EXTRACT(EPOCH FROM (now() - created_at)) / 60.0 AS age_minutes
        FROM call_outbox_events
-       WHERE (status = 'failed' OR last_error IS NOT NULL)
+       WHERE tenant_id = $1
+         AND (status = 'failed' OR last_error IS NOT NULL)
        ORDER BY created_at ASC
-       LIMIT 1`
+       LIMIT 1`,
+      [tenantId]
     );
 
     const summary: DeadLetterSummary = {
@@ -183,6 +196,10 @@ export async function PATCH(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: unknown;
   try {
@@ -207,8 +224,11 @@ export async function PATCH(request: Request) {
 
     // Verify event exists
     const event = await client.query(
-      `SELECT id, call_session_id FROM call_outbox_events WHERE id = $1`,
-      [eventId]
+      `SELECT id, call_session_id, tenant_id
+       FROM call_outbox_events
+       WHERE id = $1
+         AND tenant_id = $2`,
+      [eventId, tenantId]
     );
 
     if (event.rows.length === 0) {
@@ -228,14 +248,16 @@ export async function PATCH(request: Request) {
              last_error_code = NULL,
              next_attempt_at = now(),
              updated_at = now()
-         WHERE id = $1`,
-        [eventId]
+         WHERE id = $1
+           AND tenant_id = $2`,
+        [eventId, tenantId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
+          tenantId,
           user?.id ?? null,
           "dead_letter_recovered",
           "call_outbox_events",
@@ -254,14 +276,16 @@ export async function PATCH(request: Request) {
          SET status = 'quarantined',
              reason = $1,
              updated_at = now()
-         WHERE id = $2`,
-        [notes || "Manual quarantine", eventId]
+         WHERE id = $2
+           AND tenant_id = $3`,
+        [notes || "Manual quarantine", eventId, tenantId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
+          tenantId,
           user?.id ?? null,
           "dead_letter_quarantined",
           "call_outbox_events",
@@ -276,14 +300,15 @@ export async function PATCH(request: Request) {
     } else if (patchAction === "discard") {
       // Remove the event (irreversible, use with caution)
       await client.query(
-        `DELETE FROM call_outbox_events WHERE id = $1`,
-        [eventId]
+        `DELETE FROM call_outbox_events WHERE id = $1 AND tenant_id = $2`,
+        [eventId, tenantId]
       );
 
       await client.query(
-        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
+          tenantId,
           user?.id ?? null,
           "dead_letter_discarded",
           "call_outbox_events",
@@ -325,6 +350,10 @@ export async function POST(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: unknown;
   try {
@@ -348,11 +377,11 @@ export async function POST(request: Request) {
   try {
     await client.query("BEGIN");
 
-    let whereClause = "(status = 'failed' OR last_error IS NOT NULL)";
-    const params: (string | number | string[])[] = [];
+    let whereClause = "tenant_id = $1 AND (status = 'failed' OR last_error IS NOT NULL)";
+    const params: (string | number | string[])[] = [tenantId];
 
     if (eventIds && eventIds.length > 0) {
-      whereClause = `id = ANY($${params.length + 1})`;
+      whereClause += ` AND id = ANY($${params.length + 1})`;
       params.push(eventIds);
     } else if (filter) {
       if (filter.status) {
@@ -389,9 +418,10 @@ export async function POST(request: Request) {
       const recoveredCount = result.rows.length;
 
       await client.query(
-        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, data)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
+          tenantId,
           user?.id ?? null,
           "dead_letter_batch_recovered",
           "call_outbox_events",

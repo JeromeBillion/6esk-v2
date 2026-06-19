@@ -41,6 +41,7 @@ vi.mock("@/server/tickets", () => ({
 import { PATCH } from "@/app/api/merge-reviews/[reviewId]/route";
 
 const REVIEW_ID = "55555555-5555-5555-5555-555555555555";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 function buildUser(roleName: "agent" | "viewer") {
   return {
@@ -48,7 +49,8 @@ function buildUser(roleName: "agent" | "viewer") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -121,6 +123,16 @@ describe("PATCH /api/merge-reviews/[reviewId]", () => {
     expect(body).toMatchObject({ error: "Forbidden" });
   });
 
+  it("returns 403 when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({ ...buildUser("agent"), tenant_id: null });
+
+    const { response, body } = await patchDecision({ decision: "approve" });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getMergeReviewTaskForUser).not.toHaveBeenCalled();
+  });
+
   it("returns 404 when review is not visible to user", async () => {
     mocks.getMergeReviewTaskForUser.mockResolvedValue(null);
 
@@ -151,12 +163,14 @@ describe("PATCH /api/merge-reviews/[reviewId]", () => {
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "merge_review_approved",
+        tenantId: TENANT_ID,
         entityId: REVIEW_ID
       })
     );
     expect(mocks.recordTicketEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         ticketId: "11111111-1111-1111-1111-111111111111",
+        tenantId: TENANT_ID,
         eventType: "merge_review_applied"
       })
     );

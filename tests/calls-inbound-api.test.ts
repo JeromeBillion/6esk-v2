@@ -3,7 +3,8 @@ import { buildCallWebhookSignature } from "@/server/calls/webhook";
 
 const mocks = vi.hoisted(() => ({
   createOrUpdateInboundCall: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("@/server/calls/service", () => ({
@@ -22,7 +23,8 @@ vi.mock("@/server/calls/service", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 import { POST } from "@/app/api/calls/inbound/route";
@@ -60,6 +62,7 @@ describe("POST /api/calls/inbound", () => {
       createdTicket: false
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

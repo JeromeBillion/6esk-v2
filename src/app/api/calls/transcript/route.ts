@@ -3,7 +3,7 @@ import { timingSafeEqual } from "crypto";
 import { attachCallTranscript, resolveCallSessionProviderScope } from "@/server/calls/service";
 import { normalizeDeepgramTranscriptPayload } from "@/server/calls/stt-deepgram";
 import { authorizeCallWebhook, type CallWebhookAuthResult } from "@/server/calls/webhook";
-import { recordAuditLog } from "@/server/audit";
+import { recordPlatformAuditLog } from "@/server/audit";
 import {
   integrationError,
   integrationSuccess,
@@ -215,7 +215,7 @@ export async function POST(request: Request) {
   }
 
   if (!authorization.authorized) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {

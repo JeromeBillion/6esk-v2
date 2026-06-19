@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   isMfaRequiredForLogin: vi.fn(),
   hasActiveMfaFactor: vi.fn(),
   createMfaChallenge: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -38,7 +39,8 @@ vi.mock("@/server/auth/mfa", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 import { POST } from "@/app/api/auth/login/route";
@@ -68,6 +70,7 @@ describe("password login MFA boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
     mocks.createSession.mockResolvedValue(undefined);
     mocks.verifyPassword.mockResolvedValue(true);
     mocks.dbQuery.mockResolvedValue({ rows: [adminUser] });
@@ -220,9 +223,9 @@ describe("password login MFA boundary", () => {
     expect(response.status).toBe(401);
     expect(body).toEqual({ error: "Invalid credentials" });
     expect(mocks.verifyPassword).not.toHaveBeenCalled();
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
+    expect(mocks.recordPlatformAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: null,
         actorUserId: null,
         action: "auth_login_failed",
         data: expect.objectContaining({

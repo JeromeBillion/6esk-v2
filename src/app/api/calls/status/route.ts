@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CALL_STATUSES, updateCallSessionStatus } from "@/server/calls/service";
 import { authorizeCallWebhook } from "@/server/calls/webhook";
-import { recordAuditLog } from "@/server/audit";
+import { recordPlatformAuditLog } from "@/server/audit";
 import {
   integrationError,
   integrationSuccess,
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   });
 
   if (!authorization.authorized) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {

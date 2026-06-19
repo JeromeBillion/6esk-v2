@@ -8,7 +8,7 @@ import {
 } from "@/server/auth/oauth-login";
 import { createSession } from "@/server/auth/session";
 import { getTenantSecurityPolicy, isEmailAllowedByPolicy } from "@/server/auth/tenant-security-policy";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLog, recordPlatformAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 
 const AUTH_OAUTH_NONCE_COOKIE = "sixesk_auth_oauth_nonce";
@@ -90,8 +90,7 @@ export async function GET(request: Request) {
     const tokens = await exchangeAuthOAuthCode(state.provider, code);
     profile = await fetchAuthOAuthProfile(state.provider, tokens.accessToken);
   } catch (error) {
-    await recordAuditLog({
-      tenantId: null,
+    await recordPlatformAuditLog({
       actorUserId: null,
       action: "auth_oauth_login_failed",
       entityType: "auth_session",
@@ -104,8 +103,7 @@ export async function GET(request: Request) {
   }
 
   if (profile.emailVerified === false) {
-    await recordAuditLog({
-      tenantId: null,
+    await recordPlatformAuditLog({
       actorUserId: null,
       action: "auth_oauth_login_failed",
       entityType: "auth_session",
@@ -119,14 +117,28 @@ export async function GET(request: Request) {
   }
 
   const user = await findUserByEmail(profile.email);
-  if (!user || !user.is_active) {
+  if (!user) {
+    await recordPlatformAuditLog({
+      actorUserId: null,
+      action: "auth_oauth_login_failed",
+      entityType: "auth_session",
+      data: {
+        reason: "unknown_user",
+        provider: state.provider,
+        emailDomain: emailDomain(profile.email)
+      }
+    });
+    return loginRedirect(request, { error: "oauth_invalid_account" });
+  }
+
+  if (!user.is_active) {
     await recordAuditLog({
-      tenantId: user?.tenant_id ?? null,
+      tenantId: user.tenant_id,
       actorUserId: user?.id ?? null,
       action: "auth_oauth_login_failed",
       entityType: "auth_session",
       data: {
-        reason: user ? "inactive_user" : "unknown_user",
+        reason: "inactive_user",
         provider: state.provider,
         emailDomain: emailDomain(profile.email)
       }
@@ -219,4 +231,3 @@ export async function GET(request: Request) {
 
   return appRedirect(request, state.returnTo);
 }
-

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const TICKET_1 = "11111111-1111-1111-1111-111111111111";
 const TICKET_2 = "22222222-2222-2222-2222-222222222222";
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -41,7 +42,8 @@ function buildUser(roleName: "lead_admin" | "agent" | "viewer", id = AGENT_ID) {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID
   };
 }
 
@@ -51,6 +53,7 @@ function ticketRow(
 ) {
   return {
     id,
+    tenant_id: TENANT_ID,
     status: "open",
     priority: "normal",
     assigned_user_id: AGENT_ID,
@@ -100,6 +103,19 @@ describe("PATCH /api/tickets/bulk", () => {
 
   it("returns 403 for viewer role", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("viewer"));
+
+    const { response, body } = await patchBulk({
+      ticketIds: [TICKET_1],
+      status: "pending"
+    });
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue({ ...buildUser("lead_admin"), tenant_id: null });
 
     const { response, body } = await patchBulk({
       ticketIds: [TICKET_1],
@@ -181,13 +197,25 @@ describe("PATCH /api/tickets/bulk", () => {
     const [updateSql, updateValues] = mocks.dbQuery.mock.calls[1] ?? [];
     expect(updateSql).toContain("status = $1");
     expect(updateSql).toContain("priority = $2");
-    expect(updateValues).toEqual(["pending", "high", [TICKET_1, TICKET_2]]);
+    expect(updateSql).toContain("AND tenant_id = $4");
+    expect(updateValues).toEqual(["pending", "high", [TICKET_1, TICKET_2], TENANT_ID]);
 
-    expect(mocks.recordTicketEvent).toHaveBeenCalled();
+    expect(mocks.recordTicketEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        ticketId: TICKET_1
+      })
+    );
     expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_1, ["vip", "urgent"]);
     expect(mocks.addTagsToTicket).toHaveBeenCalledWith(TICKET_2, ["vip", "urgent"]);
     expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(TICKET_1, ["general"]);
     expect(mocks.removeTagsFromTicket).toHaveBeenCalledWith(TICKET_2, ["general"]);
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        entityId: TICKET_1
+      })
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledTimes(2);
   });
 });

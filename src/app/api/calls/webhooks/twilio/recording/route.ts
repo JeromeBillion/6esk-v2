@@ -1,4 +1,4 @@
-import { recordAuditLog } from "@/server/audit";
+import { recordPlatformAuditLog } from "@/server/audit";
 import { attachCallRecording, resolveCallSessionProviderScope } from "@/server/calls/service";
 import { normalizeTwilioParams, validateTwilioWebhookForTenant } from "@/server/calls/twilio";
 import {
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
     providerCallId
   });
   if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -101,7 +101,7 @@ export async function GET(request: Request) {
   }
 
   if (!verification.valid) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {

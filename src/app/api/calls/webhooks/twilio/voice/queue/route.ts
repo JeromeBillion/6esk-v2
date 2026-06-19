@@ -15,7 +15,7 @@ import {
   normalizeTwilioParams,
   validateTwilioWebhookForTenant
 } from "@/server/calls/twilio";
-import { recordAuditLog } from "@/server/audit";
+import { recordPlatformAuditLog } from "@/server/audit";
 import {
   integrationError,
   validateIntegrationApiVersion
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
 
   const scope = await resolveCallSessionProviderScope({ callSessionId });
   if (!scope && shouldRequireTenantProviderWebhookSecrets()) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
   }
 
   if (!verification.valid) {
-    runInBackground(recordAuditLog({
+    runInBackground(recordPlatformAuditLog({
       action: "call_webhook_rejected",
       entityType: "call_webhook",
       data: {

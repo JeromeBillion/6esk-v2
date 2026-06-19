@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   buildUnavailableTwiML: vi.fn(),
   parseQueuedOperatorIds: vi.fn(),
   shouldContinueVoiceQueue: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("@/server/calls/operators", () => ({
@@ -44,7 +45,8 @@ vi.mock("@/server/calls/twilio-queue", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 vi.mock("@/server/provider-webhook-secrets", () => {
@@ -86,6 +88,8 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
     mocks.buildTwilioPublicUrl.mockReturnValue(
       "https://desk.example.com/api/calls/webhooks/twilio/recording"
     );
+    mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
     mocks.reserveNextVoiceDeskOperatorForCall.mockResolvedValue({
       userId: "22222222-2222-2222-2222-222222222222",
       identity: "desk_user_22222222-2222-2222-2222-222222222222",

@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   isMfaRequiredForLogin: vi.fn(),
   hasActiveMfaFactor: vi.fn(),
   createMfaChallenge: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("next/headers", () => ({
@@ -53,7 +54,8 @@ vi.mock("@/server/auth/mfa", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 import { GET } from "@/app/api/auth/oauth/callback/route";
@@ -103,6 +105,7 @@ describe("/api/auth/oauth/callback", () => {
     mocks.isMfaRequiredForLogin.mockResolvedValue(false);
     mocks.createSession.mockResolvedValue(undefined);
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
   });
 
   it("mints a v2 session for a known active user after provider identity proof", async () => {

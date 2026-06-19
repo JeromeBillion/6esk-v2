@@ -4,7 +4,7 @@ import { createSession } from "@/server/auth/session";
 import { verifyPassword } from "@/server/auth/password";
 import { createMfaChallenge, hasActiveMfaFactor, isMfaRequiredForLogin } from "@/server/auth/mfa";
 import { getTenantSecurityPolicy, isEmailAllowedByPolicy } from "@/server/auth/tenant-security-policy";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLog, recordPlatformAuditLog } from "@/server/audit";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -46,14 +46,27 @@ export async function POST(request: Request) {
   );
 
   const user = result.rows[0];
-  if (!user || !user.is_active) {
-    await recordAuditLog({
-      tenantId: user?.tenant_id ?? null,
+  if (!user) {
+    await recordPlatformAuditLog({
       actorUserId: null,
       action: "auth_login_failed",
       entityType: "auth_session",
       data: {
-        reason: user ? "inactive_user" : "unknown_user",
+        reason: "unknown_user",
+        emailDomain: emailDomain(email)
+      }
+    });
+    return Response.json({ error: "Invalid credentials" }, { status: 401 });
+  }
+
+  if (!user.is_active) {
+    await recordAuditLog({
+      tenantId: user.tenant_id,
+      actorUserId: null,
+      action: "auth_login_failed",
+      entityType: "auth_session",
+      data: {
+        reason: "inactive_user",
         emailDomain: emailDomain(email)
       }
     });

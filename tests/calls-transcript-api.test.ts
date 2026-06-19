@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   resolveCallSessionProviderScope: vi.fn(),
   listActiveProviderWebhookSecrets: vi.fn(),
   markProviderWebhookSecretUsed: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn()
 }));
 
 vi.mock("@/server/calls/webhook", () => ({
@@ -19,7 +20,8 @@ vi.mock("@/server/calls/service", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 vi.mock("@/server/provider-webhook-secrets", () => {
@@ -47,6 +49,7 @@ describe("POST /api/calls/transcript", () => {
       TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "false"
     };
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
     mocks.resolveCallSessionProviderScope.mockResolvedValue({
       tenantId: TENANT_ID,
       workspaceKey: "primary"

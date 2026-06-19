@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   attachCallRecording: vi.fn(),
   resolveCallSessionProviderScope: vi.fn(),
   recordAuditLog: vi.fn(),
+  recordPlatformAuditLog: vi.fn(),
   listActiveProviderWebhookSecrets: vi.fn(),
   markProviderWebhookSecretUsed: vi.fn(),
   twilioFactory: vi.fn(),
@@ -16,7 +17,8 @@ vi.mock("@/server/calls/service", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordPlatformAuditLog: mocks.recordPlatformAuditLog
 }));
 
 vi.mock("@/server/provider-webhook-secrets", () => {
@@ -67,6 +69,7 @@ describe("GET /api/calls/webhooks/twilio/recording", () => {
       recordingR2Key: "messages/message-1/recording.mp3"
     });
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordPlatformAuditLog.mockResolvedValue(undefined);
     mocks.twilioValidate.mockReturnValue(true);
   });
 
