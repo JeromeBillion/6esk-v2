@@ -1,6 +1,6 @@
 import { type Route, type IAgentRuntime, logger, createUniqueUuid, ModelType } from '@elizaos/core';
 import { SixeskService } from './sixesk-service';
-import type { SixeskWebhookPayload, SixeskAction, SixeskTicket } from './types';
+import type { SixeskWebhookPayload, SixeskAction, SixeskActionType, SixeskTicket } from './types';
 import { cleanMessageText, normalizeWhitespace } from './sixesk-text';
 import { normalizeRouteBody, respondInvalidRequest } from '../../utils/request-validation';
 import { redactSensitiveLogContext } from '../../utils/redaction';
@@ -56,6 +56,20 @@ export const sixeskWebhookRoute: Route = {
       respondInvalidRequest(res, 'Missing event_type or resource.ticket_id', {
         route: 'hooks/6esk/events',
         field: 'event_type|resource.ticket_id',
+      });
+      return;
+    }
+
+    const runtimeValidation = validateSixeskRuntimePayload(payload);
+    if (!runtimeValidation.ok) {
+      res.status(runtimeValidation.status).json({
+        success: false,
+        code: runtimeValidation.code,
+        error: runtimeValidation.error,
+        details: {
+          route: 'hooks/6esk/events',
+          field: runtimeValidation.field,
+        },
       });
       return;
     }
@@ -130,6 +144,11 @@ const parseNumberSetting = (value: unknown, fallback: number): number => {
 
 const hasText = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
 const safeParseJson = (text: string): Record<string, unknown> | null => {
   const raw = text.trim();
   if (!raw) return null;
@@ -154,6 +173,161 @@ const readString = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed || null;
 };
+
+const PROMPT_SANDBOX_MODES = new Set(['dry_run', 'draft_only', 'hybrid_review', 'full_auto']);
+
+function readPromptSandbox(payload: SixeskWebhookPayload): Record<string, unknown> | null {
+  const record = payload as unknown as Record<string, unknown>;
+  return asRecord(record.promptSandbox) ?? asRecord(record.prompt_sandbox);
+}
+
+function readRuntimePromptSafety(payload: SixeskWebhookPayload): Record<string, unknown> | null {
+  const metadata = asRecord(payload.metadata);
+  return asRecord(metadata?.runtimePromptSafety) ?? asRecord(metadata?.runtime_prompt_safety);
+}
+
+function readPromptSandboxMode(payload: SixeskWebhookPayload): string | null {
+  const mode = readString(readPromptSandbox(payload)?.mode);
+  return mode && PROMPT_SANDBOX_MODES.has(mode) ? mode : null;
+}
+
+function readRuntimeCustomerContext(payload: SixeskWebhookPayload): Record<string, unknown> | null {
+  const record = payload as unknown as Record<string, unknown>;
+  return asRecord(record.customerContext) ?? asRecord(record.customer_context);
+}
+
+function readRuntimeDexterRagContext(payload: SixeskWebhookPayload): Record<string, unknown> | null {
+  const record = payload as unknown as Record<string, unknown>;
+  return asRecord(record.dexterRagContext) ?? asRecord(record.dexter_rag_context);
+}
+
+function hasPromptSandboxSection(
+  promptSandbox: Record<string, unknown>,
+  id: string,
+  instructionAuthority: boolean
+) {
+  const sections = promptSandbox.sections;
+  if (!Array.isArray(sections)) return false;
+  return sections.some((section) => {
+    const record = asRecord(section);
+    return record?.id === id && record.instructionAuthority === instructionAuthority;
+  });
+}
+
+export function validateSixeskRuntimePayload(payload: SixeskWebhookPayload):
+  | { ok: true }
+  | {
+      ok: false;
+      status: 400 | 403;
+      code: 'INVALID_RUNTIME_CONTRACT' | 'RUNTIME_POLICY_BLOCKED';
+      error: string;
+      field: string;
+    } {
+  const eventType = readString(payload.event_type);
+  const isReplyEligible = Boolean(eventType && REPLY_ELIGIBLE_EVENTS.has(eventType));
+  const runtimePromptSafety = readRuntimePromptSafety(payload);
+  const decision = readString(runtimePromptSafety?.decision);
+  const toolPolicy = asRecord(runtimePromptSafety?.toolPolicy);
+  const toolMode = readString(toolPolicy?.mode);
+
+  if (decision === 'deny' || toolMode === 'no_tools') {
+    return {
+      ok: false,
+      status: 403,
+      code: 'RUNTIME_POLICY_BLOCKED',
+      error: 'Runtime prompt-safety denied this 6esk event.',
+      field: 'metadata.runtimePromptSafety'
+    };
+  }
+
+  if (!isReplyEligible) {
+    return { ok: true };
+  }
+
+  if (!runtimePromptSafety) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'INVALID_RUNTIME_CONTRACT',
+      error: 'Reply-eligible 6esk events require runtime prompt-safety telemetry.',
+      field: 'metadata.runtimePromptSafety'
+    };
+  }
+
+  const promptSandbox = readPromptSandbox(payload);
+  const promptSandboxMode = readPromptSandboxMode(payload);
+  if (!promptSandbox || promptSandbox.schemaVersion !== 'agent-prompt-sandbox.v1' || !promptSandboxMode) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'INVALID_RUNTIME_CONTRACT',
+      error: 'Reply-eligible 6esk events require a valid agent prompt sandbox.',
+      field: 'promptSandbox'
+    };
+  }
+
+  if (
+    !hasPromptSandboxSection(promptSandbox, 'system_constraints', true) ||
+    !hasPromptSandboxSection(promptSandbox, 'event_payload', false) ||
+    !hasPromptSandboxSection(promptSandbox, 'customer_privacy_context', true)
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'INVALID_RUNTIME_CONTRACT',
+      error: 'Prompt sandbox is missing required trust-boundary sections.',
+      field: 'promptSandbox.sections'
+    };
+  }
+
+  const externalActionsAllowed = toolPolicy?.allowExternalActions === true;
+  if (
+    (decision === 'downgrade' || toolMode === 'read_only' || !externalActionsAllowed) &&
+    promptSandboxMode === 'full_auto'
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'RUNTIME_POLICY_BLOCKED',
+      error: 'Runtime prompt-safety downgrade cannot be delivered as full auto.',
+      field: 'promptSandbox.mode'
+    };
+  }
+
+  return { ok: true };
+}
+
+export function resolveReplyActionType(
+  policyMode: 'draft_only' | 'auto_send',
+  payload: SixeskWebhookPayload
+): Extract<SixeskActionType, 'draft_reply' | 'send_reply'> {
+  const promptSandboxMode = readPromptSandboxMode(payload);
+  const runtimePromptSafety = readRuntimePromptSafety(payload);
+  const decision = readString(runtimePromptSafety?.decision);
+  const toolPolicy = asRecord(runtimePromptSafety?.toolPolicy);
+  const externalActionsAllowed = toolPolicy?.allowExternalActions === true;
+  const toolMode = readString(toolPolicy?.mode);
+
+  if (
+    policyMode === 'auto_send' &&
+    promptSandboxMode === 'full_auto' &&
+    externalActionsAllowed &&
+    toolMode === 'normal' &&
+    (decision === 'allow' || decision === 'allow_sanitized')
+  ) {
+    return 'send_reply';
+  }
+  return 'draft_reply';
+}
+
+function runtimePolicyMetadataForPayload(payload: SixeskWebhookPayload): Record<string, any> {
+  return {
+    promptSandbox: readPromptSandbox(payload),
+    runtimePromptSafety: readRuntimePromptSafety(payload),
+    customerContext: readRuntimeCustomerContext(payload),
+    dexterRagContext: readRuntimeDexterRagContext(payload)
+  };
+}
 
 const readStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
@@ -607,6 +781,7 @@ async function processWebhookEvent(
     // Process through the agent's message pipeline
     if (runtime.messageService) {
       const messageId = createUniqueUuid(runtime, `${ticketId}-${Date.now()}`);
+      const runtimePolicyMetadata = runtimePolicyMetadataForPayload(payload);
       const memory = {
         id: messageId,
         entityId,
@@ -615,14 +790,14 @@ async function processWebhookEvent(
         content: {
           text: messageText,
           source: '6esk',
-          metadata: { ticketId, eventType },
+          metadata: { ticketId, eventType, ...runtimePolicyMetadata },
         },
         createdAt: Date.now(),
       };
 
       await runtime.messageService.handleMessage(runtime, memory, async (response) => {
         if (response.text) {
-          const actionType = service.policyMode === 'auto_send' ? 'send_reply' : 'draft_reply';
+          const actionType = resolveReplyActionType(service.policyMode, payload);
           const confidence = computeConfidence(ctx.messages);
           const normalizedActions = applySixeskActionPolicy(
             [

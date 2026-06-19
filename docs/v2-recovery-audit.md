@@ -115,6 +115,11 @@ Date: 2026-06-06
   - RAG attachment is recorded in `agent_run_events` as `agent.rag.context_attached` with citation IDs, document version/chunk IDs, confidence, safety summary, and retrieval filters
   - retrieval failures degrade to empty/error context and do not block core ticket/call/chat delivery
   - focused regression coverage proves bounded snippet shaping, no-query behavior, prompt-safety denials, compact metadata attachment, outbox delivery attachment, and graceful degradation
+- Hardened native Dexter `plugin-6esk` against ignoring v2 runtime policy:
+  - `src/dexter/plugins/plugin-6esk/sixesk-routes.ts`
+  - `src/dexter/plugins/plugin-6esk/sixesk-provider.ts`
+  - reply-eligible runtime events must now carry prompt-safety telemetry and a valid prompt sandbox before async processing; denied/no-tool payloads are rejected, downgraded payloads cannot remain `full_auto`, and `auto_send` only maps to `send_reply` when server prompt-safety and sandbox state allow external actions
+  - provider prompts now include the runtime policy boundary, server customer privacy boundary, and cited tenant Knowledge Base snippets as untrusted/cite-required context while minimizing requester PII and customer history unless the server customer context resolves and allows it
 - Hardened Knowledge Base ingestion maintenance into v2-native `tenant_id` form:
   - `src/app/api/admin/ai/knowledge/ingestion/route.ts`
   - `src/server/ai/knowledge-ingestion-worker.ts`
@@ -416,7 +421,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-customer-context.test.ts`
   - `tests/agent-prompt-sandbox.test.ts`
   - `tests/knowledge-retrieval.test.ts`
-  - `npm run test:ai-safety` now runs the v2-native local AI safety release-gate subset
+  - `tests/dexter-plugin-sixesk-runtime-policy.test.ts`
+  - `npm run test:ai-safety` now runs the v2-native local AI safety release-gate subset including the native Dexter plugin prompt-sandbox/customer-privacy boundary
 - AI provider gateway tests pass in the focused slice:
   - `tests/ai-provider-gateway.test.ts`
   - `tests/calls-transcript-ai-openai-api.test.ts`
