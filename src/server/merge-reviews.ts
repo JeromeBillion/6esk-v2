@@ -625,6 +625,7 @@ export async function resolveMergeReviewTask({
         throw new MergeReviewError("invalid_input", "Linked case review task is incomplete.");
       }
       mergeResult = await linkTickets({
+        tenantId: scopedTenantId,
         sourceTicketId: approvedTask.source_ticket_id,
         targetTicketId: approvedTask.target_ticket_id,
         actorUserId,

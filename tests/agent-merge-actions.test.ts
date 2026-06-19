@@ -1273,6 +1273,7 @@ describe("agent merge actions route", () => {
       status: "ok"
     });
     expect(mocks.linkTickets).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       sourceTicketId: TICKET_A,
       targetTicketId: TICKET_B,
       actorUserId: null,

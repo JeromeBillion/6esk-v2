@@ -59,6 +59,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await linkTickets({
+      tenantId,
       sourceTicketId,
       targetTicketId,
       actorUserId: user.id,

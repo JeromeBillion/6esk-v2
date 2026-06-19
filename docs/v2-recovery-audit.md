@@ -549,6 +549,14 @@ Before this recovery branch can replace `main`, run:
   - `tests/tickets-create-external-profile.test.ts`
   - `tests/inbound-tenant-isolation.test.ts`
   - external identity cache rows are tenant-owned, live profile lookup carries tenant context to downstream providers, cache fallback filters by `tenant_id`, cache writes conflict on `(tenant_id, external_system, external_user_id)`, and email/WhatsApp/external ticket-create flows pass the already-resolved tenant into profile enrichment
+- Ticket linked-case relationship tenant-scope closure is now recovered into v2-native form:
+  - migration `0066_ticket_links_tenant_scope.sql`
+  - `tests/ticket-links-tenant-scope.test.ts`
+  - `tests/ticket-link-api.test.ts`
+  - `tests/ticket-link-preflight-api.test.ts`
+  - `tests/agent-merge-actions.test.ts`
+  - `tests/ticket-detail-tenant-isolation-api.test.ts`
+  - linked-case rows are tenant-owned, ambiguous historical links fail migration instead of being silently assigned, pair uniqueness is tenant-scoped, linked-ticket listing requires tenant scope and filters link/ticket/message predicates, and ticket-link preflight/write callers pass the resolved session/agent/review tenant into the service boundary
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

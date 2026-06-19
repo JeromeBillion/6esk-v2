@@ -31,6 +31,14 @@ function toCount(value: string | number | null | undefined) {
 
 const DEFAULT_TICKET_MERGE_MAX_MOVE_ROWS = 5000;
 
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const scopedTenantId = tenantId?.trim();
+  if (!scopedTenantId) {
+    throw new MergeError("invalid_input", `tenantId is required to ${operation}.`);
+  }
+  return scopedTenantId;
+}
+
 function getTicketMergeMaxMoveRows() {
   const parsed = Number.parseInt(
     process.env.TICKET_MERGE_MAX_MOVE_ROWS ?? `${DEFAULT_TICKET_MERGE_MAX_MOVE_ROWS}`,
@@ -42,25 +50,28 @@ function getTicketMergeMaxMoveRows() {
   return parsed;
 }
 
-async function getTicketChannel(client: PoolClient, ticketId: string) {
+async function getTicketChannel(client: PoolClient, ticketId: string, tenantId: string) {
   const result = await client.query<{ has_whatsapp: boolean; has_voice: boolean }>(
     `SELECT
        EXISTS (
          SELECT 1
          FROM messages
          WHERE ticket_id = $1
+           AND tenant_id = $2
            AND channel = 'whatsapp'
        ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
        EXISTS (
          SELECT 1
          FROM messages
          WHERE ticket_id = $1
+           AND tenant_id = $2
            AND channel = 'voice'
        ) OR t.requester_email ILIKE 'voice:%' AS has_voice
      FROM tickets t
      WHERE t.id = $1
+       AND t.tenant_id = $2
      LIMIT 1`,
-    [ticketId]
+    [ticketId, tenantId]
   );
   if (result.rows[0]?.has_whatsapp) {
     return "whatsapp" as const;
@@ -79,6 +90,7 @@ function canonicalizeTicketPair(leftTicketId: string, rightTicketId: string) {
 
 async function getExistingTicketLink(
   client: PoolClient,
+  tenantId: string,
   sourceTicketId: string,
   targetTicketId: string,
   relationshipType = "linked_case"
@@ -91,11 +103,12 @@ async function getExistingTicketLink(
   }>(
     `SELECT id, source_ticket_id, target_ticket_id
      FROM ticket_links
-     WHERE relationship_type = $3
-       AND LEAST(source_ticket_id, target_ticket_id) = $1::uuid
-       AND GREATEST(source_ticket_id, target_ticket_id) = $2::uuid
+     WHERE tenant_id = $1
+       AND relationship_type = $4
+       AND LEAST(source_ticket_id, target_ticket_id) = $2::uuid
+       AND GREATEST(source_ticket_id, target_ticket_id) = $3::uuid
      LIMIT 1`,
-    [pair.firstTicketId, pair.secondTicketId, relationshipType]
+    [tenantId, pair.firstTicketId, pair.secondTicketId, relationshipType]
   );
   return result.rows[0] ?? null;
 }
@@ -195,17 +208,8 @@ export async function listLinkedTickets(
   ticketId: string,
   tenantId?: string | null
 ): Promise<LinkedTicketSummary[]> {
+  const scopedTenantId = requireTenantId(tenantId, "list linked tickets");
   const client = await db.connect();
-  const values = tenantId ? [ticketId, tenantId] : [ticketId];
-  const tenantClause = tenantId
-    ? `AND linked.tenant_id = $2
-       AND EXISTS (
-         SELECT 1
-         FROM tickets current_ticket
-         WHERE current_ticket.id = $1::uuid
-           AND current_ticket.tenant_id = $2::uuid
-       )`
-    : "";
   try {
     const result = await client.query<{
       link_id: string;
@@ -238,12 +242,14 @@ export async function listLinkedTickets(
            SELECT 1
            FROM messages msg
            WHERE msg.ticket_id = linked.id
+             AND msg.tenant_id = $2
              AND msg.channel = 'whatsapp'
          ) OR linked.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
          EXISTS (
            SELECT 1
            FROM messages msg
            WHERE msg.ticket_id = linked.id
+             AND msg.tenant_id = $2
              AND msg.channel = 'voice'
          ) OR linked.requester_email ILIKE 'voice:%' AS has_voice,
          tl.created_at AS linked_at,
@@ -255,10 +261,17 @@ export async function listLinkedTickets(
            ELSE tl.source_ticket_id
          END
        WHERE tl.relationship_type = 'linked_case'
+         AND tl.tenant_id = $2
          AND (tl.source_ticket_id = $1::uuid OR tl.target_ticket_id = $1::uuid)
-         ${tenantClause}
+         AND linked.tenant_id = $2
+         AND EXISTS (
+           SELECT 1
+           FROM tickets current_ticket
+           WHERE current_ticket.id = $1::uuid
+             AND current_ticket.tenant_id = $2::uuid
+         )
        ORDER BY tl.created_at DESC`,
-      values
+      [ticketId, scopedTenantId]
     );
 
     return result.rows.map((row) => ({
@@ -336,8 +349,8 @@ export async function preflightTicketMerge({
     const tenantId = source.tenant_id;
 
     const [sourceChannel, targetChannel] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId)
+      getTicketChannel(client, sourceTicketId, tenantId),
+      getTicketChannel(client, targetTicketId, tenantId)
     ]);
 
     const countsResult = await client.query<{
@@ -433,12 +446,15 @@ export async function preflightTicketMerge({
 }
 
 export async function preflightTicketLink({
+  tenantId,
   sourceTicketId,
   targetTicketId
 }: {
+  tenantId?: string | null;
   sourceTicketId: string;
   targetTicketId: string;
 }): Promise<TicketLinkPreflight> {
+  const scopedTenantId = requireTenantId(tenantId, "preflight ticket links");
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -465,8 +481,9 @@ export async function preflightTicketLink({
          priority,
          assigned_user_id
        FROM tickets
-       WHERE id = ANY($1::uuid[])`,
-      [[sourceTicketId, targetTicketId]]
+       WHERE id = ANY($1::uuid[])
+         AND tenant_id = $2`,
+      [[sourceTicketId, targetTicketId], scopedTenantId]
     );
 
     if (ticketResult.rowCount !== 2) {
@@ -480,9 +497,9 @@ export async function preflightTicketLink({
     }
 
     const [sourceChannel, targetChannel, existingLink] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId),
-      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scopedTenantId),
+      getTicketChannel(client, targetTicketId, scopedTenantId),
+      getExistingTicketLink(client, scopedTenantId, sourceTicketId, targetTicketId)
     ]);
 
     let blockingCode: "already_merged" | "already_linked" | null = null;
@@ -770,8 +787,8 @@ export async function mergeTickets({
     const tenantId = target.tenant_id;
 
     const [sourceChannel, targetChannel] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId)
+      getTicketChannel(client, sourceTicketId, tenantId),
+      getTicketChannel(client, targetTicketId, tenantId)
     ]);
 
     if (sourceChannel !== targetChannel) {
@@ -983,18 +1000,21 @@ export async function mergeTickets({
 }
 
 export async function linkTickets({
+  tenantId,
   sourceTicketId,
   targetTicketId,
   actorUserId,
   reason,
   metadata
 }: {
+  tenantId?: string | null;
   sourceTicketId: string;
   targetTicketId: string;
   actorUserId?: string | null;
   reason?: string | null;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "link tickets");
   if (sourceTicketId === targetTicketId) {
     throw new MergeError("invalid_input", "Source and target tickets must be different.");
   }
@@ -1028,8 +1048,9 @@ export async function linkTickets({
          assigned_user_id
        FROM tickets
        WHERE id = ANY($1::uuid[])
+         AND tenant_id = $2
        FOR UPDATE`,
-      [[sourceTicketId, targetTicketId]]
+      [[sourceTicketId, targetTicketId], scopedTenantId]
     );
 
     if (lockResult.rowCount !== 2) {
@@ -1048,12 +1069,15 @@ export async function linkTickets({
     if (source.tenant_id !== target.tenant_id) {
       throw new MergeError("invalid_input", "Source and target tickets must belong to the same tenant.");
     }
-    const tenantId = target.tenant_id;
+    const linkTenantId = target.tenant_id;
+    if (linkTenantId !== scopedTenantId) {
+      throw new MergeError("not_found", "Source or target ticket was not found.");
+    }
 
     const [sourceChannel, targetChannel, existingLink] = await Promise.all([
-      getTicketChannel(client, sourceTicketId),
-      getTicketChannel(client, targetTicketId),
-      getExistingTicketLink(client, sourceTicketId, targetTicketId)
+      getTicketChannel(client, sourceTicketId, scopedTenantId),
+      getTicketChannel(client, targetTicketId, scopedTenantId),
+      getExistingTicketLink(client, scopedTenantId, sourceTicketId, targetTicketId)
     ]);
 
     if (existingLink) {
@@ -1064,6 +1088,7 @@ export async function linkTickets({
 
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO ticket_links (
+         tenant_id,
          relationship_type,
          source_ticket_id,
          target_ticket_id,
@@ -1075,8 +1100,8 @@ export async function linkTickets({
          actor_user_id,
          metadata
        ) VALUES (
-         'linked_case',
          $1,
+         'linked_case',
          $2,
          $3,
          $4,
@@ -1084,10 +1109,12 @@ export async function linkTickets({
          $6,
          $7,
          $8,
-         $9
+         $9,
+         $10
        )
        RETURNING id`,
       [
+        scopedTenantId,
         sourceTicketId,
         targetTicketId,
         sourceChannel,
@@ -1127,7 +1154,7 @@ export async function linkTickets({
           reason: reason ?? null,
           linkedAt
         },
-        tenantId
+        linkTenantId
       ]
     );
 
@@ -1135,7 +1162,7 @@ export async function linkTickets({
       `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
        VALUES ($1, $2, 'ticket_linked_case', 'ticket_link', $3, $4)`,
       [
-        tenantId,
+        linkTenantId,
         actorUserId ?? null,
         linkId,
         {
@@ -1157,14 +1184,14 @@ export async function linkTickets({
       eventType: "ticket.linked_case",
       ticketId: targetTicketId,
       mailboxId: target.mailbox_id ?? source.mailbox_id ?? null,
-      tenantId,
+      tenantId: linkTenantId,
       actorUserId: actorUserId ?? null,
       threadId: targetTicketId,
       excerpt: `Linked ticket ${sourceTicketId} with ${targetTicketId}`
     });
     await publishAgentMergeEvent({
       eventType: "ticket.linked_case",
-      tenantId,
+      tenantId: linkTenantId,
       payload: {
         ...linkEvent,
         link: {

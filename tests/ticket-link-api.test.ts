@@ -100,6 +100,7 @@ describe("POST /api/tickets/link", () => {
       }
     });
     expect(mocks.linkTickets).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       sourceTicketId: SOURCE_TICKET_ID,
       targetTicketId: TARGET_TICKET_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

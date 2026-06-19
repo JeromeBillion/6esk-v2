@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const preflight = await preflightTicketLink({ sourceTicketId, targetTicketId });
+    const preflight = await preflightTicketLink({ tenantId, sourceTicketId, targetTicketId });
     return Response.json({ preflight });
   } catch (error) {
     if (error instanceof MergeError) {
