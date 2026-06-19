@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { listTicketsForUser } from "@/server/tickets";
 import { isLeadAdmin } from "@/server/auth/roles";
 
@@ -6,6 +7,10 @@ export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const url = new URL(request.url);

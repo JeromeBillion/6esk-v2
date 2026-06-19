@@ -15,13 +15,17 @@ vi.mock("@/server/tickets", () => ({
 
 import { GET } from "@/app/api/tickets/route";
 
-function buildUser(roleName: "lead_admin" | "agent" | "viewer") {
+function buildUser(
+  roleName: "lead_admin" | "agent" | "viewer",
+  tenantId: string | null = "99999999-9999-4999-8999-999999999999"
+) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -63,6 +67,17 @@ describe("GET /api/tickets", () => {
       assignedUserId: admin.id,
       channel: "voice"
     });
+  });
+
+  it("returns 403 when the session has no tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET(new Request("http://localhost/api/tickets"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.listTicketsForUser).not.toHaveBeenCalled();
   });
 
   it("normalizes all channel/status/priority/tag to null and ignores assigned=mine for non-admin", async () => {

@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import type { SessionUser } from "@/server/auth/session";
 import { LEAD_ADMIN_ROLE } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 export type TicketRecord = {
@@ -266,8 +267,11 @@ export async function listTicketsForUser(
     "(t.mailbox_id IS NULL OR mb.type = 'platform')"
   ];
 
-  // v2: tenant isolation — always scope to the user's tenant
-  const tenantId = user.tenant_id ?? DEFAULT_TENANT_ID;
+  // v2: tenant isolation - always scope to the user's tenant.
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return [];
+  }
   values.push(tenantId);
   conditions.push(`t.tenant_id = $${values.length}`);
 
