@@ -116,7 +116,7 @@ export async function storeInboundEmail(
   let inferredTags: string[] = [];
 
   if (mailbox.type === "platform" && !spamDecision.isSpam) {
-    requesterProfile = await lookupExternalProfile({ email: fromEmail });
+    requesterProfile = await lookupExternalProfile({ tenantId, email: fromEmail });
     customerResolution = await resolveOrCreateCustomerForInbound({
       tenantId,
       externalSystem:
@@ -298,6 +298,7 @@ export async function storeInboundEmail(
 
       if (requesterProfile?.status === "matched" && ticketId && !customerResolution?.conflict) {
         await upsertExternalUserLink({
+          tenantId,
           externalSystem: requesterProfile.externalSystem,
           profile: requesterProfile.profile,
           matchedBy: requesterProfile.matchedBy,

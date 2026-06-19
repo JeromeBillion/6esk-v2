@@ -152,6 +152,10 @@ describe("inbound tenant isolation", () => {
     expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT_ID, inboundEmail: "customer@example.com" })
     );
+    expect(mocks.lookupExternalProfile).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      email: "customer@example.com"
+    });
     expect(mocks.resolveTicketIdForInbound).toHaveBeenCalledWith(
       expect.any(Array),
       TENANT_ID
@@ -228,6 +232,10 @@ describe("inbound tenant isolation", () => {
     expect(mocks.resolveOrCreateCustomerForInbound).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT_ID, inboundPhone: "+15551234567" })
     );
+    expect(mocks.lookupExternalProfile).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      phone: "+15551234567"
+    });
     expect(mocks.getOrCreateMailbox).toHaveBeenCalledWith(
       "support@example.com",
       "support@example.com",

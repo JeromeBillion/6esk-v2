@@ -110,6 +110,14 @@ function isTimeoutError(value: string | null | undefined) {
   return value.toLowerCase().includes("timeout");
 }
 
+function requireLookupTenantId(tenantId: string | null | undefined) {
+  const scopedTenantId = tenantId?.trim();
+  if (!scopedTenantId) {
+    throw new Error("tenantId is required for external profile lookup");
+  }
+  return scopedTenantId;
+}
+
 function inferCacheMatchedBy({
   normalizedEmail,
   normalizedPhone,
@@ -233,10 +241,12 @@ export function readExternalProfileMatchedBy(metadata: Record<string, unknown> |
 }
 
 async function lookupProfileFromCache({
+  tenantId,
   normalizedEmail,
   normalizedPhone,
   elapsedMs
 }: {
+  tenantId: string;
   normalizedEmail: string | null;
   normalizedPhone: string | null;
   elapsedMs: () => number;
@@ -244,6 +254,7 @@ async function lookupProfileFromCache({
   try {
     const externalSystem = getExternalProfileSystem();
     const cached = await findExternalUserLinkByIdentity({
+      tenantId,
       externalSystem,
       email: normalizedEmail,
       phone: normalizedPhone
@@ -368,14 +379,17 @@ export function buildExternalProfileMetadataPatch(
 }
 
 export async function lookupExternalProfile({
+  tenantId,
   email,
   phone
 }: {
+  tenantId: string;
   email?: string;
   phone?: string;
 }): Promise<ExternalProfileLookupResult> {
   const startedAt = Date.now();
   const elapsedMs = () => Math.max(0, Date.now() - startedAt);
+  const scopedTenantId = requireLookupTenantId(tenantId);
 
   const enabled = parseBoolean(process.env.EXTERNAL_PROFILE_LOOKUP_ENABLED, true);
   const baseUrl = process.env.EXTERNAL_PROFILE_LOOKUP_URL ?? "";
@@ -406,6 +420,7 @@ export async function lookupExternalProfile({
       const response = await fetch(url, {
         method: "GET",
         headers: {
+          "x-6esk-tenant-id": scopedTenantId,
           "x-6esk-secret": sharedSecret
         },
         signal: controller.signal
@@ -427,6 +442,7 @@ export async function lookupExternalProfile({
       const payload = (await response.json()) as LookupPayload;
       if (!payload.matched || !payload.user) {
         const cachedMatch = await lookupProfileFromCache({
+          tenantId: scopedTenantId,
           normalizedEmail,
           normalizedPhone,
           elapsedMs
@@ -473,6 +489,7 @@ export async function lookupExternalProfile({
 
   if (sawTimeoutError) {
     const cachedMatch = await lookupProfileFromCache({
+      tenantId: scopedTenantId,
       normalizedEmail,
       normalizedPhone,
       elapsedMs

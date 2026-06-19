@@ -253,6 +253,7 @@ describe("POST /api/tickets/create external identity enrichment", () => {
       })
     );
     expect(mocks.upsertExternalUserLink).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       externalSystem: "white-label-webchat",
       profile: expect.objectContaining({
         id: "user-123",

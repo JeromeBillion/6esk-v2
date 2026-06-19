@@ -254,7 +254,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
   }
 
   // ── Phase 1: Resolve all external/network data BEFORE the transaction ──
-  const requesterProfile = await lookupExternalProfile({ phone: from });
+  const requesterProfile = await lookupExternalProfile({ tenantId, phone: from });
   const customerResolution = await resolveOrCreateCustomerForInbound({
     tenantId,
     externalSystem: requesterProfile.status === "matched" ? requesterProfile.externalSystem : undefined,
@@ -471,6 +471,7 @@ export async function storeInboundWhatsApp(message: NormalizedWhatsAppMessage) {
 
     if (requesterProfile.status === "matched" && ticketId && !customerResolution?.conflict) {
       await upsertExternalUserLink({
+        tenantId,
         externalSystem: requesterProfile.externalSystem,
         profile: requesterProfile.profile,
         matchedBy: requesterProfile.matchedBy,

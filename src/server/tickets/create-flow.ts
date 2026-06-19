@@ -140,9 +140,11 @@ function applyIdentityConflictMetadata(
 }
 
 async function enrichInboundExternalMetadata({
+  tenantId,
   fromEmail,
   metadata
 }: {
+  tenantId: string;
   fromEmail: string;
   metadata: Record<string, unknown> | null;
 }) {
@@ -152,6 +154,7 @@ async function enrichInboundExternalMetadata({
   }
 
   const lookup = await lookupExternalProfile({
+    tenantId,
     email: fromEmail,
     phone: readLookupPhoneFromMetadata(enriched) ?? undefined
   });
@@ -571,6 +574,7 @@ export async function processCreateTicket({
     });
   }
   let enrichedMetadata = await enrichInboundExternalMetadata({
+    tenantId,
     fromEmail,
     metadata: (data.metadata as Record<string, unknown> | null) ?? null
   });
@@ -624,6 +628,7 @@ export async function processCreateTicket({
   if (resolvedProfile && !customerResolution?.conflict) {
     const matchedBy = readExternalProfileMatchedBy(enrichedMetadata);
     await upsertExternalUserLink({
+      tenantId,
       externalSystem: externalProfileSource,
       profile: resolvedProfile,
       matchedBy,

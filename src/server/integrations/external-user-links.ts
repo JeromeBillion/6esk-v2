@@ -4,6 +4,14 @@ import type { ExternalProfile } from "@/server/integrations/external-profile";
 type InboundChannel = "email" | "whatsapp";
 type QueryExecutor = Pick<typeof db, "query">;
 
+function requireTenantId(tenantId: string | null | undefined) {
+  const scopedTenantId = tenantId?.trim();
+  if (!scopedTenantId) {
+    throw new Error("tenantId is required for external user links");
+  }
+  return scopedTenantId;
+}
+
 export function normalizeLinkEmail(value: string | null | undefined) {
   if (!value) return null;
   const normalized = value.trim().toLowerCase();
@@ -33,6 +41,7 @@ export function deriveMatchConfidence(matchedBy: string | null | undefined) {
 }
 
 export type ExternalUserLinkMatch = {
+  tenant_id: string;
   external_system: string;
   external_user_id: string;
   email: string | null;
@@ -45,14 +54,17 @@ export type ExternalUserLinkMatch = {
 };
 
 export async function findExternalUserLinkByIdentity({
+  tenantId,
   externalSystem,
   email,
   phone
 }: {
+  tenantId?: string | null;
   externalSystem: string;
   email?: string | null;
   phone?: string | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId);
   const normalizedEmail = normalizeLinkEmail(email);
   const normalizedPhone = normalizeLinkPhone(phone);
 
@@ -62,6 +74,7 @@ export async function findExternalUserLinkByIdentity({
 
   const result = await db.query<ExternalUserLinkMatch>(
     `SELECT
+       tenant_id,
        external_system,
        external_user_id,
        email,
@@ -72,34 +85,36 @@ export async function findExternalUserLinkByIdentity({
        last_ticket_id,
        last_channel
      FROM external_user_links
-     WHERE external_system = $1
+     WHERE tenant_id = $1
+       AND external_system = $2
        AND (
-         ($2::text IS NOT NULL AND LOWER(email) = $2::text)
-         OR ($3::text IS NOT NULL AND phone = $3::text)
+         ($3::text IS NOT NULL AND LOWER(email) = $3::text)
+         OR ($4::text IS NOT NULL AND phone = $4::text)
        )
      ORDER BY
        CASE
-         WHEN $2::text IS NOT NULL
-           AND LOWER(email) = $2::text
-           AND $3::text IS NOT NULL
-           AND phone = $3::text
+         WHEN $3::text IS NOT NULL
+           AND LOWER(email) = $3::text
+           AND $4::text IS NOT NULL
+           AND phone = $4::text
            THEN 0
-         WHEN $2::text IS NOT NULL AND LOWER(email) = $2::text
+         WHEN $3::text IS NOT NULL AND LOWER(email) = $3::text
            THEN 1
-         WHEN $3::text IS NOT NULL AND phone = $3::text
+         WHEN $4::text IS NOT NULL AND phone = $4::text
            THEN 2
          ELSE 3
        END ASC,
        confidence DESC NULLS LAST,
        last_seen_at DESC
      LIMIT 1`,
-    [externalSystem, normalizedEmail, normalizedPhone]
+    [scopedTenantId, externalSystem, normalizedEmail, normalizedPhone]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function upsertExternalUserLink({
+  tenantId,
   externalSystem,
   profile,
   matchedBy,
@@ -109,6 +124,7 @@ export async function upsertExternalUserLink({
   channel,
   queryExecutor = db
 }: {
+  tenantId?: string | null;
   externalSystem: string;
   profile: ExternalProfile;
   matchedBy?: string | null;
@@ -118,6 +134,7 @@ export async function upsertExternalUserLink({
   channel: InboundChannel;
   queryExecutor?: QueryExecutor;
 }) {
+  const scopedTenantId = requireTenantId(tenantId);
   const email = normalizeLinkEmail(inboundEmail) ?? normalizeLinkEmail(profile.email);
   const phone = normalizeLinkPhone(inboundPhone) ?? normalizeLinkPhone(profile.phoneNumber);
 
@@ -129,6 +146,7 @@ export async function upsertExternalUserLink({
 
   await queryExecutor.query(
     `INSERT INTO external_user_links (
+      tenant_id,
       external_system,
       external_user_id,
       email,
@@ -140,9 +158,9 @@ export async function upsertExternalUserLink({
       last_seen_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, now(), now()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now()
     )
-    ON CONFLICT (external_system, external_user_id)
+    ON CONFLICT (tenant_id, external_system, external_user_id)
     DO UPDATE SET
       email = COALESCE(EXCLUDED.email, external_user_links.email),
       phone = COALESCE(EXCLUDED.phone, external_user_links.phone),
@@ -153,6 +171,7 @@ export async function upsertExternalUserLink({
       last_seen_at = GREATEST(external_user_links.last_seen_at, EXCLUDED.last_seen_at),
       updated_at = now()`,
     [
+      scopedTenantId,
       externalSystem,
       profile.id,
       email,

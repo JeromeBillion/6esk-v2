@@ -541,6 +541,14 @@ Before this recovery branch can replace `main`, run:
   - `tests/calls-outbox-twilio.test.ts`
   - `tests/calls-outbox-http-bridge.test.ts`
   - operator presence reads/writes, available-roster reads, reservation, and queue-outcome updates require tenant scope; Twilio inbound/queue callbacks and outbound provider delivery now pass the resolved tenant into operator selection; desk live support/inbox notifications and roster reads are tenant-filtered
+- External profile link cache tenant-scope closure is now recovered into v2-native form:
+  - migration `0065_external_user_links_tenant_scope.sql`
+  - `tests/external-user-links-tenant-scope.test.ts`
+  - `tests/external-user-links.test.ts`
+  - `tests/external-profile.test.ts`
+  - `tests/tickets-create-external-profile.test.ts`
+  - `tests/inbound-tenant-isolation.test.ts`
+  - external identity cache rows are tenant-owned, live profile lookup carries tenant context to downstream providers, cache fallback filters by `tenant_id`, cache writes conflict on `(tenant_id, external_system, external_user_id)`, and email/WhatsApp/external ticket-create flows pass the already-resolved tenant into profile enrichment
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

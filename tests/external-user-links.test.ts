@@ -18,6 +18,8 @@ import {
   upsertExternalUserLink
 } from "@/server/integrations/external-user-links";
 
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
+
 describe("external user link helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -45,6 +47,7 @@ describe("external user link helpers", () => {
 
   test("returns null without querying when no normalized identity is provided", async () => {
     const result = await findExternalUserLinkByIdentity({
+      tenantId: TENANT_ID,
       externalSystem: "external-profile",
       email: " ",
       phone: " "
@@ -56,6 +59,7 @@ describe("external user link helpers", () => {
 
   test("queries by normalized identity and returns best match row", async () => {
     const row = {
+      tenant_id: TENANT_ID,
       external_system: "external-profile",
       external_user_id: "user-123",
       email: "user@example.com",
@@ -69,6 +73,7 @@ describe("external user link helpers", () => {
     mocks.dbQuery.mockResolvedValue({ rows: [row] });
 
     const result = await findExternalUserLinkByIdentity({
+      tenantId: TENANT_ID,
       externalSystem: "external-profile",
       email: "  USER@example.com ",
       phone: " +27 71 000 0001 "
@@ -76,7 +81,10 @@ describe("external user link helpers", () => {
 
     expect(result).toEqual(row);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(1);
-    expect(mocks.dbQuery).toHaveBeenCalledWith(expect.any(String), [
+    const [sql, values] = mocks.dbQuery.mock.calls[0] ?? [];
+    expect(sql).toContain("WHERE tenant_id = $1");
+    expect(values).toEqual([
+      TENANT_ID,
       "external-profile",
       "user@example.com",
       "+27710000001"
@@ -87,6 +95,7 @@ describe("external user link helpers", () => {
     const queryExecutor = { query: vi.fn().mockResolvedValue({ rows: [] }) };
 
     await upsertExternalUserLink({
+      tenantId: TENANT_ID,
       externalSystem: "external-profile",
       profile: {
         id: "user-123",
@@ -105,6 +114,10 @@ describe("external user link helpers", () => {
     });
 
     expect(queryExecutor.query).toHaveBeenCalledTimes(1);
+    const [sql, values] = queryExecutor.query.mock.calls[0] ?? [];
+    expect(sql).toContain("tenant_id");
+    expect(sql).toContain("ON CONFLICT (tenant_id, external_system, external_user_id)");
+    expect(values?.[0]).toBe(TENANT_ID);
     expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 });

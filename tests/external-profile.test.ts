@@ -14,6 +14,7 @@ import {
 } from "@/server/integrations/external-profile";
 
 const ORIGINAL_ENV = { ...process.env };
+const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 function applyLookupEnv() {
   process.env.EXTERNAL_PROFILE_LOOKUP_ENABLED = "true";
@@ -82,6 +83,21 @@ describe("lookupExternalProfile", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
+  it("rejects lookups without tenant scope before network or cache access", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      lookupExternalProfile({
+        tenantId: "",
+        email: "user@example.com"
+      })
+    ).rejects.toThrow("tenantId is required");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.findExternalUserLinkByIdentity).not.toHaveBeenCalled();
+  });
+
   it("falls back to cached external_user_links when live lookup misses", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -105,6 +121,7 @@ describe("lookupExternalProfile", () => {
     });
 
     const result = await lookupExternalProfile({
+      tenantId: TENANT_ID,
       email: "  USER@example.com "
     });
 
@@ -121,6 +138,7 @@ describe("lookupExternalProfile", () => {
       });
     }
     expect(mocks.findExternalUserLinkByIdentity).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       externalSystem: "external-profile",
       email: "user@example.com",
       phone: null
@@ -145,6 +163,7 @@ describe("lookupExternalProfile", () => {
     });
 
     const result = await lookupExternalProfile({
+      tenantId: TENANT_ID,
       phone: "+27 71 555 0000"
     });
 
@@ -155,6 +174,7 @@ describe("lookupExternalProfile", () => {
       matchedBy: "phone_number"
     });
     expect(mocks.findExternalUserLinkByIdentity).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       externalSystem: "external-profile",
       email: null,
       phone: "+27715550000"
@@ -179,6 +199,7 @@ describe("lookupExternalProfile", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await lookupExternalProfile({
+      tenantId: TENANT_ID,
       email: "live@example.com"
     });
 
@@ -189,5 +210,13 @@ describe("lookupExternalProfile", () => {
       matchedBy: "email"
     });
     expect(mocks.findExternalUserLinkByIdentity).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-6esk-tenant-id": TENANT_ID
+        })
+      })
+    );
   });
 });
