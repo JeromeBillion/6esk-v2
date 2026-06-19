@@ -220,7 +220,10 @@ export async function deliverPendingCallEvents({
     const callSessionId =
       typeof payload.callSessionId === "string" ? payload.callSessionId : null;
     try {
-      const { providerCallId } = await sendOutboundCall(provider, event.id, payload);
+      const { providerCallId } = await sendOutboundCall(provider, event.id, {
+        ...payload,
+        tenantId: event.tenant_id
+      });
       await markDelivered({
         eventId: event.id,
         tenantId: event.tenant_id,

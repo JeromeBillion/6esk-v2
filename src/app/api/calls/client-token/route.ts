@@ -29,7 +29,7 @@ export async function GET() {
 
   try {
     const token = createDeskVoiceAccessToken(user.id);
-    const presence = await getVoiceOperatorPresence(user.id);
+    const presence = await getVoiceOperatorPresence(user.id, tenantId);
     return Response.json({
       identity: token.identity,
       accessToken: token.token,

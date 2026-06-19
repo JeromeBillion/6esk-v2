@@ -1743,6 +1743,7 @@ export async function createOrUpdateInboundCall({
       });
       return {
         status: "updated_existing" as const,
+        tenantId: existing.tenant_id,
         callSessionId: existing.id,
         ticketId: existing.ticket_id,
         update: updated
@@ -1962,6 +1963,7 @@ export async function createOrUpdateInboundCall({
 
   return {
     status: "created" as const,
+    tenantId,
     callSessionId,
     messageId,
     ticketId: resolvedTicketId,

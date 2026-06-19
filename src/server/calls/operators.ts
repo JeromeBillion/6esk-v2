@@ -56,6 +56,14 @@ function readMetadataString(metadata: unknown, key: string) {
   return readString(asRecord(metadata)?.[key]);
 }
 
+function requireTenantId(tenantId: string | null | undefined, operation: string) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new Error(`${operation} requires tenantId.`);
+  }
+  return normalized;
+}
+
 function buildRoutingMetadataPatch(
   patch: Partial<{
     current_ringing_call_session_id: string | null;
@@ -83,7 +91,11 @@ function getPresenceFreshnessSeconds() {
   return Math.floor(parsed);
 }
 
-export async function getVoiceOperatorPresence(userId: string): Promise<VoiceOperatorPresence> {
+export async function getVoiceOperatorPresence(
+  userId: string,
+  tenantId: string | null | undefined
+): Promise<VoiceOperatorPresence> {
+  const scopedTenantId = requireTenantId(tenantId, "Get voice operator presence");
   const result = await db.query<{
     status: VoiceOperatorStatus | null;
     active_call_session_id: string | null;
@@ -94,8 +106,9 @@ export async function getVoiceOperatorPresence(userId: string): Promise<VoiceOpe
     `SELECT status, active_call_session_id, metadata, last_seen_at, registered_at
      FROM voice_operator_presence
      WHERE user_id = $1
+       AND tenant_id = $2
      LIMIT 1`,
-    [userId]
+    [userId, scopedTenantId]
   );
 
   const row = result.rows[0];
@@ -110,18 +123,21 @@ export async function getVoiceOperatorPresence(userId: string): Promise<VoiceOpe
 }
 
 export async function upsertVoiceOperatorPresence({
+  tenantId,
   userId,
   status,
   activeCallSessionId,
   registered,
   metadata
 }: {
+  tenantId: string | null | undefined;
   userId: string;
   status: VoiceOperatorStatus;
   activeCallSessionId?: string | null;
   registered?: boolean;
   metadata?: Record<string, unknown> | null;
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Upsert voice operator presence");
   const result = await db.query<{
     status: VoiceOperatorStatus;
     active_call_session_id: string | null;
@@ -130,6 +146,7 @@ export async function upsertVoiceOperatorPresence({
     registered_at: Date | null;
   }>(
     `INSERT INTO voice_operator_presence (
+       tenant_id,
        user_id,
        status,
        active_call_session_id,
@@ -140,22 +157,25 @@ export async function upsertVoiceOperatorPresence({
        $1,
        $2,
        $3,
-       CASE WHEN $4 THEN now() ELSE NULL END,
+       $4,
+       CASE WHEN $5 THEN now() ELSE NULL END,
        now(),
-       $5
+       $6
      )
      ON CONFLICT (user_id) DO UPDATE
        SET status = EXCLUDED.status,
            active_call_session_id = EXCLUDED.active_call_session_id,
            registered_at = CASE
-             WHEN $4 THEN now()
+             WHEN $5 THEN now()
              ELSE voice_operator_presence.registered_at
            END,
            last_seen_at = now(),
            metadata = COALESCE(voice_operator_presence.metadata, '{}'::jsonb) || EXCLUDED.metadata,
            updated_at = now()
+       WHERE voice_operator_presence.tenant_id = EXCLUDED.tenant_id
      RETURNING status, active_call_session_id, metadata, last_seen_at, registered_at`,
     [
+      scopedTenantId,
       userId,
       status,
       activeCallSessionId ?? null,
@@ -187,7 +207,11 @@ export async function upsertVoiceOperatorPresence({
   } satisfies VoiceOperatorPresence;
 }
 
-export async function listAvailableVoiceDeskOperators(limit = 8): Promise<VoiceDeskOperator[]> {
+export async function listAvailableVoiceDeskOperators(
+  tenantId: string | null | undefined,
+  limit = 8
+): Promise<VoiceDeskOperator[]> {
+  const scopedTenantId = requireTenantId(tenantId, "List available voice desk operators");
   const normalizedLimit = Math.min(Math.max(limit, 1), 25);
   const freshnessSeconds = getPresenceFreshnessSeconds();
   const result = await db.query<{
@@ -208,22 +232,23 @@ export async function listAvailableVoiceDeskOperators(limit = 8): Promise<VoiceD
        presence.active_call_session_id,
        presence.metadata->>'current_ringing_call_session_id' AS ringing_call_session_id
      FROM voice_operator_presence presence
-     JOIN users u ON u.id = presence.user_id
-     LEFT JOIN roles r ON r.id = u.role_id
+     JOIN users u ON u.id = presence.user_id AND u.tenant_id = presence.tenant_id
+     LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
      WHERE u.is_active = true
-       AND COALESCE(r.name, '') <> $2
+       AND presence.tenant_id = $1
+       AND COALESCE(r.name, '') <> $3
        AND presence.status = 'online'
        AND presence.active_call_session_id IS NULL
        AND presence.registered_at IS NOT NULL
        AND NULLIF(presence.metadata->>'current_ringing_call_session_id', '') IS NULL
-       AND presence.last_seen_at >= now() - make_interval(secs => $1::int)
+       AND presence.last_seen_at >= now() - make_interval(secs => $2::int)
      ORDER BY
        COALESCE(NULLIF(presence.metadata->>'last_queue_offer_at', '')::timestamptz, to_timestamp(0)) ASC,
        COALESCE(NULLIF(presence.metadata->>'last_queue_connected_at', '')::timestamptz, to_timestamp(0)) ASC,
        presence.last_seen_at DESC,
        presence.updated_at ASC
-     LIMIT $3`,
-    [freshnessSeconds, VIEWER_ROLE, normalizedLimit]
+     LIMIT $4`,
+    [scopedTenantId, freshnessSeconds, VIEWER_ROLE, normalizedLimit]
   );
 
   return result.rows.map((row) => ({
@@ -237,7 +262,11 @@ export async function listAvailableVoiceDeskOperators(limit = 8): Promise<VoiceD
     }));
 }
 
-export async function listVoiceOperatorRoster(limit = 12): Promise<VoiceDeskOperatorRosterEntry[]> {
+export async function listVoiceOperatorRoster(
+  tenantId: string | null | undefined,
+  limit = 12
+): Promise<VoiceDeskOperatorRosterEntry[]> {
+  const scopedTenantId = requireTenantId(tenantId, "List voice operator roster");
   const normalizedLimit = Math.min(Math.max(limit, 1), 25);
   const freshnessSeconds = getPresenceFreshnessSeconds();
   const result = await db.query<{
@@ -260,11 +289,12 @@ export async function listVoiceOperatorRoster(limit = 12): Promise<VoiceDeskOper
        presence.last_seen_at,
        presence.registered_at
      FROM voice_operator_presence presence
-     JOIN users u ON u.id = presence.user_id
-     LEFT JOIN roles r ON r.id = u.role_id
+     JOIN users u ON u.id = presence.user_id AND u.tenant_id = presence.tenant_id
+     LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
      WHERE u.is_active = true
-       AND COALESCE(r.name, '') <> $2
-       AND presence.last_seen_at >= now() - make_interval(secs => $1::int)
+       AND presence.tenant_id = $1
+       AND COALESCE(r.name, '') <> $3
+       AND presence.last_seen_at >= now() - make_interval(secs => $2::int)
      ORDER BY
        CASE
          WHEN presence.status = 'online' AND NULLIF(presence.metadata->>'current_ringing_call_session_id', '') IS NOT NULL THEN 0
@@ -275,8 +305,8 @@ export async function listVoiceOperatorRoster(limit = 12): Promise<VoiceDeskOper
        END,
        COALESCE(NULLIF(presence.metadata->>'last_queue_offer_at', '')::timestamptz, to_timestamp(0)) ASC,
        presence.updated_at ASC
-     LIMIT $3`,
-    [freshnessSeconds, VIEWER_ROLE, normalizedLimit]
+     LIMIT $4`,
+    [scopedTenantId, freshnessSeconds, VIEWER_ROLE, normalizedLimit]
   );
 
   return result.rows.map((row) => ({
@@ -292,9 +322,12 @@ export async function listVoiceOperatorRoster(limit = 12): Promise<VoiceDeskOper
   }));
 }
 
-export async function resolveVoiceDeskTargetsForOutbound(actorUserId: string | null | undefined) {
+export async function resolveVoiceDeskTargetsForOutbound(
+  tenantId: string | null | undefined,
+  actorUserId: string | null | undefined
+) {
   const preferredUserId = readString(actorUserId);
-  const available = await listAvailableVoiceDeskOperators(8);
+  const available = await listAvailableVoiceDeskOperators(tenantId, 8);
   if (!preferredUserId) {
     return available;
   }
@@ -308,12 +341,15 @@ export async function resolveVoiceDeskTargetsForOutbound(actorUserId: string | n
 }
 
 export async function reserveNextVoiceDeskOperatorForCall({
+  tenantId,
   callSessionId,
   excludeUserIds = []
 }: {
+  tenantId: string | null | undefined;
   callSessionId: string;
   excludeUserIds?: string[];
 }): Promise<VoiceDeskOperator | null> {
+  const scopedTenantId = requireTenantId(tenantId, "Reserve voice desk operator");
   const freshnessSeconds = getPresenceFreshnessSeconds();
   const exclusions = excludeUserIds.filter(Boolean);
   const client = await db.connect();
@@ -335,16 +371,17 @@ export async function reserveNextVoiceDeskOperatorForCall({
          presence.active_call_session_id,
          presence.metadata->>'current_ringing_call_session_id' AS ringing_call_session_id
        FROM voice_operator_presence presence
-       JOIN users u ON u.id = presence.user_id
-       LEFT JOIN roles r ON r.id = u.role_id
+       JOIN users u ON u.id = presence.user_id AND u.tenant_id = presence.tenant_id
+       LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
        WHERE u.is_active = true
-         AND COALESCE(r.name, '') <> $2
+         AND presence.tenant_id = $1
+         AND COALESCE(r.name, '') <> $3
          AND presence.status = 'online'
          AND presence.active_call_session_id IS NULL
          AND presence.registered_at IS NOT NULL
          AND NULLIF(presence.metadata->>'current_ringing_call_session_id', '') IS NULL
-         AND presence.last_seen_at >= now() - make_interval(secs => $1::int)
-         AND NOT (presence.user_id = ANY($3::uuid[]))
+         AND presence.last_seen_at >= now() - make_interval(secs => $2::int)
+         AND NOT (presence.user_id = ANY($4::uuid[]))
        ORDER BY
          COALESCE(NULLIF(presence.metadata->>'last_queue_offer_at', '')::timestamptz, to_timestamp(0)) ASC,
          COALESCE(NULLIF(presence.metadata->>'last_queue_connected_at', '')::timestamptz, to_timestamp(0)) ASC,
@@ -352,7 +389,7 @@ export async function reserveNextVoiceDeskOperatorForCall({
          presence.updated_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED`,
-      [freshnessSeconds, VIEWER_ROLE, exclusions]
+      [scopedTenantId, freshnessSeconds, VIEWER_ROLE, exclusions]
     );
 
     const candidate = candidateResult.rows[0];
@@ -365,7 +402,8 @@ export async function reserveNextVoiceDeskOperatorForCall({
       `UPDATE voice_operator_presence
        SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
            updated_at = now()
-       WHERE user_id = $1`,
+       WHERE user_id = $1
+         AND tenant_id = $3`,
       [
         candidate.user_id,
         JSON.stringify(
@@ -374,7 +412,8 @@ export async function reserveNextVoiceDeskOperatorForCall({
             last_queue_offer_at: new Date().toISOString(),
             last_queue_outcome: "offered"
           })
-        )
+        ),
+        scopedTenantId
       ]
     );
 
@@ -404,14 +443,17 @@ export async function reserveNextVoiceDeskOperatorForCall({
 }
 
 export async function markVoiceOperatorQueueOutcome({
+  tenantId,
   userId,
   callSessionId,
   outcome
 }: {
+  tenantId: string | null | undefined;
   userId: string;
   callSessionId: string;
   outcome: "connected" | "passed" | "missed" | "cleared";
 }) {
+  const scopedTenantId = requireTenantId(tenantId, "Mark voice operator queue outcome");
   const timestamp = new Date().toISOString();
   const patch =
     outcome === "connected"
@@ -442,11 +484,12 @@ export async function markVoiceOperatorQueueOutcome({
      SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
          updated_at = now()
      WHERE user_id = $1
+       AND tenant_id = $5
        AND (
          NULLIF(metadata->>'current_ringing_call_session_id', '') IS NULL
          OR metadata->>'current_ringing_call_session_id' = $3
          OR $4 = 'connected'
        )`,
-    [userId, JSON.stringify(patch), callSessionId, outcome]
+    [userId, JSON.stringify(patch), callSessionId, outcome, scopedTenantId]
   );
 }

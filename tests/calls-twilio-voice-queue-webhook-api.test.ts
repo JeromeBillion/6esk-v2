@@ -146,11 +146,13 @@ describe("POST /api/calls/webhooks/twilio/voice/queue", () => {
       })
     );
     expect(mocks.markVoiceOperatorQueueOutcome).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       userId: "11111111-1111-1111-1111-111111111111",
       callSessionId: "call-session-1",
       outcome: "missed"
     });
     expect(mocks.reserveNextVoiceDeskOperatorForCall).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       callSessionId: "call-session-1",
       excludeUserIds: ["11111111-1111-1111-1111-111111111111"]
     });

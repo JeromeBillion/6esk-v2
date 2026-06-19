@@ -116,6 +116,7 @@ describe("call outbox twilio provider", () => {
       provider: "twilio"
     });
     expect(mocks.twilioFactory).toHaveBeenCalledWith("AC123", "auth-token");
+    expect(mocks.resolveVoiceDeskTargetsForOutbound).toHaveBeenCalledWith(TENANT_ID, "user-1");
     expect(mocks.twilioCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "+27123456789",

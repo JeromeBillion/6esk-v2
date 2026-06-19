@@ -90,6 +90,13 @@ export async function POST(request: Request) {
       message: "Call session not found"
     });
   }
+  if (!scope) {
+    return integrationError(request, {
+      status: 404,
+      code: "unresolved_call_provider_route",
+      message: "Call session not found"
+    });
+  }
 
   let verification: Awaited<ReturnType<typeof validateTwilioWebhookForTenant>>;
   try {
@@ -140,6 +147,7 @@ export async function POST(request: Request) {
   if (operatorUserId) {
     const outcome = shouldContinueVoiceQueue(dialStatus) ? "missed" : "connected";
     await markVoiceOperatorQueueOutcome({
+      tenantId: scope?.tenantId,
       userId: operatorUserId,
       callSessionId,
       outcome
@@ -152,6 +160,7 @@ export async function POST(request: Request) {
 
   const exhaustedOperators = Array.from(new Set([...offeredUserIds, operatorUserId]));
   const operator = await reserveNextVoiceDeskOperatorForCall({
+    tenantId: scope?.tenantId,
     callSessionId,
     excludeUserIds: exhaustedOperators
   });

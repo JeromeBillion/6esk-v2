@@ -87,6 +87,7 @@ describe("POST /api/calls/webhooks/twilio/voice", () => {
     });
     mocks.createOrUpdateInboundCall.mockResolvedValue({
       status: "created",
+      tenantId: TENANT_ID,
       callSessionId: "call-session-1",
       ticketId: "ticket-1",
       messageId: "message-1",
@@ -160,6 +161,7 @@ describe("POST /api/calls/webhooks/twilio/voice", () => {
       })
     );
     expect(mocks.reserveNextVoiceDeskOperatorForCall).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       callSessionId: "call-session-1"
     });
     expect(mocks.buildDeskOperatorDialTwiML).toHaveBeenCalledWith(

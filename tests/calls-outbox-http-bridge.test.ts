@@ -99,6 +99,7 @@ describe("call outbox http bridge provider", () => {
 
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({
+      tenantId: TENANT_ID,
       eventId: "evt-1",
       callSessionId: "call-1",
       ticketId: "ticket-1",

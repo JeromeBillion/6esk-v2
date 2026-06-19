@@ -9,6 +9,7 @@ import {
 import { resolveVoiceDeskTargetsForOutbound } from "@/server/calls/operators";
 
 type OutboundCallPayload = {
+  tenantId?: unknown;
   callSessionId?: unknown;
   ticketId?: unknown;
   messageId?: unknown;
@@ -60,9 +61,14 @@ async function sendViaHttpBridge(
   const callSessionId = readString(payload.callSessionId);
   const ticketId = readString(payload.ticketId);
   const messageId = readString(payload.messageId);
+  const tenantId = readString(payload.tenantId);
   const toPhone = readString(payload.toPhone);
   const fromPhone = readString(payload.fromPhone);
   const reason = readString(payload.reason);
+
+  if (!tenantId) {
+    throw new Error("Outbound call tenant is required.");
+  }
 
   if (!callSessionId || !ticketId || !messageId || !toPhone) {
     throw new Error("Outbound call payload is incomplete.");
@@ -81,6 +87,7 @@ async function sendViaHttpBridge(
           : {})
       },
       body: JSON.stringify({
+        tenantId,
         eventId,
         callSessionId,
         ticketId,
@@ -129,10 +136,15 @@ async function sendViaTwilio(
   const callSessionId = readString(payload.callSessionId);
   const ticketId = readString(payload.ticketId);
   const messageId = readString(payload.messageId);
+  const tenantId = readString(payload.tenantId);
   const toPhone = normalizeTwilioPhoneOrNull(readString(payload.toPhone));
   const fromPhone = resolveTwilioCallerId(readString(payload.fromPhone));
   const reason = readString(payload.reason);
   const actorUserId = readString(payload.actorUserId);
+
+  if (!tenantId) {
+    throw new Error("Outbound call tenant is required.");
+  }
 
   if (!callSessionId || !ticketId || !messageId || !toPhone) {
     throw new Error("Outbound call payload is incomplete.");
@@ -142,7 +154,7 @@ async function sendViaTwilio(
   const client = twilio(accountSid, authToken);
   const statusCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/status");
   const recordingCallback = buildTwilioPublicUrl("/api/calls/webhooks/twilio/recording");
-  const deskTargets = await resolveVoiceDeskTargetsForOutbound(actorUserId);
+  const deskTargets = await resolveVoiceDeskTargetsForOutbound(tenantId, actorUserId);
   if (!deskTargets.length) {
     throw new Error("No online desk operator is available to accept the call.");
   }

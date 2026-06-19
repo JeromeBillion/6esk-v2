@@ -178,6 +178,7 @@ export async function POST(request: Request) {
   });
 
   const operator = await reserveNextVoiceDeskOperatorForCall({
+    tenantId: inbound.tenantId,
     callSessionId: inbound.callSessionId
   });
   if (!operator) {

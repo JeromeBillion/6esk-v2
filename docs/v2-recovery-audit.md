@@ -532,6 +532,15 @@ Before this recovery branch can replace `main`, run:
   - `tests/tickets-create-external-profile.test.ts`
   - `tests/outbound-email-ticket-service.test.ts`
   - voice consent event writes require tenant scope, customer IDs are ownership-validated before insertion, latest-consent reads filter by `tenant_id`, and public revocation resolves tenant scope through the public-ingress boundary instead of global consent history
+- Voice operator presence tenant-scope closure is now recovered into v2-native form:
+  - migration `0064_voice_operator_presence_tenant_scope.sql`
+  - `tests/voice-operators-tenant-scope.test.ts`
+  - `tests/calls-client-token-api.test.ts`
+  - `tests/calls-twilio-voice-webhook-api.test.ts`
+  - `tests/calls-twilio-voice-queue-webhook-api.test.ts`
+  - `tests/calls-outbox-twilio.test.ts`
+  - `tests/calls-outbox-http-bridge.test.ts`
+  - operator presence reads/writes, available-roster reads, reservation, and queue-outcome updates require tenant scope; Twilio inbound/queue callbacks and outbound provider delivery now pass the resolved tenant into operator selection; desk live support/inbox notifications and roster reads are tenant-filtered
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

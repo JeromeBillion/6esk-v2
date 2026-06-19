@@ -43,6 +43,11 @@ function buildNotificationItem(channel: DeskNotificationChannel, row: DeskNotifi
 }
 
 export async function getDeskLiveSnapshot(user: SessionUser) {
+  const tenantId = user.tenant_id?.trim();
+  if (!tenantId) {
+    throw new Error("Desk live snapshot requires tenantId.");
+  }
+
   const [
     presence,
     supportVersionResult,
@@ -52,21 +57,25 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
     latestInboxEmailResult,
     roster
   ] = await Promise.all([
-    getVoiceOperatorPresence(user.id),
+    getVoiceOperatorPresence(user.id, tenantId),
     db.query<TimestampRow>(
       `SELECT MAX(t.updated_at) AS value
        FROM tickets t
        LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE t.merged_into_ticket_id IS NULL
-         AND (t.mailbox_id IS NULL OR mb.type = 'platform')`
+         AND t.tenant_id = $1
+         AND (t.mailbox_id IS NULL OR (mb.type = 'platform' AND mb.tenant_id = $1))`,
+      [tenantId]
     ),
     db.query<TimestampRow>(
       `SELECT MAX(COALESCE(m.received_at, m.sent_at, m.created_at)) AS value
        FROM messages m
        JOIN mailboxes mb ON mb.id = m.mailbox_id
        WHERE mb.type = 'personal'
-         AND mb.owner_user_id = $1`,
-      [user.id]
+         AND mb.owner_user_id = $1
+         AND mb.tenant_id = $2
+         AND m.tenant_id = $2`,
+      [user.id, tenantId]
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -81,11 +90,14 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
        JOIN tickets t ON t.id = m.ticket_id
        LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE m.direction = 'inbound'
+         AND m.tenant_id = $1
+         AND t.tenant_id = $1
          AND m.channel = 'email'
          AND t.merged_into_ticket_id IS NULL
-         AND (t.mailbox_id IS NULL OR mb.type = 'platform')
+         AND (t.mailbox_id IS NULL OR (mb.type = 'platform' AND mb.tenant_id = $1))
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
-       LIMIT 1`
+       LIMIT 1`,
+      [tenantId]
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -100,11 +112,14 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
        JOIN tickets t ON t.id = m.ticket_id
        LEFT JOIN mailboxes mb ON mb.id = t.mailbox_id
        WHERE m.direction = 'inbound'
+         AND m.tenant_id = $1
+         AND t.tenant_id = $1
          AND m.channel = 'whatsapp'
          AND t.merged_into_ticket_id IS NULL
-         AND (t.mailbox_id IS NULL OR mb.type = 'platform')
+         AND (t.mailbox_id IS NULL OR (mb.type = 'platform' AND mb.tenant_id = $1))
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
-       LIMIT 1`
+       LIMIT 1`,
+      [tenantId]
     ),
     db.query<DeskNotificationRow>(
       `SELECT
@@ -122,11 +137,14 @@ export async function getDeskLiveSnapshot(user: SessionUser) {
          AND m.channel = 'email'
          AND mb.type = 'personal'
          AND mb.owner_user_id = $1
+         AND mb.tenant_id = $2
+         AND m.tenant_id = $2
+         AND (t.id IS NULL OR t.tenant_id = $2)
        ORDER BY COALESCE(m.received_at, m.created_at) DESC
        LIMIT 1`,
-      [user.id]
+      [user.id, tenantId]
     ),
-    listVoiceOperatorRoster(12)
+    listVoiceOperatorRoster(tenantId, 12)
   ]);
 
   const operatorSummary = roster.reduce(

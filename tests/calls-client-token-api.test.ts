@@ -73,5 +73,6 @@ describe("GET /api/calls/client-token", () => {
       }
     });
     expect(mocks.isWorkspaceModuleEnabled).toHaveBeenCalledWith("voice", "primary", TENANT_ID);
+    expect(mocks.getVoiceOperatorPresence).toHaveBeenCalledWith("user-1", TENANT_ID);
   });
 });

@@ -28,7 +28,7 @@ export async function GET() {
   }
 
   const voiceEnabled = await checkModuleEntitlement("voice", tenantId);
-  const presence = await getVoiceOperatorPresence(user.id);
+  const presence = await getVoiceOperatorPresence(user.id, tenantId);
   return Response.json({
     voiceEnabled,
     presence
@@ -64,8 +64,9 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const current = await getVoiceOperatorPresence(user.id);
+  const current = await getVoiceOperatorPresence(user.id, tenantId);
   const next = await upsertVoiceOperatorPresence({
+    tenantId,
     userId: user.id,
     status: parsed.data.status ?? current.status,
     activeCallSessionId:
