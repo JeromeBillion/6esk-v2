@@ -249,6 +249,21 @@ export type AgentRunPolicyReplay = {
   };
 };
 
+export type AgentPromptTemplateRecord = {
+  id: string;
+  tenant_id: string;
+  template_key: string;
+  template_version: string;
+  status: "draft" | "active" | "retired" | string;
+  template_body: Record<string, unknown>;
+  template_hash: string;
+  activated_at: string | null;
+  retired_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ProfileLookupMetricsPoint = {
   day: string;
   matched: number;
@@ -876,6 +891,35 @@ export async function getAgentRunReplay(agentId: string, runId: string) {
     `/api/admin/agents/${agentId}/runs/${runId}/replay`
   );
   return payload.replay;
+}
+
+export async function listAgentPromptTemplates(limit = 50) {
+  const payload = await apiFetch<{ templates: AgentPromptTemplateRecord[] }>(
+    `/api/admin/ai/prompts?limit=${limit}`
+  );
+  return payload.templates ?? [];
+}
+
+export function activateAgentPromptTemplate(templateId: string, reason?: string | null) {
+  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
+    `/api/admin/ai/prompts/${templateId}/activate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason ?? null })
+    }
+  );
+}
+
+export function rollbackAgentPromptTemplate(input?: { templateKey?: string; reason?: string | null }) {
+  return apiFetch<{ status: string; template: AgentPromptTemplateRecord }>(
+    "/api/admin/ai/prompts/rollback",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {})
+    }
+  );
 }
 
 export function deliverAgentOutbox(agentId: string, limit = 25) {

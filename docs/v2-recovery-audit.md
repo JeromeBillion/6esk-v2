@@ -182,9 +182,12 @@ Date: 2026-06-06
   - `src/app/api/admin/ai/prompts/route.ts`
   - `src/app/api/admin/ai/prompts/[templateId]/activate/route.ts`
   - `src/app/api/admin/ai/prompts/rollback/route.ts`
+  - `src/app/lib/api/admin.ts`
+  - `src/app/admin/AdminClient.tsx`
+  - `src/app/lib/mock-data.ts`
   - `db/migrations/0068_agent_prompt_templates.sql`
   - prompt construction now has a reusable sandbox shape that separates system constraints, tenant policy, server runtime context, untrusted event payloads, and untrusted retrieved knowledge
-  - prompt-template versioning now uses v2 `tenant_id`, active/draft/retired lifecycle state, audited create/activate/rollback events, and fail-open runtime fallback to the code template if template storage is unavailable
+  - prompt-template versioning now uses v2 `tenant_id`, active/draft/retired lifecycle state, audited create/activate/rollback events, Admin Automation tab activation/rollback controls, local mock fixtures, and fail-open runtime fallback to the code template if template storage is unavailable
   - generated customer-facing `draft_reply` and `send_reply` output is validated before side effects; unsafe output is blocked, tenant-scoped audit evidence is written, and denied run-tool evidence is recorded when a run id is present
   - the validator reuses v2 prompt-safety telemetry and stores redacted samples instead of raw generated output
 - Extended v2-native run ledger evidence into the Dexter outbox worker dispatch path:

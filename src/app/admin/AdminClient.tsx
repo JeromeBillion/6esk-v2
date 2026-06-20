@@ -26,6 +26,7 @@ import {
   AgentFailedEvent,
   AdminMailboxRecord,
   AgentOutboxMetrics,
+  AgentPromptTemplateRecord,
   AgentRunPolicyReplay,
   AgentRunSummary,
   AdminUserRecord,
@@ -51,6 +52,7 @@ import {
   WhatsAppTemplate,
   WhatsAppFailedEvent,
   WhatsAppOutboxMetrics,
+  activateAgentPromptTemplate,
   batchRecoverDeadLetters,
   createAdminMailbox,
   createAgentIntegration,
@@ -81,6 +83,7 @@ import {
   getWhatsAppOutboxMetrics,
   listFailedWhatsAppEvents,
   listAgentIntegrations,
+  listAgentPromptTemplates,
   listAgentRuns,
   listAdminMailboxes,
   listAuditLogs,
@@ -96,6 +99,7 @@ import {
   listWhatsAppTemplates,
   patchDeadLetterEvent,
   requestPasswordResetLink,
+  rollbackAgentPromptTemplate,
   retryFailedCallEvents,
   retryFailedCallTranscriptAiJobs,
   retryFailedAgentOutboxEvents,
@@ -446,6 +450,7 @@ export default function AdminClient() {
   const [agentRuns, setAgentRuns] = useState<AgentRunSummary[]>([]);
   const [agentReplay, setAgentReplay] = useState<AgentRunPolicyReplay | null>(null);
   const [replayLoadingRunId, setReplayLoadingRunId] = useState<string | null>(null);
+  const [promptTemplates, setPromptTemplates] = useState<AgentPromptTemplateRecord[]>([]);
   const [showAgentSecret, setShowAgentSecret] = useState(false);
   const [profileDays, setProfileDays] = useState(14);
   const [profile, setProfile] = useState<ProfileLookupMetrics | null>(null);
@@ -764,12 +769,14 @@ export default function AdminClient() {
   const loadAutomation = useCallback(async () => {
     setLoading((prev) => ({ ...prev, automation: true }));
     try {
-      const [agentRows, metrics] = await Promise.all([
+      const [agentRows, metrics, templates] = await Promise.all([
         listAgentIntegrations(),
-        getProfileLookupMetrics(profileDays)
+        getProfileLookupMetrics(profileDays),
+        listAgentPromptTemplates(25).catch(() => [])
       ]);
       setAgents(agentRows);
       setProfile(metrics);
+      setPromptTemplates(templates);
       const nextAgent = agentRows.find((agent) => agent.id === selectedAgentId) ?? agentRows[0] ?? null;
       setSelectedAgentId(nextAgent?.id ?? "");
       if (nextAgent) {
@@ -822,6 +829,31 @@ export default function AdminClient() {
     },
     [agents, loadAgentDiagnostics]
   );
+
+  const activatePromptTemplateVersion = useCallback(
+    async (templateId: string) => {
+      try {
+        await activateAgentPromptTemplate(templateId, "Activated from Admin automation diagnostics");
+        pushSuccess("Prompt template activated");
+        await loadAutomation();
+      } catch (error) {
+        pushError(error, "Failed activating prompt template");
+      }
+    },
+    [loadAutomation, pushError, pushSuccess]
+  );
+
+  const rollbackPromptTemplateVersion = useCallback(async () => {
+    try {
+      await rollbackAgentPromptTemplate({
+        reason: "Rolled back from Admin automation diagnostics"
+      });
+      pushSuccess("Prompt template rolled back");
+      await loadAutomation();
+    } catch (error) {
+      pushError(error, "Failed rolling back prompt template");
+    }
+  }, [loadAutomation, pushError, pushSuccess]);
 
   const loadOperations = useCallback(async () => {
     setLoading((prev) => ({ ...prev, operations: true }));
@@ -2874,6 +2906,57 @@ export default function AdminClient() {
                         </div>
                       </div>
                     ) : null}
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 p-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-neutral-900">Prompt templates</p>
+                        <p className="text-xs text-neutral-500">
+                          Runtime prompt rollout and rollback control for Dexter.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{promptTemplates.length}</Badge>
+                        <Button variant="outline" size="sm" onClick={() => void rollbackPromptTemplateVersion()}>
+                          Rollback
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {promptTemplates.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                          No prompt templates loaded.
+                        </div>
+                      ) : (
+                        promptTemplates.map((template) => (
+                          <div
+                            key={template.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 p-2 text-xs"
+                          >
+                            <div>
+                              <p className="font-medium text-neutral-900">{template.template_version}</p>
+                              <p className="text-neutral-500">
+                                {template.template_key} / {template.template_hash.slice(0, 12)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant={template.status === "active" ? "secondary" : "outline"}>
+                                {template.status}
+                              </Badge>
+                              {template.status !== "active" ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void activatePromptTemplateVersion(template.id)}
+                                >
+                                  Activate
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-2 max-h-56 overflow-y-auto">
                     {failedAgentEvents.length === 0 ? (
