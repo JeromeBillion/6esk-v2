@@ -167,7 +167,7 @@ Date: 2026-06-06
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
   - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
 - Hardened agent admin control routes so lead-admin role is insufficient without explicit tenant scope:
-  - agent list/detail, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, run cancellation, and stale-run recovery all reject missing tenant scope before agent/runtime state access
+  - agent list/detail, runtime/provider diagnostics, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, run cancellation, and stale-run recovery all reject missing tenant scope before agent/runtime state access
   - focused agent admin tests are now included in `npm run test:tenant-isolation`
 - Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
   - `src/server/agents/prompt-sandbox.ts`
@@ -209,8 +209,10 @@ Date: 2026-06-06
 - Added the first v2-native model/provider gateway foundation without requiring deployed provider evidence:
   - `src/server/ai/provider-gateway.ts`
   - `src/app/api/internal/calls/transcript-ai/provider/route.ts`
+  - `src/app/api/admin/agents/runtime/route.ts`
   - tenant AI resolution now returns explicit ready/disabled/misconfigured plans, bounded provider timeouts, fallback model metadata, provider-mode cost capture, and clear denial reasons
   - transcript AI now uses the provider plan for OpenAI-compatible response calls and records provider/fallback/timeout metadata into usage evidence without exposing provider secrets
+  - admin runtime diagnostics now require tenant scope and include secret-free AI provider readiness without exposing API keys or provider base URLs
 - Semantically ported the v1 Resend provider-webhook secret adoption into v2-native `tenant_id` form:
   - `src/app/api/email/webhooks/resend/route.ts`
   - `src/server/email/resend-webhook.ts`
@@ -385,6 +387,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-run-ledger.test.ts`
 - Agent admin route tenant-scope tests pass in the focused slice:
   - `tests/admin-agents-api.test.ts`
+  - `tests/admin-agent-runtime-api.test.ts`
   - `tests/admin-agent-outbox-deliver-api.test.ts`
   - `tests/admin-agent-outbox-failed-api.test.ts`
   - `tests/admin-agent-outbox-retry-api.test.ts`
@@ -428,6 +431,7 @@ Before this recovery branch can replace `main`, run:
   - `npm run test:ai-safety` now runs the v2-native local AI safety release-gate subset including the native Dexter plugin prompt-sandbox/customer-privacy boundary
 - AI provider gateway tests pass in the focused slice:
   - `tests/ai-provider-gateway.test.ts`
+  - `tests/admin-agent-runtime-api.test.ts`
   - `tests/calls-transcript-ai-openai-api.test.ts`
 - Transcript AI provider output validation now passes in the focused slice:
   - `tests/calls-transcript-ai-openai-api.test.ts`
