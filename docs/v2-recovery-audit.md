@@ -171,9 +171,15 @@ Date: 2026-06-06
   - focused agent admin tests are now included in `npm run test:tenant-isolation`
 - Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
   - `src/server/agents/prompt-sandbox.ts`
+  - `src/server/agents/prompt-templates.ts`
   - `src/server/agents/output-validator.ts`
   - `src/app/api/agent/v1/actions/route.ts`
+  - `src/app/api/admin/ai/prompts/route.ts`
+  - `src/app/api/admin/ai/prompts/[templateId]/activate/route.ts`
+  - `src/app/api/admin/ai/prompts/rollback/route.ts`
+  - `db/migrations/0068_agent_prompt_templates.sql`
   - prompt construction now has a reusable sandbox shape that separates system constraints, tenant policy, server runtime context, untrusted event payloads, and untrusted retrieved knowledge
+  - prompt-template versioning now uses v2 `tenant_id`, active/draft/retired lifecycle state, audited create/activate/rollback events, and fail-open runtime fallback to the code template if template storage is unavailable
   - generated customer-facing `draft_reply` and `send_reply` output is validated before side effects; unsafe output is blocked, tenant-scoped audit evidence is written, and denied run-tool evidence is recorded when a run id is present
   - the validator reuses v2 prompt-safety telemetry and stores redacted samples instead of raw generated output
 - Extended v2-native run ledger evidence into the Dexter outbox worker dispatch path:
@@ -396,6 +402,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-agent-rollout-api.test.ts`
 - Prompt sandbox/output validator tests pass in the focused slice:
   - `tests/agent-prompt-sandbox.test.ts`
+  - `tests/agent-prompt-templates.test.ts`
+  - `tests/admin-ai-prompts-api.test.ts`
   - `tests/agent-output-validator.test.ts`
   - `tests/agent-customer-context.test.ts`
   - `tests/agent-merge-actions.test.ts`

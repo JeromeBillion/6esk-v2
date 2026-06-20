@@ -7,6 +7,8 @@ export const TENANT_SCOPED_QUERY_TABLES = [
   "agent_drafts",
   "agent_integrations",
   "agent_outbox",
+  "agent_prompt_template_events",
+  "agent_prompt_templates",
   "agent_run_events",
   "agent_run_steps",
   "agent_runs",

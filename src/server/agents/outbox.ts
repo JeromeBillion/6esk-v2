@@ -7,9 +7,9 @@ import {
 } from "@/server/agents/integrations";
 import { buildAgentCustomerContext } from "@/server/agents/customer-context";
 import {
-  buildAgentPromptSandbox,
   type AgentPromptSandboxMode
 } from "@/server/agents/prompt-sandbox";
+import { buildAgentPromptSandboxForRuntime } from "@/server/agents/prompt-templates";
 import {
   evaluatePromptSafety,
   promptSafetyTelemetry,
@@ -619,7 +619,7 @@ async function buildDeliveryPayload({
     attachCustomerContextToPayload(payloadWithRag, customerContext),
     runtimePromptSafety
   );
-  const promptSandbox = buildAgentPromptSandbox({
+  const promptSandbox = await buildAgentPromptSandboxForRuntime({
     tenantId,
     runId,
     mode: promptSandboxModeForRuntimeSafety(

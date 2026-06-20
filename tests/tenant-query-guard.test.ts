@@ -42,6 +42,11 @@ describe("tenant query guard", () => {
       })
     ).toThrow(TenantQueryGuardError);
     expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM agent_prompt_templates WHERE template_key = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
+    expect(() =>
       enforceTenantQueryGuard("SELECT id FROM knowledge_quarantine_events WHERE reason_code = $1", {
         mode: "strict"
       })
