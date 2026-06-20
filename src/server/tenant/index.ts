@@ -14,9 +14,6 @@ export { getTenantContext, requireTenantContext, isTenantReadOnly } from "./cont
 // Guards
 export { requireTenantMatch, requireTenantWritable, guardResource } from "./guard";
 
-// Scoped database
-export { createScopedDb, type ScopedDb } from "./scoped-db";
-
 // Lifecycle operations
 export {
   TenantLifecycleError,

@@ -177,6 +177,15 @@ describe("validateEnv", () => {
     ).toThrow(/MODULE_METERING_FAIL_CLOSED must not be false in production/);
   });
 
+  it("keeps destructive data-subject deletion disabled in production until durable jobs ship", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        DATA_SUBJECT_DELETION_ENABLED: "true"
+      })
+    ).toThrow(/DATA_SUBJECT_DELETION_ENABLED must remain false/);
+  });
+
   it("rejects disabled or invalid configured rate limits in production", () => {
     expect(() =>
       validateEnv({

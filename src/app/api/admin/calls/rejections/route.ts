@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
 
@@ -25,6 +26,10 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const hours = Math.min(Math.max(Number(url.searchParams.get("hours") ?? 24) || 24, 1), 168);
@@ -36,21 +41,23 @@ export async function GET(request: Request) {
        COALESCE(data->>'mode', 'unknown') AS mode,
        COUNT(*)::int AS count
      FROM audit_logs
-     WHERE action = 'call_webhook_rejected'
-       AND created_at >= now() - (($1::text || ' hours')::interval)
+     WHERE tenant_id = $1
+       AND action = 'call_webhook_rejected'
+       AND created_at >= now() - (($2::text || ' hours')::interval)
      GROUP BY 1, 2
      ORDER BY count DESC`,
-    [hours]
+    [tenantId, hours]
   );
 
   const recentResult = await db.query<RecentRejectionRow>(
     `SELECT id, created_at, data
      FROM audit_logs
-     WHERE action = 'call_webhook_rejected'
-       AND created_at >= now() - (($1::text || ' hours')::interval)
+     WHERE tenant_id = $1
+       AND action = 'call_webhook_rejected'
+       AND created_at >= now() - (($2::text || ' hours')::interval)
      ORDER BY created_at DESC
-     LIMIT $2`,
-    [hours, limit]
+     LIMIT $3`,
+    [tenantId, hours, limit]
   );
 
   return Response.json({

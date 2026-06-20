@@ -51,6 +51,7 @@ export async function GET(request: Request) {
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const guardComment = tenantId ? "" : "/* tenant-query-guard: ignore internal-backoffice-global-audit-log-view */";
 
   params.push(limit);
   const limitIdx = params.length;
@@ -58,7 +59,8 @@ export async function GET(request: Request) {
   const offsetIdx = params.length;
 
   const result = await db.query(
-    `SELECT id, tenant_id, actor_user_id, action, entity_type, entity_id, data, created_at
+    `${guardComment}
+     SELECT id, tenant_id, actor_user_id, action, entity_type, entity_id, data, created_at
      FROM audit_logs
      ${whereClause}
      ORDER BY created_at DESC

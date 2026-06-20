@@ -1,5 +1,6 @@
 import { canManageTickets } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 
 export async function GET(request: Request) {
@@ -9,6 +10,10 @@ export async function GET(request: Request) {
   }
 
   if (!canManageTickets(user)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -52,28 +57,30 @@ export async function GET(request: Request) {
          '[]'
        ) AS identities
      FROM customers c
-     LEFT JOIN customer_identities ci ON ci.customer_id = c.id
-     LEFT JOIN tickets t ON t.customer_id = c.id AND t.merged_into_ticket_id IS NULL
-     WHERE c.merged_into_customer_id IS NULL
+     LEFT JOIN customer_identities ci ON ci.customer_id = c.id AND ci.tenant_id = c.tenant_id
+     LEFT JOIN tickets t ON t.customer_id = c.id AND t.tenant_id = c.tenant_id AND t.merged_into_ticket_id IS NULL
+     WHERE c.tenant_id = $2
+       AND c.merged_into_customer_id IS NULL
        AND (
-         c.id::text ILIKE $1 OR
-         c.display_name ILIKE $1 OR
+          c.id::text ILIKE $1 OR
+          c.display_name ILIKE $1 OR
          c.primary_email ILIKE $1 OR
          c.primary_phone ILIKE $1 OR
          c.external_user_id ILIKE $1 OR
          EXISTS (
-           SELECT 1
-           FROM customer_identities ciq
-           WHERE ciq.customer_id = c.id
-             AND ciq.identity_value ILIKE $1
-         )
-       )
+            SELECT 1
+            FROM customer_identities ciq
+            WHERE ciq.customer_id = c.id
+              AND ciq.tenant_id = c.tenant_id
+              AND ciq.identity_value ILIKE $1
+          )
+        )
      GROUP BY c.id
      ORDER BY
        MAX(COALESCE(t.updated_at, t.created_at)) DESC NULLS LAST,
        c.updated_at DESC
-     LIMIT $2`,
-    [like, limit]
+     LIMIT $3`,
+    [like, tenantId, limit]
   );
 
   return Response.json({

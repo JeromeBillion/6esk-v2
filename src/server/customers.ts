@@ -105,7 +105,7 @@ async function upsertCustomerIdentity({
     ) VALUES (
       $1, $2, $3, $4, $5, $6, now()
     )
-    ON CONFLICT (identity_type, identity_value)
+    ON CONFLICT (tenant_id, identity_type, identity_value)
     DO UPDATE SET
       is_primary =
         CASE
@@ -274,13 +274,13 @@ async function upsertRegisteredCustomer({
     ) VALUES (
       $1, 'registered', $2, $3, $4, $5, $6
     )
-    ON CONFLICT (external_system, external_user_id)
+    ON CONFLICT (tenant_id, external_system, external_user_id)
+    WHERE external_system IS NOT NULL AND external_user_id IS NOT NULL
     DO UPDATE SET
       display_name = COALESCE(EXCLUDED.display_name, customers.display_name),
       primary_email = COALESCE(EXCLUDED.primary_email, customers.primary_email),
       primary_phone = COALESCE(EXCLUDED.primary_phone, customers.primary_phone),
       updated_at = now()
-    WHERE customers.tenant_id = EXCLUDED.tenant_id
     RETURNING id`,
     [
       tenantId,
@@ -662,9 +662,10 @@ export async function updateCustomerProfile(
         `SELECT customer_id
          FROM customer_identities
          WHERE identity_type = 'email'
-           AND identity_value = $1
-         LIMIT 1`,
-        [normalizedEmail]
+            AND identity_value = $1
+            AND tenant_id = $2
+          LIMIT 1`,
+        [normalizedEmail, tenantId]
       );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
@@ -677,9 +678,10 @@ export async function updateCustomerProfile(
         `SELECT customer_id
          FROM customer_identities
          WHERE identity_type = 'phone'
-           AND identity_value = $1
-         LIMIT 1`,
-        [normalizedPhone]
+            AND identity_value = $1
+            AND tenant_id = $2
+          LIMIT 1`,
+        [normalizedPhone, tenantId]
       );
       if (conflict.rows[0] && conflict.rows[0].customer_id !== customerId) {
         await client.query("ROLLBACK");
@@ -742,14 +744,12 @@ export async function updateCustomerProfile(
              source,
              updated_at
            ) VALUES ($1, $2, 'email', $3, true, 'manual_profile_edit', now())
-           ON CONFLICT (identity_type, identity_value)
+           ON CONFLICT (tenant_id, identity_type, identity_value)
            DO UPDATE SET
              customer_id = EXCLUDED.customer_id,
-             tenant_id = EXCLUDED.tenant_id,
              is_primary = true,
              source = EXCLUDED.source,
-             updated_at = now()
-           WHERE customer_identities.tenant_id = EXCLUDED.tenant_id`,
+             updated_at = now()`,
           [customerId, tenantId, normalizedEmail]
         );
       }
@@ -776,14 +776,12 @@ export async function updateCustomerProfile(
              source,
              updated_at
            ) VALUES ($1, $2, 'phone', $3, true, 'manual_profile_edit', now())
-           ON CONFLICT (identity_type, identity_value)
+           ON CONFLICT (tenant_id, identity_type, identity_value)
            DO UPDATE SET
              customer_id = EXCLUDED.customer_id,
-             tenant_id = EXCLUDED.tenant_id,
              is_primary = true,
              source = EXCLUDED.source,
-             updated_at = now()
-           WHERE customer_identities.tenant_id = EXCLUDED.tenant_id`,
+             updated_at = now()`,
           [customerId, tenantId, normalizedPhone]
         );
       }

@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getDateRange } from "@/server/analytics/dateRange";
 import {
@@ -51,6 +52,10 @@ export async function GET(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const { start, end } = getDateRange(url.searchParams);
@@ -62,19 +67,21 @@ export async function GET(request: Request) {
     `SELECT date_trunc('day', created_at) AS day, COUNT(*)::int AS count
      FROM tickets
      WHERE created_at >= $1 AND created_at < $2
+       AND tenant_id = $3
      GROUP BY day
      ORDER BY day`,
-    [start, end]
+    [start, end, tenantId]
   );
 
   const solvedResult = await db.query<VolumeRow>(
     `SELECT date_trunc('day', solved_at) AS day, COUNT(*)::int AS count
-     FROM tickets
-     WHERE solved_at IS NOT NULL
-       AND solved_at >= $1 AND solved_at < $2
-     GROUP BY day
-     ORDER BY day`,
-    [start, end]
+      FROM tickets
+      WHERE solved_at IS NOT NULL
+        AND solved_at >= $1 AND solved_at < $2
+        AND tenant_id = $3
+      GROUP BY day
+      ORDER BY day`,
+    [start, end, tenantId]
   );
 
   const emailResult = await db.query<EmailVolumeRow>(
@@ -82,12 +89,13 @@ export async function GET(request: Request) {
        date_trunc('day', created_at) AS day,
        COUNT(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
        COUNT(*) FILTER (WHERE direction = 'outbound')::int AS outbound
-     FROM messages
-     WHERE channel = 'email'
-       AND created_at >= $1 AND created_at < $2
-     GROUP BY day
-     ORDER BY day`,
-    [start, end]
+      FROM messages
+      WHERE channel = 'email'
+        AND created_at >= $1 AND created_at < $2
+        AND tenant_id = $3
+      GROUP BY day
+      ORDER BY day`,
+    [start, end, tenantId]
   );
 
   const whatsappStatusResult = await db.query<WhatsAppStatusAggregateRow>(
@@ -97,12 +105,13 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered,
        COUNT(*) FILTER (WHERE status = 'read')::int AS read,
        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
-     FROM whatsapp_status_events
-     WHERE occurred_at >= $1 AND occurred_at < $2
-       AND ($3 = 'all' OR COALESCE(payload->>'source', 'unknown') = $3)
-     GROUP BY day
-     ORDER BY day`,
-    [start, end, whatsappSource]
+      FROM whatsapp_status_events
+      WHERE occurred_at >= $1 AND occurred_at < $2
+        AND ($3 = 'all' OR COALESCE(payload->>'source', 'unknown') = $3)
+        AND tenant_id = $4
+      GROUP BY day
+      ORDER BY day`,
+    [start, end, whatsappSource, tenantId]
   );
 
   const voiceResult = await db.query<VoiceVolumeRow>(
@@ -116,11 +125,12 @@ export async function GET(request: Request) {
        COUNT(*) FILTER (WHERE status = 'busy')::int AS busy,
        COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled,
        AVG(duration_seconds)::numeric AS avg_duration_seconds
-     FROM call_sessions
-     WHERE queued_at >= $1 AND queued_at < $2
-     GROUP BY day
-     ORDER BY day`,
-    [start, end]
+      FROM call_sessions
+      WHERE queued_at >= $1 AND queued_at < $2
+        AND tenant_id = $3
+      GROUP BY day
+      ORDER BY day`,
+    [start, end, tenantId]
   );
 
   const voiceQaResult = await db.query<VoiceQaVolumeRow>(
@@ -138,11 +148,12 @@ export async function GET(request: Request) {
            )
        )::int AS flagged,
        COALESCE(SUM(jsonb_array_length(qa_flags)) FILTER (WHERE status = 'completed'), 0)::int AS total_flags
-     FROM call_transcript_ai_jobs
-     WHERE completed_at >= $1 AND completed_at < $2
-     GROUP BY day
-     ORDER BY day`,
-    [start, end]
+      FROM call_transcript_ai_jobs
+      WHERE completed_at >= $1 AND completed_at < $2
+        AND tenant_id = $3
+      GROUP BY day
+      ORDER BY day`,
+    [start, end, tenantId]
   );
 
   const formatRows = (rows: VolumeRow[]) =>

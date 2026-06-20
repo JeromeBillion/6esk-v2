@@ -1325,7 +1325,7 @@ export async function mergeCustomers({
       FROM customer_identities
       WHERE customer_id = $2
         AND tenant_id = $3
-      ON CONFLICT (identity_type, identity_value) DO NOTHING`,
+      ON CONFLICT (tenant_id, identity_type, identity_value) DO NOTHING`,
       [targetCustomerId, sourceCustomerId, tenantId]
     );
 

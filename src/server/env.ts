@@ -48,6 +48,7 @@ const envSchema = z.object({
   TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN: optionalBooleanish,
   TENANT_PUBLIC_INGRESS_ORIGINS_JSON: optionalNonEmptyString,
   TENANT_QUERY_GUARD_MODE: optionalNonEmptyString,
+  DATA_SUBJECT_DELETION_ENABLED: optionalBooleanish,
   INBOUND_ALERT_WEBHOOK: z.union([z.string().url(), z.literal("")]).optional(),
   INBOUND_ALERT_THRESHOLD: z.string().optional(),
   INBOUND_ALERT_WINDOW_MINUTES: z.string().optional(),
@@ -244,6 +245,9 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
   }
   if (readString(source, "TENANT_INGRESS_REQUIRE_SECRETS")?.toLowerCase() === "false") {
     issues.push("TENANT_INGRESS_REQUIRE_SECRETS must not be false in production");
+  }
+  if (isEnabled(source, "DATA_SUBJECT_DELETION_ENABLED")) {
+    issues.push("DATA_SUBJECT_DELETION_ENABLED must remain false until durable erasure jobs ship");
   }
 
   const callsProvider = readString(source, "CALLS_PROVIDER")?.toLowerCase() ?? "mock";

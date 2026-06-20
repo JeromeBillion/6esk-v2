@@ -22,11 +22,11 @@ If an End-User (e.g., someone who called a 6esk tenant's support line) contacts 
 1. **Intake:** The request is received at `privacy@6esk.com`.
 2. **Identification:** 6esk identifies which Tenant(s) the end-user's data belongs to.
 3. **Forwarding:** 6esk **does not** act on the request directly. Instead, 6esk forwards the request to the relevant Tenant (the Responsible Party) within 3 business days.
-4. **Tooling:** 6esk provides the Tenant with the necessary software capabilities (e.g., UI buttons or API endpoints) to search, export, and delete the specific end-user's records (tickets, call transcripts, emails).
+4. **Tooling:** 6esk provides the Tenant with software capabilities to search and export relevant end-user records. Destructive deletion tooling is disabled in the launch build until the durable erasure workflow, object-store retry ledger, and completion evidence are shipped.
 5. **Notification:** 6esk notifies the end-user that their request has been forwarded to the Responsible Party.
 
 ## 4. Platform Capabilities for Compliance
 To enable our tenants to comply with their own POPIA obligations, the 6esk platform provides:
 - **Search & Export:** The ability to search across all modules (tickets, WhatsApp, AI transcripts) for a specific email or phone number.
-- **Redaction/Deletion:** The ability to delete an entire customer record and cascade delete their associated communications.
+- **Redaction/Deletion:** Tracked as a post-launch compliance workflow. The unsafe direct cascade-delete API is disabled by default and cannot be enabled in production until durable erasure jobs with database/object-store evidence ship.
 - **Audit Logging:** An immutable record of when a data subject's information was exported or deleted by the tenant admin.

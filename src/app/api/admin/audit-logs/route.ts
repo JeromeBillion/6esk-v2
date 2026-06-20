@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
 
@@ -13,6 +14,10 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const limitParam = Number(url.searchParams.get("limit") ?? "50");
@@ -23,10 +28,11 @@ export async function GET(request: Request) {
     `SELECT a.id, a.action, a.entity_type, a.entity_id, a.data, a.created_at,
             u.display_name as actor_name, u.email as actor_email
      FROM audit_logs a
-     LEFT JOIN users u ON u.id = a.actor_user_id
+     LEFT JOIN users u ON u.id = a.actor_user_id AND u.tenant_id = a.tenant_id
+     WHERE a.tenant_id = $1
      ORDER BY a.created_at DESC
-     LIMIT $1`,
-    [limit]
+     LIMIT $2`,
+    [tenantId, limit]
   );
 
   return Response.json({

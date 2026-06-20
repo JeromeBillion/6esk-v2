@@ -1,5 +1,6 @@
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 
 export async function GET(request: Request) {
@@ -11,6 +12,10 @@ export async function GET(request: Request) {
   if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") ?? "").trim();
@@ -20,8 +25,8 @@ export async function GET(request: Request) {
     return Response.json({ tickets: [] });
   }
 
-  const values: Array<string | number> = [];
-  const conditions: string[] = ["t.merged_into_ticket_id IS NULL"];
+  const values: Array<string | number> = [tenantId];
+  const conditions: string[] = ["t.tenant_id = $1", "t.merged_into_ticket_id IS NULL"];
   const like = `%${query}%`;
   values.push(like);
   conditions.push(
@@ -55,18 +60,18 @@ export async function GET(request: Request) {
        t.status,
        t.priority,
        t.assigned_user_id,
-       EXISTS (
-         SELECT 1 FROM messages wm
-         WHERE wm.ticket_id = t.id AND wm.channel = 'whatsapp'
-       ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
-       EXISTS (
-         SELECT 1 FROM messages vm
-         WHERE vm.ticket_id = t.id AND vm.channel = 'voice'
-       ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
-       COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at
-     FROM tickets t
-     LEFT JOIN messages m ON m.ticket_id = t.id
-     WHERE ${conditions.join(" AND ")}
+        EXISTS (
+          SELECT 1 FROM messages wm
+          WHERE wm.ticket_id = t.id AND wm.tenant_id = t.tenant_id AND wm.channel = 'whatsapp'
+        ) OR t.requester_email ILIKE 'whatsapp:%' AS has_whatsapp,
+        EXISTS (
+          SELECT 1 FROM messages vm
+          WHERE vm.ticket_id = t.id AND vm.tenant_id = t.tenant_id AND vm.channel = 'voice'
+        ) OR t.requester_email ILIKE 'voice:%' AS has_voice,
+        COALESCE(MAX(COALESCE(m.received_at, m.sent_at, m.created_at)), t.updated_at, t.created_at) AS last_message_at
+      FROM tickets t
+      LEFT JOIN messages m ON m.ticket_id = t.id AND m.tenant_id = t.tenant_id
+      WHERE ${conditions.join(" AND ")}
      GROUP BY t.id
      ORDER BY last_message_at DESC
      LIMIT $${values.length}`,

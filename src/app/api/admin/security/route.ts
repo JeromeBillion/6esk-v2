@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 
 function parseAllowlist(value?: string | null) {
@@ -24,6 +25,10 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const adminAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
   const agentAllowlist = parseAllowlist(process.env.AGENT_IP_ALLOWLIST);
@@ -34,9 +39,11 @@ export async function GET(request: Request) {
     total: number;
     encrypted: number;
   }>(
-    `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE shared_secret LIKE 'enc:v1:%')::int AS encrypted
-     FROM agent_integrations`
+     `SELECT COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE shared_secret LIKE 'enc:v1:%')::int AS encrypted
+     FROM agent_integrations
+     WHERE tenant_id = $1`,
+    [tenantId]
   );
   const agentStats = agentStatsRes.rows[0] ?? { total: 0, encrypted: 0 };
   const agentUnencrypted = Math.max(0, agentStats.total - agentStats.encrypted);
@@ -48,9 +55,11 @@ export async function GET(request: Request) {
   }>(
     `SELECT
         COUNT(*) FILTER (WHERE access_token IS NOT NULL AND access_token <> '')::int AS total_tokens,
-        COUNT(*) FILTER (WHERE access_token LIKE 'enc:v1:%')::int AS encrypted_tokens,
-        COUNT(*) FILTER (WHERE access_token IS NULL OR access_token = '')::int AS missing_tokens
-     FROM whatsapp_accounts`
+         COUNT(*) FILTER (WHERE access_token LIKE 'enc:v1:%')::int AS encrypted_tokens,
+         COUNT(*) FILTER (WHERE access_token IS NULL OR access_token = '')::int AS missing_tokens
+     FROM whatsapp_accounts
+     WHERE tenant_id = $1`,
+    [tenantId]
   );
   const whatsappStats = whatsappStatsRes.rows[0] ?? {
     total_tokens: 0,

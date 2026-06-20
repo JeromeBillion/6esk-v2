@@ -1,7 +1,7 @@
 /**
  * Shared types for the multi-tenant system.
  *
- * These types are used across the tenant context, guard, and scoped-db modules
+ * These types are used across the tenant context, guard, and lifecycle modules
  * and are re-exported by the public `@/server/tenant` barrel.
  */
 

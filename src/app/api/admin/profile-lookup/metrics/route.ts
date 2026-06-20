@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
+import { sessionTenantId } from "@/server/auth/tenant-session";
 import { db } from "@/server/db";
 import { getExternalProfileSystem } from "@/server/integrations/external-profile";
 
@@ -51,6 +52,10 @@ export async function GET(request: Request) {
   if (!isLeadAdmin(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const tenantId = sessionTenantId(user);
+  if (!tenantId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(request.url);
   const windowDays = parseWindowDays(url.searchParams.get("days"));
@@ -79,6 +84,7 @@ export async function GET(request: Request) {
         END AS duration_ms
       FROM tickets t
       WHERE t.metadata ? 'profile_lookup'
+        AND t.tenant_id = $1
     )`;
 
   const [summaryResult, seriesResult] = await Promise.all([
@@ -89,15 +95,15 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = $2
+             AND source = $3
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = $3
+             AND source = $4
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ($2, $3)
+             AND source NOT IN ($3, $4)
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
@@ -112,9 +118,9 @@ export async function GET(request: Request) {
            FILTER (WHERE duration_ms IS NOT NULL)::numeric,
            2
          )::float8 AS p95_duration_ms
-       FROM scoped
-       WHERE lookup_at >= now() - make_interval(days => $1::int)`,
-      [windowDays, liveSource, cacheSource]
+        FROM scoped
+        WHERE lookup_at >= now() - make_interval(days => $2::int)`,
+      [tenantId, windowDays, liveSource, cacheSource]
     ),
     db.query<LookupSeriesRow>(
       `${scopedCte}
@@ -123,24 +129,24 @@ export async function GET(request: Request) {
          COUNT(*) FILTER (WHERE status = 'matched')::int AS matched,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = $2
+             AND source = $3
          )::int AS matched_live,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source = $3
+             AND source = $4
          )::int AS matched_cache,
          COUNT(*) FILTER (
            WHERE status = 'matched'
-             AND source NOT IN ($2, $3)
+             AND source NOT IN ($3, $4)
          )::int AS matched_other,
          COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
          COUNT(*) FILTER (WHERE status = 'error')::int AS errored,
          COUNT(*) FILTER (WHERE status = 'disabled')::int AS disabled
-       FROM scoped
-       WHERE lookup_at >= now() - make_interval(days => $1::int)
-       GROUP BY 1
-       ORDER BY 1 ASC`,
-      [windowDays, liveSource, cacheSource]
+        FROM scoped
+        WHERE lookup_at >= now() - make_interval(days => $2::int)
+        GROUP BY 1
+        ORDER BY 1 ASC`,
+      [tenantId, windowDays, liveSource, cacheSource]
     )
   ]);
 

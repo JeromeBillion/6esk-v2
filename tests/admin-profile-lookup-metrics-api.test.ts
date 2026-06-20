@@ -17,13 +17,16 @@ vi.mock("@/server/db", () => ({
 
 import { GET } from "@/app/api/admin/profile-lookup/metrics/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
+
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -34,6 +37,19 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
 
   it("returns 403 for non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET(
+      new Request("http://localhost/api/admin/profile-lookup/metrics?days=14")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 before querying when admin session lacks tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
 
     const response = await GET(
       new Request("http://localhost/api/admin/profile-lookup/metrics?days=14")
@@ -131,14 +147,19 @@ describe("GET /api/admin/profile-lookup/metrics", () => {
     expect(body.series).toHaveLength(2);
     expect(mocks.dbQuery).toHaveBeenCalledTimes(2);
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(1, expect.any(String), [
+      TENANT_ID,
       90,
       "external-profile",
       "external-profile-cache"
     ]);
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(2, expect.any(String), [
+      TENANT_ID,
       90,
       "external-profile",
       "external-profile-cache"
     ]);
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("t.tenant_id = $1");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("source = $3");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("source = $4");
   });
 });

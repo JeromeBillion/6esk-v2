@@ -17,13 +17,16 @@ vi.mock("@/server/db", () => ({
 
 import { GET } from "@/app/api/admin/calls/rejections/route";
 
-function buildUser(roleName: "lead_admin" | "agent") {
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
+
+function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = TENANT_ID) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: tenantId
   };
 }
 
@@ -40,6 +43,17 @@ describe("GET /api/admin/calls/rejections", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+  });
+
+  it("returns 403 before querying when admin session lacks tenant scope", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
+
+    const response = await GET(new Request("http://localhost/api/admin/calls/rejections"));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
   });
 
   it("returns summary and recent webhook rejection rows", async () => {
@@ -83,7 +97,9 @@ describe("GET /api/admin/calls/rejections", () => {
     expect(mocks.dbQuery).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("created_at >= now()"),
-      [24, 20]
+      [TENANT_ID, 24, 20]
     );
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("WHERE tenant_id = $1");
+    expect(mocks.dbQuery.mock.calls[0][1]).toEqual([TENANT_ID, 24]);
   });
 });
