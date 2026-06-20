@@ -33,6 +33,7 @@ import {
   completeAgentToolCall,
   createAgentRunForOutbox,
   deriveAgentRunContext,
+  listRecentAgentRuns,
   markAgentRunCompleted,
   markAgentRunFailed,
   markAgentRunRunning,
@@ -704,5 +705,22 @@ describe("agent run ledger", () => {
       }
     });
     expect(mocks.client.query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("lists recent runs with tenant, integration, and status filters", async () => {
+    mocks.db.query.mockResolvedValueOnce({ rows: [{ id: RUN_ID, status: "running" }] });
+
+    const rows = await listRecentAgentRuns({
+      tenantId: TENANT_ID,
+      integrationId: INTEGRATION_ID,
+      statuses: ["running", "waiting_approval"],
+      limit: 500
+    });
+
+    expect(rows).toEqual([{ id: RUN_ID, status: "running" }]);
+    expect(mocks.db.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = ANY($4::text[])"),
+      [TENANT_ID, INTEGRATION_ID, 100, ["running", "waiting_approval"]]
+    );
   });
 });

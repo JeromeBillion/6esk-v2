@@ -18,6 +18,18 @@ export type AgentRunStatus =
   | "cancelled"
   | "lost";
 
+export const AGENT_RUN_STATUSES: AgentRunStatus[] = [
+  "created",
+  "queued",
+  "running",
+  "waiting_approval",
+  "completed",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "lost"
+];
+
 type Queryable = Pick<typeof db, "query">;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -108,6 +120,30 @@ type AgentRunCommandContextRow = {
   requested_scopes: unknown;
   rollout_mode: string | null;
   provider_mode: string | null;
+};
+
+export type AgentRunListRow = {
+  id: string;
+  tenant_id: string;
+  integration_id: string | null;
+  run_type: string;
+  status: AgentRunStatus;
+  lane_key: string;
+  source_channel: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  trigger_event_type: string | null;
+  trigger_outbox_id: string | null;
+  idempotency_key: string | null;
+  rollout_mode: string | null;
+  provider_mode: string | null;
+  failure_reason: string | null;
+  created_at: Date | string | null;
+  queued_at: Date | string | null;
+  started_at: Date | string | null;
+  completed_at: Date | string | null;
+  failed_at: Date | string | null;
+  updated_at: Date | string | null;
 };
 
 function queryable(client?: Queryable) {
@@ -1573,14 +1609,19 @@ export async function recoverStaleAgentRuns({
 export async function listRecentAgentRuns({
   tenantId,
   integrationId,
+  statuses,
   limit = 25
 }: {
   tenantId: string;
   integrationId?: string | null;
+  statuses?: AgentRunStatus[] | null;
   limit?: number;
 }) {
   const normalizedLimit = Math.min(Math.max(limit, 1), 100);
-  const result = await db.query(
+  const normalizedStatuses = Array.from(
+    new Set((statuses ?? []).filter((status): status is AgentRunStatus => AGENT_RUN_STATUSES.includes(status)))
+  );
+  const result = await db.query<AgentRunListRow>(
     `SELECT id, tenant_id, integration_id, run_type, status, lane_key,
             source_channel, resource_type, resource_id, trigger_event_type,
             trigger_outbox_id, idempotency_key, rollout_mode, provider_mode,
@@ -1589,9 +1630,10 @@ export async function listRecentAgentRuns({
      FROM agent_runs
      WHERE tenant_id = $1
        AND ($2::uuid IS NULL OR integration_id = $2::uuid)
+       AND (cardinality($4::text[]) = 0 OR status = ANY($4::text[]))
      ORDER BY updated_at DESC
      LIMIT $3`,
-    [tenantId, integrationId ?? null, normalizedLimit]
+    [tenantId, integrationId ?? null, normalizedLimit, normalizedStatuses]
   );
   return result.rows;
 }

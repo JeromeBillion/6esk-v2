@@ -161,13 +161,15 @@ Date: 2026-06-06
   - run-aware route actions now populate durable `agent_run_steps` and `agent_tool_calls`; policy/rollout denials are stored as denied tool calls, successful side-effect attempts are stored as running tool calls before execution and then closed as completed or failed, and admin outbox metrics include tool-call status counts
 - Semantically ported the wrong-folder agent run replay diagnostics into v2-native `tenant_id` form without copying the wrong tenant model:
   - `src/server/agents/run-replay.ts`
+  - `src/app/api/admin/agents/[agentId]/runs/route.ts`
   - `src/app/api/admin/agents/[agentId]/runs/[runId]/replay/route.ts`
+  - recent/active run-list diagnostics resolve the tenant-owned agent integration before any run read, accept only known run statuses, bound result limits, redact failure summaries, and avoid returning raw metadata or idempotency payloads
   - lead-admin replay access is scoped through the tenant-owned agent integration before any run evidence is returned
   - replay evidence assembles the run row, ordered run events, steps, tool calls, tool-policy decisions, and Knowledge Base retrieval events for a single run
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
   - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
 - Hardened agent admin control routes so lead-admin role is insufficient without explicit tenant scope:
-  - agent list/detail, runtime/provider diagnostics, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, run cancellation, and stale-run recovery all reject missing tenant scope before agent/runtime state access
+  - agent list/detail, runtime/provider diagnostics, outbox metrics, outbox deliver/retry/failed, rollout controls, run-list diagnostics, run replay, run cancellation, and stale-run recovery all reject missing tenant scope before agent/runtime state access
   - focused agent admin tests are now included in `npm run test:tenant-isolation`
 - Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
   - `src/server/agents/prompt-sandbox.ts`
@@ -385,8 +387,9 @@ Before this recovery branch can replace `main`, run:
   - `tests/knowledge-retrieval.test.ts`
   - `tests/agent-outbox-lane.test.ts`
   - outbox delivery now blocks high-risk runtime prompt-safety events before RAG/runtime delivery, downgrades medium-risk content to draft-only sandbox delivery, and attaches server-built customer privacy context plus prompt sandbox boundaries alongside RAG context before runtime delivery
-- Dexter run replay diagnostics tests pass in the focused slice:
+- Dexter run replay/run-list diagnostics tests pass in the focused slice:
   - `tests/agent-run-replay.test.ts`
+  - `tests/admin-agent-runs-api.test.ts`
   - `tests/admin-agent-run-replay-api.test.ts`
   - `tests/admin-agent-run-recover-api.test.ts`
   - `tests/admin-agent-run-cancel-api.test.ts`
@@ -398,6 +401,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-agent-outbox-failed-api.test.ts`
   - `tests/admin-agent-outbox-retry-api.test.ts`
   - `tests/admin-agent-run-recover-api.test.ts`
+  - `tests/admin-agent-runs-api.test.ts`
   - `tests/admin-agent-run-replay-api.test.ts`
   - `tests/admin-agent-rollout-api.test.ts`
 - Prompt sandbox/output validator tests pass in the focused slice:
