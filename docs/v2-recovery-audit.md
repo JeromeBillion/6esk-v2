@@ -119,7 +119,7 @@ Date: 2026-06-06
   - `src/dexter/plugins/plugin-6esk/sixesk-routes.ts`
   - `src/dexter/plugins/plugin-6esk/sixesk-provider.ts`
   - reply-eligible runtime events must now carry prompt-safety telemetry and a valid prompt sandbox with runtime run ID before async processing; denied/no-tool payloads are rejected, downgraded payloads cannot remain `full_auto`, and `auto_send` only maps to `send_reply` when server prompt-safety and sandbox state allow external actions
-  - native Dexter-generated CRM actions now carry source event ID/type, run ID, prompt-sandbox mode, compact prompt-safety telemetry, and deterministic idempotency keys so `/api/agent/v1/actions` can attach tool-policy/tool-call ledger evidence to the originating run
+  - native Dexter-generated CRM reply, review, and call actions now carry source event ID/type, run ID, prompt-sandbox mode, compact prompt-safety telemetry, and deterministic idempotency keys so `/api/agent/v1/actions` can attach tool-policy/tool-call ledger evidence to the originating run
   - provider prompts now include the runtime policy boundary, server customer privacy boundary, and cited tenant Knowledge Base snippets as untrusted/cite-required context while minimizing requester PII and customer history unless the server customer context resolves and allows it
 - Hardened Knowledge Base ingestion maintenance into v2-native `tenant_id` form:
   - `src/app/api/admin/ai/knowledge/ingestion/route.ts`

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildSixeskActionIdempotencyKey,
   buildSixeskActionRuntimeMetadata,
@@ -6,6 +6,7 @@ import {
   validateSixeskRuntimePayload
 } from "../src/dexter/plugins/plugin-6esk/sixesk-routes";
 import { sixeskTicketProvider } from "../src/dexter/plugins/plugin-6esk/sixesk-provider";
+import { sixeskInitiateTicketCallAction } from "../src/dexter/plugins/plugin-6esk/sixesk-call-actions";
 
 const TICKET_ID = "44444444-4444-4444-8444-444444444444";
 const RUN_ID = "55555555-5555-4555-8555-555555555555";
@@ -247,5 +248,77 @@ describe("Dexter 6esk runtime policy boundary", () => {
     expect(result.text).toContain("Same-customer history allowed: 0");
     expect(result.text).not.toContain("jane@example.com");
     expect(result.text).not.toContain("Prior billing issue");
+  });
+
+  it("propagates run evidence through native call actions", async () => {
+    const submitActions = vi.fn().mockResolvedValue({
+      status: "ok",
+      results: [{ status: "ok", data: { callSessionId: "call-1" } }]
+    });
+    const runtime = {
+      agentId: "66666666-6666-4666-8666-666666666666",
+      getService: () => ({
+        isConfigured: true,
+        fetchTicketCallOptions: vi.fn().mockResolvedValue({
+          ticketId: TICKET_ID,
+          selectionRequired: false,
+          defaultCandidateId: "primary",
+          canManualDial: false,
+          candidates: [
+            {
+              candidateId: "primary",
+              phone: "+15551234567",
+              label: "Primary",
+              source: "customer_primary",
+              isPrimary: true
+            }
+          ],
+          consent: { state: "unknown" }
+        }),
+        submitActions
+      })
+    };
+
+    const result = await sixeskInitiateTicketCallAction.handler(
+      runtime as any,
+      {
+        content: {
+          metadata: {
+            ticketId: TICKET_ID,
+            sourceEventId: "evt-1",
+            sourceEventType: "ticket.message.created",
+            runId: RUN_ID,
+            promptSandboxMode: "full_auto",
+            runtimePromptSafety: runtimePromptSafety()
+          }
+        }
+      } as any,
+      {
+        data: {
+          actionParams: {
+            reason: "Customer requested a call back."
+          }
+        }
+      } as any
+    );
+
+    expect(result.success).toBe(true);
+    expect(submitActions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: "initiate_call",
+        ticketId: TICKET_ID,
+        idempotencyKey: expect.any(String),
+        metadata: expect.objectContaining({
+          sourceEventId: "evt-1",
+          sourceEventType: "ticket.message.created",
+          runId: RUN_ID,
+          promptSandboxMode: "full_auto",
+          runtimePromptSafety: expect.objectContaining({
+            decision: "allow",
+            toolPolicy: expect.objectContaining({ mode: "normal" })
+          })
+        })
+      })
+    ]);
   });
 });

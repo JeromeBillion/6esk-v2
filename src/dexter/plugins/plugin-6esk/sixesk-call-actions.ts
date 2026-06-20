@@ -89,6 +89,27 @@ const readReason = (
 const readMetadataObject = (value: unknown): Record<string, unknown> | null =>
   isRecord(value) ? (value as Record<string, unknown>) : null;
 
+const buildRuntimeEvidenceMetadata = (metadata: Record<string, unknown>): Record<string, unknown> => {
+  const runtimePromptSafety = readMetadataObject(metadata.runtimePromptSafety);
+  const evidence: Record<string, unknown> = {};
+  const runId = readString(metadata.runId) || readString(metadata.agentRunId);
+  if (runId) evidence.runId = runId;
+  const sourceEventId = readString(metadata.sourceEventId);
+  if (sourceEventId) evidence.sourceEventId = sourceEventId;
+  const sourceEventType = readString(metadata.sourceEventType);
+  if (sourceEventType) evidence.sourceEventType = sourceEventType;
+  const promptSandboxMode = readString(metadata.promptSandboxMode);
+  if (promptSandboxMode) evidence.promptSandboxMode = promptSandboxMode;
+  if (runtimePromptSafety) {
+    evidence.runtimePromptSafety = {
+      decision: readString(runtimePromptSafety.decision),
+      riskLevel: readString(runtimePromptSafety.riskLevel),
+      toolPolicy: readMetadataObject(runtimePromptSafety.toolPolicy)
+    };
+  }
+  return evidence;
+};
+
 const resolveIdempotencyKey = (options: {
   runtime: IAgentRuntime;
   actionName: string;
@@ -351,8 +372,10 @@ export const sixeskInitiateTicketCallAction: Action = {
       handlerOptions: options,
     });
 
+    const runtimeEvidenceMetadata = buildRuntimeEvidenceMetadata(metadata);
     const metadataPayload: Record<string, unknown> = {
       ...(metadataOverrides ?? {}),
+      ...runtimeEvidenceMetadata,
       ...(workflowId ? { workflowId } : {}),
       intentKey,
     };

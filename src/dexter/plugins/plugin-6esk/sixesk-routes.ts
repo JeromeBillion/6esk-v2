@@ -385,6 +385,7 @@ export function resolveReplyActionType(
 
 function runtimePolicyMetadataForPayload(payload: SixeskWebhookPayload): Record<string, any> {
   return {
+    ...buildSixeskActionRuntimeMetadata(payload),
     promptSandbox: readPromptSandbox(payload),
     runtimePromptSafety: readRuntimePromptSafety(payload),
     customerContext: readRuntimeCustomerContext(payload),
