@@ -28,6 +28,7 @@ vi.mock("@/server/db", () => ({
 import {
   appendAgentApprovalRequestedCommand,
   appendAgentToolRequestedCommand,
+  cancelAgentRun,
   completeAgentRunStep,
   completeAgentToolCall,
   createAgentRunForOutbox,
@@ -631,5 +632,77 @@ describe("agent run ledger", () => {
       outboxRecoveryAction: "dead_lettered",
       recoveredOutboxStatus: "failed"
     });
+  });
+
+  it("cancels active runs with ledger, tool, step, and outbox evidence", async () => {
+    mocks.client.query.mockImplementation((queryText: unknown) => {
+      const sql = String(queryText);
+      if (sql.includes("SELECT id, status") && sql.includes("FOR UPDATE")) {
+        return Promise.resolve({ rows: [{ id: RUN_ID, status: "running" }] });
+      }
+      if (sql.includes("cancelled_steps")) {
+        return Promise.resolve({ rows: [{ cancelled_steps: 2 }] });
+      }
+      if (sql.includes("cancelled_tool_calls")) {
+        return Promise.resolve({ rows: [{ cancelled_tool_calls: 1 }] });
+      }
+      if (sql.includes("cancelled_outbox_events")) {
+        return Promise.resolve({ rows: [{ cancelled_outbox_events: 1 }] });
+      }
+      if (sql.includes("trigger_outbox_id") && sql.includes("FROM agent_runs")) {
+        return Promise.resolve({ rows: [runContext()] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const result = await cancelAgentRun({
+      tenantId: TENANT_ID,
+      integrationId: INTEGRATION_ID,
+      runId: RUN_ID,
+      reason: "Operator rollback.",
+      actor: {
+        type: "user",
+        id: "operator-1",
+        displayName: "Lead Admin"
+      }
+    });
+
+    expect(result).toMatchObject({
+      cancelled: true,
+      reason: "cancelled",
+      previousStatus: "running",
+      cancelledSteps: 2,
+      cancelledToolCalls: 1,
+      cancelledOutboxEvents: 1
+    });
+
+    const queries = mocks.client.query.mock.calls.map((call) => String(call[0]));
+    expect(queries.some((sql) => sql.includes("UPDATE agent_runs") && sql.includes("cancelled_at = now()"))).toBe(true);
+    expect(queries.some((sql) => sql.includes("UPDATE agent_run_steps") && sql.includes("status = 'cancelled'"))).toBe(true);
+    expect(queries.some((sql) => sql.includes("UPDATE agent_tool_calls") && sql.includes("status = 'cancelled'"))).toBe(true);
+    expect(queries.some((sql) => sql.includes("UPDATE agent_outbox") && sql.includes("status = 'failed'"))).toBe(true);
+
+    const eventCall = mocks.client.query.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO agent_run_events")
+    );
+    expect(eventCall?.[1]).toEqual(expect.arrayContaining([
+      TENANT_ID,
+      RUN_ID,
+      "agent.run.cancel",
+      "cancelled",
+      "Agent run cancellation requested"
+    ]));
+    const eventData = JSON.parse((eventCall?.[1] as unknown[])[5] as string);
+    expect(eventData.commandEnvelope).toMatchObject({
+      command: "agent.run.cancel",
+      actor: {
+        type: "user",
+        id: "operator-1"
+      },
+      commandData: {
+        reason: "Operator rollback."
+      }
+    });
+    expect(mocks.client.query).toHaveBeenCalledWith("COMMIT");
   });
 });

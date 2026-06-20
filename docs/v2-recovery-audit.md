@@ -145,6 +145,7 @@ Date: 2026-06-06
   - lane-busy attempts append a tenant-bound `agent.wait` command envelope with `lane_busy` metadata and release the outbox event back to pending without posting to Dexter or consuming an attempt
   - admin outbox metrics now include run queue health, stale-active counts, and top lane depth/wait snapshots
   - tenant-scoped stale-run recovery marks stale `running` runs as `timed_out`, stale `waiting_approval` runs as `lost`, requeues eligible outbox work with `run_id = NULL` so a fresh run is created, dead-letters exhausted outbox attempts, and writes recovery ledger/audit evidence
+  - tenant-scoped admin run cancellation now marks active runs as `cancelled`, cancels active tool calls/steps, stops pending/processing outbox work, appends an `agent.run.cancel` command envelope with the operator actor/reason, and rejects terminal runs instead of mutating history
   - focused regression coverage proves the atomic reservation query, worker skip/release behavior, lane diagnostics, and stale recovery/dead-letter behavior
 - Semantically ported the wrong-folder/OpenClaw-style agent tool-policy value into v2 without replacing native Dexter:
   - `src/server/agents/tool-policy.ts`
@@ -166,7 +167,7 @@ Date: 2026-06-06
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden
   - secret-like fields, tokens, emails, and prompt-safety samples are redacted before admin response serialization
 - Hardened agent admin control routes so lead-admin role is insufficient without explicit tenant scope:
-  - agent list/detail, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, and stale-run recovery all reject missing tenant scope before agent/runtime state access
+  - agent list/detail, outbox metrics, outbox deliver/retry/failed, rollout controls, run replay, run cancellation, and stale-run recovery all reject missing tenant scope before agent/runtime state access
   - focused agent admin tests are now included in `npm run test:tenant-isolation`
 - Semantically ported the wrong-folder prompt sandbox and output validator value into v2-native `tenant_id` form:
   - `src/server/agents/prompt-sandbox.ts`
@@ -380,6 +381,7 @@ Before this recovery branch can replace `main`, run:
   - `tests/agent-run-replay.test.ts`
   - `tests/admin-agent-run-replay-api.test.ts`
   - `tests/admin-agent-run-recover-api.test.ts`
+  - `tests/admin-agent-run-cancel-api.test.ts`
   - `tests/agent-run-ledger.test.ts`
 - Agent admin route tenant-scope tests pass in the focused slice:
   - `tests/admin-agents-api.test.ts`

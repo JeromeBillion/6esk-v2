@@ -64,6 +64,16 @@ export type StaleAgentRunRecoveryRow = {
   outbox_recovery_action: "retry_queued" | "dead_lettered" | "none";
 };
 
+export type AgentRunCancellationResult = {
+  cancelled: boolean;
+  reason: "cancelled" | "not_found" | "not_cancellable";
+  runId: string;
+  previousStatus?: AgentRunStatus;
+  cancelledSteps: number;
+  cancelledToolCalls: number;
+  cancelledOutboxEvents: number;
+};
+
 export type AgentToolCallLedger = {
   tenantId: string;
   runId: string;
@@ -131,6 +141,11 @@ function safeJsonSummary(value: Record<string, unknown> | null | undefined) {
   } catch {
     return { unserializable: true };
   }
+}
+
+function normalizeCancelReason(reason: string | null | undefined) {
+  const normalized = typeof reason === "string" ? reason.trim() : "";
+  return (normalized || "Cancelled by admin operator.").slice(0, 500);
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -1183,6 +1198,149 @@ export async function markAgentRunFailed({
       errorMessage: errorMessage.slice(0, 500)
     }
   });
+}
+
+export async function cancelAgentRun({
+  tenantId,
+  integrationId,
+  runId,
+  actor,
+  reason
+}: {
+  tenantId: string;
+  integrationId?: string | null;
+  runId: string;
+  actor?: DexterCommandEnvelope["actor"];
+  reason?: string | null;
+}): Promise<AgentRunCancellationResult> {
+  const normalizedReason = normalizeCancelReason(reason);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const targetResult = await client.query<{
+      id: string;
+      status: AgentRunStatus;
+    }>(
+      `SELECT id, status
+       FROM agent_runs
+       WHERE tenant_id = $1
+         AND id = $2
+         AND ($3::uuid IS NULL OR integration_id = $3::uuid)
+       FOR UPDATE`,
+      [tenantId, runId, integrationId ?? null]
+    );
+    const target = targetResult.rows[0] ?? null;
+    if (!target) {
+      await client.query("ROLLBACK");
+      return {
+        cancelled: false,
+        reason: "not_found",
+        runId,
+        cancelledSteps: 0,
+        cancelledToolCalls: 0,
+        cancelledOutboxEvents: 0
+      };
+    }
+
+    if (!["created", "queued", "running", "waiting_approval"].includes(target.status)) {
+      await client.query("ROLLBACK");
+      return {
+        cancelled: false,
+        reason: "not_cancellable",
+        runId,
+        previousStatus: target.status,
+        cancelledSteps: 0,
+        cancelledToolCalls: 0,
+        cancelledOutboxEvents: 0
+      };
+    }
+
+    await client.query(
+      `UPDATE agent_runs
+       SET status = 'cancelled',
+           cancelled_at = now(),
+           failure_reason = $3,
+           updated_at = now()
+       WHERE tenant_id = $1
+         AND id = $2
+         AND status IN ('created', 'queued', 'running', 'waiting_approval')`,
+      [tenantId, runId, normalizedReason]
+    );
+
+    const stepResult = await client.query<{ cancelled_steps: number | string }>(
+      `WITH updated AS (
+         UPDATE agent_run_steps
+         SET status = 'cancelled',
+             completed_at = COALESCE(completed_at, now()),
+             updated_at = now(),
+             metadata = metadata || $3::jsonb
+         WHERE tenant_id = $1
+           AND run_id = $2
+           AND status IN ('created', 'running', 'waiting_approval')
+         RETURNING id
+       )
+       SELECT COUNT(*)::int AS cancelled_steps
+       FROM updated`,
+      [tenantId, runId, JSON.stringify({ cancelledBy: "admin", cancellationReason: normalizedReason })]
+    );
+
+    const toolResult = await client.query<{ cancelled_tool_calls: number | string }>(
+      `WITH updated AS (
+         UPDATE agent_tool_calls
+         SET status = 'cancelled',
+             error_message = $3,
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND run_id = $2
+           AND status IN ('requested', 'approved', 'running')
+         RETURNING id
+       )
+       SELECT COUNT(*)::int AS cancelled_tool_calls
+       FROM updated`,
+      [tenantId, runId, normalizedReason]
+    );
+
+    const outboxResult = await client.query<{ cancelled_outbox_events: number | string }>(
+      `WITH updated AS (
+         UPDATE agent_outbox
+         SET status = 'failed',
+             last_error = $3,
+             next_attempt_at = now(),
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND run_id = $2
+           AND status IN ('pending', 'processing')
+         RETURNING id
+       )
+       SELECT COUNT(*)::int AS cancelled_outbox_events
+       FROM updated`,
+      [tenantId, runId, normalizedReason]
+    );
+
+    await appendAgentRunCancelCommand({
+      client,
+      tenantId,
+      runId,
+      actor,
+      reason: normalizedReason
+    });
+
+    await client.query("COMMIT");
+    return {
+      cancelled: true,
+      reason: "cancelled",
+      runId,
+      previousStatus: target.status,
+      cancelledSteps: toNumber(stepResult.rows[0]?.cancelled_steps),
+      cancelledToolCalls: toNumber(toolResult.rows[0]?.cancelled_tool_calls),
+      cancelledOutboxEvents: toNumber(outboxResult.rows[0]?.cancelled_outbox_events)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function recoverStaleAgentRuns({
