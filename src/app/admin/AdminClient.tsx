@@ -26,6 +26,8 @@ import {
   AgentFailedEvent,
   AdminMailboxRecord,
   AgentOutboxMetrics,
+  AgentRunPolicyReplay,
+  AgentRunSummary,
   AdminUserRecord,
   AuditLogRecord,
   CallFailedEvent,
@@ -62,6 +64,7 @@ import {
   deliverAgentOutbox,
   listFailedAgentEvents,
   getAgentOutboxMetrics,
+  getAgentRunReplay,
   getCallRejections,
   getCallOutboxMetrics,
   getCallTranscriptAiMetrics,
@@ -78,6 +81,7 @@ import {
   getWhatsAppOutboxMetrics,
   listFailedWhatsAppEvents,
   listAgentIntegrations,
+  listAgentRuns,
   listAdminMailboxes,
   listAuditLogs,
   listFailedCallEvents,
@@ -439,6 +443,9 @@ export default function AdminClient() {
   const [agentForm, setAgentForm] = useState<AgentForm>(defaultAgentForm);
   const [agentOutbox, setAgentOutbox] = useState<AgentOutboxMetrics | null>(null);
   const [failedAgentEvents, setFailedAgentEvents] = useState<AgentFailedEvent[]>([]);
+  const [agentRuns, setAgentRuns] = useState<AgentRunSummary[]>([]);
+  const [agentReplay, setAgentReplay] = useState<AgentRunPolicyReplay | null>(null);
+  const [replayLoadingRunId, setReplayLoadingRunId] = useState<string | null>(null);
   const [showAgentSecret, setShowAgentSecret] = useState(false);
   const [profileDays, setProfileDays] = useState(14);
   const [profile, setProfile] = useState<ProfileLookupMetrics | null>(null);
@@ -742,6 +749,18 @@ export default function AdminClient() {
     }
   }, [pushError]);
 
+  const loadAgentDiagnostics = useCallback(async (agentId: string) => {
+    const [outbox, failedOutbox, runs] = await Promise.all([
+      getAgentOutboxMetrics(agentId).catch(() => null),
+      listFailedAgentEvents(agentId, 25).catch(() => []),
+      listAgentRuns(agentId, { limit: 25 }).catch(() => [])
+    ]);
+    setAgentOutbox(outbox);
+    setFailedAgentEvents(failedOutbox);
+    setAgentRuns(runs);
+    setAgentReplay(null);
+  }, []);
+
   const loadAutomation = useCallback(async () => {
     setLoading((prev) => ({ ...prev, automation: true }));
     try {
@@ -755,16 +774,13 @@ export default function AdminClient() {
       setSelectedAgentId(nextAgent?.id ?? "");
       if (nextAgent) {
         setAgentForm(mapAgentToForm(nextAgent));
-        const [outbox, failedOutbox] = await Promise.all([
-          getAgentOutboxMetrics(nextAgent.id).catch(() => null),
-          listFailedAgentEvents(nextAgent.id, 25).catch(() => [])
-        ]);
-        setAgentOutbox(outbox);
-        setFailedAgentEvents(failedOutbox);
+        await loadAgentDiagnostics(nextAgent.id);
       } else {
         setAgentForm(defaultAgentForm());
         setAgentOutbox(null);
         setFailedAgentEvents([]);
+        setAgentRuns([]);
+        setAgentReplay(null);
       }
       setLoaded((prev) => ({ ...prev, automation: true }));
     } catch (error) {
@@ -772,7 +788,40 @@ export default function AdminClient() {
     } finally {
       setLoading((prev) => ({ ...prev, automation: false }));
     }
-  }, [profileDays, pushError, selectedAgentId]);
+  }, [loadAgentDiagnostics, profileDays, pushError, selectedAgentId]);
+
+  const loadAgentReplay = useCallback(
+    async (runId: string) => {
+      if (!selectedAgent) return;
+      setReplayLoadingRunId(runId);
+      try {
+        const replay = await getAgentRunReplay(selectedAgent.id, runId);
+        setAgentReplay(replay);
+      } catch (error) {
+        pushError(error, "Failed loading agent replay evidence");
+      } finally {
+        setReplayLoadingRunId(null);
+      }
+    },
+    [pushError, selectedAgent]
+  );
+
+  const handleAgentSelection = useCallback(
+    (agentId: string) => {
+      setSelectedAgentId(agentId);
+      const agent = agents.find((item) => item.id === agentId) ?? null;
+      setAgentForm(agent ? mapAgentToForm(agent) : defaultAgentForm());
+      if (agent) {
+        void loadAgentDiagnostics(agent.id);
+      } else {
+        setAgentOutbox(null);
+        setFailedAgentEvents([]);
+        setAgentRuns([]);
+        setAgentReplay(null);
+      }
+    },
+    [agents, loadAgentDiagnostics]
+  );
 
   const loadOperations = useCallback(async () => {
     setLoading((prev) => ({ ...prev, operations: true }));
@@ -2564,12 +2613,7 @@ export default function AdminClient() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2 flex-wrap">
-                    <select className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm" value={selectedAgentId} onChange={(event) => {
-                      const id = event.target.value;
-                      setSelectedAgentId(id);
-                      const agent = agents.find((item) => item.id === id);
-                      setAgentForm(agent ? mapAgentToForm(agent) : defaultAgentForm());
-                    }}>
+                    <select className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm" value={selectedAgentId} onChange={(event) => handleAgentSelection(event.target.value)}>
                       <option value="">Create new</option>
                       {agents.map((agent) => (
                         <option key={agent.id} value={agent.id}>{agent.name}</option>
@@ -2738,6 +2782,99 @@ export default function AdminClient() {
                       <Metric label="Failed" value={agentOutbox.queue.failed} />
                     </div>
                   ) : null}
+                  <div className="rounded-lg border border-neutral-200 p-3">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-neutral-900">Recent runs</p>
+                        <p className="text-xs text-neutral-500">Tenant-scoped run ledger and replay evidence.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{agentRuns.length}</Badge>
+                        {selectedAgent ? (
+                          <Button variant="ghost" size="sm" onClick={() => void loadAgentDiagnostics(selectedAgent.id)}>
+                            Refresh
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto">
+                      {agentRuns.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                          No agent runs recorded yet.
+                        </div>
+                      ) : (
+                        agentRuns.map((run) => (
+                          <div key={run.id} className="rounded-md border border-neutral-200 p-2 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium text-neutral-900">{run.status}</span>
+                                {run.rolloutMode ? <Badge variant="secondary">{run.rolloutMode}</Badge> : null}
+                                {run.providerMode ? <Badge variant="outline">{run.providerMode}</Badge> : null}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-neutral-500">{formatDate(run.createdAt)}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={replayLoadingRunId === run.id}
+                                  onClick={() => void loadAgentReplay(run.id)}
+                                >
+                                  {replayLoadingRunId === run.id ? "Loading" : "Replay"}
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="mt-1 text-neutral-600">{run.laneKey}</div>
+                            <div className="mt-1 text-neutral-500">
+                              {run.runType}
+                              {run.resourceType ? ` / ${run.resourceType}` : ""}
+                              {run.triggerEventType ? ` / ${run.triggerEventType}` : ""}
+                            </div>
+                            {run.failureReason ? <div className="mt-1 text-red-600">{run.failureReason}</div> : null}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {agentReplay ? (
+                      <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-neutral-900">
+                              Replay evidence · {agentReplay.status}
+                            </p>
+                            <p className="mt-1 text-neutral-600">{agentReplay.explanation}</p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void copyToClipboard(
+                                JSON.stringify(agentReplay, null, 2),
+                                "Agent replay JSON"
+                              )
+                            }
+                          >
+                            Copy JSON
+                          </Button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+                          <Metric label="Events" value={agentReplay.evidence.events.length} />
+                          <Metric label="Steps" value={agentReplay.evidence.steps.length} />
+                          <Metric label="Tools" value={agentReplay.evidence.toolCalls.length} />
+                          <Metric label="Policies" value={agentReplay.evidence.policyDecisions.length} />
+                          <Metric label="Knowledge" value={agentReplay.evidence.knowledgeRetrievals.length} />
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge variant="outline">Run {agentReplay.run.id.slice(0, 8)}</Badge>
+                          <Badge variant="outline">Status {agentReplay.run.status}</Badge>
+                          {agentReplay.missingEvidence.map((item) => (
+                            <Badge key={item} variant="secondary">
+                              Missing {item}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="space-y-2 max-h-56 overflow-y-auto">
                     {failedAgentEvents.length === 0 ? (
                       <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">

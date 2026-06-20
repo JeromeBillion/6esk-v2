@@ -163,7 +163,10 @@ Date: 2026-06-06
   - `src/server/agents/run-replay.ts`
   - `src/app/api/admin/agents/[agentId]/runs/route.ts`
   - `src/app/api/admin/agents/[agentId]/runs/[runId]/replay/route.ts`
-  - recent/active run-list diagnostics resolve the tenant-owned agent integration before any run read, accept only known run statuses, bound result limits, redact failure summaries, and avoid returning raw metadata or idempotency payloads
+  - `src/app/lib/api/admin.ts`
+  - `src/app/admin/AdminClient.tsx`
+  - `src/app/lib/mock-data.ts`
+  - recent/active run-list diagnostics resolve the tenant-owned agent integration before any run read, accept only known run statuses, bound result limits, redact failure summaries, avoid returning raw metadata or idempotency payloads, and are visible in the Admin Automation tab with replay drill-down and local mock fixtures
   - lead-admin replay access is scoped through the tenant-owned agent integration before any run evidence is returned
   - replay evidence assembles the run row, ordered run events, steps, tool calls, tool-policy decisions, and Knowledge Base retrieval events for a single run
   - replay status is classified as complete, partial, or blocked, with missing evidence surfaced explicitly instead of hidden

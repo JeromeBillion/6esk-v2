@@ -207,6 +207,48 @@ export type AgentFailedEvent = {
   payload: Record<string, unknown>;
 };
 
+export type AgentRunSummary = {
+  id: string;
+  integrationId: string | null;
+  runType: string;
+  status: string;
+  laneKey: string;
+  sourceChannel: string | null;
+  resourceType: string | null;
+  resourceId: string | null;
+  triggerEventType: string | null;
+  triggerOutboxId: string | null;
+  hasIdempotencyKey: boolean;
+  rolloutMode: string | null;
+  providerMode: string | null;
+  failureReason: string | null;
+  createdAt: string | null;
+  queuedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  updatedAt: string | null;
+};
+
+export type AgentRunPolicyReplay = {
+  status: "complete" | "partial" | "blocked";
+  explanation: string;
+  missingEvidence: string[];
+  run: Record<string, unknown> & {
+    id: string;
+    status: string;
+    lane_key?: string;
+    failure_reason?: string | null;
+  };
+  evidence: {
+    events: Array<Record<string, unknown>>;
+    steps: Array<Record<string, unknown>>;
+    toolCalls: Array<Record<string, unknown>>;
+    policyDecisions: Array<Record<string, unknown>>;
+    knowledgeRetrievals: Array<Record<string, unknown>>;
+  };
+};
+
 export type ProfileLookupMetricsPoint = {
   day: string;
   matched: number;
@@ -812,6 +854,28 @@ export function updateAgentIntegration(
 
 export function getAgentOutboxMetrics(agentId: string) {
   return apiFetch<AgentOutboxMetrics>(`/api/admin/agents/${agentId}/outbox`);
+}
+
+export async function listAgentRuns(
+  agentId: string,
+  options: { limit?: number; activeOnly?: boolean; statuses?: string[] } = {}
+) {
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 50));
+  if (options.activeOnly) params.set("activeOnly", "true");
+  if (options.statuses?.length) params.set("status", options.statuses.join(","));
+
+  const payload = await apiFetch<{ runs: AgentRunSummary[] }>(
+    `/api/admin/agents/${agentId}/runs?${params.toString()}`
+  );
+  return payload.runs ?? [];
+}
+
+export async function getAgentRunReplay(agentId: string, runId: string) {
+  const payload = await apiFetch<{ replay: AgentRunPolicyReplay }>(
+    `/api/admin/agents/${agentId}/runs/${runId}/replay`
+  );
+  return payload.replay;
 }
 
 export function deliverAgentOutbox(agentId: string, limit = 25) {

@@ -3,6 +3,8 @@ import type {
   AdminUserRecord,
   AgentIntegration,
   AgentOutboxMetrics,
+  AgentRunPolicyReplay,
+  AgentRunSummary,
   AuditLogRecord,
   CallFailedEvent,
   CallOutboxMetrics,
@@ -129,6 +131,8 @@ type DemoState = {
   whatsAppOutbox: WhatsAppOutboxMetrics;
   agents: AgentIntegration[];
   agentOutboxes: Record<string, AgentOutboxMetrics>;
+  agentRuns: Record<string, AgentRunSummary[]>;
+  agentRunReplays: Record<string, AgentRunPolicyReplay>;
   profileLookupSeries: ProfileLookupMetrics["series"];
   inboundMetrics: InboundMetrics;
   inboundSettings: InboundAlertConfig;
@@ -1988,6 +1992,155 @@ function buildInitialState(): DemoState {
     }
   };
 
+  const agentRuns: Record<string, AgentRunSummary[]> = {
+    "agent-1": [
+      {
+        id: "run-1001",
+        integrationId: "agent-1",
+        runType: "outbox_event",
+        status: "completed",
+        laneKey: "tenant:demo:ticket:ticket-1007",
+        sourceChannel: "ticket",
+        resourceType: "ticket",
+        resourceId: "ticket-1007",
+        triggerEventType: "ticket.message.created",
+        triggerOutboxId: "agent-outbox-1001",
+        hasIdempotencyKey: true,
+        rolloutMode: "draft_only",
+        providerMode: "managed",
+        failureReason: null,
+        createdAt: "2026-03-19T08:06:00Z",
+        queuedAt: "2026-03-19T08:06:05Z",
+        startedAt: "2026-03-19T08:06:12Z",
+        completedAt: "2026-03-19T08:06:38Z",
+        failedAt: null,
+        updatedAt: "2026-03-19T08:06:38Z"
+      },
+      {
+        id: "run-1000",
+        integrationId: "agent-1",
+        runType: "outbox_event",
+        status: "failed",
+        laneKey: "tenant:demo:ticket:ticket-1003",
+        sourceChannel: "ticket",
+        resourceType: "ticket",
+        resourceId: "ticket-1003",
+        triggerEventType: "ticket.reply.requested",
+        triggerOutboxId: "agent-outbox-1000",
+        hasIdempotencyKey: true,
+        rolloutMode: "hybrid_review",
+        providerMode: "managed",
+        failureReason: "Provider timeout after bounded retry window.",
+        createdAt: "2026-03-19T07:18:00Z",
+        queuedAt: "2026-03-19T07:18:03Z",
+        startedAt: "2026-03-19T07:18:10Z",
+        completedAt: null,
+        failedAt: "2026-03-19T07:19:00Z",
+        updatedAt: "2026-03-19T07:19:00Z"
+      }
+    ],
+    "agent-2": [
+      {
+        id: "run-2000",
+        integrationId: "agent-2",
+        runType: "outbox_event",
+        status: "waiting_approval",
+        laneKey: "tenant:demo:inbound:inbound-fail-3",
+        sourceChannel: "inbound",
+        resourceType: "inbound_event",
+        resourceId: "inbound-fail-3",
+        triggerEventType: "inbound.retry.requested",
+        triggerOutboxId: "agent-outbox-2000",
+        hasIdempotencyKey: true,
+        rolloutMode: "hybrid_review",
+        providerMode: "disabled",
+        failureReason: null,
+        createdAt: "2026-03-18T15:10:00Z",
+        queuedAt: "2026-03-18T15:10:02Z",
+        startedAt: "2026-03-18T15:10:20Z",
+        completedAt: null,
+        failedAt: null,
+        updatedAt: "2026-03-18T15:10:20Z"
+      }
+    ]
+  };
+
+  const agentRunReplays: Record<string, AgentRunPolicyReplay> = Object.fromEntries(
+    Object.values(agentRuns)
+      .flat()
+      .map((run) => [
+        run.id,
+        {
+          status: run.status === "failed" ? "blocked" : run.status === "waiting_approval" ? "partial" : "complete",
+          explanation:
+            run.status === "failed"
+              ? "The run reached a bounded execution failure and requires operator review before retry."
+              : run.status === "waiting_approval"
+                ? "Replay evidence is partial because the run is waiting for hybrid approval."
+                : "Replay evidence is complete enough to reconstruct the run timeline.",
+          missingEvidence: run.status === "waiting_approval" ? ["approval_decision"] : [],
+          run: {
+            id: run.id,
+            status: run.status,
+            lane_key: run.laneKey,
+            failure_reason: run.failureReason,
+            run_type: run.runType
+          },
+          evidence: {
+            events: [
+              {
+                id: `${run.id}-event-1`,
+                run_id: run.id,
+                event_type: "agent.run.create",
+                status: "queued",
+                created_at: run.queuedAt ?? run.createdAt
+              },
+              {
+                id: `${run.id}-event-2`,
+                run_id: run.id,
+                event_type: run.status === "failed" ? "agent.run.failed" : "agent.run.completed",
+                status: run.status,
+                created_at: run.updatedAt
+              }
+            ],
+            steps: [
+              {
+                id: `${run.id}-step-1`,
+                run_id: run.id,
+                step_type: "runtime:deliver_event",
+                status: run.status === "failed" ? "failed" : "completed",
+                created_at: run.startedAt ?? run.createdAt
+              }
+            ],
+            toolCalls: run.status === "waiting_approval" ? [] : [
+              {
+                id: `${run.id}-tool-1`,
+                run_id: run.id,
+                tool_name: "crm.reply",
+                status: run.status === "failed" ? "failed" : "completed"
+              }
+            ],
+            policyDecisions: [
+              {
+                id: `${run.id}-policy-1`,
+                run_id: run.id,
+                decision: run.status === "failed" ? "block" : "allow",
+                tool_class: "customer_contact"
+              }
+            ],
+            knowledgeRetrievals: [
+              {
+                id: `${run.id}-rag-1`,
+                run_id: run.id,
+                outcome: "used",
+                confidence: 0.84
+              }
+            ]
+          }
+        }
+      ])
+  );
+
   const profileLookupSeries: ProfileLookupMetrics["series"] = Array.from({ length: 14 }, (_, index) => {
     const date = new Date(Date.parse("2026-03-05T00:00:00Z") + index * 86400000).toISOString().slice(0, 10);
     const matched = 70 + index * 2;
@@ -2568,6 +2721,8 @@ function buildInitialState(): DemoState {
     whatsAppOutbox,
     agents,
     agentOutboxes,
+    agentRuns,
+    agentRunReplays,
     profileLookupSeries,
     inboundMetrics,
     inboundSettings,
@@ -3320,6 +3475,32 @@ function handleGet(url: URL) {
   if (url.pathname === "/api/admin/whatsapp/templates") return { templates: state.whatsAppTemplates };
   if (url.pathname === "/api/admin/whatsapp/outbox") return state.whatsAppOutbox;
   if (url.pathname === "/api/admin/agents") return { agents: state.agents };
+  if (parts[0] === "api" && parts[1] === "admin" && parts[2] === "agents" && parts[4] === "runs" && parts.length === 5) {
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    const activeOnly = url.searchParams.get("activeOnly") === "true";
+    const statuses = new Set(
+      (url.searchParams.get("status") ?? "")
+        .split(",")
+        .map((status) => status.trim())
+        .filter(Boolean)
+    );
+    const runs = (state.agentRuns[parts[3]] ?? []).filter((run) => {
+      if (activeOnly) return ["queued", "running", "waiting_approval"].includes(run.status);
+      return statuses.size ? statuses.has(run.status) : true;
+    });
+    return { runs: runs.slice(0, limit), filters: { limit, statuses: Array.from(statuses) } };
+  }
+  if (
+    parts[0] === "api" &&
+    parts[1] === "admin" &&
+    parts[2] === "agents" &&
+    parts[4] === "runs" &&
+    parts[6] === "replay"
+  ) {
+    const replay = state.agentRunReplays[parts[5]];
+    if (!replay) throw new Error("Not found");
+    return { replay };
+  }
   if (parts[0] === "api" && parts[1] === "admin" && parts[2] === "agents" && parts[4] === "outbox") {
     return (
       state.agentOutboxes[parts[3]] ?? {
