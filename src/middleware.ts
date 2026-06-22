@@ -1,6 +1,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis/cloudflare";
 import { NextFetchEvent, NextRequest, NextResponse } from "next/server";
+import { checkCloudflareAccessHeaders } from "@6esk/auth/cloudflare-access";
 import {
   buildRateLimitKey,
   rateLimitWindowSeconds,
@@ -23,6 +24,7 @@ type RateLimitResult = {
 
 const REQUEST_ID_HEADER = "x-6esk-request-id";
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9._:-]{8,96}$/;
+const BACKOFFICE_API_PREFIX = "/api/backoffice";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -96,6 +98,29 @@ function withRequestId(response: NextResponse, requestId: string) {
   return response;
 }
 
+export function isBackofficeApiPath(pathname: string) {
+  return pathname === BACKOFFICE_API_PREFIX || pathname.startsWith(`${BACKOFFICE_API_PREFIX}/`);
+}
+
+async function applyBackofficeAccess(request: NextRequest) {
+  if (!isBackofficeApiPath(request.nextUrl.pathname)) {
+    return null;
+  }
+
+  const access = await checkCloudflareAccessHeaders(request.headers);
+  if (!access.ok) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: access.reason }, { status: access.status })
+    };
+  }
+
+  return {
+    ok: true as const,
+    email: access.email
+  };
+}
+
 async function applyRateLimit(request: NextRequest): Promise<RateLimitResult | null> {
   if (request.method === "OPTIONS") {
     return null;
@@ -158,8 +183,16 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     return withRequestId(rateLimitResponse(result), requestId);
   }
 
+  const backofficeAccess = await applyBackofficeAccess(request);
+  if (backofficeAccess && !backofficeAccess.ok) {
+    return withRequestId(backofficeAccess.response, requestId);
+  }
+
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(REQUEST_ID_HEADER, requestId);
+  if (backofficeAccess?.ok) {
+    requestHeaders.set("x-sixesk-work-access-email", backofficeAccess.email);
+  }
   return withRequestId(
     NextResponse.next({
       request: {

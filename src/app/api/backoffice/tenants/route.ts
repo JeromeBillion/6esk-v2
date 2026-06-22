@@ -1,6 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import { listTenants, provisionTenant } from "@/server/tenant/lifecycle";
 import type { TenantStatus } from "@/server/tenant/types";
 
@@ -16,10 +18,8 @@ const provisionSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeStaff();
+  if (!auth.ok) return auth.response;
 
   const { searchParams } = new URL(request.url);
   const rawStatus = searchParams.get("status");
@@ -43,10 +43,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess();
+  if (!auth.ok) return auth.response;
 
   let payload: unknown;
   try {
@@ -65,7 +63,7 @@ export async function POST(request: Request) {
       slug: parsed.data.slug,
       displayName: parsed.data.displayName,
       plan: parsed.data.plan,
-      actorUserId: user?.id
+      actorUserId: auth.user.id
     });
     return Response.json({ tenant }, { status: 201 });
   } catch (error) {

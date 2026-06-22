@@ -40,6 +40,10 @@ describe("central rate limit routing", () => {
       id: "admin",
       envName: "RATE_LIMIT_ADMIN"
     });
+    expect(resolveRateLimitProfile("/api/backoffice/cases")).toMatchObject({
+      id: "backoffice",
+      envName: "RATE_LIMIT_BACKOFFICE"
+    });
     expect(resolveRateLimitProfile("/api/health")).toBeNull();
   });
 

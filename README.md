@@ -6,7 +6,7 @@ Forked from [6esk v1](https://github.com/JeromeBillion/6esk) — see `docs/6esk-
 
 ## What's New in v2
 
-- **Native Dexter module** (`src/dexter/`) — AI orchestration agent forked from Venus, now a first-party 6esk module
+- **Native Dexter module** (`src/dexter/`) — first-party 6esk AI orchestration for customer support workflows
 - Multi-tenant architecture foundation
 - Module entitlements and metering
 - BYO AI provider mode support
@@ -30,7 +30,7 @@ npm run db:migrate
 
 ## Dexter Module
 
-The `src/dexter/` directory contains the native AI orchestration module, ported from the external Venus ElizaOS project. It includes:
+The `src/dexter/` directory contains the native 6esk AI orchestration module. It includes:
 
 - **Characters** — Channel-specific agent personalities (webchat, CRM, Twitter, WhatsApp)
 - **Plugins** — CRM bridge, escalation, WhatsApp, routing telemetry

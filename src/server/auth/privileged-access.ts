@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { recordAuditLogWithClient } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 export type PrivilegedAccessType = "support" | "break_glass";
@@ -258,38 +259,62 @@ export async function createPrivilegedAccessGrant(
   const duration = normalizeDuration(accessType, input.requestedDurationMinutes);
   const metadata = normalizeMetadata(input.metadata);
 
-  const result = await db.query<PrivilegedAccessGrant>(
-    `INSERT INTO privileged_access_grants (
-       tenant_id,
-       workspace_key,
-       access_type,
-       status,
-       subject_user_id,
-       subject_email,
-       subject_name,
-       requested_by_user_id,
-       reason,
-       reference,
-       requested_duration_minutes,
-       metadata
-     )
-     VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11)
-     RETURNING ${GRANT_COLUMNS}`,
-    [
-      scope.tenantId,
-      workspaceKeyFor(scope),
-      accessType,
-      input.subjectUserId ?? null,
-      subjectEmail,
-      subjectName,
-      actorUserId,
-      reason,
-      reference,
-      duration,
-      metadata
-    ]
-  );
-  return result.rows[0];
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<PrivilegedAccessGrant>(
+      `INSERT INTO privileged_access_grants (
+         tenant_id,
+         workspace_key,
+         access_type,
+         status,
+         subject_user_id,
+         subject_email,
+         subject_name,
+         requested_by_user_id,
+         reason,
+         reference,
+         requested_duration_minutes,
+         metadata
+       )
+       VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING ${GRANT_COLUMNS}`,
+      [
+        scope.tenantId,
+        workspaceKeyFor(scope),
+        accessType,
+        input.subjectUserId ?? null,
+        subjectEmail,
+        subjectName,
+        actorUserId,
+        reason,
+        reference,
+        duration,
+        metadata
+      ]
+    );
+    const grant = result.rows[0];
+    await recordAuditLogWithClient(client, {
+      tenantId: scope.tenantId,
+      actorUserId: actorUserId ?? null,
+      action: "privileged_access_grant_requested",
+      entityType: "privileged_access_grant",
+      entityId: grant.id,
+      data: {
+        accessType: grant.access_type,
+        subjectEmail: grant.subject_email,
+        requestedDurationMinutes: grant.requested_duration_minutes,
+        reference: grant.reference
+      }
+    });
+    await client.query("COMMIT");
+    return grant;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function approvePrivilegedAccessGrant(
@@ -299,26 +324,49 @@ export async function approvePrivilegedAccessGrant(
   approvalNote?: string | null
 ) {
   const note = cleanText(approvalNote, 1000);
-  const result = await db.query<PrivilegedAccessGrant>(
-    `UPDATE privileged_access_grants
-     SET status = 'active',
-         approved_by_user_id = $4,
-         approval_note = $5,
-         approved_at = now(),
-         expires_at = now() + (requested_duration_minutes * interval '1 minute'),
-         updated_at = now()
-     WHERE id = $1
-       AND tenant_id = $2
-       AND workspace_key = $3
-       AND status = 'pending'
-       AND (requested_by_user_id IS NULL OR requested_by_user_id <> $4)
-     RETURNING ${GRANT_COLUMNS}`,
-    [grantId, scope.tenantId, workspaceKeyFor(scope), actorUserId, note]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Pending privileged access grant was not found or cannot be self-approved.");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<PrivilegedAccessGrant>(
+      `UPDATE privileged_access_grants
+       SET status = 'active',
+           approved_by_user_id = $4,
+           approval_note = $5,
+           approved_at = now(),
+           expires_at = now() + (requested_duration_minutes * interval '1 minute'),
+           updated_at = now()
+       WHERE id = $1
+         AND tenant_id = $2
+         AND workspace_key = $3
+         AND status = 'pending'
+         AND (requested_by_user_id IS NULL OR requested_by_user_id <> $4)
+       RETURNING ${GRANT_COLUMNS}`,
+      [grantId, scope.tenantId, workspaceKeyFor(scope), actorUserId, note]
+    );
+    const grant = result.rows[0];
+    if (!grant) {
+      throw new Error("Pending privileged access grant was not found or cannot be self-approved.");
+    }
+    await recordAuditLogWithClient(client, {
+      tenantId: scope.tenantId,
+      actorUserId,
+      action: "privileged_access_grant_approved",
+      entityType: "privileged_access_grant",
+      entityId: grant.id,
+      data: {
+        accessType: grant.access_type,
+        subjectEmail: grant.subject_email,
+        expiresAt: grant.expires_at
+      }
+    });
+    await client.query("COMMIT");
+    return grant;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  return result.rows[0];
 }
 
 export async function revokePrivilegedAccessGrant(
@@ -328,24 +376,47 @@ export async function revokePrivilegedAccessGrant(
   revokeReason: string
 ) {
   const reason = requiredText(revokeReason, "Revoke reason", 4, 1000);
-  const result = await db.query<PrivilegedAccessGrant>(
-    `UPDATE privileged_access_grants
-     SET status = 'revoked',
-         revoked_by_user_id = $4,
-         revoke_reason = $5,
-         revoked_at = now(),
-         updated_at = now()
-     WHERE id = $1
-       AND tenant_id = $2
-       AND workspace_key = $3
-       AND status IN ('pending', 'active')
-     RETURNING ${GRANT_COLUMNS}`,
-    [grantId, scope.tenantId, workspaceKeyFor(scope), actorUserId, reason]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Active or pending privileged access grant was not found.");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<PrivilegedAccessGrant>(
+      `UPDATE privileged_access_grants
+       SET status = 'revoked',
+           revoked_by_user_id = $4,
+           revoke_reason = $5,
+           revoked_at = now(),
+           updated_at = now()
+       WHERE id = $1
+         AND tenant_id = $2
+         AND workspace_key = $3
+         AND status IN ('pending', 'active')
+       RETURNING ${GRANT_COLUMNS}`,
+      [grantId, scope.tenantId, workspaceKeyFor(scope), actorUserId, reason]
+    );
+    const grant = result.rows[0];
+    if (!grant) {
+      throw new Error("Active or pending privileged access grant was not found.");
+    }
+    await recordAuditLogWithClient(client, {
+      tenantId: scope.tenantId,
+      actorUserId,
+      action: "privileged_access_grant_revoked",
+      entityType: "privileged_access_grant",
+      entityId: grant.id,
+      data: {
+        accessType: grant.access_type,
+        subjectEmail: grant.subject_email,
+        revokeReason: grant.revoke_reason
+      }
+    });
+    await client.query("COMMIT");
+    return grant;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  return result.rows[0];
 }
 
 export async function reviewPrivilegedAccessGrant(
@@ -361,24 +432,46 @@ export async function reviewPrivilegedAccessGrant(
     reviewedAt: new Date().toISOString(),
     reviewNote: note
   };
-  const result = await db.query<PrivilegedAccessGrant>(
-    `UPDATE privileged_access_grants
-     SET metadata = jsonb_set(
-           COALESCE(metadata, '{}'::jsonb),
-           '{postEventReview}',
-           $4::jsonb,
-           true
-         ),
-         updated_at = now()
-     WHERE id = $1
-       AND tenant_id = $2
-       AND workspace_key = $3
-       AND status IN ('expired', 'revoked')
-     RETURNING ${GRANT_COLUMNS}`,
-    [grantId, scope.tenantId, workspaceKeyFor(scope), JSON.stringify(review)]
-  );
-  if (!result.rows[0]) {
-    throw new Error("Expired or revoked privileged access grant was not found.");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<PrivilegedAccessGrant>(
+      `UPDATE privileged_access_grants
+       SET metadata = jsonb_set(
+             COALESCE(metadata, '{}'::jsonb),
+             '{postEventReview}',
+             $4::jsonb,
+             true
+           ),
+           updated_at = now()
+       WHERE id = $1
+         AND tenant_id = $2
+         AND workspace_key = $3
+         AND status IN ('expired', 'revoked')
+       RETURNING ${GRANT_COLUMNS}`,
+      [grantId, scope.tenantId, workspaceKeyFor(scope), JSON.stringify(review)]
+    );
+    const grant = result.rows[0];
+    if (!grant) {
+      throw new Error("Expired or revoked privileged access grant was not found.");
+    }
+    await recordAuditLogWithClient(client, {
+      tenantId: scope.tenantId,
+      actorUserId,
+      action: "privileged_access_grant_reviewed",
+      entityType: "privileged_access_grant",
+      entityId: grant.id,
+      data: {
+        accessType: grant.access_type,
+        subjectEmail: grant.subject_email
+      }
+    });
+    await client.query("COMMIT");
+    return grant;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  return result.rows[0];
 }

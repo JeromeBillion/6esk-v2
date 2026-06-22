@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { recordAuditLogWithClient } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY, DEFAULT_WORKSPACE_MODULES } from "@/server/workspace-modules";
 
 export type EntitlementDriftItem = {
@@ -77,7 +78,8 @@ export async function getTenantEntitlementDrift(
 
 export async function repairTenantEntitlementDrift(
   tenantId: string,
-  workspaceKey = DEFAULT_WORKSPACE_KEY
+  workspaceKey = DEFAULT_WORKSPACE_KEY,
+  options: { actorUserId?: string | null } = {}
 ) {
   const report = await getTenantEntitlementDrift(tenantId, workspaceKey);
   if (!report.drift.length) {
@@ -99,6 +101,18 @@ export async function repairTenantEntitlementDrift(
         [tenantId, item.moduleKey, item.workspaceEnabled]
       );
     }
+    await recordAuditLogWithClient(client, {
+      tenantId,
+      actorUserId: options.actorUserId ?? null,
+      action: "tenant_entitlement_drift_repaired",
+      entityType: "tenant",
+      entityId: tenantId,
+      data: {
+        workspaceKey: report.workspaceKey,
+        repaired: report.drift.length,
+        drift: report.drift
+      }
+    });
     await client.query("COMMIT");
     return {
       repaired: report.drift.length,

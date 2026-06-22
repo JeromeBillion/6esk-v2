@@ -94,9 +94,10 @@ export interface SixeskCustomerHistoryResponse {
 /** Message from GET /api/agent/v1/tickets/{id}/messages (camelCase per 6esk API) */
 export interface SixeskMessage {
   id: string;
-  direction: 'inbound' | 'outbound';
-  channel: 'email' | 'whatsapp' | 'voice';
+  direction: 'inbound' | 'outbound' | 'internal';
+  channel: 'email' | 'whatsapp' | 'voice' | 'internal';
   origin: 'human' | 'ai';
+  visibility?: 'customer' | 'internal';
   from: string;
   to: string[];
   subject: string | null;
@@ -150,6 +151,7 @@ export interface SixeskTicketCallOptions {
 export type SixeskActionType =
   | 'draft_reply'
   | 'send_reply'
+  | 'create_internal_comment'
   | 'initiate_call'
   | 'set_tags'
   | 'set_priority'

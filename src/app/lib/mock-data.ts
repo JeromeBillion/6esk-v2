@@ -2855,6 +2855,8 @@ function toApiMessageDetail(message: InternalMessage): SupportMessageDetail & Ma
       subject: message.subject,
       from: message.from,
       to: [...message.to],
+      cc: [],
+      bcc: [],
       direction: message.direction,
       channel: message.channel,
       origin: message.origin,

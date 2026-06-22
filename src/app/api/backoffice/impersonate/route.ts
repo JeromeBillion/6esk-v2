@@ -6,7 +6,7 @@ import {
   getActivePrivilegedAccessGrantForSubject,
   hasPrivilegedMfaSession
 } from "@/server/auth/privileged-access";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLog, recordAuditLogWithClient } from "@/server/audit";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
@@ -104,47 +104,59 @@ export async function POST(request: Request) {
 
   const tokenHash = hashToken(token);
 
-  await db.query(
-    `UPDATE auth_sessions s
-     SET impersonated_tenant_id = $1,
-         impersonation_reason = $2,
-         impersonation_ticket_ref = $3,
-         impersonation_started_at = now(),
-         impersonation_expires_at = now() + make_interval(mins => $4::int),
-         privileged_access_grant_id = $5
-     FROM users u
-     WHERE s.token_hash = $6
-       AND s.user_id = u.id
-       AND u.id = $7
-       AND u.tenant_id = $8`,
-    [
-      targetTenantId,
-      reason,
-      ticketRef,
-      effectiveDurationMinutes,
-      grant.id,
-      tokenHash,
-      user!.id,
-      user!.real_tenant_id
-    ]
-  );
-
-  // Critical: Audit log the break-glass action
-  await recordAuditLog({
-    tenantId: targetTenantId, // Log it in the target tenant's audit trail!
-    actorUserId: user!.id,
-    action: "support_impersonation_started",
-    entityType: "tenant",
-    entityId: targetTenantId,
-    data: {
-      reason,
-      ticketRef,
-      grantId: grant.id,
-      accessType: grant.access_type,
-      durationMinutes: effectiveDurationMinutes,
-      expiresAtMinutesFromNow: effectiveDurationMinutes
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const updateResult = await client.query(
+      `UPDATE auth_sessions s
+       SET impersonated_tenant_id = $1,
+           impersonation_reason = $2,
+           impersonation_ticket_ref = $3,
+           impersonation_started_at = now(),
+           impersonation_expires_at = now() + make_interval(mins => $4::int),
+           privileged_access_grant_id = $5
+       FROM users u
+       WHERE s.token_hash = $6
+         AND s.user_id = u.id
+         AND u.id = $7
+         AND u.tenant_id = $8`,
+      [
+        targetTenantId,
+        reason,
+        ticketRef,
+        effectiveDurationMinutes,
+        grant.id,
+        tokenHash,
+        user!.id,
+        user!.real_tenant_id
+      ]
+    );
+    if ((updateResult.rowCount ?? 0) !== 1) {
+      await client.query("ROLLBACK");
+      return Response.json({ error: "Active session not found." }, { status: 401 });
     }
-  });
+    await recordAuditLogWithClient(client, {
+      tenantId: targetTenantId,
+      actorUserId: user!.id,
+      action: "support_impersonation_started",
+      entityType: "tenant",
+      entityId: targetTenantId,
+      data: {
+        reason,
+        ticketRef,
+        grantId: grant.id,
+        accessType: grant.access_type,
+        durationMinutes: effectiveDurationMinutes,
+        expiresAtMinutesFromNow: effectiveDurationMinutes
+      }
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   return Response.json({
     status: "impersonating",
@@ -172,30 +184,44 @@ export async function DELETE(request: Request) {
 
   const previousTenantId = user.tenant_id;
 
-  await db.query(
-    `UPDATE auth_sessions s
-     SET impersonated_tenant_id = NULL,
-         impersonation_reason = NULL,
-         impersonation_ticket_ref = NULL,
-         impersonation_started_at = NULL,
-         impersonation_expires_at = NULL,
-         privileged_access_grant_id = NULL
-     FROM users u
-     WHERE s.token_hash = $1
-       AND s.user_id = u.id
-       AND u.id = $2
-       AND u.tenant_id = $3`,
-    [tokenHash, user.id, user.real_tenant_id]
-  );
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const updateResult = await client.query(
+      `UPDATE auth_sessions s
+       SET impersonated_tenant_id = NULL,
+           impersonation_reason = NULL,
+           impersonation_ticket_ref = NULL,
+           impersonation_started_at = NULL,
+           impersonation_expires_at = NULL,
+           privileged_access_grant_id = NULL
+       FROM users u
+       WHERE s.token_hash = $1
+         AND s.user_id = u.id
+         AND u.id = $2
+         AND u.tenant_id = $3`,
+      [tokenHash, user.id, user.real_tenant_id]
+    );
+    if ((updateResult.rowCount ?? 0) !== 1) {
+      await client.query("ROLLBACK");
+      return Response.json({ error: "Active impersonation session not found." }, { status: 401 });
+    }
 
-  await recordAuditLog({
-    tenantId: previousTenantId,
-    actorUserId: user.id,
-    action: "support_impersonation_ended",
-    entityType: "tenant",
-    entityId: previousTenantId,
-    data: {}
-  });
+    await recordAuditLogWithClient(client, {
+      tenantId: previousTenantId,
+      actorUserId: user.id,
+      action: "support_impersonation_ended",
+      entityType: "tenant",
+      entityId: previousTenantId,
+      data: {}
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   return Response.json({ status: "impersonation_ended" });
 }

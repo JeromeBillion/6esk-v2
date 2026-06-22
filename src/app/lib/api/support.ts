@@ -24,6 +24,8 @@ export type ApiTicketMessage = {
   origin: "human" | "ai";
   from_email: string;
   to_emails: string[] | null;
+  cc_emails?: string[] | null;
+  bcc_emails?: string[] | null;
   subject: string | null;
   preview_text: string | null;
   received_at: string | null;
@@ -36,6 +38,8 @@ export type ApiTicketEvent = {
   id: string;
   event_type: string;
   actor_user_id: string | null;
+  actor_name?: string | null;
+  actor_email?: string | null;
   data: Record<string, unknown> | null;
   created_at: string;
 };
@@ -88,6 +92,8 @@ export type ApiMessageDetail = {
     subject?: string | null;
     from: string;
     to: string[];
+    cc: string[];
+    bcc: string[];
     direction?: "inbound" | "outbound";
     channel?: "email" | "whatsapp" | "voice";
     origin?: "human" | "ai";
@@ -324,6 +330,8 @@ export function sendTicketReply(
     html?: string | null;
     subject?: string | null;
     recipient?: string | null;
+    cc?: string[] | null;
+    bcc?: string[] | null;
     template?: {
       name: string;
       language: string;
@@ -338,6 +346,20 @@ export function sendTicketReply(
   }
 ) {
   return apiFetch<{ status: string }>(`/api/tickets/${ticketId}/replies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export function postTicketInternalComment(
+  ticketId: string,
+  input: {
+    body: string;
+    metadata?: Record<string, unknown> | null;
+  }
+) {
+  return apiFetch<{ comment: ApiTicketEvent }>(`/api/tickets/${ticketId}/internal-comments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)

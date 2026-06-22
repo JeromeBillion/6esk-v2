@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   isInternalStaff: vi.fn(),
+  hasPrivilegedMfaSession: vi.fn(),
   getTenantById: vi.fn(),
   getTenantEntitlementDrift: vi.fn(),
   repairTenantEntitlementDrift: vi.fn(),
@@ -15,6 +16,10 @@ vi.mock("@/server/auth/session", () => ({
 
 vi.mock("@/server/auth/roles", () => ({
   isInternalStaff: mocks.isInternalStaff
+}));
+
+vi.mock("@/server/auth/privileged-access", () => ({
+  hasPrivilegedMfaSession: mocks.hasPrivilegedMfaSession
 }));
 
 vi.mock("@/server/tenant/lifecycle", () => ({
@@ -48,6 +53,7 @@ describe("backoffice tenant module drift API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.hasPrivilegedMfaSession.mockReturnValue(true);
   });
 
   it("rejects non-internal users", async () => {
@@ -113,11 +119,26 @@ describe("backoffice tenant module drift API", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ status: "ok", repaired: 2, driftCount: 2 });
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "tenant_entitlement_drift_repaired",
-        entityId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-      })
+    expect(mocks.repairTenantEntitlementDrift).toHaveBeenCalledWith(
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      undefined,
+      { actorUserId: "11111111-1111-1111-1111-111111111111" }
     );
+  });
+
+  it("requires MFA before repairing entitlement drift", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser());
+    mocks.isInternalStaff.mockReturnValue(true);
+    mocks.hasPrivilegedMfaSession.mockReturnValue(false);
+
+    const response = await POST(
+      new Request("http://localhost/api/backoffice/tenants/t1/modules/drift", {
+        method: "POST"
+      }),
+      params("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.repairTenantEntitlementDrift).not.toHaveBeenCalled();
   });
 });

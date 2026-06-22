@@ -139,13 +139,6 @@ describe("backoffice privileged access API", () => {
         subjectEmail: "support@6esk.co.za"
       })
     );
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: TENANT_ID,
-        action: "privileged_access_grant_requested",
-        entityId: GRANT_ID
-      })
-    );
     expect(mocks.sendPrivilegedAccessAlert).toHaveBeenCalledWith({
       scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
       grant,
@@ -213,12 +206,6 @@ describe("backoffice privileged access API", () => {
       GRANT_ID,
       internalAdmin.id,
       "Approved for support incident"
-    );
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "privileged_access_grant_approved",
-        entityId: GRANT_ID
-      })
     );
     expect(mocks.sendPrivilegedAccessAlert).toHaveBeenCalledWith({
       scope: { tenantId: TENANT_ID, workspaceKey: "primary" },

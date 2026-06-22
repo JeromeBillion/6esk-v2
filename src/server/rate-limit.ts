@@ -85,6 +85,12 @@ const RULES: RateLimitRule[] = [
     match: (pathname) => pathname.startsWith("/api/agent/")
   },
   {
+    id: "backoffice",
+    envName: "RATE_LIMIT_BACKOFFICE",
+    fallbackLimit: 180,
+    match: (pathname) => pathname === "/api/backoffice" || pathname.startsWith("/api/backoffice/")
+  },
+  {
     id: "admin",
     envName: "RATE_LIMIT_ADMIN",
     fallbackLimit: 120,

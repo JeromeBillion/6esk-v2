@@ -25,22 +25,23 @@ export async function GET(
     ? ((scopes as { mailbox_ids: string[] }).mailbox_ids as string[])
     : [];
 
-  const values: Array<string | number | string[]> = [threadId, limit];
+  const values: Array<string | number | string[]> = [threadId, integration.tenant_id, limit];
   let mailboxFilter = "";
   if (mailboxIds.length) {
     values.push(mailboxIds);
-    mailboxFilter = `AND mailbox_id = ANY($3)`;
+    mailboxFilter = `AND mailbox_id = ANY($4)`;
   }
 
   const result = await db.query(
-    `SELECT id, direction, channel, origin, from_email, to_emails, subject,
+    `SELECT id, ticket_id, direction, channel, origin, from_email, to_emails, subject,
             received_at, sent_at, r2_key_text, r2_key_html,
             wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE thread_id = $1
+       AND tenant_id = $2
      ${mailboxFilter}
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC
-     LIMIT $2`,
+     LIMIT $3`,
     values
   );
 
@@ -61,6 +62,7 @@ export async function GET(
 
       return {
         id: row.id,
+        ticketId: row.ticket_id,
         direction: row.direction,
         channel: row.channel,
         origin: row.origin,
@@ -80,5 +82,5 @@ export async function GET(
     })
   );
 
-  return Response.json({ threadId, messages });
+  return Response.json({ threadId, messages: messages.slice(-limit) });
 }

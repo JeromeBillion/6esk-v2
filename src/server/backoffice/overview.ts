@@ -1,7 +1,7 @@
 import { db } from "@/server/db";
 import { getOpsHealthSnapshot } from "@/server/ops/health";
 import { getSecurityReadinessSnapshot } from "@/server/security/readiness";
-import { getTenantMarginSnapshot } from "@/server/billing/margin";
+import { getMarginSnapshot } from "@/server/billing/margin";
 
 type TenantCountRow = {
   status: string;
@@ -22,7 +22,7 @@ export async function getBackofficeOverview(input: { tenantId: string }) {
     ),
     getOpsHealthSnapshot({ tenantId: input.tenantId }),
     getSecurityReadinessSnapshot(),
-    getTenantMarginSnapshot({ tenantId: input.tenantId, windowDays: 30 })
+    getMarginSnapshot({ windowDays: 30 })
   ]);
 
   const counts = {

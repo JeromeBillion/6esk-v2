@@ -24,7 +24,7 @@ export type AgentEventPayload = {
   pointers?: Record<string, string>;
 };
 
-const ORG_ID = "6ex-support";
+const ORG_ID = "6esk-support";
 
 export function buildAgentEvent({
   eventType,

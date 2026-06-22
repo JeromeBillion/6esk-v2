@@ -129,6 +129,8 @@ describe("POST /api/tickets/[ticketId]/replies", () => {
     const { response, body } = await postReply({
       text: "Hello on WhatsApp",
       recipient: "+27731234567",
+      cc: ["agent-copy@example.com"],
+      bcc: "audit@example.com",
       template: {
         name: "support_followup",
         language: "en_US",
@@ -152,6 +154,8 @@ describe("POST /api/tickets/[ticketId]/replies", () => {
         ticketId: TICKET_ID,
         text: "Hello on WhatsApp",
         recipient: "+27731234567",
+        cc: ["agent-copy@example.com"],
+        bcc: "audit@example.com",
         actorUserId: AGENT_ID,
         origin: "human"
       })
@@ -167,7 +171,52 @@ describe("POST /api/tickets/[ticketId]/replies", () => {
     });
   });
 
+  it("returns 400 when email cc or bcc recipients are invalid", async () => {
+    mocks.getTicketById.mockResolvedValue(
+      buildTicket({ requester_email: "customer@example.com" })
+    );
+
+    const { response, body } = await postReply({
+      text: "Need update",
+      cc: ["bad-cc", "copy@example.com"],
+      bcc: "not-an-email"
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: "Invalid email recipients",
+      invalidRecipients: {
+        cc: ["bad-cc"],
+        bcc: ["not-an-email"]
+      }
+    });
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when an email recipient override is invalid", async () => {
+    mocks.getTicketById.mockResolvedValue(
+      buildTicket({ requester_email: "customer@example.com" })
+    );
+
+    const { response, body } = await postReply({
+      text: "Need update",
+      recipient: "not-an-email"
+    });
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: "Invalid email recipients",
+      invalidRecipients: {
+        to: ["not-an-email"]
+      }
+    });
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+  });
+
   it("returns 502 with details when WhatsApp 24h window is closed", async () => {
+    mocks.getTicketById.mockResolvedValue(
+      buildTicket({ requester_email: "whatsapp:+27735550000" })
+    );
     mocks.sendTicketReply.mockRejectedValue(
       new Error("WhatsApp 24h window closed. Template required.")
     );

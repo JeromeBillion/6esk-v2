@@ -16,6 +16,7 @@ import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/se
 import { useThemeMode } from "@/app/lib/theme";
 import { DeskVoiceControl } from "@/app/components/DeskVoiceControl";
 import { DeskRealtimeController } from "@/app/components/DeskRealtimeController";
+import { DeskVoiceSessionProvider } from "@/app/components/DeskVoiceSessionContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -117,7 +118,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <>
+    <DeskVoiceSessionProvider>
+      <>
       <div className={cn(inter.className, "h-screen flex bg-neutral-50 dark:bg-neutral-950")}>
         <div className="w-16 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 flex flex-col items-center py-4 gap-2">
           <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.28)]">
@@ -241,6 +243,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+      </>
+    </DeskVoiceSessionProvider>
   );
 }

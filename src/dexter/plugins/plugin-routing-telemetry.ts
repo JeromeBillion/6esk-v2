@@ -32,20 +32,18 @@ type IntentRoute = {
 /* ── Intent routing table (P1.1) ── */
 
 const INTENT_ROUTES: IntentRoute[] = [
-    { intent: 'faq', keywords: ['what is 6ex', 'faq', 'how does 6ex work'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform', 'faq'] },
+    { intent: 'faq', keywords: ['what is 6esk', 'what is dexter', 'faq', 'how does 6esk work'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform', 'faq'] },
     { intent: 'status', keywords: ['status', 'down', 'offline', 'not working', 'outage'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform'] },
-    { intent: 'onboarding', keywords: ['sign up', 'create account', 'onboard', 'get started', 'new user'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform', 'kyc', 'login', 'account'] },
-    { intent: 'login', keywords: ['login', 'log in', 'otp', 'one time code', 'sign in', 'cant login', "can't login"], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['login', 'account'] },
-    { intent: 'trade', keywords: ['trade', 'buy', 'sell', 'early exit', 'market price', 'how to trade', 'place a trade'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: false, knowledgeSections: ['platform', 'trading', 'earlyExit', 'markets'] },
-    { intent: 'wallet', keywords: ['wallet', 'balance', 'deposit', 'withdraw', 'withdrawal'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['wallet'] },
-    { intent: 'portfolio', keywords: ['portfolio', 'positions', 'my positions', 'active positions', 'resolved', 'p&l'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: false, knowledgeSections: ['portfolio', 'earlyExit'] },
-    { intent: 'leaderboard', keywords: ['leaderboard', 'ranking', 'rankings', 'league table', 'top traders'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['leaderboard'] },
-    { intent: 'rewards', keywords: ['rewards', 'referral', 'refer a friend', 'invite'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['rewards'] },
-    { intent: 'social', keywords: ['comment', 'comments', 'react', 'reply', 'report comment'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['social'] },
-    { intent: 'kyc', keywords: ['kyc', 'verify', 'verification', 'id check', 'proof of address', 'identity'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: true, knowledgeSections: ['kyc', 'account'] },
-    { intent: 'billing', keywords: ['billing', 'payment', 'charge', 'chargeback', 'dispute', 'refund'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['wallet', 'trading'] },
-    { intent: 'compliance', keywords: ['compliance', 'legal', 'policy', 'terms', 'privacy', 'escalate', 'escalation', 'fraud'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['platform', 'kyc'] },
-    { intent: 'account_specific', keywords: ['my account', 'my balance', 'ticket', 'case', 'id number'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['account', 'wallet', 'portfolio', 'kyc'] },
+    { intent: 'onboarding', keywords: ['sign up', 'create account', 'onboard', 'get started', 'new user', 'setup'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform', 'support', 'channels'] },
+    { intent: 'login', keywords: ['login', 'log in', 'oauth', 'google login', 'microsoft login', 'sign in', 'cant login', "can't login"], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['platform', 'privacy'] },
+    { intent: 'ticket', keywords: ['ticket', 'case', 'support request', 'reply', 'inbox', 'merge', 'assignment', 'priority'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: false, knowledgeSections: ['support', 'privacy', 'knowledge'] },
+    { intent: 'customer_privacy', keywords: ['another customer', 'other customer', 'someone else', 'phone number', 'email address', 'what did sarah', 'their ticket'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['privacy', 'support'] },
+    { intent: 'knowledge', keywords: ['knowledge', 'sop', 'document', 'policy doc', 'folder', 'rag', 'source'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['knowledge', 'privacy', 'support'] },
+    { intent: 'channel', keywords: ['email', 'whatsapp', 'voice', 'call', 'recorded', 'recording', 'chat'], risk: 'low', model: ModelType.TEXT_SMALL, cacheable: true, knowledgeSections: ['channels', 'support', 'privacy'] },
+    { intent: 'ai_mode', keywords: ['full auto', 'hybrid', 'draft only', 'human approval', 'approval', 'auto send', 'agent mode'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['modes', 'privacy', 'support'] },
+    { intent: 'billing', keywords: ['billing', 'payment', 'charge', 'chargeback', 'dispute', 'refund', 'invoice', 'usage', 'credits', 'collections'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['billing', 'privacy'] },
+    { intent: 'compliance', keywords: ['compliance', 'legal', 'policy', 'terms', 'privacy', 'popia', 'escalate', 'escalation', 'fraud'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['privacy', 'modes', 'knowledge'] },
+    { intent: 'account_specific', keywords: ['my account', 'my profile', 'my balance', 'my ticket', 'my case', 'my request'], risk: 'high', model: ModelType.TEXT_LARGE, cacheable: false, knowledgeSections: ['privacy', 'support', 'knowledge'] },
 ];
 
 /* ── Helpers ── */

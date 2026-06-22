@@ -87,8 +87,43 @@ export function formatDuration(seconds: number) {
 
 export function normalizeRecipientEmail(value: string | null | undefined) {
   if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
+  const normalized = extractEmailAddress(value);
+  return isValidEmailAddress(normalized) ? normalized : null;
+}
+
+export function isValidEmailAddress(value: string) {
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value);
+}
+
+function extractEmailAddress(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/<([^>]+)>/);
+  return (match?.[1] ?? trimmed).trim().toLowerCase();
+}
+
+export function parseEmailAddressInput(value: string | null | undefined) {
+  if (!value) {
+    return { addresses: [] as string[], invalid: [] as string[] };
+  }
+  const addresses = new Set<string>();
+  const invalid = new Set<string>();
+  for (const rawEntry of value.split(/[;,\r\n]+/)) {
+    const entry = extractEmailAddress(rawEntry);
+    if (!entry) continue;
+    if (isValidEmailAddress(entry)) {
+      addresses.add(entry);
+    } else {
+      invalid.add(rawEntry.trim());
+    }
+  }
+  return {
+    addresses: Array.from(addresses),
+    invalid: Array.from(invalid)
+  };
+}
+
+export function parseEmailAddressList(value: string | null | undefined) {
+  return parseEmailAddressInput(value).addresses;
 }
 
 export function normalizeRecipientPhone(value: string | null | undefined) {
@@ -236,12 +271,19 @@ export function mapHistoryStatus(status: string): TicketStatusDisplay {
   return "open";
 }
 
+function isCustomerConversationMessage(
+  message: ConversationMessage
+): message is ConversationMessage & { channel: "email" | "whatsapp" | "voice" } {
+  return message.channel !== "internal";
+}
+
 export function inferPrimaryChannel(ticket: TicketView, messages: ConversationMessage[]) {
-  const inbound = messages.find((message) => message.direction === "inbound");
+  const externalMessages = messages.filter(isCustomerConversationMessage);
+  const inbound = externalMessages.find((message) => message.direction === "inbound");
   if (inbound) return inbound.channel;
   if (ticket.has_whatsapp && !ticket.has_voice) return "whatsapp";
   if (ticket.has_voice && !ticket.has_whatsapp) return "voice";
-  return messages[0]?.channel ?? "email";
+  return externalMessages[0]?.channel ?? "email";
 }
 
 // ── Saved view helpers ──────────────────────────────────────────
@@ -288,6 +330,63 @@ function normalizeEmailThreadKey(message: ConversationMessage) {
     return `${ticketPrefix}${message.subject.replace(/^re:\s*/i, "").trim().toLowerCase()}`;
   }
   return `${ticketPrefix}email:${message.id}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function actorLabelForEvent(event: ApiTicketEvent) {
+  return (
+    event.actor_name?.trim() ||
+    event.actor_email?.trim() ||
+    readString(event.data?.agentName) ||
+    readString(event.data?.agent_name) ||
+    readString(event.data?.agentId) ||
+    (event.actor_user_id ? `User ${event.actor_user_id.slice(0, 8)}` : "AI agent")
+  );
+}
+
+function internalCommentFromEvent(details: TicketDetailsResponse, event: ApiTicketEvent): ConversationMessage | null {
+  if (event.event_type !== "internal_comment") {
+    return null;
+  }
+  const data = asRecord(event.data);
+  if (data?.visibility !== "internal") {
+    return null;
+  }
+  const body = readString(data.body);
+  if (!body) {
+    return null;
+  }
+  const origin = data.origin === "ai" ? "ai" : "human";
+  const actorName = actorLabelForEvent(event);
+  return {
+    id: event.id,
+    ticketId: details.ticket.id,
+    channel: "internal",
+    direction: "internal",
+    from: {
+      name: actorName
+    },
+    to: {
+      name: "Internal team"
+    },
+    body,
+    timestamp: event.created_at,
+    visibility: "internal",
+    internal_origin: origin,
+    internal_actor_name: actorName
+  };
 }
 
 export function buildConversationTimeline(messages: ConversationMessage[]): ConversationTimelineItem[] {
@@ -358,8 +457,7 @@ export async function buildConversationMessages(
     detailRows.filter(Boolean).map((row) => [row!.message.id, row!])
   );
 
-  return details.messages
-    .map((message) => {
+  const messageRows = details.messages.map((message) => {
       const messageDetail = messageDetailById.get(message.id);
       const body =
         messageDetail?.message.text ??
@@ -368,6 +466,8 @@ export async function buildConversationMessages(
         "";
       const fromValue = messageDetail?.message.from ?? normalizeAddress(message.from_email);
       const toValue = messageDetail?.message.to?.[0] ?? message.to_emails?.[0] ?? "support@6esk.com";
+      const cc = messageDetail?.message.cc ?? message.cc_emails ?? [];
+      const bcc = messageDetail?.message.bcc ?? message.bcc_emails ?? [];
       return {
         id: message.id,
         ticketId: details.ticket.id,
@@ -385,6 +485,8 @@ export async function buildConversationMessages(
           email: toValue.includes("@") ? toValue : undefined,
           phone: toValue.includes("@") ? undefined : toValue
         },
+        cc,
+        bcc,
         body,
         timestamp:
           messageDetail?.message.sentAt ??
@@ -412,7 +514,13 @@ export async function buildConversationMessages(
         transcript: messageDetail?.message.transcript?.text ?? null,
         recording_url: messageDetail?.message.callSession?.recordingUrl ?? null
       } satisfies ConversationMessage;
-    })
+    });
+
+  const internalComments = details.events
+    .map((event) => internalCommentFromEvent(details, event))
+    .filter((message): message is ConversationMessage => Boolean(message));
+
+  return [...messageRows, ...internalComments]
     .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
 }
 
@@ -420,7 +528,20 @@ export async function buildConversationMessages(
 
 export function mapTicketEvent(event: ApiTicketEvent): HistoryTicketEvent {
   const payload = event.data ?? {};
-  const actor = event.actor_user_id ? `User ${event.actor_user_id.slice(0, 8)}` : "System";
+  const actor = event.actor_name ?? event.actor_email ?? (event.actor_user_id ? `User ${event.actor_user_id.slice(0, 8)}` : "System");
+  if (event.event_type === "internal_comment") {
+    return {
+      id: event.id,
+      type: "note_added",
+      actor,
+      timestamp: event.created_at,
+      details: "Internal comment added",
+      metadata: {
+        visibility: "internal",
+        origin: String(payload.origin ?? "human")
+      }
+    };
+  }
   if (event.event_type === "status_updated") {
     return {
       id: event.id,

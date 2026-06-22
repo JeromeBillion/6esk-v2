@@ -37,9 +37,10 @@ export async function GET(
             wa_status, wa_timestamp, wa_contact, conversation_id, provider
      FROM messages
      WHERE ticket_id = $1
+       AND tenant_id = $2
      ORDER BY COALESCE(received_at, sent_at, created_at) ASC
-     LIMIT $2`,
-    [ticketId, limit]
+     LIMIT $3`,
+    [ticketId, integration.tenant_id, limit]
   );
 
   const messages = await Promise.all(
@@ -78,5 +79,5 @@ export async function GET(
     })
   );
 
-  return Response.json({ messages });
+  return Response.json({ messages: messages.slice(-limit) });
 }

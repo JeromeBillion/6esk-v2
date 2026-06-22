@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     dbQuery: vi.fn(),
     sendTicketReply: vi.fn(),
     addTagsToTicket: vi.fn(),
+    createTicketInternalComment: vi.fn(),
     getCustomerById: vi.fn(),
     getTicketById: vi.fn(),
     recordTicketEvent: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock("@/server/email/replies", () => ({
 }));
 vi.mock("@/server/tickets", () => ({
   addTagsToTicket: mocks.addTagsToTicket,
+  createTicketInternalComment: mocks.createTicketInternalComment,
   getTicketById: mocks.getTicketById,
   recordTicketEvent: mocks.recordTicketEvent
 }));
@@ -184,6 +186,13 @@ describe("agent merge actions route", () => {
     mocks.hasMailboxScope.mockReturnValue(true);
     mocks.isWorkspaceModuleEnabled.mockResolvedValue(true);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+    mocks.createTicketInternalComment.mockResolvedValue({
+      id: "internal-comment-1",
+      event_type: "internal_comment",
+      actor_user_id: null,
+      data: { body: "Internal note", visibility: "internal", origin: "ai" },
+      created_at: "2026-06-21T10:00:00.000Z"
+    });
     mocks.getTicketById.mockImplementation(async (ticketId: string) => {
       if (ticketId === TICKET_A || ticketId === TICKET_B) return makeTicket(ticketId);
       return null;
@@ -246,6 +255,53 @@ describe("agent merge actions route", () => {
     mocks.enqueueAgentEvent.mockResolvedValue(undefined);
     mocks.deliverPendingAgentEvents.mockResolvedValue(undefined);
     mocks.dbQuery.mockResolvedValue({ rowCount: 1, rows: [] });
+  });
+
+  it("lets agents create internal comments without sending customer replies", async () => {
+    mockActionIdempotencyClaim();
+
+    const { response, body } = await postAction({
+      type: "create_internal_comment",
+      ticketId: TICKET_A,
+      text: "Customer is frustrated; keep escalation path ready.",
+      idempotencyKey: "comment-1",
+      confidence: 0.92,
+      metadata: {
+        runId: "55555555-5555-4555-8555-555555555555"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "create_internal_comment",
+      status: "ok",
+      data: {
+        commentId: "internal-comment-1",
+        visibility: "internal"
+      }
+    });
+    expect(mocks.createTicketInternalComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        ticketId: TICKET_A,
+        body: "Customer is frustrated; keep escalation path ready.",
+        origin: "ai",
+        agentId: "agent-1"
+      })
+    );
+    expect(mocks.sendTicketReply).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        action: "ai_internal_comment_created",
+        entityType: "ticket",
+        entityId: TICKET_A,
+        data: expect.objectContaining({
+          visibility: "internal",
+          commentId: "internal-comment-1"
+        })
+      })
+    );
   });
 
   it("blocks direct merge when allowMergeActions capability is disabled", async () => {

@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import { redactCallData } from "@/server/calls/redaction";
 import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
+import type { PoolClient, Pool } from "pg";
 
 type AuditLogInput = {
   tenantId: string | null | undefined;
@@ -13,6 +14,7 @@ type AuditLogInput = {
 
 type PlatformAuditLogInput = Omit<AuditLogInput, "tenantId">;
 type InsertAuditLogInput = Omit<AuditLogInput, "tenantId"> & { tenantId: string };
+type AuditQueryClient = Pick<PoolClient | Pool, "query">;
 
 function normalizeTenantId(tenantId: string | null | undefined) {
   const normalized = tenantId?.trim();
@@ -34,8 +36,8 @@ async function insertAuditLog({
   entityType,
   entityId,
   data
-}: InsertAuditLogInput) {
-  await db.query(
+}: InsertAuditLogInput, client: AuditQueryClient = db) {
+  await client.query(
     `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [tenantId, actorUserId ?? null, action, entityType, entityId ?? null, data ?? null]
@@ -58,6 +60,30 @@ export async function recordAuditLog({
     entityId,
     data
   });
+}
+
+export async function recordAuditLogWithClient(
+  client: AuditQueryClient,
+  {
+    tenantId,
+    actorUserId,
+    action,
+    entityType,
+    entityId,
+    data
+  }: AuditLogInput
+) {
+  await insertAuditLog(
+    {
+      tenantId: requireTenantId(tenantId, "Record audit log"),
+      actorUserId,
+      action,
+      entityType,
+      entityId,
+      data
+    },
+    client
+  );
 }
 
 export async function recordPlatformAuditLog({

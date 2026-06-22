@@ -91,12 +91,12 @@
 .brandWordmarkLockup {
   display: inline-flex;
   align-items: center;
-  width: clamp(4.85rem, 8vw, 6.85rem);
+  height: clamp(2.35rem, 3vw, 2.85rem);
 }
 
 .brandWordmarkImage {
-  width: 100%;
-  height: auto;
+  width: auto;
+  height: 100%;
   display: block;
   object-fit: contain;
 }
@@ -141,8 +141,7 @@
 
 .hero {
   position: relative;
-  min-height: 100svh;
-  height: 100svh;
+  min-height: clamp(42rem, 100svh, 54rem);
   padding: 0 2rem;
   background: #000;
   color: #fff;
@@ -176,19 +175,19 @@
   position: relative;
   z-index: 2;
   max-width: 1320px;
-  height: 100%;
+  min-height: inherit;
   margin: 0 auto;
-  padding-top: 6.6rem;
+  padding-top: clamp(5.6rem, 11vh, 6.6rem);
 }
 
 .heroVisualWrap {
   position: absolute;
-  left: -16rem;
-  bottom: -1rem;
+  left: clamp(-11rem, -8vw, -6rem);
+  bottom: -1.8rem;
   display: flex;
   align-items: end;
   justify-content: flex-start;
-  width: min(60vw, 48rem);
+  width: min(44vw, 38rem);
   min-height: 0;
   pointer-events: none;
 }
@@ -196,7 +195,7 @@
 .heroVisualFrame {
   position: relative;
   width: 100%;
-  transform: translateX(-8.35rem) scale(1.52);
+  transform: translateX(-3.8rem) scale(1.16);
   transform-origin: bottom left;
 }
 
@@ -252,14 +251,14 @@
   max-width: 100%;
   margin-left: 0;
   justify-self: start;
-  padding-right: min(15vw, 11rem);
+  padding-right: min(20vw, 14rem);
 }
 
 .heroLine {
   margin: 0;
   width: max-content;
   max-width: 100%;
-  font-size: clamp(3.55rem, 6vw, 6.9rem);
+  font-size: clamp(3.25rem, 5.45vw, 6.25rem);
   line-height: 0.9;
   letter-spacing: -0.05em;
   color: #fff;
@@ -267,24 +266,24 @@
 }
 
 .heroLineTop {
-  font-size: clamp(3.8rem, 6.35vw, 7.1rem);
+  font-size: clamp(3.45rem, 5.75vw, 6.45rem);
   margin-left: clamp(0.55rem, 1.4vw, 1.65rem);
 }
 
 .heroLineMiddle {
-  font-size: clamp(3.55rem, 5.85vw, 6.4rem);
+  font-size: clamp(3.2rem, 5.3vw, 5.85rem);
   margin-top: -0.5rem;
   margin-left: 0;
 }
 
 .heroLineLower {
-  font-size: clamp(3.5rem, 5.75vw, 6.15rem);
+  font-size: clamp(3.15rem, 5.2vw, 5.65rem);
   margin-top: -0.72rem;
   margin-left: clamp(1.4rem, 2.8vw, 3.05rem);
 }
 
 .heroLineBottom {
-  font-size: clamp(3.55rem, 5.85vw, 6.25rem);
+  font-size: clamp(3.2rem, 5.3vw, 5.75rem);
   margin-top: -0.86rem;
   margin-left: clamp(4.7rem, 6.6vw, 7.8rem);
 }
@@ -296,7 +295,7 @@
 .heroHeadlineSupport {
   position: absolute;
   top: 0.1rem;
-  right: clamp(-11.25rem, -9vw, -5.75rem);
+  right: 0;
   width: min(14.8rem, 26vw);
   padding: 0.9rem 0.95rem;
   border-radius: 1.25rem;
@@ -390,7 +389,7 @@
 .heroActions {
   width: min(100%, 35rem);
   margin-left: auto;
-  margin-right: clamp(-2.15rem, -2.4vw, -0.9rem);
+  margin-right: 0;
   margin-top: 0.15rem;
 }
 
@@ -442,7 +441,7 @@
   gap: 1rem;
   width: min(100%, 35rem);
   margin-left: auto;
-  margin-right: clamp(-2.15rem, -2.4vw, -0.9rem);
+  margin-right: 0;
   margin-top: 0.4rem;
 }
 
@@ -1721,7 +1720,7 @@
 
   .heroHeadlineSupport {
     top: 0.15rem;
-    right: -5.4rem;
+    right: 0;
     width: 12.2rem;
   }
 
@@ -1759,6 +1758,23 @@
 @media (max-width: 780px) {
   .nav {
     padding: 1rem 1rem;
+    gap: 1rem;
+    width: 100vw;
+    box-sizing: border-box;
+  }
+
+  .brandWordmarkLockup {
+    height: 2.1rem;
+  }
+
+  .navLinks {
+    gap: 0;
+    margin-left: auto;
+  }
+
+  .navCta {
+    min-width: auto;
+    padding: 0.72rem 1rem;
   }
 
   .navLinks a:not(.navCta) {
@@ -1778,11 +1794,12 @@
 
   .heroVisualWrap {
     position: relative;
+    order: 2;
     left: 0;
     bottom: 0;
     width: 100%;
     justify-content: center;
-    margin-top: 1rem;
+    margin-top: 1.25rem;
   }
 
   .heroVisualFrame {
@@ -1794,19 +1811,38 @@
     display: grid;
     align-content: start;
     gap: 1.5rem;
+    width: 100%;
+    max-width: 100%;
     padding-top: 6.6rem;
+    overflow: hidden;
   }
 
   .heroContent {
+    order: 1;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin-left: 0;
     padding-top: 0;
     padding-right: 0;
   }
 
+  .heroEyebrow {
+    display: block;
+    max-width: 100%;
+    line-height: 1.55;
+  }
+
+  .heroEyebrow span {
+    display: block;
+    white-space: normal;
+  }
+
   .heroHeadlineGroup {
     gap: 0.25rem;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin-left: 0;
     padding-right: 0;
   }
@@ -1832,7 +1868,25 @@
   .heroActions,
   .heroMetrics {
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin-right: 0;
+  }
+
+  .heroBody {
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+
+  .heroActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .heroActions .primaryAction,
+  .heroActions .secondaryAction {
+    width: 100%;
   }
 
   .bookingRow {

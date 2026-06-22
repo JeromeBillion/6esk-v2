@@ -8,7 +8,6 @@ import {
   listPrivilegedAccessGrants
 } from "@/server/auth/privileged-access";
 import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
-import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 const createGrantSchema = z.object({
@@ -102,19 +101,6 @@ export async function POST(request: Request) {
       }
     );
 
-    await recordAuditLog({
-      tenantId: parsed.data.tenantId,
-      actorUserId: auth.user.id,
-      action: "privileged_access_grant_requested",
-      entityType: "privileged_access_grant",
-      entityId: grant.id,
-      data: {
-        accessType: grant.access_type,
-        subjectEmail: grant.subject_email,
-        requestedDurationMinutes: grant.requested_duration_minutes,
-        reference: grant.reference
-      }
-    });
     await sendPrivilegedAccessAlert({
       scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
       grant,

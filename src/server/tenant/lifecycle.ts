@@ -6,7 +6,7 @@
  */
 
 import { db } from "@/server/db";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLogWithClient } from "@/server/audit";
 import type { TenantRecord, TenantStatus } from "./types";
 
 // -------------------------------------------------------------------------
@@ -97,9 +97,18 @@ export async function provisionTenant({
       );
     }
 
+    provisionedTenant = mapTenant(tenant);
+    await recordAuditLogWithClient(client, {
+      tenantId: provisionedTenant.id,
+      actorUserId: actorUserId ?? null,
+      action: "tenant_provisioned",
+      entityType: "tenant",
+      entityId: provisionedTenant.id,
+      data: { slug, plan, displayName }
+    });
+
     await client.query("COMMIT");
     committed = true;
-    provisionedTenant = mapTenant(tenant);
   } catch (err) {
     if (!committed) {
       await client.query("ROLLBACK");
@@ -112,16 +121,6 @@ export async function provisionTenant({
   if (!provisionedTenant) {
     throw new TenantLifecycleError("Tenant provision did not return a row", "TENANT_NOT_FOUND", 404);
   }
-
-  // 5. Audit
-  await recordAuditLog({
-    tenantId: provisionedTenant.id,
-    actorUserId: actorUserId ?? null,
-    action: "tenant_provisioned",
-    entityType: "tenant",
-    entityId: provisionedTenant.id,
-    data: { slug, plan, displayName }
-  });
 
   return provisionedTenant;
 }
@@ -273,14 +272,23 @@ async function updateTenantStatus({
       [tenantId, nextStatus, JSON.stringify(settings)]
     );
 
-    await client.query("COMMIT");
-    committed = true;
     updatedTenant = mapTenant(updateResult.rows[0]);
     auditData = {
       reason,
       previousStatus: current.status,
       status: nextStatus
     };
+    await recordAuditLogWithClient(client, {
+      tenantId,
+      actorUserId: actorUserId ?? null,
+      action: auditAction,
+      entityType: "tenant",
+      entityId: tenantId,
+      data: auditData
+    });
+
+    await client.query("COMMIT");
+    committed = true;
   } catch (error) {
     if (!committed) {
       await client.query("ROLLBACK");
@@ -289,15 +297,6 @@ async function updateTenantStatus({
   } finally {
     client.release();
   }
-
-  await recordAuditLog({
-    tenantId,
-    actorUserId: actorUserId ?? null,
-    action: auditAction,
-    entityType: "tenant",
-    entityId: tenantId,
-    data: auditData
-  });
 
   if (!updatedTenant) {
     throw new TenantLifecycleError("Tenant update did not return a row", "TENANT_NOT_FOUND", 404);
@@ -417,14 +416,23 @@ export async function changeTenantPlan({
       [tenantId, normalizedPlan, JSON.stringify(settings)]
     );
 
-    await client.query("COMMIT");
-    committed = true;
     updatedTenant = mapTenant(updateResult.rows[0]);
     auditData = {
       reason: reason ?? null,
       previousPlan: current.plan,
       plan: normalizedPlan
     };
+    await recordAuditLogWithClient(client, {
+      tenantId,
+      actorUserId: actorUserId ?? null,
+      action: "tenant_plan_changed",
+      entityType: "tenant",
+      entityId: tenantId,
+      data: auditData
+    });
+
+    await client.query("COMMIT");
+    committed = true;
   } catch (error) {
     if (!committed) {
       await client.query("ROLLBACK");
@@ -433,15 +441,6 @@ export async function changeTenantPlan({
   } finally {
     client.release();
   }
-
-  await recordAuditLog({
-    tenantId,
-    actorUserId: actorUserId ?? null,
-    action: "tenant_plan_changed",
-    entityType: "tenant",
-    entityId: tenantId,
-    data: auditData
-  });
 
   if (!updatedTenant) {
     throw new TenantLifecycleError("Tenant update did not return a row", "TENANT_NOT_FOUND", 404);

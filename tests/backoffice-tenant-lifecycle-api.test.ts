@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   isInternalStaff: vi.fn(),
+  hasPrivilegedMfaSession: vi.fn(),
   getTenantById: vi.fn(),
   suspendTenant: vi.fn(),
   reactivateTenant: vi.fn(),
@@ -16,6 +17,10 @@ vi.mock("@/server/auth/session", () => ({
 
 vi.mock("@/server/auth/roles", () => ({
   isInternalStaff: mocks.isInternalStaff
+}));
+
+vi.mock("@/server/auth/privileged-access", () => ({
+  hasPrivilegedMfaSession: mocks.hasPrivilegedMfaSession
 }));
 
 vi.mock("@/server/tenant/lifecycle", () => ({
@@ -69,6 +74,7 @@ describe("backoffice tenant lifecycle API", () => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue(buildUser());
     mocks.isInternalStaff.mockReturnValue(true);
+    mocks.hasPrivilegedMfaSession.mockReturnValue(true);
     mocks.getTenantById.mockResolvedValue(tenant());
   });
 
@@ -106,6 +112,21 @@ describe("backoffice tenant lifecycle API", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.suspendTenant).toHaveBeenCalledWith(TENANT_ID, "billing overdue", USER_ID);
+  });
+
+  it("requires MFA before changing tenant lifecycle state", async () => {
+    mocks.hasPrivilegedMfaSession.mockReturnValue(false);
+
+    const response = await POST(
+      new Request(`http://localhost/api/backoffice/tenants/${TENANT_ID}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "suspend", reason: "billing overdue" })
+      }),
+      params()
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.suspendTenant).not.toHaveBeenCalled();
   });
 
   it("changes tenant plan through the lifecycle service", async () => {

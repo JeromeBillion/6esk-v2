@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   dbQuery: vi.fn(),
   getOpsHealthSnapshot: vi.fn(),
   getSecurityReadinessSnapshot: vi.fn(),
-  getTenantMarginSnapshot: vi.fn()
+  getMarginSnapshot: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -22,7 +22,7 @@ vi.mock("@/server/security/readiness", () => ({
 }));
 
 vi.mock("@/server/billing/margin", () => ({
-  getTenantMarginSnapshot: mocks.getTenantMarginSnapshot
+  getMarginSnapshot: mocks.getMarginSnapshot
 }));
 
 import { getBackofficeOverview } from "@/server/backoffice/overview";
@@ -39,7 +39,7 @@ describe("getBackofficeOverview", () => {
     });
     mocks.getOpsHealthSnapshot.mockResolvedValue({ ready: true });
     mocks.getSecurityReadinessSnapshot.mockResolvedValue({ healthy: true });
-    mocks.getTenantMarginSnapshot.mockResolvedValue({ totals: { events: 10 } });
+    mocks.getMarginSnapshot.mockResolvedValue({ scope: "global", totals: { events: 10 } });
   });
 
   it("returns tenant, operations, security and finance overview", async () => {
@@ -52,6 +52,8 @@ describe("getBackofficeOverview", () => {
     });
     expect(overview.operations).toEqual({ ready: true });
     expect(overview.security).toEqual({ healthy: true });
-    expect(overview.finance).toEqual({ totals: { events: 10 } });
+    expect(mocks.getOpsHealthSnapshot).toHaveBeenCalledWith({ tenantId: "tenant-1" });
+    expect(mocks.getMarginSnapshot).toHaveBeenCalledWith({ windowDays: 30 });
+    expect(overview.finance).toEqual({ scope: "global", totals: { events: 10 } });
   });
 });

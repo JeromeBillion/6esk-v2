@@ -36,7 +36,7 @@ import { landingBodyFont, landingDisplayFont, landingMonoFont } from "./fonts";
 import WavesCanvas from "./WavesCanvas";
 import styles from "./landing-page.module.css";
 import heroVisual from "@/app/assets/edited hero image.png";
-import landingWordmark from "@/app/assets/landing-wordmark.png";
+import landingWordmark from "@/app/assets/Wordmark-white-transparent.png";
 import { setStoredDemoMode } from "@/app/lib/demo-mode";
 
 type LandingPageClientProps = {
@@ -497,25 +497,21 @@ export default function LandingPageClient({ signInHref, demoWorkspaceHref }: Lan
                 text="If support"
                 className={`${styles.heroLine} ${styles.heroLineTop} ${landingDisplayFont.className}`}
                 delayMs={110}
-                wrap={false}
               />
               <BlurRevealText
                 text="is serious,"
                 className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineMiddle} ${landingDisplayFont.className}`}
                 delayMs={115}
-                wrap={false}
               />
               <BlurRevealText
                 text="the software"
                 className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineLower} ${landingDisplayFont.className}`}
                 delayMs={120}
-                wrap={false}
               />
               <BlurRevealText
                 text="should be too."
                 className={`${styles.heroLine} ${styles.heroLineMuted} ${styles.heroLineBottom} ${landingDisplayFont.className}`}
                 delayMs={120}
-                wrap={false}
               />
             </div>
             <div data-reveal className={styles.heroBodyRow}>

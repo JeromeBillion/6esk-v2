@@ -6,11 +6,16 @@ import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { findInvalidEmailAddresses, normalizeAddressList } from "@/server/email/normalize";
+
+const addressListSchema = z.union([z.string(), z.array(z.string())]).optional().nullable();
 
 const replySchema = z.object({
   text: z.string().optional().nullable(),
   html: z.string().optional().nullable(),
   subject: z.string().optional().nullable(),
+  cc: addressListSchema,
+  bcc: addressListSchema,
   attachments: z
     .array(
       z.object({
@@ -92,7 +97,7 @@ export async function POST(
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const { text, html, subject, template, attachments, recipient } = parsed.data;
+  const { text, html, subject, template, attachments, recipient, cc, bcc } = parsed.data;
   if (!text && !html && !template && !(attachments?.length ?? 0)) {
     return Response.json({ error: "Reply body required" }, { status: 400 });
   }
@@ -114,6 +119,26 @@ export async function POST(
     );
   }
 
+  if (replyModule === "email") {
+    const invalidTo = findInvalidEmailAddresses(recipient ?? null);
+    const invalidCc = findInvalidEmailAddresses(cc ?? null);
+    const invalidBcc = findInvalidEmailAddresses(bcc ?? null);
+    const toList = normalizeAddressList(recipient ?? null);
+    if (invalidTo.length > 0 || toList.length > 1 || invalidCc.length > 0 || invalidBcc.length > 0) {
+      return Response.json(
+        {
+          error: "Invalid email recipients",
+          invalidRecipients: {
+            to: invalidTo.length > 0 ? invalidTo : toList.length > 1 ? toList : [],
+            cc: invalidCc,
+            bcc: invalidBcc
+          }
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   try {
     const result = await sendTicketReply({
       tenantId,
@@ -121,6 +146,8 @@ export async function POST(
       text,
       html,
       subject,
+      cc: cc ?? null,
+      bcc: bcc ?? null,
       attachments: attachments ?? null,
       template: template ?? null,
       recipient: recipient ?? null,

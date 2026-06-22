@@ -1060,9 +1060,8 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     [loadTicketDetails, loadTickets, openFeedback, selectedTicketId]
   );
   
-  const openVoiceCallModal = useCallback(async () => {
+  const loadVoiceCallOptions = useCallback(async () => {
     if (!selectedTicketId) return;
-    setVoiceModalOpen(true);
     setCallOptionsLoading(true);
     setCallError(null);
     setCallSuccessMessage(null);
@@ -1077,6 +1076,8 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
         setSelectedCallCandidateId(options.defaultCandidateId);
       } else if (options.candidates.length > 0) {
         setSelectedCallCandidateId(options.candidates[0].candidateId);
+      } else if (options.canManualDial) {
+        setSelectedCallCandidateId("manual");
       }
       
     } catch (error) {
@@ -1085,6 +1086,12 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
       setCallOptionsLoading(false);
     }
   }, [selectedTicketId]);
+
+  const openVoiceCallModal = useCallback(async () => {
+    if (!selectedTicketId) return;
+    setVoiceModalOpen(true);
+    await loadVoiceCallOptions();
+  }, [loadVoiceCallOptions, selectedTicketId]);
 
   const submitVoiceCall = useCallback(async () => {
     if (!selectedTicketId) return;
@@ -1312,6 +1319,7 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     handleBulkEmailAttachmentChange,
     submitBulkEmail,
     updateTicket,
+    loadVoiceCallOptions,
     openVoiceCallModal,
     submitVoiceCall,
     resendFailedWhatsApp,

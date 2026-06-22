@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { putObject } from "@/server/storage/r2";
+import { findInvalidEmailAddresses, normalizeAddressList } from "@/server/email/normalize";
 import { getTicketById, recordTicketEvent } from "@/server/tickets";
 import { getCustomerById } from "@/server/customers";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
@@ -12,6 +13,8 @@ type SendReplyArgs = {
   text?: string | null;
   html?: string | null;
   subject?: string | null;
+  cc?: string | string[] | null;
+  bcc?: string | string[] | null;
   attachments?: Array<{
     filename: string;
     contentType?: string | null;
@@ -70,6 +73,8 @@ export async function sendTicketReply({
   text,
   html,
   subject,
+  cc,
+  bcc,
   attachments,
   template,
   actorUserId,
@@ -85,7 +90,6 @@ export async function sendTicketReply({
   const effectiveTenantId = normalizeTenantId(ticket.tenant_id) ?? lookupTenantId;
 
   const customer = ticket.customer_id ? await getCustomerById(ticket.customer_id, effectiveTenantId) : null;
-  const requestedEmailRecipient = normalizeEmailRecipient(recipient);
   const requestedPhoneRecipient = normalizePhoneRecipient(recipient);
 
   const isWhatsAppTicket =
@@ -168,6 +172,17 @@ export async function sendTicketReply({
   const fallbackTicketEmail = ticket.requester_email?.startsWith("whatsapp:")
     ? null
     : normalizeEmailRecipient(ticket.requester_email);
+  const requestedEmailRecipients = normalizeAddressList(recipient ?? null);
+  const invalidRequestedEmailRecipients = findInvalidEmailAddresses(recipient ?? null);
+  if (invalidRequestedEmailRecipients.length > 0) {
+    throw new Error(
+      `Invalid To recipient${invalidRequestedEmailRecipients.length === 1 ? "" : "s"}: ${invalidRequestedEmailRecipients.join(", ")}`
+    );
+  }
+  if (requestedEmailRecipients.length > 1) {
+    throw new Error("Only one email recipient override is supported.");
+  }
+  const requestedEmailRecipient = requestedEmailRecipients[0] ?? null;
   const defaultEmail =
     customer?.kind === "registered"
       ? normalizeEmailRecipient(customer.primary_email) ?? fallbackTicketEmail
@@ -176,6 +191,24 @@ export async function sendTicketReply({
   if (!resolvedEmail) {
     throw new Error("No email recipient is available. Select a recipient.");
   }
+  const invalidResolvedEmail = findInvalidEmailAddresses(resolvedEmail);
+  if (invalidResolvedEmail.length > 0) {
+    throw new Error(`Invalid To recipient: ${invalidResolvedEmail.join(", ")}`);
+  }
+  const invalidCcRecipients = findInvalidEmailAddresses(cc ?? null);
+  const invalidBccRecipients = findInvalidEmailAddresses(bcc ?? null);
+  if (invalidCcRecipients.length > 0) {
+    throw new Error(
+      `Invalid Cc recipient${invalidCcRecipients.length === 1 ? "" : "s"}: ${invalidCcRecipients.join(", ")}`
+    );
+  }
+  if (invalidBccRecipients.length > 0) {
+    throw new Error(
+      `Invalid Bcc recipient${invalidBccRecipients.length === 1 ? "" : "s"}: ${invalidBccRecipients.join(", ")}`
+    );
+  }
+  const ccList = normalizeAddressList(cc ?? null);
+  const bccList = normalizeAddressList(bcc ?? null);
 
   const messageMetadata = {
     recipient: {
@@ -189,7 +222,9 @@ export async function sendTicketReply({
           : "ticket_requester",
       customerId: ticket.customer_id ?? null,
       customerKind: customer?.kind ?? null
-    }
+    },
+    cc: ccList,
+    bcc: bccList
   };
 
   const finalSubject = subject ?? (ticket.subject ? `Re: ${ticket.subject}` : "Re: Support request");
@@ -210,6 +245,8 @@ export async function sendTicketReply({
 
     const emailPayload = {
       to: [resolvedEmail],
+      cc: ccList.length ? ccList : undefined,
+      bcc: bccList.length ? bccList : undefined,
       subject: finalSubject,
       html: html ?? undefined,
       text: text ?? undefined
@@ -233,6 +270,8 @@ export async function sendTicketReply({
     const resendPayload = {
       from,
       to: [resolvedEmail],
+      cc: ccList.length ? ccList : undefined,
+      bcc: bccList.length ? bccList : undefined,
       subject: finalSubject,
       html: html ?? undefined,
       text: text ?? undefined
@@ -262,10 +301,10 @@ export async function sendTicketReply({
   await db.query(
     `INSERT INTO messages (
       tenant_id, id, mailbox_id, ticket_id, direction, message_id, thread_id, from_email,
-      to_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
+      to_emails, cc_emails, bcc_emails, subject, preview_text, sent_at, is_read, origin, ai_meta, metadata
     ) VALUES (
       $1, $2, $3, $4, 'outbound', $5, $6, $7,
-      $8, $9, $10, $11, true, $12, $13, $14
+      $8, $9, $10, $11, $12, $13, true, $14, $15, $16
     )`,
     [
       effectiveTenantId,
@@ -276,6 +315,8 @@ export async function sendTicketReply({
       providerMessageId ?? messageId,
       from,
       [resolvedEmail],
+      ccList,
+      bccList,
       finalSubject,
       (text ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null,
       sentAt,

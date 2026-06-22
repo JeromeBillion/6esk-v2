@@ -18,6 +18,7 @@ import {
 import { Button } from "@/app/workspace/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/app/workspace/components/ui/dropdown-menu";
 import { cn } from "@/app/workspace/components/ui/utils";
+import { useDeskVoiceSession, type DeskVoiceCallDetails } from "@/app/components/DeskVoiceSessionContext";
 
 type DeskVoiceControlProps = {
   currentUser: CurrentSessionUser | null;
@@ -27,21 +28,13 @@ type DeskVoiceControlProps = {
 type TwilioDevice = import("@twilio/voice-sdk").Device;
 type TwilioCall = import("@twilio/voice-sdk").Call;
 
-type IncomingCallDetails = {
-  callSessionId: string | null;
-  ticketId: string | null;
-  fromPhone: string | null;
-  toPhone: string | null;
-  direction: string | null;
-};
-
 function prettyPresenceLabel(status: VoicePresenceStatus) {
   if (status === "online") return "Online";
   if (status === "away") return "Away";
   return "Offline";
 }
 
-function readCallDetails(call: TwilioCall): IncomingCallDetails {
+function readCallDetails(call: TwilioCall): DeskVoiceCallDetails {
   const custom = call.customParameters;
   return {
     callSessionId: custom.get("callSessionId") ?? null,
@@ -62,6 +55,7 @@ function getUserInitials(user: CurrentSessionUser | null) {
 }
 
 export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceControlProps) {
+  const { publishSession, registerControls } = useDeskVoiceSession();
   const [panelOpen, setPanelOpen] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [presence, setPresence] = useState<VoicePresenceStatus>("offline");
@@ -69,9 +63,11 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
   const [sdkStatus, setSdkStatus] = useState<"idle" | "registering" | "ready" | "error">("idle");
   const [sdkError, setSdkError] = useState<string | null>(null);
   const [incomingCall, setIncomingCall] = useState<TwilioCall | null>(null);
-  const [incomingDetails, setIncomingDetails] = useState<IncomingCallDetails | null>(null);
+  const [incomingDetails, setIncomingDetails] = useState<DeskVoiceCallDetails | null>(null);
   const [activeCall, setActiveCall] = useState<TwilioCall | null>(null);
-  const [activeDetails, setActiveDetails] = useState<IncomingCallDetails | null>(null);
+  const [activeDetails, setActiveDetails] = useState<DeskVoiceCallDetails | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [holdActive, setHoldActive] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [operatorSummary, setOperatorSummary] = useState({
     online: 0,
@@ -101,6 +97,8 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
     setIncomingDetails(null);
     setActiveCall(null);
     setActiveDetails(null);
+    setMuted(false);
+    setHoldActive(false);
     if (callSessionId) {
       try {
         await patchVoicePresence({ activeCallSessionId: null });
@@ -116,6 +114,8 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
         setIncomingDetails(null);
         setActiveCall(call);
         setActiveDetails(details);
+        setMuted(false);
+        setHoldActive(false);
         void patchVoicePresence({
           status: "online",
           activeCallSessionId: details.callSessionId,
@@ -319,6 +319,95 @@ export function DeskVoiceControl({ currentUser, demoModeEnabled }: DeskVoiceCont
   const endActiveCall = useCallback(() => {
     activeCall?.disconnect();
   }, [activeCall]);
+
+  const toggleMute = useCallback(() => {
+    if (!activeCall) return;
+    setMuted((current) => {
+      const nextMuted = !current;
+      activeCall.mute(nextMuted);
+      if (!nextMuted) {
+        setHoldActive(false);
+      }
+      return nextMuted;
+    });
+  }, [activeCall]);
+
+  const toggleHold = useCallback(() => {
+    if (!activeCall) return;
+    setHoldActive((current) => {
+      const nextHold = !current;
+      activeCall.mute(nextHold);
+      setMuted(nextHold);
+      return nextHold;
+    });
+  }, [activeCall]);
+
+  const sendDigits = useCallback(
+    (digits: string) => {
+      if (!activeCall || !digits) return;
+      activeCall.sendDigits(digits);
+    },
+    [activeCall]
+  );
+
+  useEffect(() => {
+    publishSession({
+      enabledForUser,
+      voiceEnabled,
+      presence,
+      sdkStatus,
+      sdkError,
+      incomingCall: incomingDetails,
+      activeCall: activeDetails,
+      muted,
+      holdActive,
+      controlsAvailable: Boolean(incomingCall || activeCall)
+    });
+  }, [
+    activeCall,
+    activeDetails,
+    enabledForUser,
+    holdActive,
+    incomingCall,
+    incomingDetails,
+    muted,
+    presence,
+    publishSession,
+    sdkError,
+    sdkStatus,
+    voiceEnabled
+  ]);
+
+  useEffect(
+    () =>
+      registerControls({
+        answerIncoming,
+        passIncoming,
+        endActiveCall,
+        toggleMute,
+        toggleHold,
+        sendDigits
+      }),
+    [answerIncoming, endActiveCall, passIncoming, registerControls, sendDigits, toggleHold, toggleMute]
+  );
+
+  useEffect(
+    () => () => {
+      publishSession({
+        enabledForUser: false,
+        voiceEnabled: false,
+        presence: "offline",
+        sdkStatus: "idle",
+        sdkError: null,
+        incomingCall: null,
+        activeCall: null,
+        muted: false,
+        holdActive: false,
+        controlsAvailable: false
+      });
+    },
+    [publishSession]
+  );
 
   const statusTone =
     presence === "online"

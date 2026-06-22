@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   dbQuery: vi.fn(),
   dbConnect: vi.fn(),
-  recordAuditLog: vi.fn()
+  recordAuditLogWithClient: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -14,7 +14,7 @@ vi.mock("@/server/db", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLogWithClient: mocks.recordAuditLogWithClient
 }));
 
 const TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -44,7 +44,7 @@ function mockClient() {
 describe("tenant lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordAuditLogWithClient.mockResolvedValue(undefined);
   });
 
   it("fails runtime usage for suspended tenants", async () => {
@@ -82,7 +82,8 @@ describe("tenant lifecycle", () => {
       lastReason: "billing overdue",
       lastActorUserId: ACTOR_ID
     });
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         tenantId: TENANT_ID,
         actorUserId: ACTOR_ID,
@@ -114,7 +115,7 @@ describe("tenant lifecycle", () => {
     });
 
     expect(client.query).toHaveBeenNthCalledWith(3, "ROLLBACK");
-    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -137,7 +138,8 @@ describe("tenant lifecycle", () => {
 
     expect(tenant.plan).toBe("enterprise");
     expect(client.query.mock.calls[2][0]).toContain("SET plan = $2");
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         action: "tenant_plan_changed",
         data: expect.objectContaining({

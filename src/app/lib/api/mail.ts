@@ -42,6 +42,8 @@ export type ApiMessageDetail = {
     references?: string[];
     from: string;
     to: string[];
+    cc?: string[];
+    bcc?: string[];
     direction: "inbound" | "outbound";
     mailState?: ApiMailState | null;
     subject: string | null;

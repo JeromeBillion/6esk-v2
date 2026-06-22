@@ -19,6 +19,7 @@ export type AgentToolPolicyMode = "dry_run" | "draft_only" | "hybrid_review" | "
 const ACTION_TOOL_CLASSES: Record<string, AgentToolClass> = {
   request_human_review: "review_request",
   draft_reply: "draft",
+  create_internal_comment: "reversible_write",
   set_tags: "reversible_write",
   set_priority: "reversible_write",
   assign_to: "reversible_write",

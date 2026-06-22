@@ -134,4 +134,126 @@ describe("sendTicketReply tenant scope", () => {
     expect(updateSql).toContain("WHERE id = $4 AND tenant_id = $5");
     expect(updateValues[4]).toBe(TENANT_ID);
   });
+
+  it("sends and persists cc and bcc recipients on email replies", async () => {
+    mocks.getTicketById.mockResolvedValue({
+      id: "ticket-1",
+      tenant_id: TENANT_ID,
+      mailbox_id: "mailbox-1",
+      requester_email: "customer@example.com",
+      customer_id: null,
+      subject: "Need help",
+      status: "open",
+      metadata: null
+    });
+
+    await expect(
+      sendTicketReply({
+        tenantId: TENANT_ID,
+        ticketId: "ticket-1",
+        text: "Reply",
+        cc: "team@example.com, Lead <lead@example.com>",
+        bcc: ["audit@example.com"]
+      })
+    ).resolves.toMatchObject({ messageId: expect.any(String) });
+
+    const fetchCall = vi.mocked(fetch).mock.calls[0];
+    const resendBody = JSON.parse(String(fetchCall?.[1]?.body));
+    expect(resendBody).toMatchObject({
+      to: ["customer@example.com"],
+      cc: ["team@example.com", "lead@example.com"],
+      bcc: ["audit@example.com"]
+    });
+
+    const insertCall = mocks.dbQuery.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO messages")
+    );
+    expect(String(insertCall?.[0])).toContain("cc_emails");
+    expect(String(insertCall?.[0])).toContain("bcc_emails");
+    expect(insertCall?.[1][7]).toEqual(["customer@example.com"]);
+    expect(insertCall?.[1][8]).toEqual(["team@example.com", "lead@example.com"]);
+    expect(insertCall?.[1][9]).toEqual(["audit@example.com"]);
+  });
+
+  it("rejects invalid cc and bcc recipients before provider delivery", async () => {
+    mocks.getTicketById.mockResolvedValue({
+      id: "ticket-1",
+      tenant_id: TENANT_ID,
+      mailbox_id: "mailbox-1",
+      requester_email: "customer@example.com",
+      customer_id: null,
+      subject: "Need help",
+      status: "open",
+      metadata: null
+    });
+
+    await expect(
+      sendTicketReply({
+        tenantId: TENANT_ID,
+        ticketId: "ticket-1",
+        text: "Reply",
+        cc: "bad-cc",
+        bcc: ["audit@example.com", "bad-bcc"]
+      })
+    ).rejects.toThrow("Invalid Cc recipient: bad-cc");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid email recipient overrides before provider delivery", async () => {
+    mocks.getTicketById.mockResolvedValue({
+      id: "ticket-1",
+      tenant_id: TENANT_ID,
+      mailbox_id: "mailbox-1",
+      requester_email: "customer@example.com",
+      customer_id: null,
+      subject: "Need help",
+      status: "open",
+      metadata: null
+    });
+
+    await expect(
+      sendTicketReply({
+        tenantId: TENANT_ID,
+        ticketId: "ticket-1",
+        text: "Reply",
+        recipient: "not-an-email"
+      })
+    ).rejects.toThrow("Invalid To recipient: not-an-email");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+  });
+
+  it("keeps WhatsApp phone recipient overrides out of email validation", async () => {
+    mocks.getTicketById.mockResolvedValue({
+      id: "ticket-1",
+      tenant_id: TENANT_ID,
+      mailbox_id: "mailbox-1",
+      requester_email: "whatsapp:+27731230000",
+      customer_id: null,
+      subject: "Need help",
+      status: "open",
+      metadata: { channel: "whatsapp" }
+    });
+    mocks.getWhatsAppWindowStatus.mockResolvedValue({ isOpen: true });
+    mocks.queueWhatsAppSend.mockResolvedValue({ messageId: "wa-message-1" });
+
+    await expect(
+      sendTicketReply({
+        tenantId: TENANT_ID,
+        ticketId: "ticket-1",
+        text: "Reply",
+        recipient: "+27731234567"
+      })
+    ).resolves.toEqual({ messageId: "wa-message-1" });
+
+    expect(mocks.queueWhatsAppSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "+27731234567"
+      })
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

@@ -21,6 +21,24 @@
     "paths": {
       "@/*": [
         "src/*"
+      ],
+      "@6esk/auth": [
+        "packages/auth/src/index.ts"
+      ],
+      "@6esk/auth/*": [
+        "packages/auth/src/*"
+      ],
+      "@6esk/database": [
+        "packages/database/src/index.ts"
+      ],
+      "@6esk/types": [
+        "packages/types/src/index.ts"
+      ],
+      "@6esk/types/*": [
+        "packages/types/src/*"
+      ],
+      "@6esk/ui": [
+        "packages/ui/src/index.tsx"
       ]
     },
     "plugins": [
@@ -33,6 +51,10 @@
     "next-env.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx",
     ".next/types/**/*.ts"
   ],
   "exclude": [

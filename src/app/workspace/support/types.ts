@@ -30,11 +30,13 @@ export type TicketView = {
 export type ConversationMessage = {
   id: string;
   ticketId: string;
-  channel: "email" | "whatsapp" | "voice";
+  channel: "email" | "whatsapp" | "voice" | "internal";
   threadId?: string | null;
-  direction: "inbound" | "outbound";
+  direction: "inbound" | "outbound" | "internal";
   from: { name: string; email?: string; phone?: string };
   to: { name: string; email?: string; phone?: string };
+  cc?: string[];
+  bcc?: string[];
   body: string;
   subject?: string | null;
   timestamp: string;
@@ -51,6 +53,9 @@ export type ConversationMessage = {
   call_outcome?: string | null;
   transcript?: string | null;
   recording_url?: string | null;
+  visibility?: "customer" | "internal";
+  internal_origin?: "human" | "ai";
+  internal_actor_name?: string | null;
 };
 
 export type ReplyAttachment = {

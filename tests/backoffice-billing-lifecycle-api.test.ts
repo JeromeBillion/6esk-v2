@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   isInternalStaff: vi.fn(),
+  hasPrivilegedMfaSession: vi.fn(),
   getTenantById: vi.fn(),
   getTenantBillingLifecycleSnapshot: vi.fn(),
   syncTenantSubscriptionFromCatalog: vi.fn(),
@@ -18,6 +19,10 @@ vi.mock("@/server/auth/session", () => ({
 
 vi.mock("@/server/auth/roles", () => ({
   isInternalStaff: mocks.isInternalStaff
+}));
+
+vi.mock("@/server/auth/privileged-access", () => ({
+  hasPrivilegedMfaSession: mocks.hasPrivilegedMfaSession
 }));
 
 vi.mock("@/server/tenant/lifecycle", () => ({
@@ -55,6 +60,7 @@ describe("backoffice billing lifecycle API", () => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue({ id: USER_ID, role_name: "internal_admin" });
     mocks.isInternalStaff.mockReturnValue(true);
+    mocks.hasPrivilegedMfaSession.mockReturnValue(true);
     mocks.getTenantById.mockResolvedValue({ id: TENANT_ID, slug: "acme", status: "active" });
     mocks.getTenantBillingLifecycleSnapshot.mockResolvedValue({ tenantId: TENANT_ID });
   });
@@ -95,6 +101,15 @@ describe("backoffice billing lifecycle API", () => {
       tenantId: TENANT_ID,
       actorUserId: USER_ID
     });
+  });
+
+  it("requires MFA before changing billing lifecycle state", async () => {
+    mocks.hasPrivilegedMfaSession.mockReturnValue(false);
+
+    const response = await POST(request({ action: "sync_subscription" }), params());
+
+    expect(response.status).toBe(403);
+    expect(mocks.syncTenantSubscriptionFromCatalog).not.toHaveBeenCalled();
   });
 
   it("creates audited billing adjustments for internal staff", async () => {

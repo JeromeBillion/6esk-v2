@@ -213,4 +213,20 @@ describe("agent output validator", () => {
     expect(result.allowed).toBe(false);
     expect(result.reasonCodes).toContain("cross_customer_scope_expansion");
   });
+
+  it("blocks customer replies that disclose internal comments", async () => {
+    const result = await validateAgentOutput({
+      tenantId: TENANT_ID,
+      actionType: "send_reply",
+      resourceType: "ticket",
+      resourceId: ACTIVE_TICKET_ID,
+      content: {
+        text: "Our internal comment says the team expects this to become an escalation."
+      },
+      customerContext: RESOLVED_CUSTOMER_CONTEXT
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasonCodes).toContain("internal_comment_disclosure");
+  });
 });

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   dbQuery: vi.fn(),
   dbConnect: vi.fn(),
-  recordAuditLog: vi.fn()
+  clientQuery: vi.fn(),
+  clientRelease: vi.fn(),
+  recordAuditLogWithClient: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -14,7 +16,7 @@ vi.mock("@/server/db", () => ({
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLogWithClient: mocks.recordAuditLogWithClient
 }));
 
 import {
@@ -42,7 +44,12 @@ const modules = {
 describe("billing lifecycle service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.dbConnect.mockResolvedValue({
+      query: mocks.clientQuery,
+      release: mocks.clientRelease
+    });
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
+    mocks.recordAuditLogWithClient.mockResolvedValue(undefined);
   });
 
   it("builds subscription items from the v2 modular pricing catalog", () => {
@@ -146,7 +153,8 @@ describe("billing lifecycle service", () => {
   });
 
   it("normalizes manual credits as negative audited adjustments", async () => {
-    mocks.dbQuery
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {
@@ -187,10 +195,11 @@ describe("billing lifecycle service", () => {
     });
 
     expect(adjustment.amount_cent).toBe(-5000);
-    expect(mocks.dbQuery.mock.calls[1][1]).toEqual(
+    expect(mocks.clientQuery.mock.calls[2][1]).toEqual(
       expect.arrayContaining(["credit", -5000, "Service credit"])
     );
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         tenantId: TENANT_ID,
         actorUserId: USER_ID,
@@ -391,7 +400,7 @@ describe("billing lifecycle service", () => {
       expect.stringContaining("INSERT INTO tenant_invoices"),
       expect.anything()
     );
-    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
   });
 
   it("exports customer-safe invoice data inside tenant and workspace scope", async () => {

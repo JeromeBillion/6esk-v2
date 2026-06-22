@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
   hasPrivilegedMfaSession: vi.fn(),
   getActivePrivilegedAccessGrantForSubject: vi.fn(),
   dbQuery: vi.fn(),
+  dbConnect: vi.fn(),
+  clientQuery: vi.fn(),
+  clientRelease: vi.fn(),
   recordAuditLog: vi.fn(),
+  recordAuditLogWithClient: vi.fn(),
   cookieGet: vi.fn()
 }));
 
@@ -25,12 +29,14 @@ vi.mock("@/server/auth/privileged-access", () => ({
 
 vi.mock("@/server/db", () => ({
   db: {
-    query: mocks.dbQuery
+    query: mocks.dbQuery,
+    connect: mocks.dbConnect
   }
 }));
 
 vi.mock("@/server/audit", () => ({
-  recordAuditLog: mocks.recordAuditLog
+  recordAuditLog: mocks.recordAuditLog,
+  recordAuditLogWithClient: mocks.recordAuditLogWithClient
 }));
 
 vi.mock("next/headers", () => ({
@@ -70,6 +76,12 @@ describe("backoffice impersonation API", () => {
     mocks.hasPrivilegedMfaSession.mockReturnValue(true);
     mocks.getActivePrivilegedAccessGrantForSubject.mockResolvedValue(ACTIVE_GRANT);
     mocks.recordAuditLog.mockResolvedValue(undefined);
+    mocks.recordAuditLogWithClient.mockResolvedValue(undefined);
+    mocks.dbConnect.mockResolvedValue({
+      query: mocks.clientQuery,
+      release: mocks.clientRelease
+    });
+    mocks.clientQuery.mockResolvedValue({ rowCount: 1 });
   });
 
   it("rejects non-internal users", async () => {
@@ -166,9 +178,7 @@ describe("backoffice impersonation API", () => {
   it("stores bounded impersonation context and audit metadata", async () => {
     mocks.getSessionUser.mockResolvedValue(buildInternalUser());
     mocks.isInternalStaff.mockReturnValue(true);
-    mocks.dbQuery
-      .mockResolvedValueOnce({ rows: [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }] })
-      .mockResolvedValueOnce({ rowCount: 1 });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }] });
 
     const response = await POST(
       new Request("http://localhost/api/backoffice/impersonate", {
@@ -191,7 +201,7 @@ describe("backoffice impersonation API", () => {
       subjectUserId: "11111111-1111-1111-1111-111111111111",
       subjectEmail: "ops@6esk.co.za"
     });
-    expect(mocks.dbQuery).toHaveBeenCalledWith(
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
       expect.stringContaining("privileged_access_grant_id = $5"),
       [
         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -204,7 +214,8 @@ describe("backoffice impersonation API", () => {
         "33333333-3333-3333-3333-333333333333"
       ]
     );
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         action: "support_impersonation_started",
         data: expect.objectContaining({
@@ -217,6 +228,33 @@ describe("backoffice impersonation API", () => {
     );
   });
 
+  it("does not audit impersonation start when the session update does not match", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildInternalUser());
+    mocks.isInternalStaff.mockReturnValue(true);
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rowCount: null })
+      .mockResolvedValueOnce({ rowCount: 0 })
+      .mockResolvedValueOnce({ rowCount: null });
+
+    const response = await POST(
+      new Request("http://localhost/api/backoffice/impersonate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          grantId: "99999999-9999-9999-9999-999999999999",
+          reason: "Investigating inbound webhook mismatch for tenant",
+          ticketRef: "INC-9042"
+        })
+      })
+    );
+
+    expect(response.status).toBe(401);
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
+  });
+
   it("clears impersonation metadata on end", async () => {
     mocks.getSessionUser.mockResolvedValue(
       buildInternalUser({
@@ -224,7 +262,7 @@ describe("backoffice impersonation API", () => {
         is_impersonating: true
       })
     );
-    mocks.dbQuery.mockResolvedValue({ rowCount: 1 });
+    mocks.clientQuery.mockResolvedValue({ rowCount: 1 });
 
     const response = await DELETE(
       new Request("http://localhost/api/backoffice/impersonate", {
@@ -233,7 +271,7 @@ describe("backoffice impersonation API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.dbQuery).toHaveBeenCalledWith(
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
       expect.stringContaining("privileged_access_grant_id = NULL"),
       [
         expect.any(String),
@@ -241,10 +279,34 @@ describe("backoffice impersonation API", () => {
         "33333333-3333-3333-3333-333333333333"
       ]
     );
-    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
         action: "support_impersonation_ended"
       })
     );
+  });
+
+  it("does not audit impersonation end when the session update does not match", async () => {
+    mocks.getSessionUser.mockResolvedValue(
+      buildInternalUser({
+        tenant_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        is_impersonating: true
+      })
+    );
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rowCount: null })
+      .mockResolvedValueOnce({ rowCount: 0 })
+      .mockResolvedValueOnce({ rowCount: null });
+
+    const response = await DELETE(
+      new Request("http://localhost/api/backoffice/impersonate", {
+        method: "DELETE"
+      })
+    );
+
+    expect(response.status).toBe(401);
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
   });
 });

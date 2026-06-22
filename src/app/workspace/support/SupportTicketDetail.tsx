@@ -12,10 +12,16 @@ import {
   Filter,
   Plus,
   Mail,
+  MessageSquare,
   ChevronDown,
   Clock,
+  Mic,
+  MicOff,
+  Pause,
   Phone,
   PhoneCall,
+  PhoneIncoming,
+  PhoneOff,
   Play,
   Check,
   CheckCheck,
@@ -62,6 +68,7 @@ import type { ActiveWhatsAppTemplate } from "@/app/lib/api/whatsapp";
 import type { CurrentSessionUser } from "@/app/lib/api/session";
 import type { AdminUserRecord, TagRecord } from "@/app/lib/api/admin";
 import { formatFileSize, encodeAttachments } from "@/app/lib/files";
+import { useDeskVoiceSession } from "@/app/components/DeskVoiceSessionContext";
 
 import type {
   TicketStatusDisplay,
@@ -101,6 +108,7 @@ import {
   normalizeAddress,
   deriveCustomerAddress,
   getTemplateParamCount,
+  parseEmailAddressInput,
   buildConversationTimeline,
   inferPrimaryChannel,
   whatsappStatusIcon,
@@ -210,10 +218,29 @@ import { useSupportWorkspace } from "./SupportWorkspaceContext";
 import {
   patchCustomerProfile,
   patchTicketTags,
+  postTicketInternalComment,
   sendTicketReply,
   patchTicketDraft,
   resendWhatsAppMessage
 } from "@/app/lib/api/support";
+
+type ComposerMode = "email" | "whatsapp" | "voice" | "internal";
+const PHONE_KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"] as const;
+
+function voiceCandidateLabel(source: string | null | undefined) {
+  switch (source) {
+    case "customer_primary":
+      return "Primary customer number";
+    case "customer_identity":
+      return "Known customer identity";
+    case "ticket_requester":
+      return "Ticket requester";
+    case "ticket_metadata":
+      return "Ticket metadata";
+    default:
+      return "Saved number";
+  }
+}
 
 export function TicketDetail() {
   const context = useSupportWorkspace();
@@ -252,9 +279,22 @@ export function TicketDetail() {
     loadTickets,
     setReplySending,
     setDraftUpdating,
-    openVoiceCallModal,
+    loadVoiceCallOptions,
+    callOptions,
+    callOptionsLoading,
+    callQueueing,
+    callError,
+    callSuccessMessage,
+    selectedCallCandidateId,
+    setSelectedCallCandidateId,
+    manualCallPhone,
+    setManualCallPhone,
+    callReason,
+    setCallReason,
+    submitVoiceCall,
     handleHistoryTicketSelect
   } = context;
+  const deskVoice = useDeskVoiceSession();
 
   const onStatusChange = (status: TicketStatusDisplay) => void updateTicket({ status: API_STATUS_BY_DISPLAY[status] });
   const onPriorityChange = (priority: TicketPriorityDisplay) => void updateTicket({ priority: API_PRIORITY_BY_DISPLAY[priority] });
@@ -341,6 +381,36 @@ export function TicketDetail() {
     }
   };
 
+  const onSaveInternalComment = async (body: string) => {
+    if (!selectedTicketId) return false;
+    setInternalCommentSaving(true);
+    setReplyError(null);
+    try {
+      await postTicketInternalComment(selectedTicketId, {
+        body,
+        metadata: {
+          source: "support_composer"
+        }
+      });
+      await loadTicketDetails(selectedTicketId);
+      await loadTickets();
+      openFeedback({
+        tone: "success",
+        title: "Internal comment saved",
+        message: "The comment is visible to support agents and AI context only.",
+        autoCloseMs: 1500
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save internal comment";
+      setReplyError(message);
+      openFeedback({ tone: "error", title: "Internal comment failed", message });
+      return false;
+    } finally {
+      setInternalCommentSaving(false);
+    }
+  };
+
   const onUseDraft = async (draftId: string) => {
     if (!selectedTicketId) return;
     setDraftUpdating(true);
@@ -373,7 +443,7 @@ export function TicketDetail() {
     }
   };
 
-  const onOpenVoiceCall = () => void openVoiceCallModal();
+  const onLoadVoiceCallOptions = () => void loadVoiceCallOptions();
   const onResendWhatsApp = async (messageId: string) => { await resendWhatsAppMessage(messageId); };
   const onSelectHistoryTicket = (ticketId: string) => void handleHistoryTicketSelect(ticketId);
 
@@ -398,8 +468,14 @@ export function TicketDetail() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [waTemplateParams, setWaTemplateParams] = useState("");
   const [selectedRecipient, setSelectedRecipient] = useState("");
+  const [composerMode, setComposerMode] = useState<ComposerMode>("email");
+  const [internalCommentText, setInternalCommentText] = useState("");
+  const [internalCommentSaving, setInternalCommentSaving] = useState(false);
   const [recipientOverrideOpen, setRecipientOverrideOpen] = useState(false);
   const [recipientOverrideInput, setRecipientOverrideInput] = useState("");
+  const [ccInput, setCcInput] = useState("");
+  const [bccInput, setBccInput] = useState("");
+  const [replyComposerCollapsed, setReplyComposerCollapsed] = useState(true);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState(ticket.assigned_user_id ?? "");
   const [customerDisplayNameInput, setCustomerDisplayNameInput] = useState("");
   const [customerPrimaryEmailInput, setCustomerPrimaryEmailInput] = useState("");
@@ -479,6 +555,12 @@ export function TicketDetail() {
     setWaTemplateParams("");
     setRecipientOverrideOpen(false);
     setRecipientOverrideInput("");
+    setComposerMode("email");
+    setInternalCommentText("");
+    setInternalCommentSaving(false);
+    setCcInput("");
+    setBccInput("");
+    setReplyComposerCollapsed(true);
     setSelectedAssigneeId(ticket.assigned_user_id ?? "");
     setCustomerDisplayNameInput(customerProfile?.displayName?.trim() ?? ticket.requester_name);
     setCustomerPrimaryEmailInput(
@@ -543,6 +625,11 @@ export function TicketDetail() {
     () => inferPrimaryChannel(ticket, selectedTicketMessages),
     [selectedTicketMessages, ticket]
   );
+  const replyChannel = composerMode === "internal" ? primaryChannel : composerMode;
+
+  useEffect(() => {
+    setComposerMode(primaryChannel);
+  }, [primaryChannel, ticket.id]);
 
   const conversationTimeline = useMemo(
     () => buildConversationTimeline(messages),
@@ -663,7 +750,7 @@ export function TicketDetail() {
 
     const addOption = (rawValue: string | null | undefined, label: string, isPrimary = false) => {
       const normalized =
-        primaryChannel === "whatsapp"
+        replyChannel === "whatsapp"
           ? normalizeRecipientPhone(rawValue)
           : normalizeRecipientEmail(rawValue);
       if (!normalized) return;
@@ -682,7 +769,7 @@ export function TicketDetail() {
       }
     };
 
-    if (primaryChannel === "whatsapp") {
+    if (replyChannel === "whatsapp") {
       const requesterPhone = ticket.requester_email.startsWith("whatsapp:")
         ? ticket.requester_email.replace(/^whatsapp:/, "")
         : null;
@@ -697,7 +784,7 @@ export function TicketDetail() {
         addOption(message.from.phone, message.direction === "inbound" ? "Inbound contact" : "Known contact");
         addOption(message.to.phone, "Known contact");
       }
-    } else if (primaryChannel === "email") {
+    } else if (replyChannel === "email") {
       addOption(
         ticket.requester_email.startsWith("whatsapp:") || ticket.requester_email.startsWith("voice:")
           ? null
@@ -722,13 +809,13 @@ export function TicketDetail() {
     customerProfile?.identities,
     customerProfile?.primaryEmail,
     customerProfile?.primaryPhone,
-    primaryChannel,
+    replyChannel,
     selectedTicketMessages,
     ticket.requester_email
   ]);
 
   useEffect(() => {
-    if (primaryChannel === "voice") {
+    if (replyChannel === "voice" || composerMode === "internal") {
       setSelectedRecipient("");
       return;
     }
@@ -739,7 +826,7 @@ export function TicketDetail() {
       const preferred = replyRecipientOptions.find((option) => option.isPrimary);
       return preferred?.value ?? replyRecipientOptions[0]?.value ?? "";
     });
-  }, [primaryChannel, replyRecipientOptions, ticket.id]);
+  }, [composerMode, replyChannel, replyRecipientOptions, ticket.id]);
 
   useEffect(() => {
     pendingTimelineFocusTicketIdRef.current = ticket.id;
@@ -793,7 +880,7 @@ export function TicketDetail() {
     : 0;
 
   const whatsappWindow = useMemo(() => {
-    if (primaryChannel !== "whatsapp") return null;
+    if (replyChannel !== "whatsapp") return null;
     const inboundTimes = selectedTicketMessages
       .filter(
         (message: ConversationMessage) =>
@@ -812,7 +899,7 @@ export function TicketDetail() {
       isOpen,
       minutesRemaining: isOpen ? Math.max(0, Math.ceil((expiresAt - now) / 60000)) : 0
     } satisfies WhatsAppWindowState;
-  }, [primaryChannel, selectedTicketMessages]);
+  }, [replyChannel, selectedTicketMessages]);
 
   const tagSuggestions = useMemo(() => {
     const normalized = newTag.trim().toLowerCase();
@@ -839,6 +926,54 @@ export function TicketDetail() {
     () => replyRecipientOptions.find((option) => option.value === selectedRecipient) ?? null,
     [replyRecipientOptions, selectedRecipient]
   );
+  const deskVoiceCall = deskVoice.activeCall ?? deskVoice.incomingCall;
+  const deskVoiceCallMatchesTicket = Boolean(deskVoiceCall?.ticketId && deskVoiceCall.ticketId === ticket.id);
+  const deskVoicePartyLabel =
+    deskVoiceCall?.direction === "outbound"
+      ? deskVoiceCall.toPhone ?? deskVoiceCall.fromPhone ?? "Unknown number"
+      : deskVoiceCall?.fromPhone ?? deskVoiceCall?.toPhone ?? "Unknown number";
+  const deskVoiceStatusLabel = deskVoice.activeCall
+    ? "In call"
+    : deskVoice.incomingCall
+      ? "Incoming call"
+      : !deskVoice.enabledForUser
+        ? "Live voice unavailable"
+        : !deskVoice.voiceEnabled
+          ? "Voice disabled"
+          : deskVoice.sdkStatus === "ready"
+            ? "Ready"
+            : deskVoice.sdkStatus === "registering"
+              ? "Connecting"
+              : deskVoice.sdkStatus === "error"
+                ? "Voice error"
+                : `${toTitleCase(deskVoice.presence)} presence`;
+  const selectedVoiceCandidate = callOptions?.candidates?.find(
+    (candidate: any) => candidate.candidateId === selectedCallCandidateId
+  );
+  const callConsentRevoked = (callOptions?.consent?.status ?? "").toLowerCase() === "revoked";
+  const canQueueInlineCall =
+    Boolean((selectedCallCandidateId && selectedCallCandidateId !== "manual") || manualCallPhone.trim()) &&
+    callReason.trim().length > 0 &&
+    !callConsentRevoked &&
+    !deskVoice.activeCall &&
+    !deskVoice.incomingCall;
+
+  const composerPanelId = `support-reply-composer-${ticket.id}`;
+
+  const handleReplyButtonClick = useCallback(() => {
+    if (replyComposerCollapsed) {
+      setReplyComposerCollapsed(false);
+      return;
+    }
+
+    if (!recipientOverrideOpen && replyChannel !== "voice" && composerMode !== "internal") {
+      setRecipientOverrideOpen(true);
+      return;
+    }
+
+    setReplyComposerCollapsed(true);
+    setRecipientOverrideOpen(false);
+  }, [composerMode, recipientOverrideOpen, replyChannel, replyComposerCollapsed]);
 
   const customerProfileDirty = useMemo(() => {
     if (!customerProfile) return false;
@@ -898,21 +1033,26 @@ export function TicketDetail() {
   const submitReply = async () => {
     setComposerError(null);
 
-    if (primaryChannel === "voice") {
+    if (composerMode === "internal") {
+      setComposerError("Use Save internal comment for internal notes.");
+      return;
+    }
+
+    if (replyChannel === "voice") {
       setComposerError("Voice tickets use the call workflow instead of text reply.");
       return;
     }
 
     const manualRecipientRaw = recipientOverrideInput.trim();
     const manualRecipient = manualRecipientRaw
-      ? primaryChannel === "whatsapp"
+      ? replyChannel === "whatsapp"
         ? normalizeRecipientPhone(manualRecipientRaw)
         : normalizeRecipientEmail(manualRecipientRaw)
       : null;
 
     if (manualRecipientRaw && !manualRecipient) {
       setComposerError(
-        primaryChannel === "whatsapp"
+        replyChannel === "whatsapp"
           ? "Enter a valid phone number for the recipient override."
           : "Enter a valid email address for the recipient override."
       );
@@ -932,6 +1072,22 @@ export function TicketDetail() {
       size: attachment.size,
       contentBase64: attachment.contentBase64
     }));
+    const ccParse = replyChannel === "whatsapp" ? { addresses: [], invalid: [] } : parseEmailAddressInput(ccInput);
+    const bccParse = replyChannel === "whatsapp" ? { addresses: [], invalid: [] } : parseEmailAddressInput(bccInput);
+    if (ccParse.invalid.length > 0) {
+      setComposerError(
+        `Enter valid Cc email address${ccParse.invalid.length === 1 ? "" : "es"}: ${ccParse.invalid.join(", ")}`
+      );
+      return;
+    }
+    if (bccParse.invalid.length > 0) {
+      setComposerError(
+        `Enter valid Bcc email address${bccParse.invalid.length === 1 ? "" : "es"}: ${bccParse.invalid.join(", ")}`
+      );
+      return;
+    }
+    const ccRecipients = ccParse.addresses;
+    const bccRecipients = bccParse.addresses;
 
     let template: {
       name: string;
@@ -939,7 +1095,7 @@ export function TicketDetail() {
       components?: Array<Record<string, unknown>>;
     } | null = null;
 
-    if (selectedTemplate) {
+    if (replyChannel === "whatsapp" && selectedTemplate) {
       if (selectedTemplateParamCount && templateParamList.length < selectedTemplateParamCount) {
         setComposerError(`Template requires at least ${selectedTemplateParamCount} parameter(s).`);
         return;
@@ -958,17 +1114,17 @@ export function TicketDetail() {
       };
     }
 
-    if (primaryChannel === "whatsapp" && whatsappWindow && !whatsappWindow.isOpen && !template) {
+    if (replyChannel === "whatsapp" && whatsappWindow && !whatsappWindow.isOpen && !template) {
       setComposerError("WhatsApp 24h window is closed. Select a template.");
       return;
     }
 
-    if (primaryChannel === "whatsapp" && attachmentPayload.length > 1) {
+    if (replyChannel === "whatsapp" && attachmentPayload.length > 1) {
       setComposerError("WhatsApp supports one attachment per message.");
       return;
     }
 
-    if (primaryChannel === "whatsapp" && attachmentPayload.length > 0 && template) {
+    if (replyChannel === "whatsapp" && attachmentPayload.length > 0 && template) {
       setComposerError("Templates cannot be combined with attachments.");
       return;
     }
@@ -976,7 +1132,7 @@ export function TicketDetail() {
     const text = replyText.trim();
     if (!text && !template && attachmentPayload.length === 0) {
       setComposerError(
-        primaryChannel === "whatsapp"
+        replyChannel === "whatsapp"
           ? "Add a reply or provide a template."
           : "Reply body required."
       );
@@ -986,6 +1142,8 @@ export function TicketDetail() {
     const success = await onSendReply({
       text: text || null,
       recipient: resolvedRecipient || null,
+      cc: ccRecipients.length ? ccRecipients : null,
+      bcc: bccRecipients.length ? bccRecipients : null,
       template,
       attachments: attachmentPayload.length ? attachmentPayload : null
     });
@@ -996,7 +1154,26 @@ export function TicketDetail() {
       setWaTemplateParams("");
       setRecipientOverrideOpen(false);
       setRecipientOverrideInput("");
+      setCcInput("");
+      setBccInput("");
       setComposerError(null);
+    }
+  };
+
+  const submitInternalComment = async () => {
+    setComposerError(null);
+    const body = internalCommentText.trim();
+    if (!body) {
+      setComposerError("Internal comment body required.");
+      return;
+    }
+
+    const success = await onSaveInternalComment(body);
+    if (success) {
+      setInternalCommentText("");
+      setComposerError(null);
+      setReplyComposerCollapsed(true);
+      setRecipientOverrideOpen(false);
     }
   };
 
@@ -1079,20 +1256,20 @@ export function TicketDetail() {
     if (files.length === 0) return;
     setComposerError(null);
 
-    if (primaryChannel === "whatsapp" && replyAttachments.length >= 1) {
+    if (replyChannel === "whatsapp" && replyAttachments.length >= 1) {
       setComposerError("WhatsApp supports one attachment per message.");
       event.target.value = "";
       return;
     }
 
-    const limit = primaryChannel === "whatsapp" ? 1 : files.length;
+    const limit = replyChannel === "whatsapp" ? 1 : files.length;
     const nextFiles = files.slice(0, limit);
 
     try {
       const prepared = await encodeAttachments(nextFiles);
 
       setReplyAttachments((previous) =>
-        primaryChannel === "whatsapp" ? prepared.slice(0, 1) : [...previous, ...prepared]
+        replyChannel === "whatsapp" ? prepared.slice(0, 1) : [...previous, ...prepared]
       );
     } catch {
       setComposerError("Failed to read attachment.");
@@ -1196,14 +1373,105 @@ export function TicketDetail() {
               </div>
             </div>
 
-            <ResizeHandle orientation="horizontal" onPointerDown={startComposerResize} />
+            {!replyComposerCollapsed ? (
+              <ResizeHandle orientation="horizontal" onPointerDown={startComposerResize} />
+            ) : null}
 
             <div
               className="shrink-0 border-t border-neutral-200 bg-white"
-              style={{ height: composerHeight }}
+              style={replyComposerCollapsed ? undefined : { height: composerHeight }}
             >
-              <div className="h-full overflow-y-auto p-4">
+              <div className={cn(replyComposerCollapsed ? "p-3" : "h-full overflow-y-auto p-4")}>
                 <div className="mx-auto w-full max-w-[1120px]">
+                  <div
+                    className={cn(
+                      "flex flex-wrap items-center justify-between gap-3",
+                      !replyComposerCollapsed && "mb-3"
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-controls={composerPanelId}
+                        aria-expanded={!replyComposerCollapsed && recipientOverrideOpen}
+                        onClick={handleReplyButtonClick}
+                      >
+                        {replyComposerCollapsed
+                          ? "Reply"
+                          : composerMode === "internal" || replyChannel === "voice"
+                            ? "Close"
+                            : recipientOverrideOpen
+                              ? "Close"
+                              : "Recipients"}
+                      </Button>
+                      {!replyComposerCollapsed ? (
+                        <Button
+                          variant={composerMode === "email" ? "default" : "outline"}
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => {
+                            setComposerMode("email");
+                            setRecipientOverrideOpen(false);
+                            setComposerError(null);
+                          }}
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                          Email
+                        </Button>
+                      ) : null}
+                      {!replyComposerCollapsed && ticket.has_whatsapp ? (
+                        <Button
+                          variant={composerMode === "whatsapp" ? "default" : "outline"}
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => {
+                            setComposerMode("whatsapp");
+                            setRecipientOverrideOpen(false);
+                            setComposerError(null);
+                          }}
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          WhatsApp
+                        </Button>
+                      ) : null}
+                      {!replyComposerCollapsed && ticket.has_voice ? (
+                        <Button
+                          variant={composerMode === "voice" ? "default" : "outline"}
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => {
+                            setComposerMode("voice");
+                            setRecipientOverrideOpen(false);
+                            setComposerError(null);
+                            void loadVoiceCallOptions();
+                          }}
+                        >
+                          <Phone className="h-3.5 w-3.5" />
+                          Call
+                        </Button>
+                      ) : null}
+                      {!replyComposerCollapsed ? (
+                        <Button
+                          variant={composerMode === "internal" ? "default" : "outline"}
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => {
+                            setComposerMode("internal");
+                            setRecipientOverrideOpen(false);
+                            setComposerError(null);
+                          }}
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          Internal
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div id={composerPanelId}>
+                    {!replyComposerCollapsed ? (
+                      <>
               {draft && showAIDraft ? (
                 <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
                   <div className="flex items-start gap-3">
@@ -1227,6 +1495,7 @@ export function TicketDetail() {
                           onClick={() => {
                             setReplyText(draft.suggested_body);
                             setShowAIDraft(false);
+                            setReplyComposerCollapsed(false);
                             void onUseDraft(draft.id);
                           }}
                         >
@@ -1249,26 +1518,9 @@ export function TicketDetail() {
                 </div>
               ) : null}
 
-              <div className="mb-3 flex items-center gap-2">
-                <Button variant="outline" size="sm">
-                  Reply
-                </Button>
-                {ticket.has_whatsapp ? (
-                  <Button variant="outline" size="sm">
-                    WhatsApp
-                  </Button>
-                ) : null}
-                {ticket.has_voice ? (
-                  <Button variant="outline" size="sm" className="gap-2" onClick={onOpenVoiceCall}>
-                    <Phone className="w-4 h-4" />
-                    Voice Call
-                  </Button>
-                ) : null}
-              </div>
-
-              {primaryChannel !== "voice" ? (
+              {composerMode !== "internal" && replyChannel !== "voice" && recipientOverrideOpen ? (
                 <div className="mb-3 space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                  {primaryChannel === "whatsapp" && whatsappWindow ? (
+                  {replyChannel === "whatsapp" && whatsappWindow ? (
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-medium text-neutral-700">WhatsApp 24h window</p>
                       <Badge variant="outline" className="text-[11px]">
@@ -1279,12 +1531,8 @@ export function TicketDetail() {
                     </div>
                   ) : null}
 
-                  <div className="rounded-lg border border-neutral-200 bg-white">
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-                      onClick={() => setRecipientOverrideOpen((current) => !current)}
-                    >
+                  <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                    <div className="mb-3">
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-neutral-700">Recipient override</p>
                         <p className="truncate text-[11px] text-neutral-500">
@@ -1293,57 +1541,76 @@ export function TicketDetail() {
                             : "No default recipient available"}
                         </p>
                       </div>
-                      <ChevronDown
-                        className={cn(
-                          "h-4 w-4 shrink-0 text-neutral-400 transition-transform",
-                          recipientOverrideOpen && "rotate-180"
-                        )}
-                      />
-                    </button>
+                    </div>
 
-                    {recipientOverrideOpen ? (
-                      <div className="border-t border-neutral-200 px-3 py-3">
-                        <div className="grid gap-2">
-                          <Input
-                            className="h-8 text-xs"
-                            value={recipientOverrideInput}
-                            onChange={(event) => {
-                              setRecipientOverrideInput(event.target.value);
+                    <div className="grid gap-2">
+                      <Input
+                        className="h-8 text-xs"
+                        value={recipientOverrideInput}
+                        onChange={(event) => {
+                          setRecipientOverrideInput(event.target.value);
+                          setComposerError(null);
+                        }}
+                        placeholder={
+                          replyChannel === "whatsapp"
+                            ? "+15551234567"
+                            : "customer@example.com"
+                        }
+                      />
+                      <p className="text-[11px] text-neutral-500">
+                        Leave blank to use the default recipient for this ticket.
+                      </p>
+                    </div>
+
+                    {recipientSuggestions.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {recipientSuggestions.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-700 transition-colors hover:bg-neutral-100"
+                            onClick={() => {
+                              setRecipientOverrideInput(option.value);
                               setComposerError(null);
                             }}
-                            placeholder={
-                              primaryChannel === "whatsapp"
-                                ? "+15551234567"
-                                : "customer@example.com"
-                            }
-                          />
-                          <p className="text-[11px] text-neutral-500">
-                            Leave blank to use the default recipient for this ticket.
-                          </p>
-                        </div>
+                          >
+                            {option.label} • {option.value}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
 
-                        {recipientSuggestions.length > 0 ? (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {recipientSuggestions.map((option) => (
-                              <button
-                                key={option.value}
-                                type="button"
-                                className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-700 transition-colors hover:bg-neutral-100"
-                                onClick={() => {
-                                  setRecipientOverrideInput(option.value);
-                                  setComposerError(null);
-                                }}
-                              >
-                                {option.label} • {option.value}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
+                    {replyChannel !== "whatsapp" ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="grid gap-1.5">
+                          <label className="text-xs font-medium text-neutral-600">Cc</label>
+                          <Input
+                            className="h-8 text-xs"
+                            value={ccInput}
+                            onChange={(event) => {
+                              setCcInput(event.target.value);
+                              setComposerError(null);
+                            }}
+                            placeholder="cc@example.com"
+                          />
+                        </div>
+                        <div className="grid gap-1.5">
+                          <label className="text-xs font-medium text-neutral-600">Bcc</label>
+                          <Input
+                            className="h-8 text-xs"
+                            value={bccInput}
+                            onChange={(event) => {
+                              setBccInput(event.target.value);
+                              setComposerError(null);
+                            }}
+                            placeholder="bcc@example.com"
+                          />
+                        </div>
                       </div>
                     ) : null}
                   </div>
 
-                  {primaryChannel === "whatsapp" ? (
+                  {replyChannel === "whatsapp" ? (
                     <div className="grid gap-2">
                       <label className="text-xs font-medium text-neutral-600">Template</label>
                       <select
@@ -1382,82 +1649,297 @@ export function TicketDetail() {
                 </div>
               ) : null}
 
-              <Textarea
-                placeholder={
-                  primaryChannel === "voice" ? "Voice tickets use the call workflow." : "Type your reply..."
-                }
-                className="resize-none"
-                rows={4}
-                value={replyText}
-                onChange={(event) => setReplyText(event.target.value)}
-                disabled={primaryChannel === "voice"}
-              />
-
-              {replyAttachments.length > 0 ? (
-                <div className="mt-3 space-y-2">
-                  {replyAttachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2"
+              {composerMode === "internal" ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-amber-950">Internal comment</p>
+                      <p className="text-xs text-amber-800">
+                        Stored for support agents and AI context only. Never sent to the customer.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="border-amber-300 bg-white text-[11px] text-amber-800">
+                      Internal only
+                    </Badge>
+                  </div>
+                  <Textarea
+                    placeholder="Add internal context, handover notes, expectations, or investigation details..."
+                    className="resize-none bg-white"
+                    rows={5}
+                    value={internalCommentText}
+                    onChange={(event) => {
+                      setInternalCommentText(event.target.value);
+                      setComposerError(null);
+                    }}
+                  />
+                  <div className="mt-3 flex items-center justify-end">
+                    <Button
+                      size="sm"
+                      disabled={internalCommentSaving || !internalCommentText.trim()}
+                      onClick={() => void submitInternalComment()}
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-neutral-900">{attachment.filename}</p>
-                        <p className="text-xs text-neutral-500">{formatFileSize(attachment.size)}</p>
+                      {internalCommentSaving ? "Saving..." : "Save internal comment"}
+                    </Button>
+                  </div>
+                </div>
+              ) : replyChannel === "voice" ? (
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white">
+                        {deskVoice.incomingCall ? (
+                          <PhoneIncoming className="h-4 w-4" />
+                        ) : deskVoice.activeCall ? (
+                          <Phone className="h-4 w-4" />
+                        ) : (
+                          <PhoneCall className="h-4 w-4" />
+                        )}
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          setReplyAttachments((previous) =>
-                            previous.filter((entry) => entry.id !== attachment.id)
-                          )
-                        }
-                      >
-                        <X className="h-4 w-4" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-neutral-900">Phone call</p>
+                        <p className="truncate text-xs text-neutral-500">
+                          {deskVoiceCall ? deskVoicePartyLabel : deskVoiceStatusLabel}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {deskVoiceCall && !deskVoiceCallMatchesTicket ? (
+                        <Badge variant="outline" className="text-[11px]">
+                          Other ticket
+                        </Badge>
+                      ) : null}
+                      <Badge variant="outline" className="text-[11px]">
+                        {deskVoiceStatusLabel}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {deskVoice.activeCall ? (
+                    <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                      {PHONE_KEYPAD_KEYS.map((key) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className="h-10 rounded-md border border-neutral-200 bg-white text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-100"
+                          onClick={() => deskVoice.sendDigits(key)}
+                        >
+                          {key}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {deskVoice.incomingCall ? (
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button size="sm" className="gap-2" onClick={deskVoice.answerIncoming}>
+                        <PhoneCall className="h-4 w-4" />
+                        Answer
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-2" onClick={deskVoice.passIncoming}>
+                        <PhoneOff className="h-4 w-4" />
+                        Pass
                       </Button>
                     </div>
-                  ))}
-                </div>
-              ) : null}
+                  ) : deskVoice.activeCall ? (
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button variant="outline" size="sm" className="gap-2" onClick={deskVoice.toggleMute}>
+                        {deskVoice.muted ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                        {deskVoice.muted ? "Unmute" : "Mute"}
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-2" onClick={deskVoice.toggleHold}>
+                        <Pause className="h-4 w-4" />
+                        {deskVoice.holdActive ? "Resume" : "Hold"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 border-red-200 text-red-700 hover:bg-red-50"
+                        onClick={deskVoice.endActiveCall}
+                      >
+                        <PhoneOff className="h-4 w-4" />
+                        Hang up
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-neutral-700">Dial</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-2"
+                            disabled={callOptionsLoading}
+                            onClick={onLoadVoiceCallOptions}
+                          >
+                            <PhoneCall className="h-4 w-4" />
+                            {callOptionsLoading ? "Loading..." : callOptions ? "Refresh" : "Load numbers"}
+                          </Button>
+                        </div>
 
-              <div className="flex items-center justify-between mt-3">
-                <div className="flex items-center gap-2">
-                  <label className="inline-flex">
-                    <input
-                      type="file"
-                      className="hidden"
-                      multiple={primaryChannel !== "whatsapp"}
-                      onChange={(event) => {
-                        void handleAttachmentChange(event);
-                      }}
-                      disabled={primaryChannel === "voice"}
-                    />
-                    <span className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground">
-                      <Upload className="h-4 w-4" />
-                      Attach
-                    </span>
-                  </label>
-                  <Button variant="ghost" size="sm" onClick={() => setShowMacroPicker(true)}>
-                    Macro
-                  </Button>
+                        {callOptions ? (
+                          <div className="grid gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="text-[11px]">
+                                Consent: {callOptions.consent.status || "unknown"}
+                              </Badge>
+                              {selectedVoiceCandidate ? (
+                                <Badge variant="outline" className="text-[11px]">
+                                  {selectedVoiceCandidate.phone}
+                                </Badge>
+                              ) : null}
+                            </div>
+
+                            {callOptions.candidates.length > 0 ? (
+                              <select
+                                className="h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                                value={selectedCallCandidateId}
+                                onChange={(event) => {
+                                  setSelectedCallCandidateId(event.target.value);
+                                  setComposerError(null);
+                                }}
+                              >
+                                {callOptions.candidates.map((candidate: any) => (
+                                  <option key={candidate.candidateId} value={candidate.candidateId}>
+                                    {candidate.phone} - {candidate.label || voiceCandidateLabel(candidate.source)}
+                                  </option>
+                                ))}
+                                {callOptions.canManualDial ? <option value="manual">Manual number</option> : null}
+                              </select>
+                            ) : callOptions.canManualDial ? (
+                              <Badge variant="outline" className="w-fit text-[11px]">
+                                Manual number required
+                              </Badge>
+                            ) : (
+                              <p className="text-xs text-neutral-500">No callable number is available.</p>
+                            )}
+
+                            {callOptions.canManualDial &&
+                            (selectedCallCandidateId === "manual" || callOptions.candidates.length === 0) ? (
+                              <Input
+                                className="h-9 text-sm"
+                                value={manualCallPhone}
+                                onChange={(event) => {
+                                  setManualCallPhone(event.target.value);
+                                  setComposerError(null);
+                                }}
+                                placeholder="+1 555 123 4567"
+                              />
+                            ) : null}
+
+                            <Textarea
+                              rows={3}
+                              value={callReason}
+                              onChange={(event) => {
+                                setCallReason(event.target.value);
+                                setComposerError(null);
+                              }}
+                              placeholder="Reason for this call"
+                              className="resize-none bg-white"
+                            />
+                          </div>
+                        ) : (
+                          <p className="text-xs text-neutral-500">Load available numbers for this ticket to place a call.</p>
+                        )}
+
+                        {callError ? <p className="mt-2 text-xs text-red-600">{callError}</p> : null}
+                        {callSuccessMessage ? (
+                          <p className="mt-2 text-xs text-emerald-600">{callSuccessMessage}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          className="gap-2"
+                          disabled={!callOptions || callOptionsLoading || callQueueing || !canQueueInlineCall}
+                          onClick={() => void submitVoiceCall()}
+                        >
+                          <PhoneCall className="h-4 w-4" />
+                          {callQueueing ? "Queueing..." : "Call"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <Button
-                  size="sm"
-                  disabled={
-                    replySending ||
-                    primaryChannel === "voice" ||
-                    (replyRecipientOptions.length === 0 && !recipientOverrideInput.trim())
-                  }
-                  onClick={() => void submitReply()}
-                >
-                  {replySending
-                    ? "Sending..."
-                    : primaryChannel === "whatsapp"
-                      ? "Send WhatsApp"
-                      : "Send"}
-                </Button>
-              </div>
+              ) : (
+                <>
+                  <Textarea
+                    placeholder={replyChannel === "whatsapp" ? "Type your WhatsApp reply..." : "Type your email reply..."}
+                    className="resize-none"
+                    rows={4}
+                    value={replyText}
+                    onChange={(event) => setReplyText(event.target.value)}
+                  />
+
+                  {replyAttachments.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {replyAttachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium text-neutral-900">{attachment.filename}</p>
+                            <p className="text-xs text-neutral-500">{formatFileSize(attachment.size)}</p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setReplyAttachments((previous) =>
+                                previous.filter((entry) => entry.id !== attachment.id)
+                              )
+                            }
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="flex items-center justify-between mt-3">
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex">
+                        <input
+                          type="file"
+                          className="hidden"
+                          multiple={replyChannel !== "whatsapp"}
+                          onChange={(event) => {
+                            void handleAttachmentChange(event);
+                          }}
+                        />
+                        <span className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground">
+                          <Upload className="h-4 w-4" />
+                          Attach
+                        </span>
+                      </label>
+                      <Button variant="ghost" size="sm" onClick={() => setShowMacroPicker(true)}>
+                        Macro
+                      </Button>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={
+                        replySending ||
+                        (replyRecipientOptions.length === 0 && !recipientOverrideInput.trim())
+                      }
+                      onClick={() => void submitReply()}
+                    >
+                      {replySending
+                        ? "Sending..."
+                        : replyChannel === "whatsapp"
+                          ? "Send WhatsApp"
+                          : "Send email"}
+                    </Button>
+                  </div>
+                </>
+              )}
               {displayReplyError ? <p className="mt-2 text-xs text-red-600">{displayReplyError}</p> : null}
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1930,6 +2412,33 @@ function ConversationMessageItem({
     return <EmailThreadGroup messages={[message]} />;
   }
 
+  if (message.channel === "internal") {
+    return (
+      <div className="flex justify-center">
+        <div className="w-full max-w-[88%] rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="border-amber-300 bg-white text-[11px] text-amber-800">
+              Internal comment
+            </Badge>
+            <span className="text-xs font-medium">
+              {message.internal_actor_name ?? message.from.name}
+            </span>
+            {message.internal_origin === "ai" ? (
+              <Badge variant="outline" className="border-purple-200 bg-white text-[11px] text-purple-700">
+                AI
+              </Badge>
+            ) : null}
+            <span className="text-xs text-amber-700">{formatDateRelative(message.timestamp)}</span>
+          </div>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
+          <p className="mt-2 text-[11px] text-amber-700">
+            Internal only. Not sent to the customer.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (message.channel === "whatsapp") {
     return (
       <div className={cn("flex", message.direction === "outbound" ? "justify-end" : "justify-start")}>
@@ -2129,6 +2638,8 @@ function EmailThreadGroup({ messages }: { messages: ConversationMessage[] }) {
 
 function EmailThreadMessage({ message }: { message: ConversationMessage }) {
   const attachments = message.attachments ?? [];
+  const cc = message.cc ?? [];
+  const bcc = message.bcc ?? [];
 
   return (
     <>
@@ -2149,6 +2660,13 @@ function EmailThreadMessage({ message }: { message: ConversationMessage }) {
           <p className="text-xs text-neutral-500">{formatDateRelative(message.timestamp)}</p>
         </div>
       </div>
+
+      {(cc.length > 0 || bcc.length > 0) ? (
+        <div className="mb-3 space-y-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+          {cc.length > 0 ? <p className="truncate">Cc: {cc.join(", ")}</p> : null}
+          {bcc.length > 0 ? <p className="truncate">Bcc: {bcc.join(", ")}</p> : null}
+        </div>
+      ) : null}
 
       <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">{message.body}</div>
 

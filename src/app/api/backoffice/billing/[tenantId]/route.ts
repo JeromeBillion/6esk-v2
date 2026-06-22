@@ -1,6 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import {
   createBillingAdjustment,
   createInvoiceDraft,
@@ -55,14 +57,16 @@ const actionSchema = z.discriminatedUnion("action", [
   })
 ]);
 
-async function requireInternalTenant(tenantId: string) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return {
-      ok: false as const,
-      response: Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 })
-    };
-  }
+const paramsSchema = z.object({
+  tenantId: z.string().uuid()
+});
+
+async function requireInternalTenant(tenantId: string, sensitive = false) {
+  const auth = sensitive
+    ? await requireBackofficeSensitiveAccess()
+    : await requireBackofficeStaff();
+  if (!auth.ok) return auth;
+
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return {
@@ -70,14 +74,18 @@ async function requireInternalTenant(tenantId: string) {
       response: Response.json({ error: "Tenant not found" }, { status: 404 })
     };
   }
-  return { ok: true as const, user, tenant };
+  return { ok: true as const, user: auth.user, tenant };
 }
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const { tenantId } = await params;
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
   const auth = await requireInternalTenant(tenantId);
   if (!auth.ok) return auth.response;
 
@@ -89,8 +97,12 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const { tenantId } = await params;
-  const auth = await requireInternalTenant(tenantId);
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
+  const auth = await requireInternalTenant(tenantId, true);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;
@@ -105,7 +117,7 @@ export async function POST(
     return Response.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 });
   }
 
-  const actorUserId = auth.user?.id ?? null;
+  const actorUserId = auth.user.id;
   try {
     if (parsed.data.action === "sync_subscription") {
       const result = await syncTenantSubscriptionFromCatalog({ tenantId, actorUserId });

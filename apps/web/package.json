@@ -1,0 +1,10 @@
+{
+  "name": "@6esk/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "cd ../.. && next dev",
+    "build": "cd ../.. && next build",
+    "start": "cd ../.. && next start"
+  }
+}

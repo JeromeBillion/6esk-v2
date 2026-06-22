@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   isInternalStaff: vi.fn(),
+  getMarginSnapshot: vi.fn(),
   getTenantMarginSnapshot: vi.fn()
 }));
 
@@ -15,6 +16,7 @@ vi.mock("@/server/auth/roles", () => ({
 }));
 
 vi.mock("@/server/billing/margin", () => ({
+  getMarginSnapshot: mocks.getMarginSnapshot,
   getTenantMarginSnapshot: mocks.getTenantMarginSnapshot
 }));
 
@@ -33,10 +35,10 @@ describe("backoffice finance margin API", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns margin snapshot for internal tenant context", async () => {
+  it("returns global margin snapshot for internal staff by default", async () => {
     mocks.getSessionUser.mockResolvedValue({ id: "u1", tenant_id: "t1" });
     mocks.isInternalStaff.mockReturnValue(true);
-    mocks.getTenantMarginSnapshot.mockResolvedValue({ tenantId: "t1", totals: { events: 10 } });
+    mocks.getMarginSnapshot.mockResolvedValue({ scope: "global", tenantId: null, totals: { events: 10 } });
 
     const response = await GET(
       new Request("http://localhost/api/backoffice/finance/margin?windowDays=14")
@@ -44,10 +46,41 @@ describe("backoffice finance margin API", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.getTenantMarginSnapshot).toHaveBeenCalledWith({
-      tenantId: "t1",
+    expect(mocks.getMarginSnapshot).toHaveBeenCalledWith({
       windowDays: 14
     });
-    expect(body).toEqual({ tenantId: "t1", totals: { events: 10 } });
+    expect(mocks.getTenantMarginSnapshot).not.toHaveBeenCalled();
+    expect(body).toEqual({ scope: "global", tenantId: null, totals: { events: 10 } });
+  });
+
+  it("returns tenant margin snapshot when tenantId is provided", async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: "u1", tenant_id: "t1" });
+    mocks.isInternalStaff.mockReturnValue(true);
+    mocks.getTenantMarginSnapshot.mockResolvedValue({ scope: "tenant", tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", totals: { events: 5 } });
+
+    const response = await GET(
+      new Request("http://localhost/api/backoffice/finance/margin?tenantId=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa&windowDays=7")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.getTenantMarginSnapshot).toHaveBeenCalledWith({
+      tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      windowDays: 7
+    });
+    expect(body).toEqual({ scope: "tenant", tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", totals: { events: 5 } });
+  });
+
+  it("rejects invalid tenantId filters", async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: "u1", tenant_id: "t1" });
+    mocks.isInternalStaff.mockReturnValue(true);
+
+    const response = await GET(
+      new Request("http://localhost/api/backoffice/finance/margin?tenantId=not-a-uuid")
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.getMarginSnapshot).not.toHaveBeenCalled();
+    expect(mocks.getTenantMarginSnapshot).not.toHaveBeenCalled();
   });
 });

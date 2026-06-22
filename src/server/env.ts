@@ -9,6 +9,7 @@ const optionalBooleanish = z.string().optional();
 const RATE_LIMIT_KEYS = [
   "RATE_LIMIT_ADMIN",
   "RATE_LIMIT_AGENT",
+  "RATE_LIMIT_BACKOFFICE",
   "RATE_LIMIT_AUTH_LOGIN",
   "RATE_LIMIT_PORTAL_TICKET",
   "RATE_LIMIT_TICKET_CREATE",
@@ -23,6 +24,11 @@ const RATE_LIMIT_KEYS = [
 
 const envSchema = z.object({
   APP_URL: z.string().url(),
+  WEB_BASE_URL: optionalUrl,
+  BACKOFFICE_BASE_URL: optionalUrl,
+  BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: optionalBooleanish,
+  CLOUDFLARE_ACCESS_AUD: optionalNonEmptyString,
+  CLOUDFLARE_ACCESS_TEAM_DOMAIN: optionalUrl,
   DATABASE_URL: nonEmptyString,
   SESSION_SECRET: z.string().min(16),
   RESEND_API_KEY: nonEmptyString,
@@ -177,6 +183,7 @@ function requireCompleteGroup(source: EnvSource, keys: string[], issues: string[
 
 function addProductionIssues(source: EnvSource, issues: string[]) {
   requireKeys(source, [
+    "BACKOFFICE_BASE_URL",
     "INBOUND_SHARED_SECRET",
     "AGENT_SECRET_KEY",
     "AUTH_MFA_SECRET_ENCRYPTION_KEY",
@@ -191,6 +198,13 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
     "CALLS_OUTBOX_SECRET",
     "CALLS_OUTBOX_TENANT_ID"
   ], issues);
+
+  if (!isEnabled(source, "BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS")) {
+    issues.push("BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS must be true in production");
+  }
+  if (isEnabled(source, "BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS")) {
+    requireKeys(source, ["CLOUDFLARE_ACCESS_AUD", "CLOUDFLARE_ACCESS_TEAM_DOMAIN"], issues);
+  }
 
   requireOneOf(source, ["AI_API_KEY", "OPENAI_API_KEY"], issues, "AI_API_KEY|OPENAI_API_KEY");
 

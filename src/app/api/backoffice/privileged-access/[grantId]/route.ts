@@ -8,7 +8,6 @@ import {
   revokePrivilegedAccessGrant
 } from "@/server/auth/privileged-access";
 import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
-import { recordAuditLog } from "@/server/audit";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -82,18 +81,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ gra
         auth.user.id,
         parsed.data.approvalNote
       );
-      await recordAuditLog({
-        tenantId: parsed.data.tenantId,
-        actorUserId: auth.user.id,
-        action: "privileged_access_grant_approved",
-        entityType: "privileged_access_grant",
-        entityId: grant.id,
-        data: {
-          accessType: grant.access_type,
-          subjectEmail: grant.subject_email,
-          expiresAt: grant.expires_at
-        }
-      });
       await sendPrivilegedAccessAlert({
         scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
         grant,
@@ -110,18 +97,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ gra
         auth.user.id,
         parsed.data.revokeReason
       );
-      await recordAuditLog({
-        tenantId: parsed.data.tenantId,
-        actorUserId: auth.user.id,
-        action: "privileged_access_grant_revoked",
-        entityType: "privileged_access_grant",
-        entityId: grant.id,
-        data: {
-          accessType: grant.access_type,
-          subjectEmail: grant.subject_email,
-          revokeReason: grant.revoke_reason
-        }
-      });
       await sendPrivilegedAccessAlert({
         scope: { tenantId: parsed.data.tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY },
         grant,
@@ -137,17 +112,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ gra
       auth.user.id,
       parsed.data.reviewNote
     );
-    await recordAuditLog({
-      tenantId: parsed.data.tenantId,
-      actorUserId: auth.user.id,
-      action: "privileged_access_grant_reviewed",
-      entityType: "privileged_access_grant",
-      entityId: grant.id,
-      data: {
-        accessType: grant.access_type,
-        subjectEmail: grant.subject_email
-      }
-    });
     return Response.json({ grant });
   } catch (error) {
     return Response.json({ error: (error as Error).message }, { status: 400 });

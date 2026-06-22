@@ -6,7 +6,7 @@ import { sharedKnowledge } from '../knowledge/shared-knowledge';
  * Platform-specific characters spread this and override what they need.
  */
 export const baseCharacterFields: Partial<Character> = {
-  username: '6ex_dex',
+  username: 'dexter_6esk',
   plugins: [
     '@elizaos/plugin-sql',
     ...(process.env.GROQ_API_KEY?.trim() ? ['@elizaos/plugin-groq'] : []),
@@ -22,13 +22,13 @@ export const baseCharacterFields: Partial<Character> = {
   },
   knowledge: sharedKnowledge as unknown as Character['knowledge'],
   topics: [
-    'predictions markets',
-    'AMM mechanics',
-    '6ex platform',
-    'South African sports',
-    'political predictions',
-    'risk and responsibility',
-    'FICA/KYC compliance',
+    'customer support',
+    'CRM operations',
+    'tenant privacy',
+    'support tickets',
+    'approved business knowledge',
+    'AI safety',
+    'human escalation',
   ],
   adjectives: ['precise', 'confident', 'clear', 'concise', 'helpful', 'analytical'],
 };

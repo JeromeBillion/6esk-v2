@@ -64,6 +64,11 @@ const OUTPUT_SPECIFIC_RULES: Array<{
       /\b(other|another|different|next)\b.{0,80}\b(customer|client|tenant|account|workspace)\b.{0,120}\b(ticket|query|conversation|history|phone|email|profile|document|record)\b/i
   },
   {
+    code: "internal_comment_disclosure",
+    severity: "high",
+    pattern: /\b(internal\s+(comment|note|handover|memo)|private\s+(note|comment)|agent-only\s+(note|context))\b/i
+  },
+  {
     code: "audit_suppression_output",
     severity: "medium",
     pattern: /\b(do not|don't|never|avoid)\b.{0,80}\b(log|audit|record|cite|show source|mention source)\b/i

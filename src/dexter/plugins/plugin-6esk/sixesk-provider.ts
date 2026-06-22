@@ -15,6 +15,11 @@ const THREAD_SNIPPET_CHARS_DEFAULT = 280;
 const HISTORY_LIMIT = 8;
 const MINIMAL_THREAD_LIMIT = 2;
 
+const isCustomerVisibleMessage = (message: SixeskMessage): boolean =>
+  message.direction !== 'internal' &&
+  message.channel !== 'internal' &&
+  message.visibility !== 'internal';
+
 const isPriorityTicket = (priority: string | null | undefined): boolean => {
   const value = (priority || '').toLowerCase();
   return ['high', 'urgent', 'critical', 'p1', 'p0'].includes(value);
@@ -275,6 +280,7 @@ export const sixeskTicketProvider: Provider = {
     }
 
     const { ticket, messages, summary, isPriority, callContext } = context;
+    const customerVisibleMessages = messages.filter(isCustomerVisibleMessage);
     const customerContext = readCustomerContext(runtimeMetadata);
     const promptSandbox = readPromptSandbox(runtimeMetadata);
     const ragContext = readDexterRagContext(runtimeMetadata);
@@ -283,7 +289,7 @@ export const sixeskTicketProvider: Provider = {
     const allowedHistoryIds = allowedHistoryTicketIds(customerContext);
 
     const priorityTicket = typeof isPriority === 'boolean' ? isPriority : isPriorityTicket(ticket.priority);
-    const latestInboundText = findLatestInboundText(messages);
+    const latestInboundText = findLatestInboundText(customerVisibleMessages);
     const intentSignal = latestInboundText || ticket.subject || '';
     const intentInfo = detectIntent(intentSignal);
     const shouldMinimize = !priorityTicket && intentInfo.risk === 'low';
@@ -296,11 +302,17 @@ export const sixeskTicketProvider: Provider = {
       : THREAD_SNIPPET_CHARS_DEFAULT;
 
     const recentMessages = priorityTicket
-      ? messages
+      ? customerVisibleMessages
       : shouldMinimize
-        ? pickMinimalRecentMessages(messages)
-        : messages.slice(-RECENT_THREAD_LIMIT);
-    const currentChannel = recentMessages.at(-1)?.channel ?? 'email';
+        ? pickMinimalRecentMessages(customerVisibleMessages)
+        : customerVisibleMessages.slice(-RECENT_THREAD_LIMIT);
+    const currentChannel =
+      [...recentMessages]
+        .reverse()
+        .find(
+          (message): message is SixeskMessage & { channel: 'email' | 'whatsapp' | 'voice' } =>
+            message.channel === 'email' || message.channel === 'whatsapp' || message.channel === 'voice'
+        )?.channel ?? 'email';
     const rawCustomerHistory = resolvedCustomerContext
       ? (context.customerHistory || []).filter((item) => {
           if (!allowedHistoryIds.size) return false;

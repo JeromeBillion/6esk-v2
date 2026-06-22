@@ -1,6 +1,8 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import {
   changeTenantPlan,
   TenantLifecycleError,
@@ -30,16 +32,22 @@ const updateStatusSchema = z.discriminatedUnion("action", [
   })
 ]);
 
+const paramsSchema = z.object({
+  tenantId: z.string().uuid()
+});
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeStaff();
+  if (!auth.ok) return auth.response;
 
-  const { tenantId } = await params;
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
@@ -52,10 +60,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess();
+  if (!auth.ok) return auth.response;
 
   let payload: unknown;
   try {
@@ -69,7 +75,11 @@ export async function POST(
     return Response.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 });
   }
 
-  const { tenantId } = await params;
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
@@ -79,17 +89,17 @@ export async function POST(
 
   try {
     if (action === "suspend") {
-      await suspendTenant(tenantId, reason || "Administrative suspension", user?.id);
+      await suspendTenant(tenantId, reason || "Administrative suspension", auth.user.id);
     } else if (action === "reactivate") {
-      await reactivateTenant(tenantId, user?.id);
+      await reactivateTenant(tenantId, auth.user.id);
     } else if (action === "close") {
-      await closeTenant(tenantId, reason || "Administrative closure", user?.id);
+      await closeTenant(tenantId, reason || "Administrative closure", auth.user.id);
     } else if (action === "change_plan") {
       await changeTenantPlan({
         tenantId,
         plan: parsed.data.plan,
         reason: reason || "Administrative plan change",
-        actorUserId: user?.id
+        actorUserId: auth.user.id
       });
     }
 

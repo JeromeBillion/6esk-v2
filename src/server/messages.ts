@@ -8,6 +8,8 @@ export type MessageRecord = {
   subject: string | null;
   from_email: string;
   to_emails: string[];
+  cc_emails: string[];
+  bcc_emails: string[];
   direction: "inbound" | "outbound";
   channel: "email" | "whatsapp" | "voice";
   origin: "human" | "ai";
@@ -36,7 +38,7 @@ export type MessageRecord = {
 
 export async function getMessageById(messageId: string, tenantId: string) {
   const result = await db.query<MessageRecord>(
-    `SELECT id, tenant_id, mailbox_id, ticket_id, subject, from_email, to_emails, direction,
+    `SELECT id, tenant_id, mailbox_id, ticket_id, subject, from_email, to_emails, cc_emails, bcc_emails, direction,
             channel, origin, is_spam, spam_reason, is_starred, is_pinned, message_id, thread_id,
             in_reply_to, reference_ids,
             external_message_id, conversation_id, wa_contact, wa_status, wa_timestamp, provider,

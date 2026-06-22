@@ -2060,14 +2060,14 @@ export default function AdminClient() {
                         onChange={(event) =>
                           setMailboxForm((previous) => ({ ...previous, address: event.target.value }))
                         }
-                        placeholder="support@6ex.co.za"
+                        placeholder="support@example.com"
                       />
                       <Input
                         value={mailboxForm.memberEmails}
                         onChange={(event) =>
                           setMailboxForm((previous) => ({ ...previous, memberEmails: event.target.value }))
                         }
-                        placeholder="agent1@6ex.co.za, agent2@6ex.co.za"
+                        placeholder="agent1@example.com, agent2@example.com"
                       />
                     </div>
                     <div className="flex gap-2">

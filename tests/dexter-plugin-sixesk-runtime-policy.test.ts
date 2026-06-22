@@ -193,6 +193,20 @@ describe("Dexter 6esk runtime policy boundary", () => {
               sentAt: null,
               text: "Can I return this order?",
               html: null
+            },
+            {
+              id: "internal-1",
+              direction: "internal",
+              channel: "internal",
+              origin: "human",
+              visibility: "internal",
+              from: "ops@6esk.com",
+              to: [],
+              subject: null,
+              receivedAt: null,
+              sentAt: "2026-06-19T00:01:00.000Z",
+              text: "Internal note: do not mention the fraud review.",
+              html: null
             }
           ],
           customerHistory: [
@@ -248,6 +262,8 @@ describe("Dexter 6esk runtime policy boundary", () => {
     expect(result.text).toContain("Same-customer history allowed: 0");
     expect(result.text).not.toContain("jane@example.com");
     expect(result.text).not.toContain("Prior billing issue");
+    expect(result.text).not.toContain("fraud review");
+    expect(result.data?.messages).toHaveLength(1);
   });
 
   it("propagates run evidence through native call actions", async () => {

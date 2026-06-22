@@ -1,5 +1,5 @@
 import { db } from "@/server/db";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLogWithClient } from "@/server/audit";
 import {
   BASE_PLATFORM_FEE_CENT,
   MODULE_PRICES,
@@ -968,6 +968,18 @@ export async function syncTenantSubscriptionFromCatalog(input: {
          AND tenant_id = $2`,
       [subscription.id, input.tenantId, tenant.plan]
     );
+    await recordAuditLogWithClient(client, {
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId ?? null,
+      action: "tenant_subscription_synced",
+      entityType: "tenant_subscription",
+      entityId: subscriptionId,
+      data: {
+        workspaceKey,
+        itemCount: items.length,
+        prorationAmountCent
+      }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -975,19 +987,6 @@ export async function syncTenantSubscriptionFromCatalog(input: {
   } finally {
     client.release();
   }
-
-  await recordAuditLog({
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId ?? null,
-    action: "tenant_subscription_synced",
-    entityType: "tenant_subscription",
-    entityId: subscriptionId,
-    data: {
-      workspaceKey,
-      itemCount: items.length,
-      prorationAmountCent
-    }
-  });
 
   return {
     subscriptionId,
@@ -1016,52 +1015,66 @@ export async function createBillingAdjustment(input: {
   if (normalizedAmount === 0) {
     throw new Error("Billing adjustment amount must be non-zero.");
   }
-  await ensureBillingAccount(db, input.tenantId, workspaceKey);
-  const result = await db.query<AdjustmentRow>(
-    `INSERT INTO tenant_billing_adjustments (
-       tenant_id,
-       workspace_key,
-       adjustment_type,
-       amount_cent,
-       reason,
-       source_invoice_id,
-       created_by_user_id,
-       metadata
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-     RETURNING id,
-               adjustment_type,
-               amount_cent,
-               currency,
-               reason,
-               status,
-               source_invoice_id,
-               created_at`,
-    [
-      input.tenantId,
-      workspaceKey,
-      input.adjustmentType,
-      normalizedAmount,
-      input.reason,
-      input.sourceInvoiceId ?? null,
-      input.actorUserId ?? null,
-      JSON.stringify(input.metadata ?? {})
-    ]
-  );
-  const adjustment = result.rows[0];
-  await recordAuditLog({
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId ?? null,
-    action: "tenant_billing_adjustment_created",
-    entityType: "tenant_billing_adjustment",
-    entityId: adjustment.id,
-    data: {
-      workspaceKey,
-      adjustmentType: input.adjustmentType,
-      amountCent: normalizedAmount,
-      sourceInvoiceId: input.sourceInvoiceId ?? null
-    }
-  });
+  const client = await db.connect();
+  let adjustment: AdjustmentRow | null = null;
+  try {
+    await client.query("BEGIN");
+    await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const result = await client.query<AdjustmentRow>(
+      `INSERT INTO tenant_billing_adjustments (
+         tenant_id,
+         workspace_key,
+         adjustment_type,
+         amount_cent,
+         reason,
+         source_invoice_id,
+         created_by_user_id,
+         metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+       RETURNING id,
+                 adjustment_type,
+                 amount_cent,
+                 currency,
+                 reason,
+                 status,
+                 source_invoice_id,
+                 created_at`,
+      [
+        input.tenantId,
+        workspaceKey,
+        input.adjustmentType,
+        normalizedAmount,
+        input.reason,
+        input.sourceInvoiceId ?? null,
+        input.actorUserId ?? null,
+        JSON.stringify(input.metadata ?? {})
+      ]
+    );
+    adjustment = result.rows[0];
+    await recordAuditLogWithClient(client, {
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId ?? null,
+      action: "tenant_billing_adjustment_created",
+      entityType: "tenant_billing_adjustment",
+      entityId: adjustment.id,
+      data: {
+        workspaceKey,
+        adjustmentType: input.adjustmentType,
+        amountCent: normalizedAmount,
+        sourceInvoiceId: input.sourceInvoiceId ?? null
+      }
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (!adjustment) {
+    throw new Error("Billing adjustment was not created.");
+  }
   return adjustment;
 }
 
@@ -1241,6 +1254,18 @@ export async function createInvoiceDraft(input: {
       );
     }
 
+    await recordAuditLogWithClient(client, {
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId ?? null,
+      action: "tenant_invoice_draft_created",
+      entityType: "tenant_invoice",
+      entityId: invoice.id,
+      data: {
+        workspaceKey,
+        invoiceNumber: invoice.invoice_number,
+        totalCent: toInt(invoice.total_cent)
+      }
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1248,19 +1273,6 @@ export async function createInvoiceDraft(input: {
   } finally {
     client.release();
   }
-
-  await recordAuditLog({
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId ?? null,
-    action: "tenant_invoice_draft_created",
-    entityType: "tenant_invoice",
-    entityId: invoice?.id ?? null,
-    data: {
-      workspaceKey,
-      invoiceNumber: invoice?.invoice_number ?? null,
-      totalCent: invoice ? toInt(invoice.total_cent) : null
-    }
-  });
 
   return invoice;
 }
@@ -1274,82 +1286,96 @@ export async function transitionInvoiceStatus(input: {
   reason?: string | null;
 }) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
-  const result = await db.query<InvoiceRow>(
-    `UPDATE tenant_invoices i
-     SET status = $4,
-         issued_at = CASE WHEN $4 = 'open' THEN COALESCE(i.issued_at, now()) ELSE i.issued_at END,
-         due_at = CASE
-           WHEN $4 = 'open' THEN COALESCE(i.due_at, now() + (a.payment_terms_days::text || ' days')::interval)
-           ELSE i.due_at
-         END,
-         paid_at = CASE WHEN $4 = 'paid' THEN COALESCE(i.paid_at, now()) ELSE i.paid_at END,
-         voided_at = CASE WHEN $4 = 'void' THEN COALESCE(i.voided_at, now()) ELSE i.voided_at END,
-         amount_due_cent = CASE WHEN $4 IN ('paid', 'void') THEN 0 ELSE i.amount_due_cent END,
-         updated_at = now()
-     FROM tenant_billing_accounts a
-     WHERE i.id = $1
-       AND i.tenant_id = $2
-       AND i.workspace_key = $3
-       AND a.tenant_id = i.tenant_id
-       AND a.workspace_key = i.workspace_key
-     RETURNING i.id,
-               i.invoice_number,
-               i.status,
-               i.currency,
-               i.period_start,
-               i.period_end,
-               i.subtotal_cent,
-               i.usage_cent,
-               i.adjustment_cent,
-               i.tax_cent,
-               i.total_cent,
-               i.amount_due_cent,
-               i.due_at,
-               i.issued_at,
-               i.paid_at,
-               i.voided_at,
-               i.created_at`,
-    [input.invoiceId, input.tenantId, workspaceKey, input.status]
-  );
-  const invoice = result.rows[0];
+  const client = await db.connect();
+  let invoice: InvoiceRow | null = null;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<InvoiceRow>(
+      `UPDATE tenant_invoices i
+       SET status = $4,
+           issued_at = CASE WHEN $4 = 'open' THEN COALESCE(i.issued_at, now()) ELSE i.issued_at END,
+           due_at = CASE
+             WHEN $4 = 'open' THEN COALESCE(i.due_at, now() + (a.payment_terms_days::text || ' days')::interval)
+             ELSE i.due_at
+           END,
+           paid_at = CASE WHEN $4 = 'paid' THEN COALESCE(i.paid_at, now()) ELSE i.paid_at END,
+           voided_at = CASE WHEN $4 = 'void' THEN COALESCE(i.voided_at, now()) ELSE i.voided_at END,
+           amount_due_cent = CASE WHEN $4 IN ('paid', 'void') THEN 0 ELSE i.amount_due_cent END,
+           updated_at = now()
+       FROM tenant_billing_accounts a
+       WHERE i.id = $1
+         AND i.tenant_id = $2
+         AND i.workspace_key = $3
+         AND a.tenant_id = i.tenant_id
+         AND a.workspace_key = i.workspace_key
+       RETURNING i.id,
+                 i.invoice_number,
+                 i.status,
+                 i.currency,
+                 i.period_start,
+                 i.period_end,
+                 i.subtotal_cent,
+                 i.usage_cent,
+                 i.adjustment_cent,
+                 i.tax_cent,
+                 i.total_cent,
+                 i.amount_due_cent,
+                 i.due_at,
+                 i.issued_at,
+                 i.paid_at,
+                 i.voided_at,
+                 i.created_at`,
+      [input.invoiceId, input.tenantId, workspaceKey, input.status]
+    );
+    invoice = result.rows[0] ?? null;
+    if (!invoice) {
+      throw new Error("Invoice not found.");
+    }
+
+    if (input.status === "paid") {
+      await client.query(
+        `UPDATE tenant_billing_accounts
+         SET collection_status = 'current',
+             dunning_status = 'none',
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND workspace_key = $2`,
+        [input.tenantId, workspaceKey]
+      );
+    } else if (input.status === "uncollectible") {
+      await client.query(
+        `UPDATE tenant_billing_accounts
+         SET collection_status = 'collections',
+             dunning_status = 'active',
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND workspace_key = $2`,
+        [input.tenantId, workspaceKey]
+      );
+    }
+
+    await recordAuditLogWithClient(client, {
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId ?? null,
+      action: `tenant_invoice_${input.status}`,
+      entityType: "tenant_invoice",
+      entityId: input.invoiceId,
+      data: {
+        workspaceKey,
+        invoiceNumber: invoice.invoice_number,
+        reason: input.reason ?? null
+      }
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
   if (!invoice) {
     throw new Error("Invoice not found.");
   }
-
-  if (input.status === "paid") {
-    await db.query(
-      `UPDATE tenant_billing_accounts
-       SET collection_status = 'current',
-           dunning_status = 'none',
-           updated_at = now()
-       WHERE tenant_id = $1
-         AND workspace_key = $2`,
-      [input.tenantId, workspaceKey]
-    );
-  } else if (input.status === "uncollectible") {
-    await db.query(
-      `UPDATE tenant_billing_accounts
-       SET collection_status = 'collections',
-           dunning_status = 'active',
-           updated_at = now()
-       WHERE tenant_id = $1
-         AND workspace_key = $2`,
-      [input.tenantId, workspaceKey]
-    );
-  }
-
-  await recordAuditLog({
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId ?? null,
-    action: `tenant_invoice_${input.status}`,
-    entityType: "tenant_invoice",
-    entityId: input.invoiceId,
-    data: {
-      workspaceKey,
-      invoiceNumber: invoice.invoice_number,
-      reason: input.reason ?? null
-    }
-  });
   return invoice;
 }
 
@@ -1364,69 +1390,84 @@ export async function recordCollectionEvent(input: {
   metadata?: Record<string, unknown> | null;
 }) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
-  await ensureBillingAccount(db, input.tenantId, workspaceKey);
-  const result = await db.query<{ id: string }>(
-    `INSERT INTO tenant_collection_events (
-       tenant_id,
-       workspace_key,
-       invoice_id,
-       event_type,
-       status,
-       attempt_number,
-       completed_at,
-       actor_user_id,
-       metadata
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 IN ('succeeded', 'failed', 'sent', 'canceled') THEN now() ELSE NULL END, $7, $8::jsonb)
-     RETURNING id`,
-    [
-      input.tenantId,
-      workspaceKey,
-      input.invoiceId ?? null,
-      input.eventType,
-      input.status ?? "pending",
-      Math.max(1, Math.trunc(input.attemptNumber ?? 1)),
-      input.actorUserId ?? null,
-      JSON.stringify(input.metadata ?? {})
-    ]
-  );
-
-  if (input.eventType === "dunning_started" || input.eventType === "dunning_escalated") {
-    await db.query(
-      `UPDATE tenant_billing_accounts
-       SET collection_status = 'collections',
-           dunning_status = 'active',
-           updated_at = now()
-       WHERE tenant_id = $1
-         AND workspace_key = $2`,
-      [input.tenantId, workspaceKey]
+  const client = await db.connect();
+  let event: { id: string } | null = null;
+  try {
+    await client.query("BEGIN");
+    await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const result = await client.query<{ id: string }>(
+      `INSERT INTO tenant_collection_events (
+         tenant_id,
+         workspace_key,
+         invoice_id,
+         event_type,
+         status,
+         attempt_number,
+         completed_at,
+         actor_user_id,
+         metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 IN ('succeeded', 'failed', 'sent', 'canceled') THEN now() ELSE NULL END, $7, $8::jsonb)
+       RETURNING id`,
+      [
+        input.tenantId,
+        workspaceKey,
+        input.invoiceId ?? null,
+        input.eventType,
+        input.status ?? "pending",
+        Math.max(1, Math.trunc(input.attemptNumber ?? 1)),
+        input.actorUserId ?? null,
+        JSON.stringify(input.metadata ?? {})
+      ]
     );
-  } else if (input.eventType === "collections_paused") {
-    await db.query(
-      `UPDATE tenant_billing_accounts
-       SET collection_status = 'paused',
-           dunning_status = 'paused',
-           updated_at = now()
-       WHERE tenant_id = $1
-         AND workspace_key = $2`,
-      [input.tenantId, workspaceKey]
-    );
-  }
+    event = result.rows[0] ?? null;
 
-  await recordAuditLog({
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId ?? null,
-    action: "tenant_collection_event_recorded",
-    entityType: "tenant_collection_event",
-    entityId: result.rows[0]?.id ?? null,
-    data: {
-      workspaceKey,
-      invoiceId: input.invoiceId ?? null,
-      eventType: input.eventType,
-      status: input.status ?? "pending"
+    if (input.eventType === "dunning_started" || input.eventType === "dunning_escalated") {
+      await client.query(
+        `UPDATE tenant_billing_accounts
+         SET collection_status = 'collections',
+             dunning_status = 'active',
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND workspace_key = $2`,
+        [input.tenantId, workspaceKey]
+      );
+    } else if (input.eventType === "collections_paused") {
+      await client.query(
+        `UPDATE tenant_billing_accounts
+         SET collection_status = 'paused',
+             dunning_status = 'paused',
+             updated_at = now()
+         WHERE tenant_id = $1
+           AND workspace_key = $2`,
+        [input.tenantId, workspaceKey]
+      );
     }
-  });
-  return result.rows[0];
+
+    await recordAuditLogWithClient(client, {
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId ?? null,
+      action: "tenant_collection_event_recorded",
+      entityType: "tenant_collection_event",
+      entityId: event?.id ?? null,
+      data: {
+        workspaceKey,
+        invoiceId: input.invoiceId ?? null,
+        eventType: input.eventType,
+        status: input.status ?? "pending"
+      }
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (!event) {
+    throw new Error("Collection event was not recorded.");
+  }
+  return event;
 }
 
 function invoiceLineFromRow(row: InvoiceLineRow): CustomerSafeInvoiceExport["invoice"]["lines"][number] {

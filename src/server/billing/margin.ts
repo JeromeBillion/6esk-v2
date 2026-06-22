@@ -11,7 +11,8 @@ type MarginRow = {
 };
 
 export type MarginSnapshot = {
-  tenantId: string;
+  tenantId: string | null;
+  scope: "tenant" | "global";
   windowDays: number;
   generatedAt: string;
   totals: {
@@ -49,13 +50,22 @@ function marginPercent(revenueCent: number, costCent: number) {
   return Math.round(margin * 100) / 100;
 }
 
-export async function getTenantMarginSnapshot(input: {
-  tenantId: string;
+export async function getMarginSnapshot(input: {
+  tenantId?: string | null;
   windowDays?: number;
 }): Promise<MarginSnapshot> {
   const windowDays = clampWindowDays(input.windowDays);
+  const params: unknown[] = [String(windowDays)];
+  const conditions = [`created_at >= now() - ($1::text || ' days')::interval`];
+  const tenantId = input.tenantId?.trim() || null;
+  if (tenantId) {
+    params.push(tenantId);
+    conditions.push(`tenant_id = $${params.length}`);
+  }
+  const guardComment = tenantId ? "" : "/* tenant-query-guard: ignore internal-backoffice-global-margin-view */";
   const result = await db.query<MarginRow>(
-     `SELECT
+     `${guardComment}
+      SELECT
        module_key,
        usage_kind,
        provider_mode,
@@ -63,11 +73,10 @@ export async function getTenantMarginSnapshot(input: {
        SUM(cost_cent)::numeric AS cost_total_cent,
        COUNT(*)::bigint AS event_count
      FROM workspace_module_usage_events
-     WHERE tenant_id = $1
-       AND created_at >= now() - ($2::text || ' days')::interval
+     WHERE ${conditions.join(" AND ")}
      GROUP BY module_key, usage_kind, provider_mode
      ORDER BY module_key, usage_kind, provider_mode`,
-    [input.tenantId, String(windowDays)]
+    params
   );
 
   const moduleTotals = new Map<
@@ -113,7 +122,8 @@ export async function getTenantMarginSnapshot(input: {
   }
 
   return {
-    tenantId: input.tenantId,
+    tenantId,
+    scope: tenantId ? "tenant" : "global",
     windowDays,
     generatedAt: new Date().toISOString(),
     totals: {
@@ -134,4 +144,11 @@ export async function getTenantMarginSnapshot(input: {
       estimatedMarginPct: marginPercent(value.estimatedRevenueCent, value.costCent)
     }))
   };
+}
+
+export async function getTenantMarginSnapshot(input: {
+  tenantId: string;
+  windowDays?: number;
+}): Promise<MarginSnapshot> {
+  return getMarginSnapshot(input);
 }

@@ -15,6 +15,7 @@ import {
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 const PROFILE_SOURCE = 'white-label-webchat';
+const SUPPORT_FALLBACK_EMAIL = process.env.SUPPORT_ADDRESS?.trim() || 'support@6esk.com';
 
 type IdentityDetails = {
   email: string | null;
@@ -261,7 +262,7 @@ export const escalateToHumanAction: Action = {
 
         if (callback) {
           await callback({
-            text: "I'm sorry, I wasn't able to create a ticket right now. Please email support@6ex.co.za directly and a support agent will assist you.",
+            text: `I'm sorry, I wasn't able to create a ticket right now. Please email ${SUPPORT_FALLBACK_EMAIL} directly and a support agent will assist you.`,
             actions: ['ESCALATE_TO_HUMAN'],
           });
         }
@@ -302,7 +303,7 @@ export const escalateToHumanAction: Action = {
 
       if (callback) {
         await callback({
-          text: "I'm sorry, something went wrong while creating your ticket. Please email support@6ex.co.za directly and our team will help you.",
+          text: `I'm sorry, something went wrong while creating your ticket. Please email ${SUPPORT_FALLBACK_EMAIL} directly and our team will help you.`,
           actions: ['ESCALATE_TO_HUMAN'],
         });
       }
@@ -356,7 +357,7 @@ export const escalateToHumanAction: Action = {
       },
       {
         name: '{{user1}}',
-        content: { text: 'Thandi, thandi@mail.co.za. My KYC has been pending for a week.' },
+        content: { text: 'Thandi, thandi@mail.co.za. My request has been pending for a week.' },
       },
       {
         name: 'Dexter',

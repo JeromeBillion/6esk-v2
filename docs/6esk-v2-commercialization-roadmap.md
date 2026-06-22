@@ -979,6 +979,63 @@ Run the SaaS business itself:
 - provider credential rotation and re-consent tracking
 - hosted-email domain verification, abuse review, and suspension workflow
 
+### Backoffice UI And Service Architecture
+`6esk Work` must ship as its own internal UI and deployable service, not as a hidden tab inside the tenant product app.
+
+Target workspace shape:
+- `apps/web` is the customer/operator product app.
+- `apps/backoffice` is the internal `6esk Work` app for 6esk staff.
+- both apps build and deploy independently as separate services.
+- `work.6esk.com` is protected by Cloudflare Access email allowlisting before traffic reaches the app.
+- Cloudflare Access is ingress control only; app-level internal staff authorization, MFA, privileged-access grants, and audit logs still apply.
+
+Shared logic must be extracted into isolated packages before the backoffice UI grows:
+- `packages/database` owns the Postgres client, transaction helpers, tenant-safe query primitives, and shared migration/query access.
+- `packages/types` owns shared DTOs, enums, API contracts, Zod schemas, and workflow/billing/module types.
+- `packages/auth` owns session parsing, internal staff checks, MFA/privileged-access guard helpers, and Cloudflare Access JWT verification helpers.
+- `packages/ui` owns shared shell primitives, brand/theme components, modal/action-feedback patterns, and dense internal UI primitives.
+
+Required `6esk Work` UI modules:
+1. overview: tenant posture, ops health, security readiness, finance/margin status, and action queues.
+2. tenants: tenant search, provisioning, status, plan, lifecycle controls, module entitlements, drift, usage, and health.
+3. billing and finance: subscription sync, credits/adjustments, invoice drafts, invoice transitions, collections/dunning, and margin visibility.
+4. security and access: security readiness, risk profile, privileged access, impersonation review, and security artifact tracking.
+5. ops and incidents: provider health, incident cases, escalation state, operational notes, and support coordination.
+6. BizOps workflows: onboarding, implementation, renewals, contracts/legal, partner/pro-services, deliverability, and security questionnaire work.
+7. audit: internal operator actions filtered by tenant, operator, action type, and target resource.
+
+Durable workflow data requirements:
+- backoffice cases for onboarding, implementation, contract, renewal, incident, security questionnaire, legal artifact, data request, provider rotation, deliverability, and partner-services work.
+- case events for status changes, notes, assignments, approvals, and timeline history.
+- tenant backoffice profiles for owner, implementation stage, risk tier, renewal date, security status, and internal notes.
+- artifact and evidence links for contracts, DPA/subprocessor records, security evidence, provider dashboards, R2 objects, and external documents.
+
+### Backoffice Acceptance Criteria
+`6esk Work` is not launch-ready until:
+- `apps/web` and `apps/backoffice` build independently.
+- tenant admins cannot access `6esk Work`.
+- internal staff auth is enforced on every page and API.
+- Cloudflare Access enforcement is production-gated and fails closed for `work.6esk.com` and backoffice API access when required headers/config are missing; this is only the 6esk Work/backoffice ingress boundary and must not put tenant/customer app space behind Cloudflare Access.
+- sensitive internal 6esk Work actions require an internal staff MFA session or an active privileged-access grant; read-only internal views may remain internal-staff-only.
+- all mutating backoffice actions write audit events atomically with the mutation or through a durable outbox/idempotency model.
+- workflow cases are tenant-linked, test-covered, and visible in the internal UI.
+- the UI follows `docs/frontend-ui-system.md` and does not introduce a second visual language.
+- evidence/artifact links are validated as safe `https:` URLs or controlled internal object references, and backoffice routes have route-parameter validation plus rate limiting.
+- customer-facing AI reply generation cannot cite, paraphrase, or disclose internal comments; internal notes may only be used for internal staff workflows unless promoted to approved customer-visible facts.
+
+Agreed Gang launch findings to close before push/launch:
+- Backoffice control-plane boundary: `/api/backoffice/**` must not be reachable from the customer web app without the same 6esk Work ingress and internal-staff authorization boundary used by `apps/backoffice`.
+- Internal staff MFA/privileged grant boundary: finance, security posture, evidence/legal links, impersonation, break-glass support, tenant suspension, and similar high-risk mutations require MFA and/or scoped privileged access.
+- Audit integrity: case, tenant-profile, artifact-link, billing/security, and privileged-access mutations must not commit without corresponding audit evidence.
+- AI privacy boundary: internal comments are not customer context. They must be structurally separated from customer-visible thread history, not merely hidden by prompt wording or regex output checks.
+- Abuse hardening: backoffice endpoints need explicit rate limiting, UUID/parameter validation, and SSRF-safe evidence link validation.
+- Regression coverage: tests must prove tenant admins are denied, internal staff without MFA/grant are denied for sensitive mutations, audit failures do not leave unaudited state changes, customer replies cannot use internal comments, and root/customer web routing cannot bypass the backoffice boundary.
+
+Dan review notes:
+- State: Postgres remains the source of truth for tenants, billing, auth, workflows, audit, and security posture; Cloudflare Access is ingress control, not business authorization.
+- Feedback: `6esk Work` must expose operational status, audit history, security posture, workflow state, and actionable failure states for staff.
+- Blast radius: the monorepo migration affects imports, builds, Docker/deploy config, env validation, auth/session boundaries, and app routing, so it must be staged before feature work.
+
 ## Workstream K: GTM and Public Company Readiness
 ### Required Non-Code Assets
 - pricing page

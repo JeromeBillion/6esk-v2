@@ -5,6 +5,11 @@ function baseEnv() {
   return {
     NODE_ENV: "production",
     APP_URL: "https://app.6esk.example",
+    WEB_BASE_URL: "https://app.6esk.example",
+    BACKOFFICE_BASE_URL: "https://work.6esk.example",
+    BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: "true",
+    CLOUDFLARE_ACCESS_AUD: "cloudflare-access-audience",
+    CLOUDFLARE_ACCESS_TEAM_DOMAIN: "https://6esk.cloudflareaccess.com",
     DATABASE_URL: "postgres://user:pass@localhost:5432/6esk",
     SESSION_SECRET: "replace-with-a-long-session-secret",
     RESEND_API_KEY: "resend-key",
@@ -175,6 +180,29 @@ describe("validateEnv", () => {
         MODULE_METERING_FAIL_CLOSED: "false"
       })
     ).toThrow(/MODULE_METERING_FAIL_CLOSED must not be false in production/);
+  });
+
+  it("requires Cloudflare Access enforcement for the backoffice in production", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: "false"
+      })
+    ).toThrow(/BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS must be true in production/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        CLOUDFLARE_ACCESS_AUD: ""
+      })
+    ).toThrow(/CLOUDFLARE_ACCESS_AUD/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        CLOUDFLARE_ACCESS_TEAM_DOMAIN: ""
+      })
+    ).toThrow(/CLOUDFLARE_ACCESS_TEAM_DOMAIN/);
   });
 
   it("keeps destructive data-subject deletion disabled in production until durable jobs ship", () => {

@@ -161,6 +161,53 @@ export async function recordTicketEvent({
   );
 }
 
+export async function createTicketInternalComment({
+  tenantId,
+  ticketId,
+  body,
+  actorUserId,
+  origin = "human",
+  agentId,
+  metadata
+}: {
+  tenantId?: string | null;
+  ticketId: string;
+  body: string;
+  actorUserId?: string | null;
+  origin?: "human" | "ai";
+  agentId?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const scopedTenantId = requireTenantId(tenantId, "Create internal comment");
+  const cleanBody = body.trim();
+  if (!cleanBody) {
+    throw new Error("Internal comment body required");
+  }
+
+  const data = {
+    body: cleanBody,
+    visibility: "internal",
+    origin,
+    agentId: agentId ?? null,
+    metadata: metadata ?? null
+  };
+
+  const result = await db.query<{
+    id: string;
+    event_type: string;
+    actor_user_id: string | null;
+    data: Record<string, unknown> | null;
+    created_at: string;
+  }>(
+    `INSERT INTO ticket_events (tenant_id, ticket_id, event_type, actor_user_id, data)
+     VALUES ($1, $2, 'internal_comment', $3, $4)
+     RETURNING id, event_type, actor_user_id, data, created_at`,
+    [scopedTenantId, ticketId, actorUserId ?? null, data]
+  );
+
+  return result.rows[0];
+}
+
 export async function reopenTicketIfNeeded(ticketId: string, tenantId: string) {
   const result = await db.query<{ status: string }>(
     "SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2",
@@ -483,7 +530,7 @@ export async function listTicketMessages(ticketId: string, tenantId: string) {
   const values = [ticketId, tenantId];
   const tenantClause = "AND m.tenant_id = $2";
   const result = await db.query(
-    `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.subject,
+    `SELECT m.id, m.direction, m.channel, m.origin, m.from_email, m.to_emails, m.cc_emails, m.bcc_emails, m.subject,
             m.preview_text, m.received_at, m.sent_at, m.wa_status, m.wa_timestamp,
             m.wa_contact, m.conversation_id,
             COALESCE(
@@ -510,13 +557,15 @@ export async function listTicketMessages(ticketId: string, tenantId: string) {
 
 export async function listTicketEvents(ticketId: string, tenantId: string) {
   const values = [ticketId, tenantId];
-  const tenantClause = "AND tenant_id = $2";
+  const tenantClause = "AND e.tenant_id = $2";
   const result = await db.query(
-    `SELECT id, event_type, actor_user_id, data, created_at
-     FROM ticket_events
-     WHERE ticket_id = $1
+    `SELECT e.id, e.event_type, e.actor_user_id, u.display_name AS actor_name, u.email AS actor_email,
+            e.data, e.created_at
+     FROM ticket_events e
+     LEFT JOIN users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+     WHERE e.ticket_id = $1
        ${tenantClause}
-     ORDER BY created_at ASC`,
+     ORDER BY e.created_at ASC`,
     values
   );
   return result.rows;

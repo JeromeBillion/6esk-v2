@@ -190,6 +190,8 @@ export async function GET(
       subject: message.subject,
       from: message.from_email,
       to: message.to_emails,
+      cc: message.cc_emails ?? [],
+      bcc: message.bcc_emails ?? [],
       direction: message.direction,
       channel: message.channel,
       mailState:

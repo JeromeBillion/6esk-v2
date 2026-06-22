@@ -20,7 +20,7 @@ import { deliverPendingAgentEvents, enqueueAgentEvent } from "@/server/agents/ou
 import { recordAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 import { sendTicketReply } from "@/server/email/replies";
-import { addTagsToTicket, getTicketById, recordTicketEvent } from "@/server/tickets";
+import { addTagsToTicket, createTicketInternalComment, getTicketById, recordTicketEvent } from "@/server/tickets";
 import { getCustomerById } from "@/server/customers";
 import { linkTickets, mergeCustomers, MergeError, mergeTickets } from "@/server/merges";
 import { createMergeReviewTask, MergeReviewError } from "@/server/merge-reviews";
@@ -41,6 +41,7 @@ const actionSchema = z.object({
   type: z.enum([
     "draft_reply",
     "send_reply",
+    "create_internal_comment",
     "initiate_call",
     "set_tags",
     "set_priority",
@@ -95,14 +96,21 @@ type AgentActionRolloutMode = "dry_run" | "draft_only" | "hybrid_review" | "full
 
 const DEFAULT_AGENT_MERGE_MIN_CONFIDENCE = 0.85;
 const DEFAULT_AGENT_ACTIONS_MAX_PER_MINUTE = 120;
-const DRAFT_ONLY_ROLLOUT_ACTIONS = new Set(["draft_reply", "request_human_review", "propose_merge"]);
+const DRAFT_ONLY_ROLLOUT_ACTIONS = new Set([
+  "draft_reply",
+  "create_internal_comment",
+  "request_human_review",
+  "propose_merge"
+]);
 const HYBRID_REVIEW_DIRECT_ACTIONS = new Set([
   "draft_reply",
+  "create_internal_comment",
   "request_human_review",
   "propose_merge"
 ]);
 const REQUIRED_IDEMPOTENCY_ACTIONS = new Set<AgentAction["type"]>([
   "send_reply",
+  "create_internal_comment",
   "initiate_call",
   "set_tags",
   "set_priority",
@@ -116,6 +124,7 @@ const REQUIRED_IDEMPOTENCY_ACTIONS = new Set<AgentAction["type"]>([
 const ACTION_REQUESTED_SCOPES: Record<AgentAction["type"], string[]> = {
   draft_reply: ["tickets:read", "drafts:write"],
   send_reply: ["tickets:read", "tickets:write", "customer_contact:send"],
+  create_internal_comment: ["tickets:read", "tickets:write"],
   initiate_call: ["tickets:read", "voice:call"],
   set_tags: ["tickets:read", "tickets:write"],
   set_priority: ["tickets:read", "tickets:write"],
@@ -1256,6 +1265,70 @@ export async function POST(request: Request) {
           }
         });
         results.push({ type: action.type, status: "ok" });
+        break;
+      }
+      case "create_internal_comment": {
+        const body = action.text?.trim();
+        if (!body) {
+          results.push({ type: action.type, status: "failed", detail: "Internal comment body required" });
+          break;
+        }
+        const idempotencyFailure = getRequiredIdempotencyFailure(action);
+        if (idempotencyFailure) {
+          await recordRequiredIdempotencyFailure({
+            tenantId,
+            integrationId: integration.id,
+            action
+          });
+          results.push(idempotencyFailure);
+          break;
+        }
+
+        const comment = await createTicketInternalComment({
+          tenantId,
+          ticketId: action.ticketId,
+          body,
+          origin: "ai",
+          agentId: integration.id,
+          metadata: {
+            confidence: action.confidence ?? null,
+            reason: action.reason ?? null,
+            ...(action.metadata ?? {})
+          }
+        });
+        await recordAuditLog({
+          tenantId,
+          action: "ai_internal_comment_created",
+          entityType: "ticket",
+          entityId: action.ticketId,
+          data: {
+            agentId: integration.id,
+            commentId: comment.id,
+            visibility: "internal"
+          }
+        });
+        await recordModuleUsageEvent({
+          tenantId,
+          moduleKey: "aiAutomation",
+          usageKind: "internal_comment",
+          actorType: "ai",
+          providerMode: resolveAiProviderMode(action.metadata ?? null),
+          metadata: {
+            route: "/api/agent/v1/actions",
+            ticketId: action.ticketId,
+            actionType: action.type,
+            integrationId: integration.id,
+            commentId: comment.id
+          }
+        });
+        results.push({
+          type: action.type,
+          status: "ok",
+          data: {
+            commentId: comment.id,
+            visibility: "internal"
+          }
+        });
         break;
       }
       case "send_reply": {

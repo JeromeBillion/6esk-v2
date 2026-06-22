@@ -1,9 +1,11 @@
 "use client";
 
 import { Inter } from "next/font/google";
+import Image from "next/image";
 import { Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
-import BrandMark from "@/app/components/BrandMark";
+import wordmarkBlack from "@/app/assets/Wordmark-black-transparent.png";
+import wordmarkWhite from "@/app/assets/Wordmark-white-transparent.png";
 import WavesCanvas from "@/app/components/landing/WavesCanvas";
 import { useThemeMode } from "@/app/lib/theme";
 import { Button } from "@/app/workspace/components/ui/button";
@@ -28,6 +30,7 @@ export default function PublicPageFrame({
   maxWidthClassName = "max-w-xl"
 }: PublicPageFrameProps) {
   const { theme, toggleTheme } = useThemeMode();
+  const wordmark = theme === "dark" ? wordmarkWhite : wordmarkBlack;
 
   return (
     <div
@@ -51,14 +54,14 @@ export default function PublicPageFrame({
       <div className={`relative z-10 mx-auto flex min-h-[calc(100vh-5rem)] items-center ${maxWidthClassName}`}>
         <Card className="w-full border-border/60 bg-card/92 shadow-[0_24px_80px_rgba(0,0,0,0.36)] backdrop-blur-xl dark:bg-card/88 dark:shadow-[0_24px_80px_rgba(0,0,0,0.5)]">
           <CardHeader className="border-b border-border/80 pb-5">
-            <div className="mb-4 flex items-start justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <BrandMark size={34} priority />
-                <div>
-                  <CardTitle className="text-2xl text-foreground">{title}</CardTitle>
-                  <CardDescription className="mt-1 text-sm text-muted-foreground">{description}</CardDescription>
-                </div>
-              </div>
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <Image
+                src={wordmark}
+                alt="6esk"
+                priority
+                className="h-14 w-auto object-contain"
+                sizes="9rem"
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -69,6 +72,10 @@ export default function PublicPageFrame({
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 {theme === "dark" ? "Light" : "Dark"}
               </Button>
+            </div>
+            <div>
+              <CardTitle className="text-2xl text-foreground">{title}</CardTitle>
+              <CardDescription className="mt-1 text-sm text-muted-foreground">{description}</CardDescription>
             </div>
           </CardHeader>
           <CardContent className="pt-6">{children}</CardContent>

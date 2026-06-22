@@ -1,24 +1,32 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import { getTenantById } from "@/server/tenant/lifecycle";
-import { recordAuditLog } from "@/server/audit";
+import { recordAuditLogWithClient } from "@/server/audit";
 
 const updateModulesSchema = z.object({
   modules: z.record(z.boolean())
+});
+
+const paramsSchema = z.object({
+  tenantId: z.string().uuid()
 });
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeStaff();
+  if (!auth.ok) return auth.response;
 
-  const { tenantId } = await params;
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
@@ -40,10 +48,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess();
+  if (!auth.ok) return auth.response;
 
   let payload: unknown;
   try {
@@ -57,7 +63,11 @@ export async function PATCH(
     return Response.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 });
   }
 
-  const { tenantId } = await params;
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedParams.data;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
     return Response.json({ error: "Tenant not found" }, { status: 404 });
@@ -108,16 +118,15 @@ export async function PATCH(
       }
     }
 
-    await client.query("COMMIT");
-
-    await recordAuditLog({
+    await recordAuditLogWithClient(client, {
       tenantId,
-      actorUserId: user?.id ?? null,
+      actorUserId: auth.user.id,
       action: "tenant_modules_updated",
       entityType: "tenant",
       entityId: tenantId,
       data: { modules: merged }
     });
+    await client.query("COMMIT");
 
     return Response.json({ modules: merged });
   } catch (err) {
