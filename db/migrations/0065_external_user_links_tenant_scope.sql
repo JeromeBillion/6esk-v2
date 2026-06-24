@@ -10,7 +10,7 @@ WHERE links.last_ticket_id = tickets.id
 UPDATE external_user_links links
 SET tenant_id = single_tenant.id
 FROM (
-  SELECT MIN(id) AS id, COUNT(*) AS tenant_count
+  SELECT MIN(id::text)::uuid AS id, COUNT(*) AS tenant_count
   FROM tenants
 ) single_tenant
 WHERE links.tenant_id IS NULL

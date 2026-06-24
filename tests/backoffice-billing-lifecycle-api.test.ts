@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   createBillingAdjustment: vi.fn(),
   createInvoiceDraft: vi.fn(),
   transitionInvoiceStatus: vi.fn(),
-  recordCollectionEvent: vi.fn()
+  recordCollectionEvent: vi.fn(),
+  isBillingActionIdempotencyError: vi.fn()
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -35,13 +36,15 @@ vi.mock("@/server/billing/lifecycle", () => ({
   createBillingAdjustment: mocks.createBillingAdjustment,
   createInvoiceDraft: mocks.createInvoiceDraft,
   transitionInvoiceStatus: mocks.transitionInvoiceStatus,
-  recordCollectionEvent: mocks.recordCollectionEvent
+  recordCollectionEvent: mocks.recordCollectionEvent,
+  isBillingActionIdempotencyError: mocks.isBillingActionIdempotencyError
 }));
 
 import { GET, POST } from "@/app/api/backoffice/billing/[tenantId]/route";
 
 const TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const USER_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+const IDEMPOTENCY_KEY = "billing-action-key-1";
 
 function params() {
   return { params: Promise.resolve({ tenantId: TENANT_ID }) };
@@ -63,6 +66,13 @@ describe("backoffice billing lifecycle API", () => {
     mocks.hasPrivilegedMfaSession.mockReturnValue(true);
     mocks.getTenantById.mockResolvedValue({ id: TENANT_ID, slug: "acme", status: "active" });
     mocks.getTenantBillingLifecycleSnapshot.mockResolvedValue({ tenantId: TENANT_ID });
+    mocks.isBillingActionIdempotencyError.mockImplementation((error: unknown) =>
+      Boolean(
+        error &&
+          typeof error === "object" &&
+          (error as { name?: string }).name === "BillingActionIdempotencyError"
+      )
+    );
   });
 
   it("rejects non-internal users", async () => {
@@ -94,19 +104,34 @@ describe("backoffice billing lifecycle API", () => {
       prorationAmountCent: 100
     });
 
-    const response = await POST(request({ action: "sync_subscription" }), params());
+    const response = await POST(
+      request({ action: "sync_subscription", idempotencyKey: IDEMPOTENCY_KEY }),
+      params()
+    );
 
     expect(response.status).toBe(200);
     expect(mocks.syncTenantSubscriptionFromCatalog).toHaveBeenCalledWith({
       tenantId: TENANT_ID,
-      actorUserId: USER_ID
+      actorUserId: USER_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+      idempotencyPayload: { action: "sync_subscription" }
     });
+  });
+
+  it("requires an idempotency key for billing mutations", async () => {
+    const response = await POST(request({ action: "sync_subscription" }), params());
+
+    expect(response.status).toBe(400);
+    expect(mocks.syncTenantSubscriptionFromCatalog).not.toHaveBeenCalled();
   });
 
   it("requires MFA before changing billing lifecycle state", async () => {
     mocks.hasPrivilegedMfaSession.mockReturnValue(false);
 
-    const response = await POST(request({ action: "sync_subscription" }), params());
+    const response = await POST(
+      request({ action: "sync_subscription", idempotencyKey: IDEMPOTENCY_KEY }),
+      params()
+    );
 
     expect(response.status).toBe(403);
     expect(mocks.syncTenantSubscriptionFromCatalog).not.toHaveBeenCalled();
@@ -118,6 +143,7 @@ describe("backoffice billing lifecycle API", () => {
     const response = await POST(
       request({
         action: "create_adjustment",
+        idempotencyKey: IDEMPOTENCY_KEY,
         adjustmentType: "credit",
         amountCent: 5000,
         reason: "Launch service credit"
@@ -133,7 +159,42 @@ describe("backoffice billing lifecycle API", () => {
       reason: "Launch service credit",
       sourceInvoiceId: null,
       actorUserId: USER_ID,
-      metadata: null
+      metadata: null,
+      idempotencyKey: IDEMPOTENCY_KEY,
+      idempotencyPayload: {
+        action: "create_adjustment",
+        adjustmentType: "credit",
+        amountCent: 5000,
+        reason: "Launch service credit"
+      }
+    });
+  });
+
+  it("returns duplicate billing action replay as deduplicated success", async () => {
+    mocks.createBillingAdjustment.mockRejectedValue({
+      name: "BillingActionIdempotencyError",
+      code: "idempotency_replay",
+      message: "Billing action already completed.",
+      response: { id: "adjustment-1" }
+    });
+
+    const response = await POST(
+      request({
+        action: "create_adjustment",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        adjustmentType: "credit",
+        amountCent: 5000,
+        reason: "Launch service credit"
+      }),
+      params()
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      status: "ok",
+      deduplicated: true,
+      adjustment: { id: "adjustment-1" }
     });
   });
 
@@ -143,6 +204,7 @@ describe("backoffice billing lifecycle API", () => {
     const response = await POST(
       request({
         action: "transition_invoice",
+        idempotencyKey: IDEMPOTENCY_KEY,
         invoiceId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
         status: "paid",
         reason: "Provider payment confirmed"
@@ -156,7 +218,14 @@ describe("backoffice billing lifecycle API", () => {
       invoiceId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
       status: "paid",
       reason: "Provider payment confirmed",
-      actorUserId: USER_ID
+      actorUserId: USER_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+      idempotencyPayload: {
+        action: "transition_invoice",
+        invoiceId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        status: "paid",
+        reason: "Provider payment confirmed"
+      }
     });
   });
 });

@@ -25,6 +25,8 @@
   align-items: center;
   gap: 12px;
   margin-bottom: 34px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .brandMark {
@@ -66,10 +68,32 @@
   padding: 12px;
   color: #d4d4d8;
   font-size: 14px;
+  text-decoration: none;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
 }
 
 .navItem strong {
   color: #fafafa;
+}
+
+.navItem span {
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.navItem:hover,
+.navItemActive {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.navItemActive span {
+  color: #93c5fd;
 }
 
 .operatorBox {
@@ -277,6 +301,18 @@
 .module {
   border-radius: 18px;
   padding: 16px;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+
+.module:hover {
+  border-color: rgba(147, 197, 253, 0.34);
+  background: rgba(255, 255, 255, 0.055);
+  transform: translateY(-1px);
 }
 
 .moduleTitle {
@@ -353,6 +389,17 @@
   text-align: right;
 }
 
+.valueStack {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.valueStack strong {
+  color: #fafafa;
+  font-size: 14px;
+}
+
 .checkItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -386,6 +433,204 @@
   padding: 18px;
   color: #a1a1aa;
   font-size: 14px;
+}
+
+.actionDeck {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.requirementGrid,
+.rhythmGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.requirementItem,
+.rhythmItem {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 14px;
+}
+
+.rhythmItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  color: #93c5fd;
+}
+
+.routeLink {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 5px 9px;
+  color: #f4f4f5;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.routeLink:hover {
+  border-color: rgba(147, 197, 253, 0.34);
+  color: #bfdbfe;
+}
+
+.financeTable {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+}
+
+.financeRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(5, minmax(110px, 1fr));
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px 14px;
+  color: #d4d4d8;
+  font-size: 13px;
+}
+
+.financeRow:first-child {
+  border-top: 0;
+}
+
+.financeHeader {
+  background: rgba(255, 255, 255, 0.06);
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.financeRow strong {
+  color: #fafafa;
+}
+
+.billingTable,
+.moduleProfitTable {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+}
+
+.billingRow,
+.moduleProfitRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  color: #d4d4d8;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.billingRow {
+  grid-template-columns: minmax(220px, 1.5fr) repeat(5, minmax(120px, 1fr));
+  padding: 13px 14px;
+}
+
+.moduleProfitRow {
+  grid-template-columns: minmax(220px, 1.4fr) minmax(90px, 0.7fr) repeat(5, minmax(105px, 1fr));
+  padding: 12px 14px;
+}
+
+.billingRow:first-child,
+.moduleProfitRow:first-child {
+  border-top: 0;
+}
+
+.billingRow strong,
+.moduleProfitRow strong {
+  color: #fafafa;
+}
+
+.billingRow small,
+.moduleProfitRow small {
+  display: block;
+  margin-top: 4px;
+  color: #8e8e97;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.billingRow:hover,
+.billingRowActive {
+  background: rgba(96, 165, 250, 0.1);
+}
+
+.billingRowActive {
+  box-shadow: inset 3px 0 0 rgba(147, 197, 253, 0.8);
+}
+
+.billingHeader {
+  background: rgba(255, 255, 255, 0.06);
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.flagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.flagBlock {
+  margin-top: 16px;
+}
+
+.invoiceLineGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.invoiceLineGrid strong {
+  display: block;
+  margin-top: 10px;
+  color: #fafafa;
+}
+
+.buttonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f4f5;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 10px 16px;
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .formGrid {
@@ -464,6 +709,7 @@
 .feedbackSuccess,
 .feedbackError {
   grid-column: 1 / -1;
+  margin-top: 14px;
   border-radius: 14px;
   padding: 12px 14px;
   font-size: 14px;
@@ -534,8 +780,30 @@
 
   .metrics,
   .moduleGrid,
-  .twoCol {
+  .twoCol,
+  .actionDeck,
+  .requirementGrid,
+  .rhythmGrid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .financeTable {
+    overflow-x: auto;
+  }
+
+  .financeRow,
+  .billingTable,
+  .moduleProfitTable {
+    overflow-x: auto;
+  }
+
+  .financeRow,
+  .billingRow {
+    min-width: 860px;
+  }
+
+  .moduleProfitRow {
+    min-width: 980px;
   }
 }
 
@@ -552,7 +820,16 @@
   .metrics,
   .moduleGrid,
   .twoCol,
+  .actionDeck,
+  .requirementGrid,
+  .invoiceLineGrid,
+  .rhythmGrid,
   .formGrid {
     grid-template-columns: 1fr;
+  }
+
+  .title {
+    font-size: 34px;
+    line-height: 1;
   }
 }

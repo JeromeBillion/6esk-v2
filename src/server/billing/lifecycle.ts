@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { db } from "@/server/db";
 import { recordAuditLogWithClient } from "@/server/audit";
 import {
@@ -17,6 +18,33 @@ import {
 type Queryable = {
   query<T = any>(sql: string, params?: unknown[]): Promise<{ rows: T[]; rowCount?: number | null }>;
 };
+
+type BillingActionIdempotencyInput = {
+  idempotencyKey?: string | null;
+  idempotencyPayload?: Record<string, unknown> | null;
+};
+
+type BillingActionIdempotencyRow = {
+  id: string;
+  request_hash: string;
+  status: "processing" | "completed";
+  response: unknown;
+};
+
+export class BillingActionIdempotencyError extends Error {
+  constructor(
+    public readonly code: "idempotency_conflict" | "idempotency_replay" | "idempotency_in_progress",
+    message: string,
+    public readonly response?: unknown
+  ) {
+    super(message);
+    this.name = "BillingActionIdempotencyError";
+  }
+}
+
+export function isBillingActionIdempotencyError(error: unknown): error is BillingActionIdempotencyError {
+  return error instanceof BillingActionIdempotencyError;
+}
 
 export type BillingAdjustmentType = "credit" | "refund" | "write_off" | "proration";
 export type InvoiceStatus = "draft" | "open" | "paid" | "void" | "uncollectible";
@@ -271,6 +299,119 @@ function toIso(value: string | Date | null | undefined) {
 
 function requiredIso(value: string | Date) {
   return toIso(value) ?? new Date(value).toISOString();
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`).join(",")}}`;
+}
+
+function billingActionRequestHash(input: {
+  tenantId: string;
+  workspaceKey: string;
+  actionType: string;
+  payload: Record<string, unknown>;
+}) {
+  return createHash("sha256")
+    .update(stableJson(input))
+    .digest("hex");
+}
+
+async function claimBillingActionIdempotency(
+  queryable: Queryable,
+  input: {
+    tenantId: string;
+    workspaceKey: string;
+    actionType: string;
+    actorUserId?: string | null;
+  } & BillingActionIdempotencyInput
+) {
+  const idempotencyKey = input.idempotencyKey?.trim();
+  if (!idempotencyKey) return null;
+
+  const requestHash = billingActionRequestHash({
+    tenantId: input.tenantId,
+    workspaceKey: input.workspaceKey,
+    actionType: input.actionType,
+    payload: input.idempotencyPayload ?? {}
+  });
+
+  const inserted = await queryable.query<{ id: string }>(
+    `INSERT INTO tenant_billing_action_idempotency (
+       tenant_id,
+       workspace_key,
+       idempotency_key,
+       action_type,
+       request_hash,
+       created_by_user_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (tenant_id, workspace_key, idempotency_key) DO NOTHING
+     RETURNING id`,
+    [
+      input.tenantId,
+      input.workspaceKey,
+      idempotencyKey,
+      input.actionType,
+      requestHash,
+      input.actorUserId ?? null
+    ]
+  );
+  if (inserted.rows[0]) return inserted.rows[0].id;
+
+  const existing = await queryable.query<BillingActionIdempotencyRow>(
+    `SELECT id,
+            request_hash,
+            status,
+            response
+     FROM tenant_billing_action_idempotency
+     WHERE tenant_id = $1
+       AND workspace_key = $2
+       AND idempotency_key = $3
+     LIMIT 1
+     FOR UPDATE`,
+    [input.tenantId, input.workspaceKey, idempotencyKey]
+  );
+  const row = existing.rows[0];
+  if (!row || row.request_hash !== requestHash) {
+    throw new BillingActionIdempotencyError(
+      "idempotency_conflict",
+      "Idempotency key has already been used for a different billing action."
+    );
+  }
+  if (row.status === "completed") {
+    throw new BillingActionIdempotencyError(
+      "idempotency_replay",
+      "Billing action already completed.",
+      row.response
+    );
+  }
+  throw new BillingActionIdempotencyError(
+    "idempotency_in_progress",
+    "Billing action is already processing."
+  );
+}
+
+async function completeBillingActionIdempotency(
+  queryable: Queryable,
+  idempotencyRowId: string | null,
+  response: unknown
+) {
+  if (!idempotencyRowId) return;
+  await queryable.query(
+    `UPDATE tenant_billing_action_idempotency
+     SET status = 'completed',
+         response = $2::jsonb,
+         completed_at = now(),
+         updated_at = now()
+     WHERE id = $1`,
+    [idempotencyRowId, JSON.stringify(response ?? null)]
+  );
 }
 
 function startOfUtcMonth(now = new Date()) {
@@ -785,7 +926,7 @@ export async function syncTenantSubscriptionFromCatalog(input: {
   workspaceKey?: string;
   actorUserId?: string | null;
   effectiveAt?: Date;
-}) {
+} & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const effectiveAt = input.effectiveAt ?? new Date();
   const period = currentBillingPeriod(effectiveAt);
@@ -800,6 +941,14 @@ export async function syncTenantSubscriptionFromCatalog(input: {
       throw new Error("Tenant not found.");
     }
     await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const idempotencyRowId = await claimBillingActionIdempotency(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      actionType: "sync_subscription",
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyPayload: input.idempotencyPayload
+    });
 
     const modules = normalizeWorkspaceModules(tenant.modules);
     items = buildCatalogSubscriptionItems({
@@ -980,6 +1129,11 @@ export async function syncTenantSubscriptionFromCatalog(input: {
         prorationAmountCent
       }
     });
+    await completeBillingActionIdempotency(client, idempotencyRowId, {
+      subscriptionId,
+      items,
+      prorationAmountCent
+    });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1004,7 +1158,7 @@ export async function createBillingAdjustment(input: {
   actorUserId?: string | null;
   sourceInvoiceId?: string | null;
   metadata?: Record<string, unknown> | null;
-}) {
+} & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const normalizedAmount =
     input.adjustmentType === "credit" ||
@@ -1020,6 +1174,14 @@ export async function createBillingAdjustment(input: {
   try {
     await client.query("BEGIN");
     await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const idempotencyRowId = await claimBillingActionIdempotency(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      actionType: "create_adjustment",
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyPayload: input.idempotencyPayload
+    });
     const result = await client.query<AdjustmentRow>(
       `INSERT INTO tenant_billing_adjustments (
          tenant_id,
@@ -1065,6 +1227,7 @@ export async function createBillingAdjustment(input: {
         sourceInvoiceId: input.sourceInvoiceId ?? null
       }
     });
+    await completeBillingActionIdempotency(client, idempotencyRowId, adjustment);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1090,13 +1253,21 @@ export async function createInvoiceDraft(input: {
   actorUserId?: string | null;
   periodStart?: Date;
   periodEnd?: Date;
-}) {
+} & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const client = await db.connect();
   let invoice: InvoiceRow | null = null;
   try {
     await client.query("BEGIN");
     const account = await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const idempotencyRowId = await claimBillingActionIdempotency(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      actionType: "create_invoice_draft",
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyPayload: input.idempotencyPayload
+    });
     const snapshot = await buildTenantBillingLifecycleSnapshot(client, {
       tenantId: input.tenantId,
       workspaceKey,
@@ -1266,6 +1437,7 @@ export async function createInvoiceDraft(input: {
         totalCent: toInt(invoice.total_cent)
       }
     });
+    await completeBillingActionIdempotency(client, idempotencyRowId, invoice);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1284,12 +1456,21 @@ export async function transitionInvoiceStatus(input: {
   status: Exclude<InvoiceStatus, "draft">;
   actorUserId?: string | null;
   reason?: string | null;
-}) {
+} & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const client = await db.connect();
   let invoice: InvoiceRow | null = null;
   try {
     await client.query("BEGIN");
+    await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const idempotencyRowId = await claimBillingActionIdempotency(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      actionType: "transition_invoice",
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyPayload: input.idempotencyPayload
+    });
     const result = await client.query<InvoiceRow>(
       `UPDATE tenant_invoices i
        SET status = $4,
@@ -1366,6 +1547,7 @@ export async function transitionInvoiceStatus(input: {
         reason: input.reason ?? null
       }
     });
+    await completeBillingActionIdempotency(client, idempotencyRowId, invoice);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1388,13 +1570,21 @@ export async function recordCollectionEvent(input: {
   attemptNumber?: number;
   actorUserId?: string | null;
   metadata?: Record<string, unknown> | null;
-}) {
+} & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const client = await db.connect();
   let event: { id: string } | null = null;
   try {
     await client.query("BEGIN");
     await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    const idempotencyRowId = await claimBillingActionIdempotency(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      actionType: "record_collection_event",
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyPayload: input.idempotencyPayload
+    });
     const result = await client.query<{ id: string }>(
       `INSERT INTO tenant_collection_events (
          tenant_id,
@@ -1457,6 +1647,7 @@ export async function recordCollectionEvent(input: {
         status: input.status ?? "pending"
       }
     });
+    await completeBillingActionIdempotency(client, idempotencyRowId, event);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

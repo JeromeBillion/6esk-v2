@@ -66,6 +66,11 @@ describe("tenant query guard", () => {
         mode: "strict"
       })
     ).toThrow(TenantQueryGuardError);
+    expect(() =>
+      enforceTenantQueryGuard("SELECT id FROM tenant_billing_action_idempotency WHERE idempotency_key = $1", {
+        mode: "strict"
+      })
+    ).toThrow(TenantQueryGuardError);
   });
 
   it("does not retain wrong-folder table aliases that are absent from v2 migrations", () => {

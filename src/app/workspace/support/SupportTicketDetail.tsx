@@ -1420,11 +1420,12 @@ export function TicketDetail() {
                           Email
                         </Button>
                       ) : null}
-                      {!replyComposerCollapsed && ticket.has_whatsapp ? (
+                      {!replyComposerCollapsed ? (
                         <Button
                           variant={composerMode === "whatsapp" ? "default" : "outline"}
                           size="sm"
                           className="gap-2"
+                          title={ticket.has_whatsapp ? "WhatsApp available" : "No saved WhatsApp number"}
                           onClick={() => {
                             setComposerMode("whatsapp");
                             setRecipientOverrideOpen(false);
@@ -1435,11 +1436,12 @@ export function TicketDetail() {
                           WhatsApp
                         </Button>
                       ) : null}
-                      {!replyComposerCollapsed && ticket.has_voice ? (
+                      {!replyComposerCollapsed ? (
                         <Button
                           variant={composerMode === "voice" ? "default" : "outline"}
                           size="sm"
                           className="gap-2"
+                          title={ticket.has_voice ? "Call available" : "No saved phone number"}
                           onClick={() => {
                             setComposerMode("voice");
                             setRecipientOverrideOpen(false);

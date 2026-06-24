@@ -7,18 +7,23 @@ import {
   createBillingAdjustment,
   createInvoiceDraft,
   getTenantBillingLifecycleSnapshot,
+  isBillingActionIdempotencyError,
   recordCollectionEvent,
   syncTenantSubscriptionFromCatalog,
   transitionInvoiceStatus
 } from "@/server/billing/lifecycle";
 import { getTenantById } from "@/server/tenant/lifecycle";
 
+const idempotencyKey = z.string().trim().min(8).max(200);
+
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
-    action: z.literal("sync_subscription")
+    action: z.literal("sync_subscription"),
+    idempotencyKey
   }),
   z.object({
     action: z.literal("create_adjustment"),
+    idempotencyKey,
     adjustmentType: z.enum(["credit", "refund", "write_off", "proration"]),
     amountCent: z.number().int(),
     reason: z.string().min(3).max(500),
@@ -27,17 +32,20 @@ const actionSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("create_invoice_draft"),
+    idempotencyKey,
     periodStart: z.string().datetime().optional(),
     periodEnd: z.string().datetime().optional()
   }),
   z.object({
     action: z.literal("transition_invoice"),
+    idempotencyKey,
     invoiceId: z.string().uuid(),
     status: z.enum(["open", "paid", "void", "uncollectible"]),
     reason: z.string().max(500).optional()
   }),
   z.object({
     action: z.literal("record_collection_event"),
+    idempotencyKey,
     invoiceId: z.string().uuid().optional().nullable(),
     eventType: z.enum([
       "invoice_opened",
@@ -60,6 +68,20 @@ const actionSchema = z.discriminatedUnion("action", [
 const paramsSchema = z.object({
   tenantId: z.string().uuid()
 });
+
+type BillingAction = z.infer<typeof actionSchema>;
+
+function idempotencyPayload(action: BillingAction) {
+  const { idempotencyKey: _idempotencyKey, ...payload } = action;
+  return payload;
+}
+
+function responseKeyForAction(action: BillingAction["action"]) {
+  if (action === "sync_subscription") return "result";
+  if (action === "create_adjustment") return "adjustment";
+  if (action === "record_collection_event") return "event";
+  return "invoice";
+}
 
 async function requireInternalTenant(tenantId: string, sensitive = false) {
   const auth = sensitive
@@ -116,11 +138,25 @@ export async function POST(
   if (!parsed.success) {
     return Response.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 });
   }
+  if (parsed.data.action === "create_invoice_draft" && parsed.data.periodStart && parsed.data.periodEnd) {
+    const periodStart = new Date(parsed.data.periodStart);
+    const periodEnd = new Date(parsed.data.periodEnd);
+    if (periodEnd <= periodStart) {
+      return Response.json({ error: "Invoice period end must be after period start" }, { status: 400 });
+    }
+  }
 
   const actorUserId = auth.user.id;
+  const payloadForIdempotency = idempotencyPayload(parsed.data);
+  const responseKey = responseKeyForAction(parsed.data.action);
   try {
     if (parsed.data.action === "sync_subscription") {
-      const result = await syncTenantSubscriptionFromCatalog({ tenantId, actorUserId });
+      const result = await syncTenantSubscriptionFromCatalog({
+        tenantId,
+        actorUserId,
+        idempotencyKey: parsed.data.idempotencyKey,
+        idempotencyPayload: payloadForIdempotency
+      });
       return Response.json({ status: "ok", result });
     }
 
@@ -132,7 +168,9 @@ export async function POST(
         reason: parsed.data.reason,
         sourceInvoiceId: parsed.data.sourceInvoiceId ?? null,
         actorUserId,
-        metadata: parsed.data.metadata ?? null
+        metadata: parsed.data.metadata ?? null,
+        idempotencyKey: parsed.data.idempotencyKey,
+        idempotencyPayload: payloadForIdempotency
       });
       return Response.json({ status: "ok", adjustment });
     }
@@ -142,7 +180,9 @@ export async function POST(
         tenantId,
         actorUserId,
         periodStart: parsed.data.periodStart ? new Date(parsed.data.periodStart) : undefined,
-        periodEnd: parsed.data.periodEnd ? new Date(parsed.data.periodEnd) : undefined
+        periodEnd: parsed.data.periodEnd ? new Date(parsed.data.periodEnd) : undefined,
+        idempotencyKey: parsed.data.idempotencyKey,
+        idempotencyPayload: payloadForIdempotency
       });
       return Response.json({ status: "ok", invoice });
     }
@@ -153,7 +193,9 @@ export async function POST(
         invoiceId: parsed.data.invoiceId,
         status: parsed.data.status,
         reason: parsed.data.reason ?? null,
-        actorUserId
+        actorUserId,
+        idempotencyKey: parsed.data.idempotencyKey,
+        idempotencyPayload: payloadForIdempotency
       });
       return Response.json({ status: "ok", invoice });
     }
@@ -165,10 +207,22 @@ export async function POST(
       status: parsed.data.status,
       attemptNumber: parsed.data.attemptNumber,
       actorUserId,
-      metadata: parsed.data.metadata ?? null
+      metadata: parsed.data.metadata ?? null,
+      idempotencyKey: parsed.data.idempotencyKey,
+      idempotencyPayload: payloadForIdempotency
     });
     return Response.json({ status: "ok", event });
   } catch (error) {
+    if (isBillingActionIdempotencyError(error)) {
+      if (error.code === "idempotency_replay") {
+        return Response.json({
+          status: "ok",
+          deduplicated: true,
+          [responseKey]: error.response
+        });
+      }
+      return Response.json({ error: error.message }, { status: 409 });
+    }
     return Response.json({ error: (error as Error).message }, { status: 400 });
   }
 }

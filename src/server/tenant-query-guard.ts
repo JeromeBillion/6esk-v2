@@ -63,6 +63,7 @@ export const TENANT_SCOPED_QUERY_TABLES = [
   "support_saved_views",
   "tags",
   "tenant_billing_accounts",
+  "tenant_billing_action_idempotency",
   "tenant_backoffice_profiles",
   "tenant_billing_adjustments",
   "tenant_collection_events",

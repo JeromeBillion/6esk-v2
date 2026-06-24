@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { enforceTenantQueryGuard } from "@/server/tenant-query-guard";
 
 type GuardedQueryTarget = {
@@ -28,9 +28,25 @@ function wrapPool(pool: GuardedPool) {
   wrapQueryTarget(pool as unknown as GuardedQueryTarget, "pool");
   if (!pool.__tenantQueryGuardConnectWrapped) {
     const originalConnect = pool.connect.bind(pool);
-    pool.connect = (async () => {
-      const client = await originalConnect();
-      return wrapQueryTarget(client as unknown as GuardedQueryTarget, "client");
+    pool.connect = ((
+      callback?: (
+        err: Error | undefined,
+        client: PoolClient | undefined,
+        done: (release?: unknown) => void
+      ) => void
+    ) => {
+      if (typeof callback === "function") {
+        return originalConnect((err, client, done) => {
+          if (client) {
+            wrapQueryTarget(client as unknown as GuardedQueryTarget, "client");
+          }
+          callback(err, client, done);
+        });
+      }
+
+      return originalConnect().then((client) =>
+        wrapQueryTarget(client as unknown as GuardedQueryTarget, "client")
+      );
     }) as typeof pool.connect;
     pool.__tenantQueryGuardConnectWrapped = true;
   }

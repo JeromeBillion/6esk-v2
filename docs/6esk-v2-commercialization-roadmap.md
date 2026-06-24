@@ -937,6 +937,38 @@ Current implementation status:
 - customer-facing usage totals must reconcile to the same source events used for invoices
 - usage charting must make invoice shock visible before month end through budget warnings and forecasted totals
 
+### Backoffice Billing And Finance Cockpit
+The `6esk Work` `/billing` tab must become the internal finance control panel that keeps the business alive. It must explain revenue, direct runtime/provider cost, margin, invoice lifecycle, adjustments, collections, reconciliation state, and audit evidence from server-side records.
+
+Source-of-truth rule:
+- Postgres billing lifecycle tables and existing server-side billing services remain authoritative for subscriptions, usage, invoice estimates, invoice drafts, invoice lines, adjustments, collections, and audit evidence.
+- The UI must not calculate authoritative money client-side. Client-side calculations may only format or visualize values returned by trusted server services.
+- Provider-spend and payment-provider reconciliation must stay visibly marked as runtime/deployed-evidence pending until deployed credentials, provider dashboards, and reconciliation exports are verified.
+
+Required cockpit capabilities:
+- global P/L summary across tenants: estimated revenue, direct runtime/provider cost, gross profit/loss, margin percentage, open receivables, overdue receivables, pending adjustments, and collection count.
+- tenant financial health table showing profitability, billing status, plan/module posture, open invoices, overdue exposure, collection status, dunning status, and missing-evidence flags.
+- selected-tenant drill-down for subscription source, enabled modules, current estimated invoice, persisted invoices, invoice lines, pending/applied adjustments, collection events, and recent billing audit events.
+- module profitability by module and usage kind, with usage quantity, event count, customer bill estimate, direct cost, gross P/L, margin percentage, provider mode, and source evidence.
+- invoice lifecycle visibility for draft, open, paid, void, and uncollectible states, including due dates, paid dates, amount due, source line count, and export/review actions.
+- dunning and collections queue showing overdue invoices, failed payment attempts, reminders, escalations, paused collections, write-offs, and required next action.
+- audit evidence for every subscription sync, invoice draft, invoice transition, adjustment, collection event, export, and reconciliation note.
+- anomaly and reconciliation flags for missing billing email, negative margin, stale metering sync, suspended tenant generating usage, overdue AR, aged pending adjustment, abnormal provider/runtime cost spike, duplicate invoice attempt, and missing provider reconciliation evidence.
+
+Hardening requirements:
+- finance mutations require internal-staff authorization plus MFA or a scoped privileged-access grant.
+- all billing actions must be tenant-scoped and validated server-side for tenant ownership, route parameters, invoice ownership, date ranges, non-zero amounts, legal status transitions, and reason text.
+- high-risk billing actions need idempotency keys: subscription sync, invoice draft creation, adjustment creation, invoice status transition, and collection event recording.
+- mutation and audit evidence must commit atomically, or through a durable outbox/idempotency model that cannot leave unaudited billing state changes.
+- operator UX must show explicit tenant selection, action summary, confirmation copy for high-risk actions, recoverable errors, and durable result state without relying on page reload as the only feedback.
+
+Acceptance criteria for this cockpit:
+- internal staff can immediately see which tenants are profitable, overdue, risky, or missing billing evidence.
+- billing actions are tenant-scoped, MFA-gated, idempotent, audited, and recoverable.
+- invoice totals reconcile to persisted lifecycle invoice lines and tenant-scoped usage events.
+- uncertainty is visible instead of hidden: missing provider reconciliation, stale usage sync, negative margin, overdue AR, and suspicious spend spikes must be shown as flags.
+- implementation passes `npm run typecheck`, focused billing/backoffice tests, `npm run build:backoffice`, and `git diff --check`.
+
 ### Missing From Current Internal-Tool Shape
 The platform currently behaves like a product. `v2` must also behave like a business system.
 
@@ -1003,6 +1035,8 @@ Required `6esk Work` UI modules:
 5. ops and incidents: provider health, incident cases, escalation state, operational notes, and support coordination.
 6. BizOps workflows: onboarding, implementation, renewals, contracts/legal, partner/pro-services, deliverability, and security questionnaire work.
 7. audit: internal operator actions filtered by tenant, operator, action type, and target resource.
+
+The billing and finance module must implement the Workstream I backoffice cockpit requirements inside `6esk Work`, not as a customer-facing admin shortcut. It is the internal finance operating surface for revenue assurance, P/L visibility, collections posture, billing evidence, and launch-risk review.
 
 Durable workflow data requirements:
 - backoffice cases for onboarding, implementation, contract, renewal, incident, security questionnaire, legal artifact, data request, provider rotation, deliverability, and partner-services work.

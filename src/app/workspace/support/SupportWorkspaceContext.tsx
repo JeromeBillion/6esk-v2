@@ -1100,17 +1100,22 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     setCallError(null);
     
     try {
-      const payload: any = { ticketId: selectedTicketId };
+      const payload: {
+        ticketId: string;
+        candidateId?: string | null;
+        toPhone?: string | null;
+        reason: string;
+      } = {
+        ticketId: selectedTicketId,
+        reason: callReason.trim() || "Voice call follow-up"
+      };
       if (selectedCallCandidateId === "manual") {
         if (!manualCallPhone.trim()) {
-           throw new Error("Manual phone number is required");
+          throw new Error("Manual phone number is required");
         }
-        payload.manualPhone = manualCallPhone.trim();
+        payload.toPhone = manualCallPhone.trim();
       } else {
-        payload.phoneCandidateId = selectedCallCandidateId;
-      }
-      if (callReason.trim()) {
-        payload.internalReason = callReason.trim();
+        payload.candidateId = selectedCallCandidateId;
       }
       
       await queueOutboundCall(payload);
