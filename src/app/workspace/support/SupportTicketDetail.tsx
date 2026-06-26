@@ -69,6 +69,10 @@ import type { CurrentSessionUser } from "@/app/lib/api/session";
 import type { AdminUserRecord, TagRecord } from "@/app/lib/api/admin";
 import { formatFileSize, encodeAttachments } from "@/app/lib/files";
 import { useDeskVoiceSession } from "@/app/components/DeskVoiceSessionContext";
+import {
+  getEnabledCustomerReplyChannels,
+  type CustomerReplyChannel
+} from "@/app/lib/workspace-modules-context";
 
 import type {
   TicketStatusDisplay,
@@ -267,6 +271,8 @@ export function TicketDetail() {
     whatsAppTemplates,
     assigneeOptions,
     currentUser,
+    moduleVisibility,
+    workspaceModulesLoading,
     
     // Actions extracted from Workspace
     updateTicket,
@@ -625,11 +631,23 @@ export function TicketDetail() {
     () => inferPrimaryChannel(ticket, selectedTicketMessages),
     [selectedTicketMessages, ticket]
   );
+  const enabledCustomerReplyChannels = useMemo(
+    () => getEnabledCustomerReplyChannels(moduleVisibility),
+    [moduleVisibility]
+  );
+  const preferredComposerMode = useMemo<ComposerMode>(() => {
+    if (enabledCustomerReplyChannels.includes(primaryChannel as CustomerReplyChannel)) {
+      return primaryChannel as ComposerMode;
+    }
+    return enabledCustomerReplyChannels[0] ?? "internal";
+  }, [enabledCustomerReplyChannels, primaryChannel]);
   const replyChannel = composerMode === "internal" ? primaryChannel : composerMode;
+  const noCustomerReplyChannels =
+    !workspaceModulesLoading && enabledCustomerReplyChannels.length === 0;
 
   useEffect(() => {
-    setComposerMode(primaryChannel);
-  }, [primaryChannel, ticket.id]);
+    setComposerMode(preferredComposerMode);
+  }, [preferredComposerMode, ticket.id]);
 
   const conversationTimeline = useMemo(
     () => buildConversationTimeline(messages),
@@ -1043,6 +1061,11 @@ export function TicketDetail() {
       return;
     }
 
+    if (!moduleVisibility[replyChannel]) {
+      setComposerError(`${toTitleCase(replyChannel)} is not available for this workspace package.`);
+      return;
+    }
+
     const manualRecipientRaw = recipientOverrideInput.trim();
     const manualRecipient = manualRecipientRaw
       ? replyChannel === "whatsapp"
@@ -1405,7 +1428,7 @@ export function TicketDetail() {
                               ? "Close"
                               : "Recipients"}
                       </Button>
-                      {!replyComposerCollapsed ? (
+                      {!replyComposerCollapsed && moduleVisibility.email ? (
                         <Button
                           variant={composerMode === "email" ? "default" : "outline"}
                           size="sm"
@@ -1420,7 +1443,7 @@ export function TicketDetail() {
                           Email
                         </Button>
                       ) : null}
-                      {!replyComposerCollapsed ? (
+                      {!replyComposerCollapsed && moduleVisibility.whatsapp ? (
                         <Button
                           variant={composerMode === "whatsapp" ? "default" : "outline"}
                           size="sm"
@@ -1436,7 +1459,7 @@ export function TicketDetail() {
                           WhatsApp
                         </Button>
                       ) : null}
-                      {!replyComposerCollapsed ? (
+                      {!replyComposerCollapsed && moduleVisibility.voice ? (
                         <Button
                           variant={composerMode === "voice" ? "default" : "outline"}
                           size="sm"
@@ -1474,7 +1497,19 @@ export function TicketDetail() {
                   <div id={composerPanelId}>
                     {!replyComposerCollapsed ? (
                       <>
-              {draft && showAIDraft ? (
+              {workspaceModulesLoading ? (
+                <div className="mb-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                  Loading workspace package...
+                </div>
+              ) : null}
+
+              {noCustomerReplyChannels ? (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  No customer reply channels are active for this workspace package. Internal notes remain available.
+                </div>
+              ) : null}
+
+              {moduleVisibility.aiAutomation && draft && showAIDraft ? (
                 <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
                   <div className="flex items-start gap-3">
                     <Sparkles className="mt-0.5 h-5 w-5 text-blue-600" />

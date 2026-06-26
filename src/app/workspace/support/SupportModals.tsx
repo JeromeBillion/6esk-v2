@@ -27,7 +27,7 @@ import { useSupportWorkspace } from "./SupportWorkspaceContext";
 export function SupportModals() {
   const context = useSupportWorkspace();
   
-  const { activeSavedViewId, applyBulkActions, applySavedView, assigneeOptions, bulkActionsOpen, bulkAddTagsInput, bulkAssigneeValue, bulkEmailAttachments, bulkEmailBody, bulkEmailOpen, bulkEmailSending, bulkEmailSubject, bulkPriorityValue, bulkRemoveTagsInput, bulkStatusValue, bulkUpdating, callError, callOptions, callOptionsLoading, callQueueing, callReason, callSuccessMessage, currentUser, demoModeEnabled, feedback, handleBulkEmailAttachmentChange, loadTicketDetails, loadTickets, manualCallPhone, mergeType, newSavedViewName, removeSavedView, resetBulkEmailComposer, saveCurrentView, savedViewDeletingId, savedViews, savedViewSaving, savedViewsLoading, savedViewsOpen, selectedCallCandidateId, selectedTicket, selectedTicketId, selectedTickets, setBulkActionsOpen, setBulkAddTagsInput, setBulkAssigneeValue, setBulkEmailAttachments, setBulkEmailBody, setBulkEmailOpen, setBulkEmailSubject, setBulkPriorityValue, setBulkRemoveTagsInput, setBulkStatusValue, setCallReason, setFeedback, setManualCallPhone, setNewSavedViewName, setSavedViewsOpen, setSelectedCallCandidateId, setShowMergeModal, setVoiceModalOpen, showMergeModal, submitBulkEmail, submitVoiceCall, voiceModalOpen } = context;
+  const { activeSavedViewId, applyBulkActions, applySavedView, assigneeOptions, bulkActionsOpen, bulkAddTagsInput, bulkAssigneeValue, bulkEmailAttachments, bulkEmailBody, bulkEmailOpen, bulkEmailSending, bulkEmailSubject, bulkPriorityValue, bulkRemoveTagsInput, bulkStatusValue, bulkUpdating, callError, callOptions, callOptionsLoading, callQueueing, callReason, callSuccessMessage, currentUser, demoModeEnabled, feedback, handleBulkEmailAttachmentChange, loadTicketDetails, loadTickets, manualCallPhone, mergeType, moduleVisibility, newSavedViewName, removeSavedView, resetBulkEmailComposer, saveCurrentView, savedViewDeletingId, savedViews, savedViewSaving, savedViewsLoading, savedViewsOpen, selectedCallCandidateId, selectedTicket, selectedTicketId, selectedTickets, setBulkActionsOpen, setBulkAddTagsInput, setBulkAssigneeValue, setBulkEmailAttachments, setBulkEmailBody, setBulkEmailOpen, setBulkEmailSubject, setBulkPriorityValue, setBulkRemoveTagsInput, setBulkStatusValue, setCallReason, setFeedback, setManualCallPhone, setNewSavedViewName, setSavedViewsOpen, setSelectedCallCandidateId, setShowMergeModal, setVoiceModalOpen, showMergeModal, submitBulkEmail, submitVoiceCall, voiceModalOpen } = context;
 
   return (
     <>
@@ -228,7 +228,7 @@ export function SupportModals() {
       </Dialog>
 
       <Dialog
-        open={bulkEmailOpen}
+        open={bulkEmailOpen && moduleVisibility.email}
         onOpenChange={(open: any) => {
           setBulkEmailOpen(open);
           if (!open && !bulkEmailSending) {
@@ -351,6 +351,7 @@ export function SupportModals() {
               }}
               disabled={
                 bulkEmailSending ||
+                !moduleVisibility.email ||
                 demoModeEnabled ||
                 selectedTickets.size === 0 ||
                 !bulkEmailSubject.trim() ||
@@ -376,29 +377,31 @@ export function SupportModals() {
         }}
       />
 
-      <VoiceCallModal
-        open={voiceModalOpen}
-        onClose={() => setVoiceModalOpen(false)}
-        ticketLabel={
-          selectedTicket
-            ? `${formatTicketDisplayId(selectedTicket.ticket_number, selectedTicket.id)} • ${selectedTicket.subject}`
-            : "Voice call"
-        }
-        options={callOptions}
-        loading={callOptionsLoading}
-        queueing={callQueueing}
-        error={callError}
-        successMessage={callSuccessMessage}
-        selectedCandidateId={selectedCallCandidateId}
-        manualPhone={manualCallPhone}
-        reason={callReason}
-        onSelectedCandidateIdChange={setSelectedCallCandidateId}
-        onManualPhoneChange={setManualCallPhone}
-        onReasonChange={setCallReason}
-        onQueue={() => {
-          void submitVoiceCall();
-        }}
-      />
+      {moduleVisibility.voice ? (
+        <VoiceCallModal
+          open={voiceModalOpen}
+          onClose={() => setVoiceModalOpen(false)}
+          ticketLabel={
+            selectedTicket
+              ? `${formatTicketDisplayId(selectedTicket.ticket_number, selectedTicket.id)} • ${selectedTicket.subject}`
+              : "Voice call"
+          }
+          options={callOptions}
+          loading={callOptionsLoading}
+          queueing={callQueueing}
+          error={callError}
+          successMessage={callSuccessMessage}
+          selectedCandidateId={selectedCallCandidateId}
+          manualPhone={manualCallPhone}
+          reason={callReason}
+          onSelectedCandidateIdChange={setSelectedCallCandidateId}
+          onManualPhoneChange={setManualCallPhone}
+          onReasonChange={setCallReason}
+          onQueue={() => {
+            void submitVoiceCall();
+          }}
+        />
+      ) : null}
 
       <ActionFeedbackModal
         open={feedback.open}

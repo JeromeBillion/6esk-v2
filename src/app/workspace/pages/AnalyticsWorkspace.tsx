@@ -41,13 +41,24 @@ import {
   getAnalyticsVolume
 } from "@/app/lib/api/analytics";
 import { isAbortError } from "@/app/lib/api/http";
+import {
+  getEnabledCustomerReplyChannels,
+  useWorkspaceModules,
+  type CustomerReplyChannel
+} from "@/app/lib/workspace-modules-context";
 
 type TimeRange = "7d" | "30d" | "90d" | "all";
 type WhatsAppSource = "all" | "webhook" | "outbox";
-type ChannelFocus = "email" | "whatsapp" | "voice";
+type ChannelFocus = CustomerReplyChannel;
 
 
 type MetricHealthStatus = "healthy" | "warning" | "critical";
+
+const CHANNEL_FOCUS_LABELS: Record<ChannelFocus, string> = {
+  email: "Email",
+  whatsapp: "WhatsApp",
+  voice: "Voice"
+};
 
 function rangeToDates(timeRange: TimeRange) {
   const end = new Date();
@@ -137,6 +148,7 @@ function downloadCsv(filename: string, headers: string[], rows: Array<Array<stri
 }
 
 export function AnalyticsWorkspace() {
+  const { visibility: moduleVisibility, loading: workspaceModulesLoading } = useWorkspaceModules();
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
   const [whatsAppSource, setWhatsAppSource] = useState<WhatsAppSource>("all");
   const [loading, setLoading] = useState(false);
@@ -154,6 +166,12 @@ export function AnalyticsWorkspace() {
   const [tagFilterInput, setTagFilterInput] = useState("");
   const [appliedTagFilter, setAppliedTagFilter] = useState("");
   const [channelFocus, setChannelFocus] = useState<ChannelFocus>("email");
+  const enabledChannelFocusOptions = useMemo(
+    () => getEnabledCustomerReplyChannels(moduleVisibility),
+    [moduleVisibility]
+  );
+  const hasCustomerChannelAnalytics = enabledChannelFocusOptions.length > 0;
+  const channelFocusLabel = CHANNEL_FOCUS_LABELS[channelFocus];
 
   const timeRangeLabels: Record<TimeRange, string> = {
     "7d": "Last 7 days",
@@ -239,6 +257,17 @@ export function AnalyticsWorkspace() {
     return () => controller.abort();
   }, [loadAnalytics]);
 
+  useEffect(() => {
+    if (moduleVisibility.whatsapp || whatsAppSource === "all") return;
+    setWhatsAppSource("all");
+  }, [moduleVisibility.whatsapp, whatsAppSource]);
+
+  useEffect(() => {
+    if (workspaceModulesLoading || enabledChannelFocusOptions.length === 0) return;
+    if (enabledChannelFocusOptions.includes(channelFocus)) return;
+    setChannelFocus(enabledChannelFocusOptions[0]);
+  }, [channelFocus, enabledChannelFocusOptions, workspaceModulesLoading]);
+
   const timeSeries = useMemo(() => {
     if (!volume || !overview || !sla) return [];
     const byDay = new Map<string, { tickets: number; resolved: number }>();
@@ -269,16 +298,29 @@ export function AnalyticsWorkspace() {
   const channelDistribution = useMemo(() => {
     if (!overview) return [];
     const channels = [
-      { channel: "Email", count: overview.channels.email.inbound + overview.channels.email.outbound },
-      { channel: "WhatsApp", count: overview.channels.whatsapp.inbound + overview.channels.whatsapp.outbound },
-      { channel: "Voice", count: overview.channels.voice.inbound + overview.channels.voice.outbound }
-    ];
+      {
+        channel: "Email",
+        enabled: moduleVisibility.email,
+        count: overview.channels.email.inbound + overview.channels.email.outbound
+      },
+      {
+        channel: "WhatsApp",
+        enabled: moduleVisibility.whatsapp,
+        count: overview.channels.whatsapp.inbound + overview.channels.whatsapp.outbound
+      },
+      {
+        channel: "Voice",
+        enabled: moduleVisibility.voice,
+        count: overview.channels.voice.inbound + overview.channels.voice.outbound
+      }
+    ].filter((channel) => channel.enabled);
     const total = channels.reduce((sum, channel) => sum + channel.count, 0) || 1;
     return channels.map((channel) => ({
-      ...channel,
+      channel: channel.channel,
+      count: channel.count,
       percentage: Number(((channel.count / total) * 100).toFixed(1))
     }));
-  }, [overview]);
+  }, [moduleVisibility.email, moduleVisibility.voice, moduleVisibility.whatsapp, overview]);
 
   const priorityBreakdown = useMemo(
     () =>
@@ -762,19 +804,21 @@ export function AnalyticsWorkspace() {
                 <DropdownMenuItem onClick={() => setTimeRange("all")}>All time</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="gap-2">
-                  WA Source: {whatsAppSource === "all" ? "All" : toTitleCase(whatsAppSource)}
-                  <ChevronDown className="w-4 h-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setWhatsAppSource("all")}>All sources</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setWhatsAppSource("webhook")}>Webhook</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setWhatsAppSource("outbox")}>Outbox</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {moduleVisibility.whatsapp ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2">
+                    WA Source: {whatsAppSource === "all" ? "All" : toTitleCase(whatsAppSource)}
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setWhatsAppSource("all")}>All sources</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setWhatsAppSource("webhook")}>Webhook</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setWhatsAppSource("outbox")}>Outbox</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="gap-2">
@@ -786,9 +830,15 @@ export function AnalyticsWorkspace() {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={exportOverviewCsv}>Overview summary</DropdownMenuItem>
                 <DropdownMenuItem onClick={exportVolumeCsv}>Ticket volume</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportEmailCsv}>Email activity</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportWhatsAppCsv}>WhatsApp delivery</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportVoiceCsv}>Voice outcomes</DropdownMenuItem>
+                {moduleVisibility.email ? (
+                  <DropdownMenuItem onClick={exportEmailCsv}>Email activity</DropdownMenuItem>
+                ) : null}
+                {moduleVisibility.whatsapp ? (
+                  <DropdownMenuItem onClick={exportWhatsAppCsv}>WhatsApp delivery</DropdownMenuItem>
+                ) : null}
+                {moduleVisibility.voice ? (
+                  <DropdownMenuItem onClick={exportVoiceCsv}>Voice outcomes</DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   onClick={() =>
                     downloadCsv(
@@ -1018,8 +1068,12 @@ export function AnalyticsWorkspace() {
                 <div className="grid grid-cols-2 gap-3">
                   <Metric label="First Response SLA" value={`${executiveSummary?.firstResponseSla.toFixed(1) ?? "0.0"}%`} />
                   <Metric label="Resolution SLA" value={`${executiveSummary?.resolutionSla.toFixed(1) ?? "0.0"}%`} />
-                  <Metric label="WhatsApp Delivered" value={`${whatsAppRates.deliveredRate.toFixed(1)}%`} />
-                  <Metric label="Voice Connect Rate" value={`${voiceRates.connectRate.toFixed(1)}%`} />
+                  {moduleVisibility.whatsapp ? (
+                    <Metric label="WhatsApp Delivered" value={`${whatsAppRates.deliveredRate.toFixed(1)}%`} />
+                  ) : null}
+                  {moduleVisibility.voice ? (
+                    <Metric label="Voice Connect Rate" value={`${voiceRates.connectRate.toFixed(1)}%`} />
+                  ) : null}
                 </div>
               </Card>
 
@@ -1101,46 +1155,47 @@ export function AnalyticsWorkspace() {
                 <div>
                   <h3 className="font-semibold">Channel Drilldown</h3>
                   <p className="mt-1 text-xs text-neutral-600">
-                    Deep-dive metrics and daily patterns for Email, WhatsApp, and Voice.
+                    Deep-dive metrics and daily patterns for the enabled customer channels in this package.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button asChild variant="outline" size="sm">
-                    <Link href={channelQueueHref}>
-                      Open {channelFocus === "email" ? "Email" : channelFocus === "whatsapp" ? "WhatsApp" : "Voice"} queue
-                    </Link>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={exportChannelFocusCsv}>
-                    Export {channelFocus === "email" ? "Email" : channelFocus === "whatsapp" ? "WhatsApp" : "Voice"}
-                  </Button>
+                {hasCustomerChannelAnalytics ? (
+                  <div className="flex items-center gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={channelQueueHref}>Open {channelFocusLabel} queue</Link>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={exportChannelFocusCsv}>
+                      Export {channelFocusLabel}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+
+              {workspaceModulesLoading ? (
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+                  Loading package channels...
                 </div>
-              </div>
+              ) : null}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant={channelFocus === "email" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setChannelFocus("email")}
-                >
-                  Email
-                </Button>
-                <Button
-                  variant={channelFocus === "whatsapp" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setChannelFocus("whatsapp")}
-                >
-                  WhatsApp
-                </Button>
-                <Button
-                  variant={channelFocus === "voice" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setChannelFocus("voice")}
-                >
-                  Voice
-                </Button>
-              </div>
+              {hasCustomerChannelAnalytics ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {enabledChannelFocusOptions.map((channel) => (
+                    <Button
+                      key={channel}
+                      variant={channelFocus === channel ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setChannelFocus(channel)}
+                    >
+                      {CHANNEL_FOCUS_LABELS[channel]}
+                    </Button>
+                  ))}
+                </div>
+              ) : !workspaceModulesLoading ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  No customer channel modules are active for this workspace package.
+                </div>
+              ) : null}
 
-              {channelFocus === "email" ? (
+              {hasCustomerChannelAnalytics && channelFocus === "email" ? (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <Metric label="Inbound" value={emailTotals.inbound} />
@@ -1213,7 +1268,7 @@ export function AnalyticsWorkspace() {
                 </>
               ) : null}
 
-              {channelFocus === "whatsapp" ? (
+              {hasCustomerChannelAnalytics && channelFocus === "whatsapp" ? (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <Metric
@@ -1286,7 +1341,7 @@ export function AnalyticsWorkspace() {
                 </>
               ) : null}
 
-              {channelFocus === "voice" ? (
+              {hasCustomerChannelAnalytics && channelFocus === "voice" ? (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                     <Metric
@@ -1562,56 +1617,60 @@ export function AnalyticsWorkspace() {
                 </div>
               </Card>
 
-              <Card className="p-6">
-                <h3 className="font-semibold mb-4">WhatsApp Delivery Trend</h3>
-                <ResponsiveContainer width="100%" height={250}>
-                  <LineChart data={whatsAppStatusSeries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(date) => {
-                        const parsed = new Date(date);
-                        return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
-                      }}
-                      stroke="#9ca3af"
-                      fontSize={12}
-                    />
-                    <YAxis stroke="#9ca3af" fontSize={12} />
-                    <Tooltip />
-                    <Legend wrapperStyle={{ fontSize: "12px" }} />
-                    <Line type="monotone" dataKey="sent" stroke={COLORS.primary} dot={false} />
-                    <Line type="monotone" dataKey="delivered" stroke={COLORS.success} dot={false} />
-                    <Line type="monotone" dataKey="read" stroke={COLORS.secondary} dot={false} />
-                    <Line type="monotone" dataKey="failed" stroke="#ef4444" dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Card>
+              {moduleVisibility.whatsapp ? (
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4">WhatsApp Delivery Trend</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={whatsAppStatusSeries}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(date) => {
+                          const parsed = new Date(date);
+                          return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
+                        }}
+                        stroke="#9ca3af"
+                        fontSize={12}
+                      />
+                      <YAxis stroke="#9ca3af" fontSize={12} />
+                      <Tooltip />
+                      <Legend wrapperStyle={{ fontSize: "12px" }} />
+                      <Line type="monotone" dataKey="sent" stroke={COLORS.primary} dot={false} />
+                      <Line type="monotone" dataKey="delivered" stroke={COLORS.success} dot={false} />
+                      <Line type="monotone" dataKey="read" stroke={COLORS.secondary} dot={false} />
+                      <Line type="monotone" dataKey="failed" stroke="#ef4444" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Card>
+              ) : null}
 
-              <Card className="p-6">
-                <h3 className="font-semibold mb-4">Voice Outcomes</h3>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={voiceOutcomes}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(date) => {
-                        const parsed = new Date(date);
-                        return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
-                      }}
-                      stroke="#9ca3af"
-                      fontSize={12}
-                    />
-                    <YAxis stroke="#9ca3af" fontSize={12} />
-                    <Tooltip />
-                    <Legend wrapperStyle={{ fontSize: "12px" }} />
-                    <Bar dataKey="completed" stackId="voice" fill={COLORS.success} />
-                    <Bar dataKey="failed" stackId="voice" fill="#ef4444" />
-                    <Bar dataKey="noAnswer" stackId="voice" fill="#f59e0b" />
-                    <Bar dataKey="busy" stackId="voice" fill="#6366f1" />
-                    <Bar dataKey="canceled" stackId="voice" fill={COLORS.neutral} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Card>
+              {moduleVisibility.voice ? (
+                <Card className="p-6">
+                  <h3 className="font-semibold mb-4">Voice Outcomes</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={voiceOutcomes}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(date) => {
+                          const parsed = new Date(date);
+                          return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
+                        }}
+                        stroke="#9ca3af"
+                        fontSize={12}
+                      />
+                      <YAxis stroke="#9ca3af" fontSize={12} />
+                      <Tooltip />
+                      <Legend wrapperStyle={{ fontSize: "12px" }} />
+                      <Bar dataKey="completed" stackId="voice" fill={COLORS.success} />
+                      <Bar dataKey="failed" stackId="voice" fill="#ef4444" />
+                      <Bar dataKey="noAnswer" stackId="voice" fill="#f59e0b" />
+                      <Bar dataKey="busy" stackId="voice" fill="#6366f1" />
+                      <Bar dataKey="canceled" stackId="voice" fill={COLORS.neutral} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              ) : null}
             </div>
 
             <Card className="p-6">

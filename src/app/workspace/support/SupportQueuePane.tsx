@@ -18,6 +18,7 @@ import {
 import { getPriorityColor, getStatusColor, formatTicketDisplayId, formatDateRelative, normalizeQueuePreviewValue } from "./utils";
 import type { TicketView, TicketPriorityDisplay, TicketStatusDisplay } from "./types";
 import type { TagRecord, AdminUserRecord } from "@/app/lib/api/admin";
+import { CUSTOMER_REPLY_CHANNELS } from "@/app/lib/workspace-modules-context";
 
 export type SupportQueuePaneProps = {
   queuePaneWidth: number;
@@ -67,7 +68,8 @@ import { useSupportWorkspace } from "./SupportWorkspaceContext";
 export function SupportQueuePane() {
   const context = useSupportWorkspace();
   
-  const { router, searchQuery, setSearchQuery, activeQueueFilters, statusFilter, setStatusFilter, priorityFilter, setPriorityFilter, channelFilter, setChannelFilter, tagFilter, setTagFilter, availableTags, clearAllQueueFilters, clearQueueFilter, assignedMine, setAssignedMine, activeSavedViewId, queueCounts, setSavedViewsOpen, selectedTickets, setBulkActionsOpen, setBulkEmailOpen, activeSavedView, tickets, toggleSelectAll, queueLoading, queueError, selectedTicket, setSelectedTicketId, toggleTicketSelection, assigneeNameById, queuePaneWidth, setMergeType, setShowMergeModal } = context;
+  const { router, searchQuery, setSearchQuery, activeQueueFilters, statusFilter, setStatusFilter, priorityFilter, setPriorityFilter, channelFilter, setChannelFilter, tagFilter, setTagFilter, availableTags, clearAllQueueFilters, clearQueueFilter, assignedMine, setAssignedMine, activeSavedViewId, queueCounts, setSavedViewsOpen, selectedTickets, setBulkActionsOpen, setBulkEmailOpen, activeSavedView, tickets, toggleSelectAll, queueLoading, queueError, selectedTicket, setSelectedTicketId, toggleTicketSelection, assigneeNameById, queuePaneWidth, setMergeType, setShowMergeModal, moduleVisibility } = context;
+  const enabledChannelFilters = CUSTOMER_REPLY_CHANNELS.filter((channel) => moduleVisibility[channel]);
 
   return (
     <>
@@ -190,9 +192,15 @@ export function SupportQueuePane() {
                     onValueChange={(value: any) => setChannelFilter(value as "all" | "email" | "whatsapp" | "voice")}
                   >
                     <DropdownMenuRadioItem value="all">All channels</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="email">Email</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="whatsapp">WhatsApp</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="voice">Voice</DropdownMenuRadioItem>
+                    {enabledChannelFilters.includes("email") ? (
+                      <DropdownMenuRadioItem value="email">Email</DropdownMenuRadioItem>
+                    ) : null}
+                    {enabledChannelFilters.includes("whatsapp") ? (
+                      <DropdownMenuRadioItem value="whatsapp">WhatsApp</DropdownMenuRadioItem>
+                    ) : null}
+                    {enabledChannelFilters.includes("voice") ? (
+                      <DropdownMenuRadioItem value="voice">Voice</DropdownMenuRadioItem>
+                    ) : null}
                   </DropdownMenuRadioGroup>
 
                   <DropdownMenuSeparator />
@@ -330,15 +338,17 @@ export function SupportQueuePane() {
                 >
                   Bulk Actions
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-[12px] px-3 text-[12px] font-medium dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70"
-                  onClick={() => setBulkEmailOpen(true)}
-                >
-                  <Mail className="h-3.5 w-3.5" />
-                  Bulk Email
-                </Button>
+                {moduleVisibility.email ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-[12px] px-3 text-[12px] font-medium dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-800/70"
+                    onClick={() => setBulkEmailOpen(true)}
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    Bulk Email
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {activeSavedView ? (
@@ -435,12 +445,12 @@ export function SupportQueuePane() {
                           → {ticket.assigned_user_name ?? assigneeNameById.get(ticket.assigned_user_id ?? "")}
                         </span>
                       )}
-                      {ticket.has_whatsapp && (
+                      {moduleVisibility.whatsapp && ticket.has_whatsapp && (
                         <Badge variant="outline" className="text-xs">
                           WhatsApp
                         </Badge>
                       )}
-                      {ticket.has_voice && (
+                      {moduleVisibility.voice && ticket.has_voice && (
                         <Badge variant="outline" className="text-xs">
                           Voice
                         </Badge>

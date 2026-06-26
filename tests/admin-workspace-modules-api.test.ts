@@ -22,7 +22,10 @@ vi.mock("@/server/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/workspace/modules/route";
 
-function buildUser(roleName: "lead_admin" | "agent", tenantId: string | null = "00000000-0000-0000-0000-000000000001") {
+function buildUser(
+  roleName: "lead_admin" | "agent" | "viewer",
+  tenantId: string | null = "00000000-0000-0000-0000-000000000001"
+) {
   return {
     id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     email: `${roleName}@6ex.co.za`,
@@ -54,14 +57,25 @@ describe("workspace modules admin API", () => {
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
-  it("GET returns 403 for non-admin users", async () => {
+  it("GET returns workspace modules for support operators", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ config: CONFIG });
+  });
+
+  it("GET returns 403 for viewers", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("viewer"));
 
     const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.getWorkspaceModules).not.toHaveBeenCalled();
   });
 
   it("GET returns workspace modules for lead admins", async () => {

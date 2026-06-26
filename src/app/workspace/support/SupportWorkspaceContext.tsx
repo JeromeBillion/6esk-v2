@@ -96,6 +96,10 @@ import { listActiveWhatsAppTemplates, type ActiveWhatsAppTemplate } from "@/app/
 import { getCurrentSessionUser, type CurrentSessionUser } from "@/app/lib/api/session";
 import { listTags, listUsers, type AdminUserRecord, type TagRecord } from "@/app/lib/api/admin";
 import { useDemoMode } from "@/app/lib/demo-mode";
+import {
+  isCustomerReplyChannel,
+  useWorkspaceModules
+} from "@/app/lib/workspace-modules-context";
 import { DESK_LIVE_EVENT_NAME, type DeskLiveEventDetail } from "@/app/lib/desk-live";
 import { encodeAttachments, formatFileSize } from "@/app/lib/files";
 import { isAbortError } from "@/app/lib/api/http";
@@ -261,6 +265,11 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
   const router = useRouter();
   const searchParams = useSearchParams();
   const { demoModeEnabled } = useDemoMode();
+  const {
+    config: workspaceModules,
+    visibility: moduleVisibility,
+    loading: workspaceModulesLoading
+  } = useWorkspaceModules();
   const paramsKey = searchParams.toString();
   const workspaceLayoutRef = useRef<HTMLDivElement | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
@@ -375,14 +384,14 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
         : "all"
     );
     setChannelFilter(
-      CHANNEL_FILTER_VALUES.has(channel)
+      channel === "all" || (CHANNEL_FILTER_VALUES.has(channel) && isCustomerReplyChannel(channel) && moduleVisibility[channel])
         ? (channel as "all" | "email" | "whatsapp" | "voice")
         : "all"
     );
     setAssignedMine(ASSIGNED_FILTER_VALUES.has(assigned) ? assigned !== "any" : true);
     setSearchQuery(query);
     setTagFilter(tag || "all");
-  }, [paramsKey, searchParams]);
+  }, [moduleVisibility, paramsKey, searchParams]);
 
   const openFeedback = useCallback(
     (next: Omit<FeedbackState, "open">) => {
@@ -398,12 +407,15 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     () => ({
       status: statusFilter as SavedViewFilters["status"],
       priority: priorityFilter,
-      channel: channelFilter,
+      channel:
+        channelFilter !== "all" && moduleVisibility[channelFilter]
+          ? channelFilter
+          : "all",
       tag: tagFilter,
       assigned: assignedMine ? "mine" : "any",
       query: searchQuery.trim()
     }),
-    [assignedMine, channelFilter, priorityFilter, searchQuery, statusFilter, tagFilter]
+    [assignedMine, channelFilter, moduleVisibility, priorityFilter, searchQuery, statusFilter, tagFilter]
   );
 
   const loadSavedViews = useCallback(async (signal?: AbortSignal) => {
@@ -511,7 +523,10 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
         const baseFilters = {
           status: statusFilter !== "all" ? statusFilter : undefined,
           priority: priorityFilter !== "all" ? priorityFilter : undefined,
-          channel: channelFilter !== "all" ? channelFilter : undefined,
+          channel:
+            channelFilter !== "all" && moduleVisibility[channelFilter]
+              ? channelFilter
+              : undefined,
           tag: tagFilter !== "all" ? tagFilter : undefined,
           query: searchQuery.trim() || undefined
         };
@@ -549,7 +564,16 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
         setQueueLoading(false);
       }
     },
-    [assignedMine, channelFilter, priorityFilter, searchQuery, selectedTicketId, statusFilter, tagFilter]
+    [
+      assignedMine,
+      channelFilter,
+      moduleVisibility,
+      priorityFilter,
+      searchQuery,
+      selectedTicketId,
+      statusFilter,
+      tagFilter
+    ]
   );
 
   useEffect(() => {
@@ -796,12 +820,16 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     const normalized = normalizeSavedViewFilters(view.filters);
     setStatusFilter(normalized.status || "all");
     setPriorityFilter(normalized.priority || "all");
-    setChannelFilter(normalized.channel || "all");
+    setChannelFilter(
+      normalized.channel && normalized.channel !== "all" && moduleVisibility[normalized.channel]
+        ? normalized.channel
+        : "all"
+    );
     setTagFilter(normalized.tag || "all");
     setAssignedMine(normalized.assigned !== "any");
     setSearchQuery(normalized.query || "");
     setActiveSavedViewId(view.id);
-  }, []);
+  }, [moduleVisibility]);
 
   const saveCurrentView = useCallback(
     async (name: string) => {
@@ -984,6 +1012,14 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
 
   const submitBulkEmail = useCallback(async () => {
     if (selectedTickets.size === 0) return;
+    if (!moduleVisibility.email) {
+      openFeedback({
+        tone: "error",
+        title: "Email module disabled",
+        message: "Bulk email is not available for this workspace package."
+      });
+      return;
+    }
     if (!bulkEmailSubject.trim() || !bulkEmailBody.trim()) {
       openFeedback({
         tone: "error",
@@ -1032,6 +1068,7 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     bulkEmailBody,
     bulkEmailSubject,
     loadTickets,
+    moduleVisibility.email,
     openFeedback,
     resetBulkEmailComposer,
     selectedTickets
@@ -1062,6 +1099,11 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
   
   const loadVoiceCallOptions = useCallback(async () => {
     if (!selectedTicketId) return;
+    if (!moduleVisibility.voice) {
+      setCallOptions(null);
+      setCallError("Voice is not available for this workspace package.");
+      return;
+    }
     setCallOptionsLoading(true);
     setCallError(null);
     setCallSuccessMessage(null);
@@ -1085,16 +1127,28 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     } finally {
       setCallOptionsLoading(false);
     }
-  }, [selectedTicketId]);
+  }, [moduleVisibility.voice, selectedTicketId]);
 
   const openVoiceCallModal = useCallback(async () => {
     if (!selectedTicketId) return;
+    if (!moduleVisibility.voice) {
+      openFeedback({
+        tone: "error",
+        title: "Voice module disabled",
+        message: "Calls are not available for this workspace package."
+      });
+      return;
+    }
     setVoiceModalOpen(true);
     await loadVoiceCallOptions();
-  }, [loadVoiceCallOptions, selectedTicketId]);
+  }, [loadVoiceCallOptions, moduleVisibility.voice, openFeedback, selectedTicketId]);
 
   const submitVoiceCall = useCallback(async () => {
     if (!selectedTicketId) return;
+    if (!moduleVisibility.voice) {
+      setCallError("Voice is not available for this workspace package.");
+      return;
+    }
     
     setCallQueueing(true);
     setCallError(null);
@@ -1131,7 +1185,14 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     } finally {
       setCallQueueing(false);
     }
-  }, [callReason, loadTicketDetails, manualCallPhone, selectedCallCandidateId, selectedTicketId]);
+  }, [
+    callReason,
+    loadTicketDetails,
+    manualCallPhone,
+    moduleVisibility.voice,
+    selectedCallCandidateId,
+    selectedTicketId
+  ]);
 
   const resendFailedWhatsApp = useCallback(
     async (messageId: string) => {
@@ -1173,6 +1234,9 @@ export function SupportWorkspaceProvider({ children }: { children: ReactNode }) 
     workspaceLayoutRef,
     currentUser,
     setCurrentUser,
+    workspaceModules,
+    workspaceModulesLoading,
+    moduleVisibility,
     assigneeOptions,
     setAssigneeOptions,
     supportMacros,

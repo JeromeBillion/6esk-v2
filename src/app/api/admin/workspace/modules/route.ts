@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
+import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
 import {
@@ -20,7 +20,7 @@ const modulesSchema = z.object({
 
 export async function GET() {
   const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
+  if (!canManageTickets(user)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

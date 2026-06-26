@@ -17,6 +17,11 @@ import { useThemeMode } from "@/app/lib/theme";
 import { DeskVoiceControl } from "@/app/components/DeskVoiceControl";
 import { DeskRealtimeController } from "@/app/components/DeskRealtimeController";
 import { DeskVoiceSessionProvider } from "@/app/components/DeskVoiceSessionContext";
+import {
+  useWorkspaceModules,
+  WorkspaceModulesProvider,
+  type WorkspaceModuleVisibility
+} from "@/app/lib/workspace-modules-context";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -25,12 +30,46 @@ const inter = Inter({
 
 const NAVIGATION = [
   { name: "Support", href: "/tickets", icon: Ticket },
-  { name: "Mail", href: "/mail", icon: Mail },
+  { name: "Mail", href: "/mail", icon: Mail, moduleKey: "email" },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Admin", href: "/admin", icon: Settings },
 ] as const;
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <DeskVoiceSessionProvider>
+      <WorkspaceModulesProvider>
+        <AppShellFrame>{children}</AppShellFrame>
+      </WorkspaceModulesProvider>
+    </DeskVoiceSessionProvider>
+  );
+}
+
+function packageHasModule(
+  item: (typeof NAVIGATION)[number],
+  visibility: WorkspaceModuleVisibility
+) {
+  return !("moduleKey" in item) || visibility[item.moduleKey];
+}
+
+function PackageUnavailable({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center bg-neutral-50 p-6 dark:bg-neutral-950">
+      <div className="max-w-md rounded-2xl border border-neutral-200 bg-white p-6 text-center shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{title}</p>
+        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function AppShellFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -39,11 +78,26 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<CurrentSessionUser | null>(null);
   const { theme, toggleTheme } = useThemeMode();
   const { demoModeEnabled, setDemoModeEnabled } = useDemoMode();
+  const { visibility: moduleVisibility } = useWorkspaceModules();
 
   const activeRoute = useMemo(() => pathname ?? "", [pathname]);
   const demoQueryValue = searchParams.get("demo");
   const nextThemeLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
   const ThemeIcon = theme === "dark" ? Sun : Moon;
+  const visibleNavigation = useMemo(
+    () => NAVIGATION.filter((item) => packageHasModule(item, moduleVisibility)),
+    [moduleVisibility]
+  );
+  const routeBlockedByPackage = activeRoute === "/mail" || activeRoute.startsWith("/mail/");
+  const renderedChildren =
+    routeBlockedByPackage && !moduleVisibility.email ? (
+      <PackageUnavailable
+        title="Email module is not active"
+        description="This workspace package does not include the standalone mail surface. Use the enabled support channels for this tenant."
+      />
+    ) : (
+      children
+    );
 
   const buildWorkspaceHref = useMemo(() => {
     return (href: string, demoEnabled: boolean) => {
@@ -118,15 +172,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <DeskVoiceSessionProvider>
-      <>
+    <>
       <div className={cn(inter.className, "h-screen flex bg-neutral-50 dark:bg-neutral-950")}>
         <div className="w-16 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 flex flex-col items-center py-4 gap-2">
           <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.28)]">
             <BrandMark size={32} priority />
           </div>
           <nav className="flex flex-col gap-1 w-full px-2">
-            {NAVIGATION.map((item) => {
+            {visibleNavigation.map((item) => {
               const isActive =
                 activeRoute === item.href ||
                 activeRoute.startsWith(`${item.href}/`);
@@ -148,7 +201,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="mt-auto flex flex-col items-center gap-2 w-full px-2">
-            <DeskVoiceControl currentUser={currentUser} demoModeEnabled={demoModeEnabled} />
+            {moduleVisibility.voice ? (
+              <DeskVoiceControl currentUser={currentUser} demoModeEnabled={demoModeEnabled} />
+            ) : null}
             <button
               type="button"
               onClick={toggleTheme}
@@ -175,7 +230,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         <div className="flex-1 overflow-hidden" key={demoModeEnabled ? "sample-data" : "live-data"}>
-          {children}
+          {renderedChildren}
         </div>
       </div>
 
@@ -243,7 +298,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </DialogContent>
       </Dialog>
-      </>
-    </DeskVoiceSessionProvider>
+    </>
   );
 }

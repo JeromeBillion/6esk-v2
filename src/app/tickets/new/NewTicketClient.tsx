@@ -7,6 +7,7 @@ import AppShell from "@/app/components/AppShell";
 import { listTags, type TagRecord } from "@/app/lib/api/admin";
 import { createTicket } from "@/app/lib/api/tickets";
 import { encodeAttachments, formatFileSize, type EncodedAttachment } from "@/app/lib/files";
+import { useWorkspaceModules } from "@/app/lib/workspace-modules-context";
 import { ActionFeedbackModal } from "@/app/workspace/components/ActionFeedbackModal";
 import { Badge } from "@/app/workspace/components/ui/badge";
 import { Button } from "@/app/workspace/components/ui/button";
@@ -16,7 +17,8 @@ import { Textarea } from "@/app/workspace/components/ui/textarea";
 
 const CATEGORY_OPTIONS = ["payments", "markets", "account", "kyc", "security", "general"];
 
-export default function NewTicketClient() {
+function NewTicketContent() {
+  const { visibility: moduleVisibility, loading: workspaceModulesLoading } = useWorkspaceModules();
   const [availableTags, setAvailableTags] = useState<TagRecord[]>([]);
   const [form, setForm] = useState({
     contactMode: "email" as "email" | "whatsapp" | "call",
@@ -70,6 +72,26 @@ export default function NewTicketClient() {
       .slice(0, 8);
   }, [availableTags, parsedTagList]);
   const activeAttachmentCount = form.contactMode === "call" ? 0 : attachments.length;
+  const contactModes = useMemo(
+    () =>
+      [
+        moduleVisibility.email ? { value: "email" as const, label: "Email" } : null,
+        moduleVisibility.whatsapp ? { value: "whatsapp" as const, label: "WhatsApp" } : null,
+        moduleVisibility.voice ? { value: "call" as const, label: "Initiate Call" } : null
+      ].filter(
+        (mode): mode is { value: "email" | "whatsapp" | "call"; label: string } =>
+          Boolean(mode)
+      ),
+    [moduleVisibility.email, moduleVisibility.voice, moduleVisibility.whatsapp]
+  );
+  const noContactModes = !workspaceModulesLoading && contactModes.length === 0;
+
+  useEffect(() => {
+    if (contactModes.length === 0) return;
+    if (contactModes.some((mode) => mode.value === form.contactMode)) return;
+    setForm((previous) => ({ ...previous, contactMode: contactModes[0].value }));
+    setAttachments([]);
+  }, [contactModes, form.contactMode]);
 
   function addTag(name: string) {
     const normalized = name.trim().toLowerCase();
@@ -114,6 +136,24 @@ export default function NewTicketClient() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (noContactModes) {
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "No outbound channels",
+        message: "This workspace package does not include an outbound ticket channel."
+      });
+      return;
+    }
+    if (!contactModes.some((mode) => mode.value === form.contactMode)) {
+      setFeedback({
+        open: true,
+        tone: "error",
+        title: "Channel unavailable",
+        message: "The selected contact mode is not available for this workspace package."
+      });
+      return;
+    }
     setStatus("submitting");
     setMetadataError(null);
     setCreatedTicketId(null);
@@ -199,14 +239,14 @@ export default function NewTicketClient() {
   }
 
   return (
-    <AppShell>
+    <>
       <div className="h-full overflow-y-auto bg-neutral-50">
         <div className="mx-auto max-w-5xl space-y-6 p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="mb-1 text-2xl font-semibold">Create Ticket</h1>
               <p className="text-sm text-neutral-600">
-                Start an email support ticket, open a WhatsApp conversation, or initiate a standalone outbound-call ticket from the same form.
+                Start an outbound ticket through the channels included in this workspace package.
               </p>
             </div>
             <Card className="min-w-56">
@@ -244,6 +284,11 @@ export default function NewTicketClient() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {noContactModes ? (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  No outbound email, WhatsApp, or voice module is active for this workspace package.
+                </div>
+              ) : null}
               <form onSubmit={handleSubmit} className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="grid gap-4">
                   <label className="grid gap-2">
@@ -262,10 +307,19 @@ export default function NewTicketClient() {
                         }))
                       }
                       className="h-11 rounded-md border border-neutral-200 bg-white px-3 text-sm"
+                      disabled={workspaceModulesLoading || noContactModes}
                     >
-                      <option value="email">Email</option>
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="call">Initiate Call</option>
+                      {workspaceModulesLoading ? (
+                        <option value={form.contactMode}>Loading package...</option>
+                      ) : null}
+                      {noContactModes ? (
+                        <option value={form.contactMode}>No outbound channels</option>
+                      ) : null}
+                      {contactModes.map((mode) => (
+                        <option key={mode.value} value={mode.value}>
+                          {mode.label}
+                        </option>
+                      ))}
                     </select>
                   </label>
 
@@ -457,7 +511,7 @@ export default function NewTicketClient() {
                 <div className="flex items-center justify-between gap-3 lg:col-span-2">
                   <div className="space-y-1" />
 
-                  <Button type="submit" disabled={status === "submitting"}>
+                  <Button type="submit" disabled={status === "submitting" || workspaceModulesLoading || noContactModes}>
                     {status === "submitting"
                       ? "Creating..."
                       : form.contactMode === "call"
@@ -499,6 +553,14 @@ export default function NewTicketClient() {
         message={feedback.message}
         autoCloseMs={feedback.autoCloseMs}
       />
+    </>
+  );
+}
+
+export default function NewTicketClient() {
+  return (
+    <AppShell>
+      <NewTicketContent />
     </AppShell>
   );
 }

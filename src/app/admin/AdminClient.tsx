@@ -306,6 +306,28 @@ function Metric({ label, value }: { label: string; value: number | string }) {
   );
 }
 
+function ModuleUnavailableCard({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          This workspace package does not include this module. Enable it in Workspace Modules before configuring or operating this surface.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function getTemplateParamCount(template: WhatsAppTemplate) {
   if (!template.components) return 0;
   let count = 0;
@@ -500,6 +522,12 @@ export default function AdminClient() {
       operationsFilterDraft.auditLimit !== String(operationsFilters.auditLimit),
     [operationsFilterDraft, operationsFilters]
   );
+  const emailModuleEnabled = workspaceModules?.modules.email === true;
+  const whatsAppModuleEnabled = workspaceModules?.modules.whatsapp === true;
+  const voiceModuleEnabled = workspaceModules?.modules.voice === true;
+  const aiModuleEnabled =
+    workspaceModules?.modules.aiAutomation === true || workspaceModules?.modules.dexterOrchestration === true;
+  const voiceQaEnabled = voiceModuleEnabled && workspaceModules?.modules.aiAutomation === true;
 
   const replaceQueryState = useCallback(
     (tab: TabKey, section?: OperationsSectionKey | null) => {
@@ -695,11 +723,14 @@ export default function AdminClient() {
   const loadWorkspace = useCallback(async () => {
     setLoading((prev) => ({ ...prev, workspace: true }));
     try {
+      const [modulesPayload, usagePayload, tagRows] = await Promise.all([
+        getWorkspaceModules(),
+        getWorkspaceModuleUsage(),
+        listTags()
+      ]);
+      const nextModules = modulesPayload.config;
       const [
-        modulesPayload,
-        usagePayload,
         mailboxRows,
-        tagRows,
         ruleRows,
         spamRows,
         accountPayload,
@@ -707,18 +738,15 @@ export default function AdminClient() {
         outbox,
         failedOutbox
       ] = await Promise.all([
-        getWorkspaceModules(),
-        getWorkspaceModuleUsage(),
-        listAdminMailboxes(),
-        listTags(),
-        listSpamRules(),
-        listSpamMessages(25),
-        getWhatsAppAccount(),
-        listWhatsAppTemplates(),
-        getWhatsAppOutboxMetrics(),
-        listFailedWhatsAppEvents(25)
+        nextModules.modules.email ? listAdminMailboxes() : Promise.resolve([]),
+        nextModules.modules.email ? listSpamRules() : Promise.resolve([]),
+        nextModules.modules.email ? listSpamMessages(25) : Promise.resolve([]),
+        nextModules.modules.whatsapp ? getWhatsAppAccount() : Promise.resolve({ account: null }),
+        nextModules.modules.whatsapp ? listWhatsAppTemplates() : Promise.resolve([]),
+        nextModules.modules.whatsapp ? getWhatsAppOutboxMetrics() : Promise.resolve(null),
+        nextModules.modules.whatsapp ? listFailedWhatsAppEvents(25) : Promise.resolve([])
       ]);
-      setWorkspaceModules(modulesPayload.config);
+      setWorkspaceModules(nextModules);
       setWorkspaceUsage(usagePayload.summary);
       setMailboxes(mailboxRows);
       setTags(tagRows);
@@ -964,12 +992,7 @@ export default function AdminClient() {
       const billableEnabled = WORKSPACE_MODULE_FIELDS.filter(
         (field) => field.billing === "billable" && workspaceModules?.modules[field.key]
       ).length;
-      return [
-        {
-          label: "Mailboxes",
-          value: mailboxes.length,
-          status: mailboxes.length > 0 ? "healthy" : "warning"
-        },
+      const metrics: SummaryMetric[] = [
         {
           label: "Enabled Modules",
           value: enabledModules,
@@ -977,19 +1000,31 @@ export default function AdminClient() {
           trendValue: `${billableEnabled} billable`,
           trendTone: billableEnabled > 0 ? "positive" : "neutral",
           status: enabledModules > 0 ? "healthy" : "warning"
-        },
-        {
-          label: "Spam Queue",
-          value: spamMessages.length,
-          status: spamMessages.length === 0 ? "healthy" : spamMessages.length < 10 ? "warning" : "critical"
-        },
-        {
+        }
+      ];
+      if (workspaceModules?.modules.email) {
+        metrics.push(
+          {
+            label: "Mailboxes",
+            value: mailboxes.length,
+            status: mailboxes.length > 0 ? "healthy" : "warning"
+          },
+          {
+            label: "Spam Queue",
+            value: spamMessages.length,
+            status: spamMessages.length === 0 ? "healthy" : spamMessages.length < 10 ? "warning" : "critical"
+          }
+        );
+      }
+      if (workspaceModules?.modules.whatsapp) {
+        metrics.push({
           label: "WA Failures",
           value: failedWhatsAppEvents.length,
           status:
             failedWhatsAppEvents.length === 0 ? "healthy" : failedWhatsAppEvents.length < 5 ? "warning" : "critical"
-        }
-      ];
+        });
+      }
+      return metrics;
     }
 
     if (activeTab === "automation") {
@@ -1206,6 +1241,25 @@ export default function AdminClient() {
     if (!tabParam || !TAB_VALUES.has(tabParam)) return;
     setActiveTab(tabParam as TabKey);
   }, [paramsKey, searchParams]);
+
+  useEffect(() => {
+    if (workspaceModules) return;
+    let cancelled = false;
+    getWorkspaceModules()
+      .then((payload) => {
+        if (!cancelled) {
+          setWorkspaceModules((previous) => previous ?? payload.config);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          pushError(error, "Failed loading workspace package modules");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pushError, workspaceModules]);
 
   useEffect(() => {
     if (activeTab !== "operations") return;
@@ -1822,7 +1876,7 @@ export default function AdminClient() {
                 </CardContent>
               </Card>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className={emailModuleEnabled ? "grid grid-cols-1 lg:grid-cols-2 gap-6" : "grid grid-cols-1 gap-6"}>
                 <Card>
                   <CardHeader>
                     <CardTitle>SLA Targets</CardTitle>
@@ -2039,83 +2093,85 @@ export default function AdminClient() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Platform Mailboxes</CardTitle>
-                  <CardDescription>
-                    Shared inboxes owned inside 6esk. Personal mailboxes are created automatically when admins create users.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-neutral-900">Create or update platform mailbox</p>
-                      <p className="mt-1 text-xs text-neutral-600">
-                        Re-save the same address to replace member access. Use comma-separated user emails for inbox membership.
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-[0.8fr_1.2fr] gap-2">
-                      <Input
-                        value={mailboxForm.address}
-                        onChange={(event) =>
-                          setMailboxForm((previous) => ({ ...previous, address: event.target.value }))
-                        }
-                        placeholder="support@example.com"
-                      />
-                      <Input
-                        value={mailboxForm.memberEmails}
-                        onChange={(event) =>
-                          setMailboxForm((previous) => ({ ...previous, memberEmails: event.target.value }))
-                        }
-                        placeholder="agent1@example.com, agent2@example.com"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={() => void saveMailbox()}>Save Mailbox</Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setMailboxForm({ address: "", memberEmails: "" })}
-                      >
-                        Reset
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {mailboxes.map((mailbox) => (
-                      <div
-                        key={mailbox.id}
-                        className="rounded-lg border border-neutral-200 p-3 space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-neutral-900">{mailbox.address}</p>
-                            <p className="text-xs text-neutral-500">
-                              Created {formatDate(mailbox.created_at)}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={mailbox.type === "platform" ? "outline" : "secondary"}>
-                              {mailbox.type}
-                            </Badge>
-                            {mailbox.owner_email ? (
-                              <Badge variant="secondary">{mailbox.owner_email}</Badge>
-                            ) : null}
-                          </div>
-                        </div>
-                        <p className="text-xs text-neutral-600">
-                          Members:{" "}
-                          {mailbox.members.length
-                            ? mailbox.members.map((member) => member.email).join(", ")
-                            : mailbox.type === "platform"
-                              ? "Lead admins only until members are added."
-                              : "Owner mailbox"}
+              {emailModuleEnabled ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Platform Mailboxes</CardTitle>
+                    <CardDescription>
+                      Shared inboxes owned inside 6esk. Personal mailboxes are created automatically when admins create users.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
+                      <div>
+                        <p className="text-sm font-medium text-neutral-900">Create or update platform mailbox</p>
+                        <p className="mt-1 text-xs text-neutral-600">
+                          Re-save the same address to replace member access. Use comma-separated user emails for inbox membership.
                         </p>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                      <div className="grid grid-cols-1 md:grid-cols-[0.8fr_1.2fr] gap-2">
+                        <Input
+                          value={mailboxForm.address}
+                          onChange={(event) =>
+                            setMailboxForm((previous) => ({ ...previous, address: event.target.value }))
+                          }
+                          placeholder="support@example.com"
+                        />
+                        <Input
+                          value={mailboxForm.memberEmails}
+                          onChange={(event) =>
+                            setMailboxForm((previous) => ({ ...previous, memberEmails: event.target.value }))
+                          }
+                          placeholder="agent1@example.com, agent2@example.com"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button onClick={() => void saveMailbox()}>Save Mailbox</Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setMailboxForm({ address: "", memberEmails: "" })}
+                        >
+                          Reset
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {mailboxes.map((mailbox) => (
+                        <div
+                          key={mailbox.id}
+                          className="rounded-lg border border-neutral-200 p-3 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-neutral-900">{mailbox.address}</p>
+                              <p className="text-xs text-neutral-500">
+                                Created {formatDate(mailbox.created_at)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant={mailbox.type === "platform" ? "outline" : "secondary"}>
+                                {mailbox.type}
+                              </Badge>
+                              {mailbox.owner_email ? (
+                                <Badge variant="secondary">{mailbox.owner_email}</Badge>
+                              ) : null}
+                            </div>
+                          </div>
+                          <p className="text-xs text-neutral-600">
+                            Members:{" "}
+                            {mailbox.members.length
+                              ? mailbox.members.map((member) => member.email).join(", ")
+                              : mailbox.type === "platform"
+                                ? "Lead admins only until members are added."
+                                : "Owner mailbox"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
@@ -2210,12 +2266,13 @@ export default function AdminClient() {
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Spam Rules</CardTitle>
-                    <CardDescription>Create and toggle spam filtering patterns.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
+                {emailModuleEnabled ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Spam Rules</CardTitle>
+                      <CardDescription>Create and toggle spam filtering patterns.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
                     <div className="rounded-lg border border-neutral-200 p-4 space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -2264,26 +2321,68 @@ export default function AdminClient() {
                         ) : null}
                       </div>
                     </div>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {spamRules.map((rule) => (
-                        <div key={rule.id} className="rounded-lg border border-neutral-200 p-2 text-sm flex items-center justify-between gap-2">
-                          <span>{rule.rule_type}:{rule.scope} · {rule.pattern}</span>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => startRuleEdit(rule)}>Edit</Button>
-                            <Button variant="outline" size="sm" onClick={() => void updateSpamRule(rule.id, { isActive: !rule.is_active }).then(loadWorkspace)}>Toggle</Button>
-                            <Button variant="ghost" size="sm" onClick={() => void deleteSpamRule(rule.id).then(loadWorkspace)}>Delete</Button>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {spamRules.map((rule) => (
+                          <div key={rule.id} className="rounded-lg border border-neutral-200 p-2 text-sm flex items-center justify-between gap-2">
+                            <span>{rule.rule_type}:{rule.scope} · {rule.pattern}</span>
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" onClick={() => startRuleEdit(rule)}>Edit</Button>
+                              <Button variant="outline" size="sm" onClick={() => void updateSpamRule(rule.id, { isActive: !rule.is_active }).then(loadWorkspace)}>Toggle</Button>
+                              <Button variant="ghost" size="sm" onClick={() => void deleteSpamRule(rule.id).then(loadWorkspace)}>Delete</Button>
+                            </div>
                           </div>
+                        ))}
+                      </div>
+                      <div className="rounded-lg border border-neutral-200 p-3">
+                        <div className="mb-3">
+                          <p className="text-sm font-medium text-neutral-900">Spam Queue</p>
+                          <p className="text-xs text-neutral-600">Review messages held by mailbox spam controls.</p>
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                        <div className="space-y-2 max-h-72 overflow-y-auto">
+                          {spamMessages.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-neutral-200 p-3 text-xs text-neutral-500">
+                              No spam messages need review.
+                            </div>
+                          ) : (
+                            spamMessages.map((message) => (
+                              <div key={message.id} className="rounded-md border border-neutral-200 p-3 text-xs">
+                                <p className="font-medium text-neutral-900">{message.subject ?? "(no subject)"}</p>
+                                <p className="mt-1 text-neutral-600">{message.from_email}</p>
+                                <p className="mt-1 text-neutral-500">{message.mailbox_address}</p>
+                                {message.spam_reason ? (
+                                  <p className="mt-2 text-red-600">{message.spam_reason}</p>
+                                ) : null}
+                                <div className="mt-3">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      void setMessageSpamStatus(message.id, { isSpam: false })
+                                        .then(() => {
+                                          pushSuccess("Message removed from spam");
+                                          return loadWorkspace();
+                                        })
+                                        .catch((error) => pushError(error, "Could not update spam status"))
+                                    }
+                                  >
+                                    Mark Not Spam
+                                  </Button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
               </div>
 
-              <Card>
+              {whatsAppModuleEnabled ? (
+                <Card>
                 <CardHeader>
-                  <CardTitle>WhatsApp & Spam Queue</CardTitle>
-                  <CardDescription>Outbound setup, templates, and spam review.</CardDescription>
+                  <CardTitle>WhatsApp</CardTitle>
+                  <CardDescription>Outbound setup, templates, and delivery queue operations.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -2542,102 +2641,74 @@ export default function AdminClient() {
                     </div>
                   </div>
 
-                  <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-                    <div className="space-y-2 max-h-72 overflow-y-auto">
-                      {whatsAppTemplates.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">
-                          No WhatsApp templates saved yet.
-                        </div>
-                      ) : (
-                        whatsAppTemplates.map((template) => (
-                          <div key={template.id} className="rounded-lg border border-neutral-200 p-3 text-sm">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="font-medium text-neutral-900">
-                                  {template.name} ({template.language})
-                                </p>
-                                <p className="mt-1 text-xs text-neutral-600">
-                                  {template.category ? `Category: ${template.category} · ` : ""}
-                                  Status: {template.status}
-                                  {template.components ? ` · Params: ${getTemplateParamCount(template)}` : ""}
-                                </p>
-                              </div>
-                              <Badge variant="outline">{template.status}</Badge>
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {whatsAppTemplates.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">
+                        No WhatsApp templates saved yet.
+                      </div>
+                    ) : (
+                      whatsAppTemplates.map((template) => (
+                        <div key={template.id} className="rounded-lg border border-neutral-200 p-3 text-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-neutral-900">
+                                {template.name} ({template.language})
+                              </p>
+                              <p className="mt-1 text-xs text-neutral-600">
+                                {template.category ? `Category: ${template.category} · ` : ""}
+                                Status: {template.status}
+                                {template.components ? ` · Params: ${getTemplateParamCount(template)}` : ""}
+                              </p>
                             </div>
-                            <div className="mt-3 flex gap-2">
-                              <Button variant="outline" size="sm" onClick={() => startTemplateEdit(template)}>
-                                Edit
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  void updateWhatsAppTemplate(template.id, {
-                                    status: template.status === "active" ? "paused" : "active"
-                                  })
-                                    .then(() => {
-                                      pushSuccess("Template status updated");
-                                      return loadWorkspace();
-                                    })
-                                    .catch((error) => pushError(error, "Could not update template"))
-                                }
-                              >
-                                Toggle
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  void deleteWhatsAppTemplate(template.id)
-                                    .then(() => {
-                                      pushSuccess("Template deleted");
-                                      return loadWorkspace();
-                                    })
-                                    .catch((error) => pushError(error, "Could not delete template"))
-                                }
-                              >
-                                Delete
-                              </Button>
-                            </div>
+                            <Badge variant="outline">{template.status}</Badge>
                           </div>
-                        ))
-                      )}
-                    </div>
-
-                    <div className="space-y-2 max-h-72 overflow-y-auto">
-                      {spamMessages.map((message) => (
-                        <div key={message.id} className="rounded-md border border-neutral-200 p-3 text-xs">
-                          <p className="font-medium text-neutral-900">{message.subject ?? "(no subject)"}</p>
-                          <p className="mt-1 text-neutral-600">{message.from_email}</p>
-                          <p className="mt-1 text-neutral-500">{message.mailbox_address}</p>
-                          {message.spam_reason ? (
-                            <p className="mt-2 text-red-600">{message.spam_reason}</p>
-                          ) : null}
-                          <div className="mt-3">
+                          <div className="mt-3 flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => startTemplateEdit(template)}>
+                              Edit
+                            </Button>
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() =>
-                                void setMessageSpamStatus(message.id, { isSpam: false })
+                                void updateWhatsAppTemplate(template.id, {
+                                  status: template.status === "active" ? "paused" : "active"
+                                })
                                   .then(() => {
-                                    pushSuccess("Message removed from spam");
+                                    pushSuccess("Template status updated");
                                     return loadWorkspace();
                                   })
-                                  .catch((error) => pushError(error, "Could not update spam status"))
+                                  .catch((error) => pushError(error, "Could not update template"))
                               }
                             >
-                              Mark Not Spam
+                              Toggle
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                void deleteWhatsAppTemplate(template.id)
+                                  .then(() => {
+                                    pushSuccess("Template deleted");
+                                    return loadWorkspace();
+                                  })
+                                  .catch((error) => pushError(error, "Could not delete template"))
+                              }
+                            >
+                              Delete
                             </Button>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      ))
+                    )}
                   </div>
                 </CardContent>
-              </Card>
+                </Card>
+              ) : null}
             </TabsContent>
 
             <TabsContent value="automation" className="space-y-6">
+              {aiModuleEnabled ? (
+                <>
               <Card>
                 <CardHeader>
                   <CardTitle>Agent Integration</CardTitle>
@@ -3025,6 +3096,13 @@ export default function AdminClient() {
                   </div>
                 </CardContent>
               </Card>
+                </>
+              ) : (
+                <ModuleUnavailableCard
+                  title="AI Automation"
+                  description="Agent runtime, prompt rollout, profile lookup diagnostics, and autonomous outbox controls require an AI-capable package."
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="operations" className="space-y-6">
@@ -3041,24 +3119,34 @@ export default function AdminClient() {
                     <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("inbound-settings")}>
                       Inbound Settings
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("calls")}>
-                      Calls
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("call-rejections")}>
-                      Call Rejections
-                    </Button>
+                    {voiceModuleEnabled ? (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("calls")}>
+                          Calls
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("call-rejections")}>
+                          Call Rejections
+                        </Button>
+                      </>
+                    ) : null}
                     <Button variant="outline" size="sm" onClick={() => jumpToOperationsSection("audit-logs")}>
                       Audit Logs
                     </Button>
-                    <Button asChild variant="ghost" size="sm">
-                      <Link href="/tickets?channel=voice">Open voice queue</Link>
-                    </Button>
-                    <Button asChild variant="ghost" size="sm">
-                      <Link href="/tickets?channel=email">Open email queue</Link>
-                    </Button>
-                    <Button asChild variant="ghost" size="sm">
-                      <Link href="/mail?view=spam">Open spam queue</Link>
-                    </Button>
+                    {voiceModuleEnabled ? (
+                      <Button asChild variant="ghost" size="sm">
+                        <Link href="/tickets?channel=voice">Open voice queue</Link>
+                      </Button>
+                    ) : null}
+                    {emailModuleEnabled ? (
+                      <>
+                        <Button asChild variant="ghost" size="sm">
+                          <Link href="/tickets?channel=email">Open email queue</Link>
+                        </Button>
+                        <Button asChild variant="ghost" size="sm">
+                          <Link href="/mail?view=spam">Open spam queue</Link>
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                   <div className="rounded-lg border border-neutral-200 bg-white/70 p-3 dark:border-neutral-800 dark:bg-neutral-950/80">
                     <p className="text-xs text-neutral-600 dark:text-neutral-300">
@@ -3300,7 +3388,8 @@ export default function AdminClient() {
                   </CardContent>
                 </Card>
 
-                <Card id="ops-calls" className="scroll-mt-24">
+                {voiceModuleEnabled ? (
+                  <Card id="ops-calls" className="scroll-mt-24">
                   <CardHeader>
                     <CardTitle>Calls</CardTitle>
                     <CardDescription>Outbox delivery and dead-letter recovery.</CardDescription>
@@ -3344,18 +3433,22 @@ export default function AdminClient() {
                     <div className="flex gap-2 flex-wrap">
                       <Button variant="outline" onClick={() => void runCallOutbox(operationsFilters.eventLimit).then(loadOperations)}>Run Outbox</Button>
                       <Button variant="outline" onClick={() => void retryFailedCallEvents(operationsFilters.eventLimit).then(loadOperations)}>Retry Failed</Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => void runCallTranscriptAiOutbox(operationsFilters.eventLimit).then(loadOperations)}
-                      >
-                        Run Transcript QA
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => void retryFailedCallTranscriptAiJobs(operationsFilters.eventLimit).then(loadOperations)}
-                      >
-                        Retry Failed QA
-                      </Button>
+                      {voiceQaEnabled ? (
+                        <>
+                          <Button
+                            variant="outline"
+                            onClick={() => void runCallTranscriptAiOutbox(operationsFilters.eventLimit).then(loadOperations)}
+                          >
+                            Run Transcript QA
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => void retryFailedCallTranscriptAiJobs(operationsFilters.eventLimit).then(loadOperations)}
+                          >
+                            Retry Failed QA
+                          </Button>
+                        </>
+                      ) : null}
                       <Button variant="outline" onClick={() => void batchRecoverDeadLetters({ filter: { status: "failed" } }).then(loadOperations)}>Batch Recover</Button>
                       <select
                         className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm"
@@ -3372,7 +3465,8 @@ export default function AdminClient() {
                         <option value="quarantined">Quarantined</option>
                       </select>
                     </div>
-                    <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
+                    {voiceQaEnabled ? (
+                      <div className="rounded-lg border border-neutral-200 p-3 space-y-3">
                       <div className="flex items-center justify-between gap-2">
                         <div>
                           <p className="text-sm font-medium text-neutral-900">Transcript QA</p>
@@ -3525,7 +3619,8 @@ export default function AdminClient() {
                           )}
                         </div>
                       </div>
-                    </div>
+                      </div>
+                    ) : null}
                     <div className="space-y-2 max-h-56 overflow-y-auto">
                       {filteredDeadLetters.map((event) => (
                         <div key={event.id} className="rounded-md border border-neutral-200 p-2 text-xs">
@@ -3542,9 +3637,11 @@ export default function AdminClient() {
                       ))}
                     </div>
                   </CardContent>
-                </Card>
+                  </Card>
+                ) : null}
 
-                <Card id="ops-call-rejections" className="scroll-mt-24">
+                {voiceModuleEnabled ? (
+                  <Card id="ops-call-rejections" className="scroll-mt-24">
                   <CardHeader>
                     <CardTitle>Call Rejections</CardTitle>
                     <CardDescription>Recent webhook rejection reasons and failed call attempts.</CardDescription>
@@ -3642,7 +3739,8 @@ export default function AdminClient() {
                       </div>
                     </div>
                   </CardContent>
-                </Card>
+                  </Card>
+                ) : null}
               </div>
 
               <Card id="ops-audit-logs" className="scroll-mt-24">
