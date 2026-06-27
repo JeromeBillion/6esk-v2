@@ -30,6 +30,7 @@ import { POST } from "@/app/api/customers/merge/route";
 
 const SOURCE_CUSTOMER_ID = "33333333-3333-3333-3333-333333333333";
 const TARGET_CUSTOMER_ID = "44444444-4444-4444-4444-444444444444";
+const TENANT_ID = "99999999-9999-4999-8999-999999999999";
 const ACK_TEXT = "I understand this merge is irreversible";
 
 function buildUser(roleName: "agent" | "viewer") {
@@ -38,7 +39,11 @@ function buildUser(roleName: "agent" | "viewer") {
     email: `${roleName}@6ex.co.za`,
     display_name: roleName,
     role_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    role_name: roleName
+    role_name: roleName,
+    tenant_id: TENANT_ID,
+    tenant_slug: "acme",
+    real_tenant_id: TENANT_ID,
+    is_impersonating: false
   };
 }
 
@@ -82,6 +87,7 @@ describe("POST /api/customers/merge", () => {
       error: "Source or target customer is already merged."
     });
     expect(mocks.mergeCustomers).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
       sourceCustomerId: SOURCE_CUSTOMER_ID,
       targetCustomerId: TARGET_CUSTOMER_ID,
       actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -150,6 +156,13 @@ describe("POST /api/customers/merge", () => {
         movedTickets: 2,
         movedIdentities: 2
       }
+    });
+    expect(mocks.mergeCustomers).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      sourceCustomerId: SOURCE_CUSTOMER_ID,
+      targetCustomerId: TARGET_CUSTOMER_ID,
+      actorUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      reason: "Duplicate profiles"
     });
   });
 

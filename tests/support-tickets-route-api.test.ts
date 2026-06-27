@@ -232,6 +232,69 @@ describe("POST /api/support/tickets", () => {
     expect(mocks.enqueueAgentEvent).toHaveBeenCalled();
   });
 
+  it("stores created-ticket attachments under the resolved tenant", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/support/tickets", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "support-secret"
+        },
+        body: JSON.stringify({
+          from: "user@example.com",
+          subject: "Invoice question",
+          description: "Please check the attached invoice.",
+          attachments: [
+            {
+              filename: "invoice.txt",
+              contentType: "text/plain",
+              contentBase64: Buffer.from("invoice").toString("base64")
+            }
+          ]
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const attachmentInsert = mocks.dbQuery.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO attachments")
+    );
+    expect(attachmentInsert?.[0]).toContain("tenant_id");
+    expect(attachmentInsert?.[1]?.[0]).toBe(TENANT_ID);
+  });
+
+  it("rejects malformed attachment payloads before storage", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/support/tickets", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "support-secret"
+        },
+        body: JSON.stringify({
+          from: "user@example.com",
+          subject: "Invoice question",
+          description: "Please check this attachment.",
+          attachments: [
+            {
+              filename: "invoice.txt",
+              contentType: "text/plain",
+              contentBase64: "not-base64!"
+            }
+          ]
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "invalid_attachment",
+      error: "Attachment content must be valid base64."
+    });
+    expect(mocks.putObject).not.toHaveBeenCalled();
+  });
+
   it("blocks call-mode request when policy denies due revoked consent", async () => {
     mocks.getSessionUser.mockResolvedValue({
       id: "agent-1",

@@ -721,9 +721,10 @@ export async function processCreateTicket({
       });
 
       await db.query(
-        `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO attachments (tenant_id, id, message_id, filename, content_type, size_bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
+          tenantId,
           attachmentId,
           messageId,
           attachment.filename,

@@ -2292,6 +2292,7 @@ export async function POST(request: Request) {
         }
         try {
           const result = await mergeCustomers({
+            tenantId,
             sourceCustomerId,
             targetCustomerId,
             actorUserId: null,

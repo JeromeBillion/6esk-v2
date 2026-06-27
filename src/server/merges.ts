@@ -580,12 +580,18 @@ export type CustomerMergePreflight = {
 };
 
 export async function preflightCustomerMerge({
+  tenantId,
   sourceCustomerId,
   targetCustomerId
 }: {
+  tenantId: string;
   sourceCustomerId: string;
   targetCustomerId: string;
 }): Promise<CustomerMergePreflight> {
+  const scopedTenantId = tenantId.trim();
+  if (!scopedTenantId) {
+    throw new MergeError("invalid_input", "Tenant scope is required for customer merge preflight.");
+  }
   if (sourceCustomerId === targetCustomerId) {
     throw new MergeError("invalid_input", "Source and target customers must be different.");
   }
@@ -608,8 +614,9 @@ export async function preflightCustomerMerge({
          primary_phone,
          merged_into_customer_id
        FROM customers
-       WHERE id = ANY($1::uuid[])`,
-      [[sourceCustomerId, targetCustomerId]]
+       WHERE id = ANY($1::uuid[])
+         AND tenant_id = $2`,
+      [[sourceCustomerId, targetCustomerId], scopedTenantId]
     );
 
     if (customerResult.rowCount !== 2) {
@@ -631,22 +638,25 @@ export async function preflightCustomerMerge({
       identities_to_move_count: string;
     }>(
       `SELECT
-         (SELECT COUNT(*) FROM tickets WHERE customer_id = $1) AS total_tickets,
+         (SELECT COUNT(*) FROM tickets WHERE customer_id = $1 AND tenant_id = $3) AS total_tickets,
          (
            SELECT COUNT(*)
            FROM tickets
            WHERE customer_id = $1
+             AND tenant_id = $3
              AND merged_into_ticket_id IS NULL
          ) AS active_tickets,
          (
            SELECT COUNT(*)
            FROM tickets t
            WHERE t.customer_id = $1
+             AND t.tenant_id = $3
              AND t.merged_into_ticket_id IS NULL
              AND EXISTS (
                SELECT 1
                FROM messages m
                WHERE m.ticket_id = t.id
+                 AND m.tenant_id = $3
                  AND m.channel = 'whatsapp'
              )
          ) AS active_whatsapp_tickets,
@@ -654,17 +664,20 @@ export async function preflightCustomerMerge({
             SELECT COUNT(*)
             FROM tickets t
             WHERE t.customer_id = $1
+              AND t.tenant_id = $3
               AND t.merged_into_ticket_id IS NULL
               AND NOT EXISTS (
                 SELECT 1
                 FROM messages m
                 WHERE m.ticket_id = t.id
+                  AND m.tenant_id = $3
                   AND m.channel = 'whatsapp'
               )
               AND NOT EXISTS (
                 SELECT 1
                 FROM messages m
                 WHERE m.ticket_id = t.id
+                  AND m.tenant_id = $3
                   AND m.channel = 'voice'
               )
           ) AS active_email_tickets,
@@ -672,20 +685,23 @@ export async function preflightCustomerMerge({
            SELECT COUNT(*)
            FROM customer_identities
            WHERE customer_id = $1
+             AND tenant_id = $3
          ) AS source_identity_count,
          (
            SELECT COUNT(*)
            FROM customer_identities source_identity
            WHERE source_identity.customer_id = $1
+             AND source_identity.tenant_id = $3
              AND NOT EXISTS (
                SELECT 1
                FROM customer_identities target_identity
                WHERE target_identity.customer_id = $2
+                 AND target_identity.tenant_id = $3
                  AND target_identity.identity_type = source_identity.identity_type
                  AND target_identity.identity_value = source_identity.identity_value
              )
          ) AS identities_to_move_count`,
-      [sourceCustomerId, targetCustomerId]
+      [sourceCustomerId, targetCustomerId, scopedTenantId]
     );
 
     const counts = countsResult.rows[0];
@@ -1229,16 +1245,22 @@ export async function linkTickets({
 }
 
 export async function mergeCustomers({
+  tenantId,
   sourceCustomerId,
   targetCustomerId,
   actorUserId,
   reason
 }: {
+  tenantId: string;
   sourceCustomerId: string;
   targetCustomerId: string;
   actorUserId?: string | null;
   reason?: string | null;
 }) {
+  const scopedTenantId = tenantId.trim();
+  if (!scopedTenantId) {
+    throw new MergeError("invalid_input", "Tenant scope is required for customer merge.");
+  }
   if (sourceCustomerId === targetCustomerId) {
     throw new MergeError("invalid_input", "Source and target customers must be different.");
   }
@@ -1257,8 +1279,9 @@ export async function mergeCustomers({
       `SELECT id, tenant_id, primary_email, primary_phone, merged_into_customer_id
        FROM customers
        WHERE id = ANY($1::uuid[])
+         AND tenant_id = $2
        FOR UPDATE`,
-      [[sourceCustomerId, targetCustomerId]]
+      [[sourceCustomerId, targetCustomerId], scopedTenantId]
     );
 
     if (customerLock.rowCount !== 2) {
@@ -1277,7 +1300,7 @@ export async function mergeCustomers({
     if (source.tenant_id !== target.tenant_id) {
       throw new MergeError("invalid_input", "Source and target customers must belong to the same tenant.");
     }
-    const tenantId = target.tenant_id;
+    const mergeTenantId = target.tenant_id;
 
     const movedTickets = await client.query(
       `UPDATE tickets
@@ -1285,7 +1308,7 @@ export async function mergeCustomers({
            updated_at = now()
        WHERE customer_id = $2
          AND tenant_id = $3`,
-      [targetCustomerId, sourceCustomerId, tenantId]
+      [targetCustomerId, sourceCustomerId, mergeTenantId]
     );
 
     const targetRepresentativeTicket = await client.query<{
@@ -1299,7 +1322,7 @@ export async function mergeCustomers({
          AND merged_into_ticket_id IS NULL
        ORDER BY COALESCE(updated_at, created_at) DESC
        LIMIT 1`,
-      [targetCustomerId, tenantId]
+      [targetCustomerId, mergeTenantId]
     );
 
     const movedIdentityInsert = await client.query(
@@ -1326,14 +1349,14 @@ export async function mergeCustomers({
       WHERE customer_id = $2
         AND tenant_id = $3
       ON CONFLICT (tenant_id, identity_type, identity_value) DO NOTHING`,
-      [targetCustomerId, sourceCustomerId, tenantId]
+      [targetCustomerId, sourceCustomerId, mergeTenantId]
     );
 
     await client.query(
       `DELETE FROM customer_identities
        WHERE customer_id = $1
          AND tenant_id = $2`,
-      [sourceCustomerId, tenantId]
+      [sourceCustomerId, mergeTenantId]
     );
 
     await client.query(
@@ -1343,7 +1366,7 @@ export async function mergeCustomers({
            updated_at = now()
        WHERE id = $1
          AND tenant_id = $4`,
-      [targetCustomerId, source.primary_email, source.primary_phone, tenantId]
+      [targetCustomerId, source.primary_email, source.primary_phone, mergeTenantId]
     );
 
     await client.query(
@@ -1355,7 +1378,7 @@ export async function mergeCustomers({
            updated_at = now()
        WHERE id = $4
          AND tenant_id = $5`,
-      [targetCustomerId, reason ?? null, actorUserId ?? null, sourceCustomerId, tenantId]
+      [targetCustomerId, reason ?? null, actorUserId ?? null, sourceCustomerId, mergeTenantId]
     );
 
     await client.query(
@@ -1368,14 +1391,14 @@ export async function mergeCustomers({
       ) VALUES (
         $1, $2, $3, $4, $5
       )`,
-      [tenantId, sourceCustomerId, targetCustomerId, reason ?? null, actorUserId ?? null]
+      [mergeTenantId, sourceCustomerId, targetCustomerId, reason ?? null, actorUserId ?? null]
     );
 
     await client.query(
       `INSERT INTO audit_logs (tenant_id, actor_user_id, action, entity_type, entity_id, data)
        VALUES ($1, $2, 'customer_merged', 'customer', $3, $4)`,
       [
-        tenantId,
+        mergeTenantId,
         actorUserId ?? null,
         sourceCustomerId,
         {
@@ -1395,14 +1418,14 @@ export async function mergeCustomers({
       eventType: "customer.merged",
       ticketId: representative?.id ?? null,
       mailboxId: representative?.mailbox_id ?? null,
-      tenantId,
+      tenantId: mergeTenantId,
       actorUserId: actorUserId ?? null,
       threadId: representative?.id ?? null,
       excerpt: `Merged customer ${sourceCustomerId} into ${targetCustomerId}`
     });
     await publishAgentMergeEvent({
       eventType: "customer.merged",
-      tenantId,
+      tenantId: mergeTenantId,
       payload: {
         ...mergeEvent,
         merge: {

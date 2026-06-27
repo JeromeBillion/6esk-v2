@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
+import { validateAttachmentList } from "@/server/attachments/policy";
 import { getTicketById } from "@/server/tickets";
 import { sendTicketReply } from "@/server/email/replies";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
@@ -100,6 +101,10 @@ export async function POST(
   const { text, html, subject, template, attachments, recipient, cc, bcc } = parsed.data;
   if (!text && !html && !template && !(attachments?.length ?? 0)) {
     return Response.json({ error: "Reply body required" }, { status: 400 });
+  }
+  const attachmentPolicy = validateAttachmentList(attachments ?? null);
+  if (!attachmentPolicy.ok) {
+    return Response.json({ error: "Invalid attachment", details: attachmentPolicy.message }, { status: 400 });
   }
 
   const replyModule = inferReplyModule({

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { outboundEmailSchema } from "@/server/email/schema";
+import { validateAttachmentList } from "@/server/attachments/policy";
 import { normalizeAddressList, sanitizeFilename } from "@/server/email/normalize";
 import { findMailbox, getOrCreateMailbox } from "@/server/email/mailbox";
 import { enqueueEmailOutboxEvent } from "@/server/email/outbox";
@@ -79,6 +80,11 @@ export async function POST(request: Request) {
   }
 
   const data = parsed.data;
+  const attachmentPolicy = validateAttachmentList(data.attachments ?? null);
+  if (!attachmentPolicy.ok) {
+    return Response.json({ error: "Invalid attachment", details: attachmentPolicy.message }, { status: 400 });
+  }
+
   const toList = normalizeAddressList(data.to);
   const ccList = normalizeAddressList(data.cc ?? undefined);
   const bccList = normalizeAddressList(data.bcc ?? undefined);

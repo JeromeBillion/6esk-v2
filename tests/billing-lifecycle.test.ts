@@ -26,7 +26,8 @@ import {
   createInvoiceDraft,
   getCustomerSafeInvoiceExport,
   getTenantBillingLifecycleSnapshot,
-  syncTenantSubscriptionFromCatalog
+  syncTenantSubscriptionFromCatalog,
+  transitionInvoiceStatus
 } from "@/server/billing/lifecycle";
 
 const TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -401,6 +402,129 @@ describe("billing lifecycle service", () => {
       expect.anything()
     );
     expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
+  });
+
+  it("opens draft invoices only when the current status allows the transition", async () => {
+    const invoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (sql.includes("INSERT INTO tenant_billing_accounts")) {
+        return {
+          rows: [
+            {
+              tenant_id: TENANT_ID,
+              workspace_key: "primary",
+              currency: "ZAR",
+              vat_rate_bps: 0,
+              payment_terms_days: 7,
+              invoice_prefix: "6ESK-",
+              next_invoice_sequence: 4,
+              collection_status: "current",
+              dunning_status: "none",
+              billing_email: null
+            }
+          ]
+        };
+      }
+      if (sql.includes("SELECT status") && sql.includes("FOR UPDATE")) {
+        return { rows: [{ status: "draft", invoice_number: "6ESK-202606-000004" }] };
+      }
+      if (sql.includes("UPDATE tenant_invoices i")) {
+        expect(sql).toContain("AND i.status = $5");
+        expect(params).toEqual([invoiceId, TENANT_ID, "primary", "open", "draft"]);
+        return {
+          rows: [
+            {
+              id: invoiceId,
+              invoice_number: "6ESK-202606-000004",
+              status: "open",
+              currency: "ZAR",
+              period_start: "2026-06-01T00:00:00.000Z",
+              period_end: "2026-07-01T00:00:00.000Z",
+              subtotal_cent: 69900,
+              usage_cent: 0,
+              adjustment_cent: 0,
+              tax_cent: 0,
+              total_cent: 69900,
+              amount_due_cent: 69900,
+              due_at: "2026-07-08T00:00:00.000Z",
+              issued_at: "2026-07-01T00:00:00.000Z",
+              paid_at: null,
+              voided_at: null,
+              created_at: "2026-07-01T00:00:00.000Z"
+            }
+          ]
+        };
+      }
+      return { rows: [] };
+    });
+    mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
+
+    const invoice = await transitionInvoiceStatus({
+      tenantId: TENANT_ID,
+      invoiceId,
+      status: "open",
+      actorUserId: USER_ID,
+      reason: "Issue invoice"
+    });
+
+    expect(invoice.status).toBe("open");
+    expect(query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("rejects illegal invoice status transitions and audits the attempt", async () => {
+    const invoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const query = vi.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("INSERT INTO tenant_billing_accounts")) {
+        return {
+          rows: [
+            {
+              tenant_id: TENANT_ID,
+              workspace_key: "primary",
+              currency: "ZAR",
+              vat_rate_bps: 0,
+              payment_terms_days: 7,
+              invoice_prefix: "6ESK-",
+              next_invoice_sequence: 4,
+              collection_status: "current",
+              dunning_status: "none",
+              billing_email: null
+            }
+          ]
+        };
+      }
+      if (sql.includes("SELECT status") && sql.includes("FOR UPDATE")) {
+        return { rows: [{ status: "paid", invoice_number: "6ESK-202606-000004" }] };
+      }
+      return { rows: [] };
+    });
+    mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
+
+    await expect(
+      transitionInvoiceStatus({
+        tenantId: TENANT_ID,
+        invoiceId,
+        status: "open",
+        actorUserId: USER_ID,
+        reason: "Undo payment"
+      })
+    ).rejects.toThrow("Invoice status cannot transition from paid to open.");
+
+    expect(query).not.toHaveBeenCalledWith(expect.stringContaining("UPDATE tenant_invoices i"), expect.anything());
+    expect(mocks.recordAuditLogWithClient).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        action: "tenant_invoice_transition_rejected",
+        entityId: invoiceId,
+        data: expect.objectContaining({
+          currentStatus: "paid",
+          requestedStatus: "open"
+        })
+      })
+    );
+    expect(query).toHaveBeenCalledWith("ROLLBACK");
   });
 
   it("exports customer-safe invoice data inside tenant and workspace scope", async () => {

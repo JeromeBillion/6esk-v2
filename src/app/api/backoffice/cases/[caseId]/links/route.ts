@@ -4,41 +4,10 @@ import {
   BackofficeWorkflowError,
   linkBackofficeCaseArtifact
 } from "@/server/backoffice/workflows";
+import { isPublicHttpsUrl } from "@/server/security/outbound-url";
 import { BACKOFFICE_LINK_TYPES } from "@6esk/types/backoffice";
 
-function isPrivateIpv4(hostname: string) {
-  const parts = hostname.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return false;
-  }
-  const [a, b] = parts;
-  return (
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
-  );
-}
-
-function isSafeHttpsUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    const hostname = parsed.hostname.toLowerCase();
-    return (
-      parsed.protocol === "https:" &&
-      hostname !== "localhost" &&
-      !hostname.endsWith(".localhost") &&
-      hostname !== "::1" &&
-      hostname !== "[::1]" &&
-      !isPrivateIpv4(hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-const safeUrlSchema = z.string().trim().url().max(2048).refine(isSafeHttpsUrl, {
+const safeUrlSchema = z.string().trim().url().max(2048).refine(isPublicHttpsUrl, {
   message: "URL must use public https and cannot target localhost or private networks"
 });
 

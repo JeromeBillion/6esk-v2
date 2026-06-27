@@ -42,6 +42,7 @@ export async function POST(request: Request) {
 
   try {
     const preflight = await preflightCustomerMerge({
+      tenantId: user.tenant_id,
       sourceCustomerId: parsed.data.sourceCustomerId,
       targetCustomerId: parsed.data.targetCustomerId
     });

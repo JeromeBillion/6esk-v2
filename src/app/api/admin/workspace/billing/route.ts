@@ -4,6 +4,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isTenantAdmin } from "@/server/auth/roles";
 import { getTenantById } from "@/server/tenant/lifecycle";
 import { encrypt } from "@/server/security/encryption";
+import { isPublicHttpsUrl } from "@/server/security/outbound-url";
 import { recordAuditLog } from "@/server/audit";
 import {
   getCustomerSafeInvoiceExport,
@@ -14,7 +15,9 @@ const billingSettingsSchema = z.object({
   aiProviderMode: z.enum(["managed", "byo", "none"]).optional(),
   aiProviderApiKey: z.string().optional(),
   aiProviderModel: z.string().optional(),
-  aiProviderBaseUrl: z.string().url().optional()
+  aiProviderBaseUrl: z.string().trim().url().max(2048).refine(isPublicHttpsUrl, {
+    message: "Base URL must use public https and cannot target private networks"
+  }).optional()
 });
 
 function safeAttachmentStem(value: string) {

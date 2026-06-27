@@ -615,6 +615,7 @@ export async function resolveMergeReviewTask({
         throw new MergeReviewError("invalid_input", "Customer merge review task is incomplete.");
       }
       mergeResult = await mergeCustomers({
+        tenantId: scopedTenantId,
         sourceCustomerId: approvedTask.source_customer_id,
         targetCustomerId: approvedTask.target_customer_id,
         actorUserId,

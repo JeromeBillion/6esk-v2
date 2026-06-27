@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import { isDemoModeEnabled } from "@/app/lib/demo-mode";
 import {
   changeTenantPlan,
@@ -35,10 +37,8 @@ export async function GET(request: Request) {
     });
   }
 
-  const user = await getSessionUser();
-  if (!user || !isInternalStaff(user)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireBackofficeStaff();
+  if (!auth.ok) return auth.response;
 
   const url = new URL(request.url);
   const status = url.searchParams.get("status") as TenantStatus | null;
@@ -61,10 +61,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not available in demo mode" }, { status: 400 });
   }
 
-  const user = await getSessionUser();
-  if (!user || !isInternalStaff(user)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess();
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
@@ -86,7 +84,7 @@ export async function POST(request: Request) {
       slug: parsed.data.slug,
       displayName: parsed.data.displayName,
       plan: parsed.data.plan ?? "starter",
-      actorUserId: user.id
+      actorUserId: auth.user.id
     });
     return NextResponse.json({ tenant }, { status: 201 });
   } catch (err: any) {
@@ -115,10 +113,8 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Not available in demo mode" }, { status: 400 });
   }
 
-  const user = await getSessionUser();
-  if (!user || !isInternalStaff(user)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess();
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
@@ -140,13 +136,13 @@ export async function PATCH(request: Request) {
   try {
     switch (action) {
       case "suspend":
-        await suspendTenant(tenantId, reason ?? "No reason provided", user.id);
+        await suspendTenant(tenantId, reason ?? "No reason provided", auth.user.id);
         break;
       case "reactivate":
-        await reactivateTenant(tenantId, user.id);
+        await reactivateTenant(tenantId, auth.user.id);
         break;
       case "close":
-        await closeTenant(tenantId, reason ?? "No reason provided", user.id);
+        await closeTenant(tenantId, reason ?? "No reason provided", auth.user.id);
         break;
       case "change_plan":
         if (!parsed.data.plan) {
@@ -156,7 +152,7 @@ export async function PATCH(request: Request) {
           tenantId,
           plan: parsed.data.plan,
           reason: reason ?? "No reason provided",
-          actorUserId: user.id
+          actorUserId: auth.user.id
         });
         break;
     }

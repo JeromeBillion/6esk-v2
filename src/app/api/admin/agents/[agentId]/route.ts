@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { isLeadAdmin } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
+import { isPublicHttpsUrl } from "@/server/security/outbound-url";
 import {
   getAgentIntegrationById,
   updateAgentIntegration
@@ -10,7 +11,9 @@ import {
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
-  baseUrl: z.string().url().optional(),
+  baseUrl: z.string().trim().url().max(2048).refine(isPublicHttpsUrl, {
+    message: "Base URL must use public https and cannot target private networks"
+  }).optional(),
   sharedSecret: z.string().min(8).optional(),
   provider: z.string().optional(),
   authType: z.string().optional(),

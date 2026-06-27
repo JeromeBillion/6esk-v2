@@ -60,6 +60,18 @@ export type CollectionEventType =
   | "invoice_voided"
   | "write_off_recorded";
 
+const ALLOWED_INVOICE_STATUS_TRANSITIONS: Record<InvoiceStatus, readonly InvoiceStatus[]> = {
+  draft: ["open", "void"],
+  open: ["paid", "void", "uncollectible"],
+  uncollectible: ["paid", "void"],
+  paid: [],
+  void: []
+};
+
+function canTransitionInvoiceStatus(current: InvoiceStatus, next: InvoiceStatus) {
+  return current === next || ALLOWED_INVOICE_STATUS_TRANSITIONS[current].includes(next);
+}
+
 export type BillingSubscriptionItem = {
   itemKey: string;
   itemKind: "base" | "module" | "addon" | "usage_commit";
@@ -1471,6 +1483,39 @@ export async function transitionInvoiceStatus(input: {
       idempotencyKey: input.idempotencyKey,
       idempotencyPayload: input.idempotencyPayload
     });
+    const currentInvoice = await client.query<{ status: InvoiceStatus; invoice_number: string }>(
+      `SELECT status,
+              invoice_number
+       FROM tenant_invoices
+       WHERE id = $1
+         AND tenant_id = $2
+         AND workspace_key = $3
+       LIMIT 1
+       FOR UPDATE`,
+      [input.invoiceId, input.tenantId, workspaceKey]
+    );
+    const currentStatus = currentInvoice.rows[0]?.status;
+    if (!currentStatus) {
+      throw new Error("Invoice not found.");
+    }
+    if (!canTransitionInvoiceStatus(currentStatus, input.status)) {
+      await recordAuditLogWithClient(client, {
+        tenantId: input.tenantId,
+        actorUserId: input.actorUserId ?? null,
+        action: "tenant_invoice_transition_rejected",
+        entityType: "tenant_invoice",
+        entityId: input.invoiceId,
+        data: {
+          workspaceKey,
+          invoiceNumber: currentInvoice.rows[0]?.invoice_number ?? null,
+          currentStatus,
+          requestedStatus: input.status,
+          reason: input.reason ?? null
+        }
+      });
+      throw new Error(`Invoice status cannot transition from ${currentStatus} to ${input.status}.`);
+    }
+
     const result = await client.query<InvoiceRow>(
       `UPDATE tenant_invoices i
        SET status = $4,
@@ -1487,6 +1532,7 @@ export async function transitionInvoiceStatus(input: {
        WHERE i.id = $1
          AND i.tenant_id = $2
          AND i.workspace_key = $3
+         AND i.status = $5
          AND a.tenant_id = i.tenant_id
          AND a.workspace_key = i.workspace_key
        RETURNING i.id,
@@ -1506,7 +1552,7 @@ export async function transitionInvoiceStatus(input: {
                  i.paid_at,
                  i.voided_at,
                  i.created_at`,
-      [input.invoiceId, input.tenantId, workspaceKey, input.status]
+      [input.invoiceId, input.tenantId, workspaceKey, input.status, currentStatus]
     );
     invoice = result.rows[0] ?? null;
     if (!invoice) {

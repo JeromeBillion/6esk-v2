@@ -185,10 +185,70 @@ describe("merge review task tenant scope", () => {
     expect(mocks.dbQuery.mock.calls[3]?.[1]).toEqual([REVIEW_ID, TENANT_ID]);
   });
 
+  it("passes tenant scope into customer merge side effects", async () => {
+    const sourceCustomerId = "55555555-5555-4555-8555-555555555555";
+    const targetCustomerId = "66666666-6666-4666-8666-666666666666";
+    mocks.dbQuery
+      .mockResolvedValueOnce({
+        rows: [
+          buildTask({
+            proposal_type: "customer",
+            source_ticket_id: null,
+            target_ticket_id: null,
+            source_customer_id: sourceCustomerId,
+            target_customer_id: targetCustomerId
+          })
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 2 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          buildTask({
+            status: "approved",
+            proposal_type: "customer",
+            source_ticket_id: null,
+            target_ticket_id: null,
+            source_customer_id: sourceCustomerId,
+            target_customer_id: targetCustomerId
+          })
+        ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          buildTask({
+            status: "applied",
+            proposal_type: "customer",
+            source_ticket_id: null,
+            target_ticket_id: null,
+            source_customer_id: sourceCustomerId,
+            target_customer_id: targetCustomerId
+          })
+        ]
+      });
+
+    mocks.mergeCustomers.mockResolvedValueOnce({ sourceCustomerId, targetCustomerId });
+
+    await resolveMergeReviewTask({
+      tenantId: TENANT_ID,
+      reviewId: REVIEW_ID,
+      decision: "approve",
+      actorUserId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    });
+
+    expect(mocks.mergeCustomers).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      sourceCustomerId,
+      targetCustomerId,
+      actorUserId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      reason: "Duplicate"
+    });
+  });
+
   it("rejects approval before side effects when stored references are outside the tenant", async () => {
     mocks.dbQuery
       .mockResolvedValueOnce({ rows: [buildTask()] })
-      .mockResolvedValueOnce({ rows: [{ count: 2 }] });
+      .mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
     await expect(
       resolveMergeReviewTask({

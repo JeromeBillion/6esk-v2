@@ -3,6 +3,7 @@ import { canManageTickets, isLeadAdmin } from "@/server/auth/roles";
 import { getSessionUser } from "@/server/auth/session";
 import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
+import { validateAttachmentList } from "@/server/attachments/policy";
 import { db } from "@/server/db";
 import { normalizeAddressList } from "@/server/email/normalize";
 import { getCustomerById, listCustomerIdentities } from "@/server/customers";
@@ -96,6 +97,10 @@ export async function POST(request: Request) {
   const parsed = bulkEmailSchema.safeParse(payload);
   if (!parsed.success) {
     return Response.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
+  }
+  const attachmentPolicy = validateAttachmentList(parsed.data.attachments ?? null);
+  if (!attachmentPolicy.ok) {
+    return Response.json({ error: "Invalid attachment", details: attachmentPolicy.message }, { status: 400 });
   }
 
   const uniqueTicketIds = Array.from(new Set(parsed.data.ticketIds));

@@ -44,7 +44,7 @@ vi.mock("@/server/billing/lifecycle", () => ({
   getCustomerSafeInvoiceExport: mocks.getCustomerSafeInvoiceExport
 }));
 
-import { GET } from "@/app/api/admin/workspace/billing/route";
+import { GET, PATCH } from "@/app/api/admin/workspace/billing/route";
 
 const TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -76,6 +76,11 @@ describe("workspace billing admin API", () => {
         lines: []
       }
     });
+    mocks.dbConnect.mockResolvedValue({
+      query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+      release: vi.fn()
+    });
+    mocks.encrypt.mockReturnValue("encrypted-key");
   });
 
   it("returns tenant billing settings with lifecycle invoice visibility", async () => {
@@ -135,5 +140,47 @@ describe("workspace billing admin API", () => {
       })
     );
     expect(JSON.stringify(body)).not.toContain("tenant_id");
+  });
+
+  it("rejects private BYO AI provider base URLs", async () => {
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/workspace/billing", {
+        method: "PATCH",
+        body: JSON.stringify({
+          aiProviderMode: "byo",
+          aiProviderBaseUrl: "https://127.0.0.1:11434"
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+  });
+
+  it("stores public BYO AI provider base URLs", async () => {
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/workspace/billing", {
+        method: "PATCH",
+        body: JSON.stringify({
+          aiProviderMode: "byo",
+          aiProviderBaseUrl: "https://api.groq.com/openai/v1",
+          aiProviderApiKey: "tenant-key"
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const client = await mocks.dbConnect.mock.results[0].value;
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE tenants SET settings"),
+      [
+        JSON.stringify({
+          aiProviderMode: "byo",
+          aiProviderBaseUrl: "https://api.groq.com/openai/v1",
+          aiProviderApiKey: "encrypted-key"
+        }),
+        TENANT_ID
+      ]
+    );
   });
 });

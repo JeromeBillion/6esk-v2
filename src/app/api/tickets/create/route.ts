@@ -9,6 +9,7 @@ import {
   integrationError,
   validateIntegrationApiVersion
 } from "@/server/api-contract";
+import { validateAttachmentList } from "@/server/attachments/policy";
 import {
   createTicketSchema,
   processCreateTicket
@@ -79,6 +80,14 @@ export async function POST(request: Request) {
       status: 401,
       code: "tenant_required",
       message: "Tenant context is required"
+    });
+  }
+  const attachmentPolicy = validateAttachmentList(parsed.data.attachments ?? null);
+  if (!attachmentPolicy.ok) {
+    return integrationError(request, {
+      status: 400,
+      code: "invalid_attachment",
+      message: attachmentPolicy.message
     });
   }
   return processCreateTicket({

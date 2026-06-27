@@ -1233,6 +1233,41 @@ describe("agent merge actions route", () => {
     });
   });
 
+  it("executes merge_customers with tenant scope when capability and safety checks pass", async () => {
+    mocks.getAgentFromRequest.mockResolvedValue({
+      id: "agent-1",
+      tenant_id: TENANT_ID,
+      status: "active",
+      policy_mode: "manual",
+      scopes: {},
+      capabilities: { allow_merge_actions: true }
+    });
+    mockActionIdempotencyClaim("merge-customer-1");
+
+    const { response, body } = await postAction({
+      type: "merge_customers",
+      ticketId: TICKET_A,
+      sourceCustomerId: CUSTOMER_A,
+      targetCustomerId: CUSTOMER_B,
+      reason: "Same customer duplicate profile",
+      confidence: 0.97,
+      idempotencyKey: "merge-customer-1"
+    });
+
+    expect(response.status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      type: "merge_customers",
+      status: "ok"
+    });
+    expect(mocks.mergeCustomers).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      sourceCustomerId: CUSTOMER_A,
+      targetCustomerId: CUSTOMER_B,
+      actorUserId: null,
+      reason: "Same customer duplicate profile"
+    });
+  });
+
   it("requires idempotencyKey before direct ticket merge execution", async () => {
     mocks.getAgentFromRequest.mockResolvedValue({
       id: "agent-1",

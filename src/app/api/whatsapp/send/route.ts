@@ -3,6 +3,7 @@ import { getSessionUser } from "@/server/auth/session";
 import { canManageTickets } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
 import { recordAuditLog } from "@/server/audit";
+import { validateAttachmentList } from "@/server/attachments/policy";
 import { queueWhatsAppSend } from "@/server/whatsapp/send";
 import { getWhatsAppWindowStatus } from "@/server/whatsapp/window";
 import { checkModuleEntitlement } from "@/server/tenant/module-guard";
@@ -69,6 +70,10 @@ export async function POST(request: Request) {
 
   if (!parsed.data.text && !parsed.data.template && !(parsed.data.attachments?.length ?? 0)) {
     return Response.json({ error: "Message body required" }, { status: 400 });
+  }
+  const attachmentPolicy = validateAttachmentList(parsed.data.attachments ?? null);
+  if (!attachmentPolicy.ok) {
+    return Response.json({ error: "Invalid attachment", details: attachmentPolicy.message }, { status: 400 });
   }
 
   if (parsed.data.ticketId) {

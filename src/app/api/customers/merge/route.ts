@@ -48,6 +48,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await mergeCustomers({
+      tenantId: user.tenant_id,
       sourceCustomerId: parsed.data.sourceCustomerId,
       targetCustomerId: parsed.data.targetCustomerId,
       actorUserId: user.id,

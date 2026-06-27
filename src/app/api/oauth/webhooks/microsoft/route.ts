@@ -40,11 +40,13 @@ export async function POST(request: NextRequest) {
       acceptedNotifications += 1;
     }
 
-    fetch(new URL("/api/cron/sync-mailboxes", request.url).toString(), {
-      headers: {
-        Authorization: `Bearer ${process.env.CRON_SECRET || ""}`
-      }
-    }).catch(e => log.error("Microsoft OAuth webhook failed to wake mailbox sync", { error: e }));
+    if (acceptedNotifications > 0) {
+      fetch(new URL("/api/cron/sync-mailboxes", request.url).toString(), {
+        headers: {
+          Authorization: `Bearer ${process.env.CRON_SECRET || ""}`
+        }
+      }).catch(e => log.error("Microsoft OAuth webhook failed to wake mailbox sync", { error: e }));
+    }
 
     log.info("Microsoft OAuth webhook accepted notifications", {
       notificationCount: body.value.length,
