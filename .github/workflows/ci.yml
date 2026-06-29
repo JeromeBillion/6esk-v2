@@ -30,6 +30,7 @@ env:
   RESEND_WEBHOOK_SECRET: ci-resend-webhook-secret
   RESEND_FROM_DOMAIN: 6esk.example
   SUPPORT_ADDRESS: support@6esk.example
+  SECURITY_ALERT_WEBHOOK: https://alerts.ci.6esk.example/security
   INBOUND_SHARED_SECRET: ci-inbound-shared-secret
   AGENT_SECRET_KEY: ci-agent-secret-long-enough
   AUTH_MFA_SECRET_ENCRYPTION_KEY: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

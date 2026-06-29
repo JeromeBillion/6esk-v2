@@ -190,6 +190,7 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
     "BACKOFFICE_BASE_URL",
     "INBOUND_SHARED_SECRET",
     "AGENT_SECRET_KEY",
+    "SECURITY_ALERT_WEBHOOK",
     "AUTH_MFA_SECRET_ENCRYPTION_KEY",
     "CRON_SECRET",
     "OAUTH_ENCRYPTION_KEY",

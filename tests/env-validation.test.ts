@@ -15,6 +15,7 @@ function baseEnv() {
     RESEND_API_KEY: "resend-key",
     RESEND_WEBHOOK_SECRET: "resend-webhook-secret",
     RESEND_FROM_DOMAIN: "6ex.co.za",
+    SECURITY_ALERT_WEBHOOK: "https://alerts.6esk.example/security",
     R2_ENDPOINT: "https://account.r2.cloudflarestorage.com",
     R2_ACCESS_KEY_ID: "r2-key",
     R2_SECRET_ACCESS_KEY: "r2-secret",
@@ -71,6 +72,7 @@ describe("validateEnv", () => {
       CALLS_PROVIDER: "mock",
       CALLS_OUTBOX_TENANT_ID: "",
       CRON_SECRET: "",
+      SECURITY_ALERT_WEBHOOK: "",
       AUTH_MFA_SECRET_ENCRYPTION_KEY: "",
       TENANT_INGRESS_SECRET_ENCRYPTION_KEY: "",
       PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: "",
@@ -80,6 +82,7 @@ describe("validateEnv", () => {
     };
 
     expect(() => validateEnv(env)).toThrow(/CRON_SECRET/);
+    expect(() => validateEnv(env)).toThrow(/SECURITY_ALERT_WEBHOOK/);
     expect(() => validateEnv(env)).toThrow(/AUTH_MFA_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/TENANT_INGRESS_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY/);

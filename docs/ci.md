@@ -49,6 +49,7 @@ git diff --check
 ```
 
 The local gate proves code, tests, and builds only. It does not prove deployed provider credentials, provider dashboards, Cloudflare Access policies, R2 bucket policy/versioning, production telemetry, or backup restore evidence.
+Production env validation does require a `SECURITY_ALERT_WEBHOOK` so security-sensitive events have a configured alert destination before launch. The CI workflow uses a placeholder URL only to validate the contract; real deploys must use the production alert sink.
 
 ## Rollback Stance
 
