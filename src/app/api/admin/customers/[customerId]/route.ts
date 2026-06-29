@@ -3,6 +3,7 @@ import { hasTenantAdminAccess } from "@/server/auth/roles";
 import { sessionTenantId } from "@/server/auth/tenant-session";
 import { deleteCustomerAndData } from "@/server/customers";
 import { recordAuditLog } from "@/server/audit";
+import { requestLogger } from "@/server/logger";
 
 function dataSubjectDeletionEnabled() {
   const value = process.env.DATA_SUBJECT_DELETION_ENABLED?.trim().toLowerCase();
@@ -59,7 +60,14 @@ export async function DELETE(
 
     return Response.json({ status: "deleted" });
   } catch (error) {
-    console.error("Failed to execute data subject deletion:", error);
+    requestLogger(request, { route: "DELETE /api/admin/customers/[customerId]" }).error(
+      "Data subject deletion failed",
+      {
+        error,
+        tenantId,
+        customerId
+      }
+    );
     return Response.json({ error: "Internal server error during deletion" }, { status: 500 });
   }
 }

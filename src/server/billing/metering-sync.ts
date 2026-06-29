@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { getTenantById } from "@/server/tenant/lifecycle";
 
 export interface MeteringProvider {
@@ -18,7 +19,14 @@ class MockMeteringProvider implements MeteringProvider {
   async reportUsage(params: Parameters<MeteringProvider["reportUsage"]>[0]) {
     // In production, this would call Stripe.billing.MeterEvents.create(...)
     // or an equivalent endpoint.
-    console.log(`[MeteringEngine] Reported ${params.quantity} ${params.usageKind} for ${params.tenantId} (module: ${params.moduleKey})`);
+    logger.info("Metering provider accepted usage event", {
+      tenantId: params.tenantId,
+      workspaceKey: params.workspaceKey,
+      moduleKey: params.moduleKey,
+      usageKind: params.usageKind,
+      quantity: params.quantity,
+      eventId: params.eventId
+    });
     return true;
   }
 }

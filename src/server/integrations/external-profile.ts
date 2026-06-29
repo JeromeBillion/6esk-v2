@@ -1,4 +1,5 @@
 import { findExternalUserLinkByIdentity } from "@/server/integrations/external-user-links";
+import { logger } from "@/server/logger";
 
 type LookupPayloadUser = {
   id: string;
@@ -294,7 +295,12 @@ async function lookupProfileFromCache({
       durationMs: elapsedMs()
     };
   } catch (error) {
-    console.error("[ExternalProfile] Cache lookup failed:", error instanceof Error ? error.message : error);
+    logger.warn("External profile cache lookup failed", {
+      error,
+      tenantId,
+      hasEmail: Boolean(normalizedEmail),
+      hasPhone: Boolean(normalizedPhone)
+    });
     return null;
   }
 }

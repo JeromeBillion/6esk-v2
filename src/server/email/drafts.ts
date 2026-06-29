@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { deleteObject, putObject } from "@/server/storage/r2";
 import { normalizeAddressList } from "@/server/email/normalize";
+import { logger } from "@/server/logger";
 import { getMessageById, type MessageRecord } from "@/server/messages";
 
 type UpsertMailDraftArgs = {
@@ -115,7 +116,12 @@ async function persistDraftBodies(draftId: string, tenantId: string, text?: stri
         await deleteObject(key);
       } catch (error) {
         // Best-effort cleanup for cleared draft bodies.
-        console.error("[Drafts] Failed to delete R2 object:", key, error instanceof Error ? error.message : error);
+        logger.warn("Failed to delete cleared draft body object", {
+          error,
+          tenantId,
+          draftId,
+          phase: "draft_body_cleanup"
+        });
       }
     })
   );
@@ -269,7 +275,12 @@ export async function deleteMailDraft(draftId: string, tenantId: string, mailbox
         await deleteObject(key);
       } catch (error) {
         // Best-effort cleanup; the draft row is already gone.
-        console.error("[Drafts] Failed to delete R2 object:", key, error instanceof Error ? error.message : error);
+        logger.warn("Failed to delete draft artifact object", {
+          error,
+          tenantId,
+          draftId,
+          phase: "draft_delete_cleanup"
+        });
       }
     })
   );

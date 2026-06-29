@@ -1,5 +1,6 @@
 import { getTenantById } from "./lifecycle";
 import { getGlobalAiProviderConfig, type GlobalAiProviderConfig } from "@/server/ai/global-provider";
+import { logger } from "@/server/logger";
 import { decrypt } from "@/server/security/encryption";
 import type { ModuleUsageProviderMode } from "@/server/module-metering";
 
@@ -88,7 +89,11 @@ export async function getTenantAiProviderConfig(tenantId: string): Promise<Tenan
         providerMode: "byo"
       };
     } catch (err) {
-      console.error(`[AI Provider] Failed to decrypt BYO key for tenant ${tenantId}`, err);
+      logger.error("Tenant BYO AI provider key decrypt failed", {
+        error: err,
+        tenantId,
+        providerMode
+      });
       throw new Error("Tenant BYO AI provider key could not be decrypted.");
     }
   }

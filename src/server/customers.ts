@@ -1063,7 +1063,16 @@ export async function deleteCustomerAndData(customerId: string, tenantId: string
     if (deleteRes.rows.length > 0 && keysToDelete.length > 0) {
       // Run deletions in parallel with catch to prevent one failure from stopping all
       await Promise.allSettled(
-        keysToDelete.map(key => deleteObject(key).catch(e => console.error("Failed to delete R2 object", key, e)))
+        keysToDelete.map((key) =>
+          deleteObject(key).catch((error) =>
+            logger.warn("Failed to delete customer storage object during data subject erasure", {
+              error,
+              tenantId,
+              customerId,
+              objectCount: keysToDelete.length
+            })
+          )
+        )
       );
     }
 
