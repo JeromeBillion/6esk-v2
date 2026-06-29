@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getRequestContext, logger, requestLogger } from "@/server/logger";
+import { getRequestContext, logger, redactLogContext, requestLogger } from "@/server/logger";
 
 describe("structured logger", () => {
   afterEach(() => {
@@ -49,6 +49,62 @@ describe("structured logger", () => {
       }
     });
     expect(payload.ts).toEqual(expect.any(String));
+  });
+
+  it("redacts secret-bearing context before logging", () => {
+    const circular: Record<string, unknown> = {
+      requestId: "req-1",
+      authorization: "Bearer live-token",
+      nested: {
+        refreshToken: "refresh-token",
+        apiKey: "provider-key",
+        safe: "kept"
+      },
+      attempts: [{ cookie: "sid=secret", status: "blocked" }]
+    };
+    circular.self = circular;
+
+    expect(redactLogContext(circular)).toMatchObject({
+      requestId: "req-1",
+      authorization: "[REDACTED]",
+      nested: {
+        refreshToken: "[REDACTED]",
+        apiKey: "[REDACTED]",
+        safe: "kept"
+      },
+      attempts: [{ cookie: "[REDACTED]", status: "blocked" }],
+      self: "[Circular]"
+    });
+  });
+
+  it("redacts caller and child logger secrets from emitted JSON", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("LOG_LEVEL", "debug");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    logger.child({ tenantId: "tenant-1", cookie: "session=secret" }).warn("Provider rejected webhook", {
+      route: "webhook",
+      signature: "sha256=secret",
+      provider: {
+        name: "google",
+        accessToken: "access-token"
+      }
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(warnSpy.mock.calls[0][0]));
+    expect(payload).toMatchObject({
+      level: "warn",
+      msg: "Provider rejected webhook",
+      tenantId: "tenant-1",
+      cookie: "[REDACTED]",
+      route: "webhook",
+      signature: "[REDACTED]",
+      provider: {
+        name: "google",
+        accessToken: "[REDACTED]"
+      }
+    });
   });
 
   it("lets child loggers inherit and override context", () => {

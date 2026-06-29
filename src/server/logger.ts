@@ -18,6 +18,13 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   error: 3
 };
 
+const REDACTED = "[REDACTED]";
+const CIRCULAR = "[Circular]";
+const TRUNCATED = "[Truncated]";
+const MAX_REDACTION_DEPTH = 6;
+const SENSITIVE_LOG_KEY_RE =
+  /password|passwd|secret|token|authorization|cookie|api[_-]?key|apikey|credential|signature|private[_-]?key|shared[_-]?secret/i;
+
 function resolveMinLevel(): LogLevel {
   const defaultLevel = process.env.NODE_ENV === "test" ? "error" : "info";
   const envLevel = (process.env.LOG_LEVEL ?? defaultLevel).toLowerCase();
@@ -48,18 +55,47 @@ function serializeError(value: unknown) {
   };
 }
 
+function redactValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (value == null || typeof value !== "object") return value;
+  if (value instanceof Error) return serializeError(value);
+  if (value instanceof Date) return value.toISOString();
+  if (depth >= MAX_REDACTION_DEPTH) return TRUNCATED;
+  if (seen.has(value)) return CIRCULAR;
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    const output = value.map((entry) => redactValue(entry, depth + 1, seen));
+    seen.delete(value);
+    return output;
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = SENSITIVE_LOG_KEY_RE.test(key) ? REDACTED : redactValue(entryValue, depth + 1, seen);
+  }
+
+  seen.delete(value);
+  return output;
+}
+
+export function redactLogContext<T>(value: T): T {
+  return redactValue(value, 0, new WeakSet<object>()) as T;
+}
+
 function emit(level: LogLevel, msg: string, context?: LogContext) {
   if (!shouldLog(level)) return;
 
+  const redactedContext = context ? redactLogContext(context) : {};
   const entry: Record<string, unknown> = {
     level,
     msg,
     ts: new Date().toISOString(),
-    ...context
+    ...redactedContext
   };
 
-  if (entry.error !== undefined) {
-    entry.error = serializeError(entry.error);
+  if (context?.error !== undefined) {
+    entry.error = serializeError(context.error);
   }
 
   const line = JSON.stringify(entry);
