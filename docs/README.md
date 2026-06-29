@@ -30,6 +30,8 @@ This directory is intentionally compact and only keeps implementation-critical d
   - Migration deployment checklist
 - `docs/dependency-audit-baseline.md`
   - Current npm audit baseline, release gate command, and remediation workflow
+- `docs/ci.md`
+  - GitHub Actions release gate, branch protection requirements, local release-candidate checks, and rollback stance
 - `docs/6esk-v2-commercialization-roadmap.md`
   - Multi-tenant SaaS commercialization roadmap for `6esk v2`, including security launch gates, AI readiness, usage/billing, South Africa readiness, and BizOps
 - `docs/v2-recovery-audit.md`

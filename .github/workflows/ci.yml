@@ -1,0 +1,144 @@
+name: Production CI Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - recovery/v2-retain-all-work
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_URL: https://app.ci.6esk.example
+  WEB_BASE_URL: https://app.ci.6esk.example
+  BACKOFFICE_BASE_URL: https://work.ci.6esk.example
+  BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: "true"
+  CLOUDFLARE_ACCESS_AUD: ci-cloudflare-access-audience
+  CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://6esk.cloudflareaccess.com
+  DATABASE_URL: postgres://ci:ci@localhost:5432/6esk_ci
+  SESSION_SECRET: ci-session-secret-for-build-and-test
+  RESEND_API_KEY: ci-resend-key
+  RESEND_WEBHOOK_SECRET: ci-resend-webhook-secret
+  RESEND_FROM_DOMAIN: 6esk.example
+  SUPPORT_ADDRESS: support@6esk.example
+  INBOUND_SHARED_SECRET: ci-inbound-shared-secret
+  AGENT_SECRET_KEY: ci-agent-secret-long-enough
+  AUTH_MFA_SECRET_ENCRYPTION_KEY: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  AUTH_REQUIRE_MFA_ADMIN: "true"
+  AUTH_MFA_ISSUER: 6esk
+  AUTH_OAUTH_LOGIN_ENABLED: "false"
+  ENTITLEMENTS_FAIL_CLOSED: "true"
+  MODULE_METERING_FAIL_CLOSED: "true"
+  TENANT_INGRESS_SECRET_ENCRYPTION_KEY: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  TENANT_INGRESS_REQUIRE_SECRETS: "true"
+  PROVIDER_WEBHOOK_SECRET_ENCRYPTION_KEY: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  TENANT_PROVIDER_WEBHOOK_REQUIRE_SECRETS: "true"
+  TENANT_PUBLIC_INGRESS_REQUIRE_ORIGIN: "true"
+  TENANT_QUERY_GUARD_MODE: strict
+  DATA_SUBJECT_DELETION_ENABLED: "false"
+  CRON_SECRET: ci-cron-secret
+  WHATSAPP_VERIFY_TOKEN: ci-whatsapp-verify-token
+  WHATSAPP_APP_SECRET: ci-whatsapp-app-secret
+  WHATSAPP_OUTBOX_SECRET: ci-whatsapp-outbox-secret
+  CALLS_PROVIDER: http_bridge
+  CALLS_PROVIDER_HTTP_URL: https://calls-provider.ci.6esk.example
+  CALLS_PROVIDER_HTTP_SECRET: ci-calls-provider-secret
+  CALLS_WEBHOOK_SECRET: ci-calls-webhook-secret
+  CALLS_WEBHOOK_ALLOW_UNAUTHENTICATED: "false"
+  CALLS_WEBHOOK_ALLOW_LEGACY_BODY_SIGNATURE: "false"
+  CALLS_OUTBOX_SECRET: ci-calls-outbox-secret
+  CALLS_OUTBOX_TENANT_ID: 22222222-2222-4222-8222-222222222222
+  CALLS_STT_PROVIDER: managed_http
+  CALLS_STT_PROVIDER_HTTP_URL: https://stt-provider.ci.6esk.example
+  CALLS_STT_PROVIDER_HTTP_SECRET: ci-stt-provider-secret
+  CALLS_TRANSCRIPT_AI_PROVIDER: managed_http
+  CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET: ci-transcript-ai-secret
+  AI_API_KEY: ci-ai-key
+  AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN: "true"
+  AI_KNOWLEDGE_MALWARE_SCAN_URL: https://scanner.ci.6esk.example/scan
+  AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL: https://extractor.ci.6esk.example/parse
+  OAUTH_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  UPSTASH_REDIS_REST_URL: https://redis.ci.6esk.example
+  UPSTASH_REDIS_REST_TOKEN: ci-upstash-token
+
+jobs:
+  validate:
+    name: Typecheck, lint, test, and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: High-severity dependency audit
+        run: npm run audit:security
+
+  build-web:
+    name: Build web service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web
+        run: npm run build:web
+
+  build-backoffice:
+    name: Build backoffice service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backoffice
+        run: npm run build:backoffice
