@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@6esk/auth/cloudflare-access", replacement: path.resolve(__dirname, "packages/auth/src/cloudflare-access.ts") },
+      { find: "@6esk/auth/google-pubsub", replacement: path.resolve(__dirname, "packages/auth/src/google-pubsub.ts") },
       { find: "@6esk/types/backoffice", replacement: path.resolve(__dirname, "packages/types/src/backoffice.ts") },
       { find: "@6esk/auth", replacement: path.resolve(__dirname, "packages/auth/src/index.ts") },
       { find: "@6esk/database", replacement: path.resolve(__dirname, "packages/database/src/index.ts") },

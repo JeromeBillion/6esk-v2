@@ -1,4 +1,8 @@
 import { NextRequest } from "next/server";
+import {
+  checkGooglePubSubPushHeaders,
+  checkGooglePubSubSubscription
+} from "@6esk/auth/google-pubsub";
 import { db } from "@/server/db";
 import { requestLogger } from "@/server/logger";
 import { syncConnection } from "@/server/oauth/sync-engine";
@@ -6,7 +10,24 @@ import { syncConnection } from "@/server/oauth/sync-engine";
 export async function POST(request: NextRequest) {
   const log = requestLogger(request, { route: "POST /api/oauth/webhooks/google" });
   try {
+    const auth = await checkGooglePubSubPushHeaders(request.headers);
+    if (!auth.ok) {
+      log.warn("Google OAuth webhook rejected unauthenticated Pub/Sub push", {
+        reason: auth.reason,
+        status: auth.status
+      });
+      return new Response(auth.reason, { status: auth.status });
+    }
+
     const body = await request.json();
+    const subscription = checkGooglePubSubSubscription(body.subscription);
+    if (!subscription.ok) {
+      log.warn("Google OAuth webhook rejected unexpected Pub/Sub subscription", {
+        reason: subscription.reason,
+        status: subscription.status
+      });
+      return new Response(subscription.reason, { status: subscription.status });
+    }
 
     if (!body.message || !body.message.data) {
       log.warn("Google OAuth webhook rejected invalid payload");

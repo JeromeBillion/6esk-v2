@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./cloudflare-access": "./src/cloudflare-access.ts"
+    "./cloudflare-access": "./src/cloudflare-access.ts",
+    "./google-pubsub": "./src/google-pubsub.ts"
   },
   "dependencies": {
     "jose": "^6.2.3"

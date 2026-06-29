@@ -118,7 +118,11 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: optionalNonEmptyString,
   GOOGLE_OAUTH_CLIENT_SECRET: optionalNonEmptyString,
   GOOGLE_OAUTH_REDIRECT_URI: optionalUrl,
+  GOOGLE_PUBSUB_REQUIRE_AUTH: optionalBooleanish,
   GOOGLE_PUBSUB_TOPIC: optionalNonEmptyString,
+  GOOGLE_PUBSUB_PUSH_AUDIENCE: optionalNonEmptyString,
+  GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL: optionalNonEmptyString,
+  GOOGLE_PUBSUB_SUBSCRIPTION: optionalNonEmptyString,
   GOOGLE_AUTH_CLIENT_ID: optionalNonEmptyString,
   GOOGLE_AUTH_CLIENT_SECRET: optionalNonEmptyString,
   GOOGLE_AUTH_REDIRECT_URI: optionalUrl,
@@ -213,6 +217,13 @@ function addProductionIssues(source: EnvSource, issues: string[]) {
     "GOOGLE_OAUTH_CLIENT_SECRET",
     "GOOGLE_OAUTH_REDIRECT_URI"
   ], issues);
+  if (readString(source, "GOOGLE_PUBSUB_TOPIC") || isEnabled(source, "GOOGLE_PUBSUB_REQUIRE_AUTH")) {
+    requireKeys(source, [
+      "GOOGLE_PUBSUB_PUSH_AUDIENCE",
+      "GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL",
+      "GOOGLE_PUBSUB_SUBSCRIPTION"
+    ], issues);
+  }
   requireCompleteGroup(source, [
     "MICROSOFT_OAUTH_CLIENT_ID",
     "MICROSOFT_OAUTH_CLIENT_SECRET",

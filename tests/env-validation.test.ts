@@ -99,6 +99,33 @@ describe("validateEnv", () => {
     expect(() => validateEnv(env)).toThrow(/GOOGLE_OAUTH_REDIRECT_URI/);
   });
 
+  it("requires authenticated Google Pub/Sub push config when mailbox sync topics are configured", () => {
+    const missingPushConfig = {
+      ...baseEnv(),
+      GOOGLE_PUBSUB_TOPIC: "projects/project-id/topics/gmail-events"
+    };
+    const completePushConfig = {
+      ...missingPushConfig,
+      GOOGLE_PUBSUB_PUSH_AUDIENCE: "https://app.6esk.example/api/oauth/webhooks/google",
+      GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL: "pubsub-push@project-id.iam.gserviceaccount.com",
+      GOOGLE_PUBSUB_SUBSCRIPTION: "projects/project-id/subscriptions/gmail-events"
+    };
+
+    expect(() => validateEnv(missingPushConfig)).toThrow(/GOOGLE_PUBSUB_PUSH_AUDIENCE/);
+    expect(() => validateEnv(missingPushConfig)).toThrow(/GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL/);
+    expect(() => validateEnv(missingPushConfig)).toThrow(/GOOGLE_PUBSUB_SUBSCRIPTION/);
+    expect(() => validateEnv(completePushConfig)).not.toThrow();
+  });
+
+  it("requires Google Pub/Sub push config when webhook push auth is explicitly enabled", () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv(),
+        GOOGLE_PUBSUB_REQUIRE_AUTH: "true"
+      })
+    ).toThrow(/GOOGLE_PUBSUB_PUSH_AUDIENCE/);
+  });
+
   it("requires Google and Microsoft auth login config when OAuth login is enabled", () => {
     const env = {
       ...baseEnv(),
