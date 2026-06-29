@@ -67,6 +67,10 @@ env:
   AI_KNOWLEDGE_MALWARE_SCAN_URL: https://scanner.ci.6esk.example/scan
   AI_KNOWLEDGE_DOCUMENT_EXTRACTOR_URL: https://extractor.ci.6esk.example/parse
   OAUTH_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  R2_ENDPOINT: https://account-id.r2.cloudflarestorage.com
+  R2_ACCESS_KEY_ID: ci-r2-access-key
+  R2_SECRET_ACCESS_KEY: ci-r2-secret-key
+  R2_BUCKET: 6esk-ci-artifacts
   UPSTASH_REDIS_REST_URL: https://redis.ci.6esk.example
   UPSTASH_REDIS_REST_TOKEN: ci-upstash-token
 
