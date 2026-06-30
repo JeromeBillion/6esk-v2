@@ -1058,7 +1058,7 @@ Durable workflow data requirements:
 - all mutating backoffice actions write audit events atomically with the mutation or through a durable outbox/idempotency model.
 - workflow cases are tenant-linked, test-covered, and visible in the internal UI.
 - the UI follows `docs/frontend-ui-system.md` and does not introduce a second visual language.
-- evidence/artifact links are validated as safe `https:` URLs or controlled internal object references, and backoffice routes have route-parameter validation plus rate limiting.
+- evidence/artifact links are validated as safe `https:` URLs or controlled internal object references, and backoffice routes have route-parameter validation plus rate limiting in both the root product app and independently deployed `apps/backoffice` service.
 - customer-facing AI reply generation cannot cite, paraphrase, or disclose internal comments; internal notes may only be used for internal staff workflows unless promoted to approved customer-visible facts.
 
 Agreed Gang launch findings to close before push/launch:
@@ -1066,7 +1066,7 @@ Agreed Gang launch findings to close before push/launch:
 - Internal staff MFA/privileged grant boundary: finance, security posture, evidence/legal links, impersonation, break-glass support, tenant suspension, and similar high-risk mutations require MFA and/or scoped privileged access.
 - Audit integrity: case, tenant-profile, artifact-link, billing/security, and privileged-access mutations must not commit without corresponding audit evidence.
 - AI privacy boundary: internal comments are not customer context. They must be structurally separated from customer-visible thread history, not merely hidden by prompt wording or regex output checks.
-- Abuse hardening: backoffice endpoints need explicit rate limiting, UUID/parameter validation, and SSRF-safe evidence link validation.
+- Abuse hardening: backoffice endpoints need explicit rate limiting across both deploy surfaces, UUID/parameter validation, and SSRF-safe evidence link validation.
 - Regression coverage: tests must prove tenant admins are denied, internal staff without MFA/grant are denied for sensitive mutations, audit failures do not leave unaudited state changes, customer replies cannot use internal comments, and root/customer web routing cannot bypass the backoffice boundary.
 
 Dan review notes:
@@ -1179,6 +1179,7 @@ Retained and verified in the current recovery branch:
 - core CRM service writes now reject missing tenant scope before customer resolution, ticket creation, ticket event writes, or outbound email ticket creation; inbound message reference resolution returns no ticket instead of querying the legacy default tenant when tenant scope is absent
 - ticket reply sending now rejects missing tenant scope before ticket lookup, uses the supplied tenant for ticket reads, and keeps message body-key updates tenant-scoped after outbound send persistence
 - central API rate-limit/request-correlation middleware now backs the existing Upstash dependency: sensitive auth, admin, agent, ticket, email, WhatsApp, and outbound call routes resolve to per-minute profiles; production fails closed when Upstash credentials are absent; production env validation rejects disabled/invalid configured limits; dev/test uses an in-memory limiter; request ids are sanitized and propagated as `x-6esk-request-id`; rate-limit keys prefer Cloudflare connecting IP over spoofable forwarded headers and sanitize/bound tenant, workspace, and client identity parts before limiter lookup
+- independent 6esk Work abuse protection is now core-code closed: `apps/backoffice` uses the shared edge-safe rate-limit middleware for `/api/backoffice/**` and sensitive auth routes before Cloudflare Access JWT verification, declares the Upstash dependencies for standalone deploys, and has regression coverage for repeated backoffice API and login attempts
 - 6esk Work Cloudflare Access/session binding is now core-code closed: the backoffice app middleware forwards the verified Access email into downstream request headers, shared backoffice authorization rejects production session/email mismatches, server-rendered backoffice page data loaders use the same guard, the backoffice login route rejects mismatched Access/login emails before session creation, and regression coverage spans middleware, authz, login, page data, privileged access, impersonation, workflows, billing, finance, audit, ops, and security readiness APIs
 - v2-native release gates recovered from the v1 wrong-folder work: `.github/workflows/ai-safety.yml`, `.github/workflows/tenant-isolation.yml`, `npm run test:ai-safety`, and `npm run test:tenant-isolation`
 

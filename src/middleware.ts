@@ -1,82 +1,13 @@
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis/cloudflare";
 import { NextFetchEvent, NextRequest, NextResponse } from "next/server";
 import {
   BACKOFFICE_ACCESS_EMAIL_HEADER,
   checkCloudflareAccessHeaders
 } from "@6esk/auth/cloudflare-access";
-import {
-  buildRateLimitKey,
-  rateLimitWindowSeconds,
-  readRateLimitValue,
-  resolveRateLimitProfile
-} from "@/server/rate-limit";
-
-type MemoryEntry = {
-  count: number;
-  resetAt: number;
-};
-
-type RateLimitResult = {
-  success: boolean;
-  limit: number;
-  remaining: number;
-  reset: number;
-  pending?: Promise<unknown>;
-};
+import { applyRateLimit, rateLimitResponse } from "@/server/rate-limit-middleware";
 
 const REQUEST_ID_HEADER = "x-6esk-request-id";
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9._:-]{8,96}$/;
 const BACKOFFICE_API_PREFIX = "/api/backoffice";
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __sixeskRateLimitMemory: Map<string, MemoryEntry> | undefined;
-}
-
-const redis =
-  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
-    ? Redis.fromEnv()
-    : null;
-const upstashLimiters = new Map<string, Ratelimit>();
-
-function getMemoryStore() {
-  globalThis.__sixeskRateLimitMemory ??= new Map<string, MemoryEntry>();
-  return globalThis.__sixeskRateLimitMemory;
-}
-
-function getUpstashLimiter(profileId: string, limit: number) {
-  if (!redis) return null;
-  const cacheKey = `${profileId}:${limit}`;
-  const existing = upstashLimiters.get(cacheKey);
-  if (existing) return existing;
-
-  const limiter = new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(limit, `${rateLimitWindowSeconds()} s`),
-    analytics: false,
-    prefix: `6esk:${profileId}`
-  });
-  upstashLimiters.set(cacheKey, limiter);
-  return limiter;
-}
-
-function memoryLimit(key: string, limit: number): RateLimitResult {
-  const now = Date.now();
-  const windowMs = rateLimitWindowSeconds() * 1000;
-  const store = getMemoryStore();
-  const current = store.get(key);
-  const entry = current && current.resetAt > now ? current : { count: 0, resetAt: now + windowMs };
-  entry.count += 1;
-  store.set(key, entry);
-
-  return {
-    success: entry.count <= limit,
-    limit,
-    remaining: Math.max(0, limit - entry.count),
-    reset: entry.resetAt
-  };
-}
 
 export function normalizeRequestIdForMiddleware(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -122,58 +53,6 @@ async function applyBackofficeAccess(request: NextRequest) {
     ok: true as const,
     email: access.email
   };
-}
-
-async function applyRateLimit(request: NextRequest): Promise<RateLimitResult | null> {
-  if (request.method === "OPTIONS") {
-    return null;
-  }
-
-  const profile = resolveRateLimitProfile(request.nextUrl.pathname);
-  if (!profile) {
-    return null;
-  }
-
-  const limit = readRateLimitValue(process.env[profile.envName], profile.fallbackLimit);
-  if (limit === 0) {
-    return null;
-  }
-
-  const key = buildRateLimitKey({ profile, headers: request.headers });
-  const limiter = getUpstashLimiter(profile.id, limit);
-  if (!limiter) {
-    if (process.env.NODE_ENV === "production") {
-      return {
-        success: false,
-        limit,
-        remaining: 0,
-        reset: Date.now() + rateLimitWindowSeconds() * 1000
-      };
-    }
-    return memoryLimit(key, limit);
-  }
-
-  return limiter.limit(key);
-}
-
-function rateLimitResponse(result: RateLimitResult) {
-  const retryAfter = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
-  return NextResponse.json(
-    {
-      error: "Too many requests",
-      code: "rate_limited",
-      retryAfterSeconds: retryAfter
-    },
-    {
-      status: 429,
-      headers: {
-        "Retry-After": String(retryAfter),
-        "X-RateLimit-Limit": String(result.limit),
-        "X-RateLimit-Remaining": String(result.remaining),
-        "X-RateLimit-Reset": String(result.reset)
-      }
-    }
-  );
 }
 
 export async function middleware(request: NextRequest, event: NextFetchEvent) {

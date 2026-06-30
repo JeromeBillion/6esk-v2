@@ -13,6 +13,14 @@ import { isBackofficeApiPath, middleware } from "@/middleware";
 
 const originalBackofficeLimit = process.env.RATE_LIMIT_BACKOFFICE;
 
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
 function event() {
   return { waitUntil: vi.fn() } as any;
 }
@@ -24,7 +32,7 @@ describe("root middleware backoffice boundary", () => {
   });
 
   afterEach(() => {
-    process.env.RATE_LIMIT_BACKOFFICE = originalBackofficeLimit;
+    restoreEnv("RATE_LIMIT_BACKOFFICE", originalBackofficeLimit);
     globalThis.__sixeskRateLimitMemory = new Map();
   });
 

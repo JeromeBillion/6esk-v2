@@ -12,6 +12,8 @@
     "@6esk/auth": "0.0.0",
     "@6esk/database": "0.0.0",
     "@6esk/types": "0.0.0",
-    "@6esk/ui": "0.0.0"
+    "@6esk/ui": "0.0.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.37.0"
   }
 }

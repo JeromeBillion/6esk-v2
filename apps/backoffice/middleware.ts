@@ -1,11 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent } from "next/server";
 import type { NextRequest } from "next/server";
 import {
   BACKOFFICE_ACCESS_EMAIL_HEADER,
   checkCloudflareAccessHeaders
 } from "@6esk/auth/cloudflare-access";
+import { applyRateLimit, rateLimitResponse } from "@/server/rate-limit-middleware";
 
-export async function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest, event?: NextFetchEvent) {
+  const limit = await applyRateLimit(request);
+  if (limit?.pending) {
+    event?.waitUntil(limit.pending);
+  }
+  if (limit && !limit.success) {
+    return rateLimitResponse(limit);
+  }
+
   const access = await checkCloudflareAccessHeaders(request.headers);
   if (!access.ok) {
     return NextResponse.json({ error: access.reason }, { status: access.status });
