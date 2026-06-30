@@ -479,59 +479,149 @@ export async function verifyMfaChallenge({
   code: string;
 }): Promise<MfaChallengeVerification> {
   const hash = tokenHash(challengeToken);
-  const result = await db.query<{
-    id: string;
-    tenant_id: string;
-    workspace_key: string;
-    user_id: string;
-    auth_provider: string | null;
-    attempt_count: number;
-    expired: boolean;
-  }>(
-    `SELECT id,
-            tenant_id,
-            workspace_key,
-            user_id,
-            auth_provider,
-            attempt_count,
-            expires_at <= now() AS expired
-     FROM auth_mfa_challenges
-     WHERE challenge_hash = $1
-       AND used_at IS NULL
-     LIMIT 1`,
-    [hash]
-  );
-  const challenge = result.rows[0];
-  if (!challenge) {
-    return { ok: false, code: "invalid_challenge" };
-  }
-  const scope = {
-    tenantId: challenge.tenant_id,
-    workspaceKey: challenge.workspace_key,
-    userId: challenge.user_id
-  };
-  if (challenge.expired) {
-    return {
-      ok: false,
-      code: "expired_challenge",
-      tenantId: scope.tenantId,
-      workspaceKey: scope.workspaceKey,
-      userId: scope.userId
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<{
+      id: string;
+      tenant_id: string;
+      workspace_key: string;
+      user_id: string;
+      auth_provider: string | null;
+      attempt_count: number;
+      expired: boolean;
+    }>(
+      `SELECT id,
+              tenant_id,
+              workspace_key,
+              user_id,
+              auth_provider,
+              attempt_count,
+              expires_at <= now() AS expired
+       FROM auth_mfa_challenges
+       WHERE challenge_hash = $1
+         AND used_at IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [hash]
+    );
+    const challenge = result.rows[0];
+    if (!challenge) {
+      await client.query("ROLLBACK");
+      return { ok: false, code: "invalid_challenge" };
+    }
+    const scope = {
+      tenantId: challenge.tenant_id,
+      workspaceKey: challenge.workspace_key,
+      userId: challenge.user_id
     };
-  }
-  if (challenge.attempt_count >= MFA_MAX_CHALLENGE_ATTEMPTS) {
-    return {
-      ok: false,
-      code: "too_many_attempts",
-      tenantId: scope.tenantId,
-      workspaceKey: scope.workspaceKey,
-      userId: scope.userId
-    };
-  }
+    if (challenge.expired) {
+      await client.query("ROLLBACK");
+      return {
+        ok: false,
+        code: "expired_challenge",
+        tenantId: scope.tenantId,
+        workspaceKey: scope.workspaceKey,
+        userId: scope.userId
+      };
+    }
+    if (challenge.attempt_count >= MFA_MAX_CHALLENGE_ATTEMPTS) {
+      await client.query("ROLLBACK");
+      return {
+        ok: false,
+        code: "too_many_attempts",
+        tenantId: scope.tenantId,
+        workspaceKey: scope.workspaceKey,
+        userId: scope.userId
+      };
+    }
 
-  const token = normalizeMfaCode(code);
-  if (!token) {
-    await incrementChallengeAttempts(challenge.id, scope);
+    const token = normalizeMfaCode(code);
+    if (!token) {
+      await incrementChallengeAttempts(client, challenge.id, scope);
+      await client.query("COMMIT");
+      return {
+        ok: false,
+        code: "invalid_code",
+        tenantId: scope.tenantId,
+        workspaceKey: scope.workspaceKey,
+        userId: scope.userId
+      };
+    }
+
+    const factorResult = await client.query<{
+      id: string;
+      secret_encrypted: string;
+    }>(
+      `SELECT id, secret_encrypted
+       FROM auth_mfa_factors
+       WHERE tenant_id = $1
+         AND workspace_key = $2
+         AND user_id = $3
+         AND factor_type = 'totp'
+         AND disabled_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [scope.tenantId, scope.workspaceKey, scope.userId]
+    );
+
+    if (factorResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return {
+        ok: false,
+        code: "mfa_not_configured",
+        tenantId: scope.tenantId,
+        workspaceKey: scope.workspaceKey,
+        userId: scope.userId
+      };
+    }
+
+    for (const factor of factorResult.rows) {
+      const secretBase32 = decryptMfaSecret(factor.secret_encrypted, scope);
+      if (!validateTotpCode(secretBase32, token)) continue;
+
+      const consumed = await client.query(
+        `UPDATE auth_mfa_challenges
+         SET used_at = now()
+         WHERE id = $1
+           AND tenant_id = $2
+           AND workspace_key = $3
+           AND used_at IS NULL`,
+        [challenge.id, scope.tenantId, scope.workspaceKey]
+      );
+      if ((consumed.rowCount ?? 0) !== 1) {
+        await client.query("ROLLBACK");
+        return {
+          ok: false,
+          code: "invalid_challenge",
+          tenantId: scope.tenantId,
+          workspaceKey: scope.workspaceKey,
+          userId: scope.userId
+        };
+      }
+
+      await client.query(
+        `UPDATE auth_mfa_factors
+         SET last_used_at = now()
+         WHERE id = $1
+           AND tenant_id = $2
+           AND workspace_key = $3`,
+        [factor.id, scope.tenantId, scope.workspaceKey]
+      );
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        userId: scope.userId,
+        tenantId: scope.tenantId,
+        workspaceKey: scope.workspaceKey,
+        factorId: factor.id,
+        challengeId: challenge.id,
+        authProvider: normalizeMfaSessionAuthProvider(challenge.auth_provider)
+      };
+    }
+
+    await incrementChallengeAttempts(client, challenge.id, scope);
+    await client.query("COMMIT");
     return {
       ok: false,
       code: "invalid_code",
@@ -539,78 +629,20 @@ export async function verifyMfaChallenge({
       workspaceKey: scope.workspaceKey,
       userId: scope.userId
     };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-
-  const factorResult = await db.query<{
-    id: string;
-    secret_encrypted: string;
-  }>(
-    `SELECT id, secret_encrypted
-     FROM auth_mfa_factors
-     WHERE tenant_id = $1
-       AND workspace_key = $2
-       AND user_id = $3
-       AND factor_type = 'totp'
-       AND disabled_at IS NULL
-     ORDER BY created_at DESC
-     LIMIT 10`,
-    [scope.tenantId, scope.workspaceKey, scope.userId]
-  );
-
-  if (factorResult.rows.length === 0) {
-    return {
-      ok: false,
-      code: "mfa_not_configured",
-      tenantId: scope.tenantId,
-      workspaceKey: scope.workspaceKey,
-      userId: scope.userId
-    };
-  }
-
-  for (const factor of factorResult.rows) {
-    const secretBase32 = decryptMfaSecret(factor.secret_encrypted, scope);
-    if (!validateTotpCode(secretBase32, token)) continue;
-
-    await db.query(
-      `UPDATE auth_mfa_factors
-       SET last_used_at = now()
-       WHERE id = $1
-         AND tenant_id = $2
-         AND workspace_key = $3`,
-      [factor.id, scope.tenantId, scope.workspaceKey]
-    );
-    await db.query(
-      `UPDATE auth_mfa_challenges
-       SET used_at = now()
-       WHERE id = $1
-         AND tenant_id = $2
-         AND workspace_key = $3
-         AND used_at IS NULL`,
-      [challenge.id, scope.tenantId, scope.workspaceKey]
-    );
-    return {
-      ok: true,
-      userId: scope.userId,
-      tenantId: scope.tenantId,
-      workspaceKey: scope.workspaceKey,
-      factorId: factor.id,
-      challengeId: challenge.id,
-      authProvider: normalizeMfaSessionAuthProvider(challenge.auth_provider)
-    };
-  }
-
-  await incrementChallengeAttempts(challenge.id, scope);
-  return {
-    ok: false,
-    code: "invalid_code",
-    tenantId: scope.tenantId,
-    workspaceKey: scope.workspaceKey,
-    userId: scope.userId
-  };
 }
 
-async function incrementChallengeAttempts(challengeId: string, scope: MfaScope) {
-  await db.query(
+async function incrementChallengeAttempts(
+  queryable: Pick<typeof db, "query">,
+  challengeId: string,
+  scope: MfaScope
+) {
+  await queryable.query(
     `UPDATE auth_mfa_challenges
      SET attempt_count = attempt_count + 1
      WHERE id = $1
