@@ -15,6 +15,10 @@ import {
 import { getTenantById } from "@/server/tenant/lifecycle";
 
 const idempotencyKey = z.string().trim().min(8).max(200);
+const adjustmentAmountCent = z.number().int().min(-2_147_483_647).max(2_147_483_647).refine(
+  (value) => value !== 0,
+  { message: "Adjustment amount must be non-zero" }
+);
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -25,7 +29,7 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("create_adjustment"),
     idempotencyKey,
     adjustmentType: z.enum(["credit", "refund", "write_off", "proration"]),
-    amountCent: z.number().int(),
+    amountCent: adjustmentAmountCent,
     reason: z.string().min(3).max(500),
     sourceInvoiceId: z.string().uuid().optional().nullable(),
     metadata: z.record(z.unknown()).optional()

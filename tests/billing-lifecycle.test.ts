@@ -26,6 +26,7 @@ import {
   createInvoiceDraft,
   getCustomerSafeInvoiceExport,
   getTenantBillingLifecycleSnapshot,
+  recordCollectionEvent,
   syncTenantSubscriptionFromCatalog,
   transitionInvoiceStatus
 } from "@/server/billing/lifecycle";
@@ -207,6 +208,64 @@ describe("billing lifecycle service", () => {
         action: "tenant_billing_adjustment_created"
       })
     );
+  });
+
+  it("rejects adjustment source invoices outside the tenant workspace before writes", async () => {
+    const sourceInvoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const query = vi.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("INSERT INTO tenant_billing_accounts")) {
+        return {
+          rows: [
+            {
+              tenant_id: TENANT_ID,
+              workspace_key: "primary",
+              currency: "ZAR",
+              vat_rate_bps: 0,
+              payment_terms_days: 7,
+              invoice_prefix: "6ESK-",
+              next_invoice_sequence: 1,
+              collection_status: "current",
+              dunning_status: "none",
+              billing_email: null
+            }
+          ]
+        };
+      }
+      if (sql.includes("FROM tenant_invoices") && sql.includes("id = $3")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+    mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
+
+    await expect(
+      createBillingAdjustment({
+        tenantId: TENANT_ID,
+        adjustmentType: "credit",
+        amountCent: 5000,
+        reason: "Invoice-linked credit",
+        sourceInvoiceId,
+        actorUserId: USER_ID,
+        idempotencyKey: "billing-adjustment-key-1",
+        idempotencyPayload: { action: "create_adjustment", sourceInvoiceId }
+      })
+    ).rejects.toThrow("Source invoice was not found for this tenant workspace.");
+
+    expect(query).toHaveBeenCalledWith("ROLLBACK");
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM tenant_invoices"),
+      [TENANT_ID, "primary", sourceInvoiceId]
+    );
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO tenant_billing_adjustments"),
+      expect.anything()
+    );
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining("tenant_billing_action_idempotency"),
+      expect.anything()
+    );
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
   });
 
   it("syncs subscription items and records proration for a mid-period module change", async () => {
@@ -525,6 +584,63 @@ describe("billing lifecycle service", () => {
       })
     );
     expect(query).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("rejects collection events for invoices outside the tenant workspace before writes", async () => {
+    const invoiceId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const query = vi.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("INSERT INTO tenant_billing_accounts")) {
+        return {
+          rows: [
+            {
+              tenant_id: TENANT_ID,
+              workspace_key: "primary",
+              currency: "ZAR",
+              vat_rate_bps: 0,
+              payment_terms_days: 7,
+              invoice_prefix: "6ESK-",
+              next_invoice_sequence: 1,
+              collection_status: "current",
+              dunning_status: "none",
+              billing_email: null
+            }
+          ]
+        };
+      }
+      if (sql.includes("FROM tenant_invoices") && sql.includes("id = $3")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+    mocks.dbConnect.mockResolvedValue({ query, release: vi.fn() });
+
+    await expect(
+      recordCollectionEvent({
+        tenantId: TENANT_ID,
+        invoiceId,
+        eventType: "payment_failed",
+        status: "failed",
+        actorUserId: USER_ID,
+        idempotencyKey: "collection-event-key-1",
+        idempotencyPayload: { action: "record_collection_event", invoiceId }
+      })
+    ).rejects.toThrow("Collection event invoice was not found for this tenant workspace.");
+
+    expect(query).toHaveBeenCalledWith("ROLLBACK");
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM tenant_invoices"),
+      [TENANT_ID, "primary", invoiceId]
+    );
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO tenant_collection_events"),
+      expect.anything()
+    );
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining("tenant_billing_action_idempotency"),
+      expect.anything()
+    );
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
   });
 
   it("exports customer-safe invoice data inside tenant and workspace scope", async () => {

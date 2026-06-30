@@ -170,6 +170,22 @@ describe("backoffice billing lifecycle API", () => {
     });
   });
 
+  it("rejects zero-value billing adjustments before service calls", async () => {
+    const response = await POST(
+      request({
+        action: "create_adjustment",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        adjustmentType: "credit",
+        amountCent: 0,
+        reason: "No-op adjustment"
+      }),
+      params()
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createBillingAdjustment).not.toHaveBeenCalled();
+  });
+
   it("returns duplicate billing action replay as deduplicated success", async () => {
     mocks.createBillingAdjustment.mockRejectedValue({
       name: "BillingActionIdempotencyError",

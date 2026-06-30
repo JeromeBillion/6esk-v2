@@ -67,9 +67,26 @@ const ALLOWED_INVOICE_STATUS_TRANSITIONS: Record<InvoiceStatus, readonly Invoice
   paid: [],
   void: []
 };
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 function canTransitionInvoiceStatus(current: InvoiceStatus, next: InvoiceStatus) {
   return current === next || ALLOWED_INVOICE_STATUS_TRANSITIONS[current].includes(next);
+}
+
+function normalizeBillingAdjustmentAmount(type: BillingAdjustmentType, amountCent: number) {
+  if (!Number.isSafeInteger(amountCent)) {
+    throw new Error("Billing adjustment amount must be a safe integer in cents.");
+  }
+  if (Math.abs(amountCent) > MAX_POSTGRES_INTEGER) {
+    throw new Error("Billing adjustment amount exceeds the supported cents range.");
+  }
+  if (amountCent === 0) {
+    throw new Error("Billing adjustment amount must be non-zero.");
+  }
+  if (type === "credit" || type === "refund" || type === "write_off") {
+    return -Math.abs(amountCent);
+  }
+  return amountCent;
 }
 
 export type BillingSubscriptionItem = {
@@ -576,6 +593,30 @@ async function ensureBillingAccount(queryable: Queryable, tenantId: string, work
     [tenantId, workspaceKey]
   );
   return result.rows[0];
+}
+
+async function assertInvoiceBelongsToTenantWorkspace(
+  queryable: Queryable,
+  input: {
+    tenantId: string;
+    workspaceKey: string;
+    invoiceId?: string | null;
+    label: string;
+  }
+) {
+  if (!input.invoiceId) return;
+  const result = await queryable.query<{ id: string }>(
+    `SELECT id
+     FROM tenant_invoices
+     WHERE tenant_id = $1
+       AND workspace_key = $2
+       AND id = $3
+     LIMIT 1`,
+    [input.tenantId, input.workspaceKey, input.invoiceId]
+  );
+  if (!result.rows[0]) {
+    throw new Error(`${input.label} invoice was not found for this tenant workspace.`);
+  }
 }
 
 async function getBillingAccount(queryable: Queryable, tenantId: string, workspaceKey: string) {
@@ -1172,20 +1213,18 @@ export async function createBillingAdjustment(input: {
   metadata?: Record<string, unknown> | null;
 } & BillingActionIdempotencyInput) {
   const workspaceKey = input.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
-  const normalizedAmount =
-    input.adjustmentType === "credit" ||
-    input.adjustmentType === "refund" ||
-    input.adjustmentType === "write_off"
-      ? -Math.abs(Math.trunc(input.amountCent))
-      : Math.trunc(input.amountCent);
-  if (normalizedAmount === 0) {
-    throw new Error("Billing adjustment amount must be non-zero.");
-  }
+  const normalizedAmount = normalizeBillingAdjustmentAmount(input.adjustmentType, input.amountCent);
   const client = await db.connect();
   let adjustment: AdjustmentRow | null = null;
   try {
     await client.query("BEGIN");
     await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    await assertInvoiceBelongsToTenantWorkspace(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      invoiceId: input.sourceInvoiceId,
+      label: "Source"
+    });
     const idempotencyRowId = await claimBillingActionIdempotency(client, {
       tenantId: input.tenantId,
       workspaceKey,
@@ -1623,6 +1662,12 @@ export async function recordCollectionEvent(input: {
   try {
     await client.query("BEGIN");
     await ensureBillingAccount(client, input.tenantId, workspaceKey);
+    await assertInvoiceBelongsToTenantWorkspace(client, {
+      tenantId: input.tenantId,
+      workspaceKey,
+      invoiceId: input.invoiceId,
+      label: "Collection event"
+    });
     const idempotencyRowId = await claimBillingActionIdempotency(client, {
       tenantId: input.tenantId,
       workspaceKey,
