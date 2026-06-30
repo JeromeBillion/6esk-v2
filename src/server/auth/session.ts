@@ -47,6 +47,8 @@ type CreateSessionOptions = {
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sixesk_session";
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 14);
+const MFA_ENROLLMENT_REQUIRED_SUFFIX = "_mfa_enrollment_required";
+const SAFE_AUTH_PROVIDER_PATTERN = /^[a-z0-9_:-]{1,80}$/;
 
 function normalizeSessionTtlDays(value: unknown) {
   const numeric = Number(value);
@@ -57,6 +59,22 @@ function normalizeSessionTtlDays(value: unknown) {
 function hashToken(token: string) {
   const secret = process.env.SESSION_SECRET ?? "";
   return createHash("sha256").update(`${token}:${secret}`).digest("hex");
+}
+
+function normalizeAuthProvider(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!SAFE_AUTH_PROVIDER_PATTERN.test(normalized)) {
+    throw new Error("Invalid session auth provider.");
+  }
+  return normalized;
+}
+
+export function completedMfaEnrollmentAuthProvider(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized.endsWith(MFA_ENROLLMENT_REQUIRED_SUFFIX)) return null;
+  const baseProvider = normalized.slice(0, -MFA_ENROLLMENT_REQUIRED_SUFFIX.length);
+  if (!baseProvider) return null;
+  return normalizeAuthProvider(`${baseProvider}_mfa`);
 }
 
 function hashFingerprint(value: string | null | undefined) {
@@ -78,7 +96,7 @@ function userAgentFromHeaders(headers?: Headers | null) {
 export async function createSession(userId: string, options: CreateSessionOptions = {}) {
   const token = randomBytes(32).toString("hex");
   const tokenHash = hashToken(token);
-  const authProvider = options.authProvider?.trim() || "password";
+  const authProvider = normalizeAuthProvider(options.authProvider?.trim() || "password");
   const userAgentHash = hashFingerprint(userAgentFromHeaders(options.requestHeaders));
   const ipHash = hashFingerprint(clientIpFromHeaders(options.requestHeaders));
   const userResult = await db.query<{
@@ -295,6 +313,42 @@ export async function revokeSessionForUser({
        AND u.tenant_id = $3
        AND s.revoked_at IS NULL`,
     [sessionId, user.id, homeTenantIdFor(user), reason]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function updateCurrentSessionAuthProvider({
+  user,
+  authProvider
+}: {
+  user: Pick<SessionUser, "id" | "tenant_id" | "real_tenant_id">;
+  authProvider: string;
+}) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
+  if (!token) return false;
+
+  const tokenHash = hashToken(token);
+  const tenantId = homeTenantIdFor(user);
+  const result = await db.query(
+    `UPDATE auth_sessions s
+     SET auth_provider = $4,
+         last_seen_at = now()
+     FROM users u
+     WHERE s.token_hash = $1
+       AND s.user_id = $2
+       AND s.user_id = u.id
+       AND u.tenant_id = $3
+       AND s.revoked_at IS NULL
+       AND s.expires_at > now()
+       AND s.auth_provider LIKE $5`,
+    [
+      tokenHash,
+      user.id,
+      tenantId,
+      normalizeAuthProvider(authProvider),
+      `%${MFA_ENROLLMENT_REQUIRED_SUFFIX}`
+    ]
   );
   return (result.rowCount ?? 0) > 0;
 }

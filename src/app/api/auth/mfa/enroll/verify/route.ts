@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
+import {
+  completedMfaEnrollmentAuthProvider,
+  getSessionUser,
+  updateCurrentSessionAuthProvider
+} from "@/server/auth/session";
 import { verifyTotpEnrollment } from "@/server/auth/mfa";
 import { recordAuditLog } from "@/server/audit";
 
@@ -43,13 +47,25 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid MFA enrollment", code: result.code }, { status: 401 });
   }
 
+  const upgradedAuthProvider = completedMfaEnrollmentAuthProvider(user.session_auth_provider);
+  const sessionUpgraded = upgradedAuthProvider
+    ? await updateCurrentSessionAuthProvider({
+        user,
+        authProvider: upgradedAuthProvider
+      })
+    : false;
+
   await recordAuditLog({
     tenantId: user.tenant_id,
     actorUserId: user.id,
     action: "auth_mfa_enrollment_verified",
     entityType: "auth_mfa_factor",
     entityId: result.factorId,
-    data: { factorType: "totp" }
+    data: {
+      factorType: "totp",
+      sessionAuthProvider: upgradedAuthProvider,
+      sessionUpgraded
+    }
   });
 
   return Response.json({ status: "ok", factorId: result.factorId });

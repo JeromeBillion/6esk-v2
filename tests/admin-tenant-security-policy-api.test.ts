@@ -36,7 +36,7 @@ const POLICY = {
   oidc_issuer: null
 };
 
-function buildUser(roleName: "tenant_admin" | "agent") {
+function buildUser(roleName: "tenant_admin" | "agent", overrides: Record<string, unknown> = {}) {
   return {
     id: USER_ID,
     email: `${roleName}@example.test`,
@@ -46,7 +46,8 @@ function buildUser(roleName: "tenant_admin" | "agent") {
     tenant_id: TENANT_ID,
     tenant_slug: "acme",
     real_tenant_id: TENANT_ID,
-    is_impersonating: false
+    is_impersonating: false,
+    ...overrides
   };
 }
 
@@ -58,6 +59,19 @@ describe("/api/admin/tenant/security-policy", () => {
 
   it("returns 403 for non-admin users", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("agent"));
+
+    const response = await GET();
+
+    expect(response.status).toBe(403);
+    expect(mocks.getTenantSecurityPolicyOrDefault).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when an admin session still requires MFA enrollment", async () => {
+    mocks.getSessionUser.mockResolvedValue(
+      buildUser("tenant_admin", {
+        session_auth_provider: "password_mfa_enrollment_required"
+      })
+    );
 
     const response = await GET();
 

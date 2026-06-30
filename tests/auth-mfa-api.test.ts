@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   createSession: vi.fn(),
+  completedMfaEnrollmentAuthProvider: vi.fn(),
+  updateCurrentSessionAuthProvider: vi.fn(),
   verifyMfaChallenge: vi.fn(),
   getMfaStatusForUser: vi.fn(),
   startTotpEnrollment: vi.fn(),
@@ -12,7 +14,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser,
-  createSession: mocks.createSession
+  createSession: mocks.createSession,
+  completedMfaEnrollmentAuthProvider: mocks.completedMfaEnrollmentAuthProvider,
+  updateCurrentSessionAuthProvider: mocks.updateCurrentSessionAuthProvider
 }));
 
 vi.mock("@/server/auth/mfa", () => ({
@@ -48,6 +52,8 @@ describe("MFA API routes", () => {
     vi.clearAllMocks();
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.createSession.mockResolvedValue(undefined);
+    mocks.completedMfaEnrollmentAuthProvider.mockReturnValue(null);
+    mocks.updateCurrentSessionAuthProvider.mockResolvedValue(false);
   });
 
   it("verifies an MFA challenge and mints an MFA-authenticated session", async () => {
@@ -147,6 +153,46 @@ describe("MFA API routes", () => {
         tenantId: TENANT_ID,
         actorUserId: user.id,
         action: "auth_mfa_enrollment_verified"
+      })
+    );
+  });
+
+  it("upgrades an MFA-enrollment-required session after factor verification", async () => {
+    const enrollmentUser = {
+      ...user,
+      session_auth_provider: "password_mfa_enrollment_required"
+    };
+    mocks.getSessionUser.mockResolvedValue(enrollmentUser);
+    mocks.verifyTotpEnrollment.mockResolvedValue({
+      ok: true,
+      factorId: "factor-1"
+    });
+    mocks.completedMfaEnrollmentAuthProvider.mockReturnValue("password_mfa");
+    mocks.updateCurrentSessionAuthProvider.mockResolvedValue(true);
+
+    const response = await POST_VERIFY_ENROLLMENT(
+      new Request("http://localhost/api/auth/mfa/enroll/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enrollmentToken: "enroll-token", code: "123456" })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.completedMfaEnrollmentAuthProvider).toHaveBeenCalledWith(
+      "password_mfa_enrollment_required"
+    );
+    expect(mocks.updateCurrentSessionAuthProvider).toHaveBeenCalledWith({
+      user: enrollmentUser,
+      authProvider: "password_mfa"
+    });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "auth_mfa_enrollment_verified",
+        data: expect.objectContaining({
+          sessionAuthProvider: "password_mfa",
+          sessionUpgraded: true
+        })
       })
     );
   });

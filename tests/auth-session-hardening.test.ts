@@ -95,4 +95,37 @@ describe("auth session hardening", () => {
       "tenant-home"
     ]);
   });
+
+  it("maps enrollment-required session providers to MFA-satisfied providers", async () => {
+    const { completedMfaEnrollmentAuthProvider } = await import("@/server/auth/session");
+
+    expect(completedMfaEnrollmentAuthProvider("password_mfa_enrollment_required")).toBe(
+      "password_mfa"
+    );
+    expect(completedMfaEnrollmentAuthProvider("google_oauth_mfa_enrollment_required")).toBe(
+      "google_oauth_mfa"
+    );
+    expect(completedMfaEnrollmentAuthProvider("password")).toBeNull();
+  });
+
+  it("upgrades only the current active enrollment-required session provider", async () => {
+    const { updateCurrentSessionAuthProvider } = await import("@/server/auth/session");
+    mocks.cookieGet.mockReturnValue({ value: "raw-session-token" });
+    mocks.dbQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const updated = await updateCurrentSessionAuthProvider({
+      user: {
+        id: "support-user",
+        tenant_id: "tenant-target",
+        real_tenant_id: "tenant-home"
+      },
+      authProvider: "password_mfa"
+    });
+
+    expect(updated).toBe(true);
+    expect(mocks.dbQuery).toHaveBeenCalledWith(
+      expect.stringContaining("s.auth_provider LIKE $5"),
+      [expect.any(String), "support-user", "tenant-home", "password_mfa", "%_mfa_enrollment_required"]
+    );
+  });
 });
