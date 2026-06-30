@@ -119,6 +119,26 @@ describe("GET /api/attachments/[attachmentId] tenant isolation", () => {
     expect(mocks.getObjectBuffer).not.toHaveBeenCalled();
   });
 
+  it("ignores malformed demo-mode cookies instead of bypassing auth or throwing", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+    mocks.resolveMockAttachment.mockReturnValue({
+      filename: "demo.txt",
+      contentType: "text/plain",
+      body: "demo"
+    });
+
+    const { response, body } = await getAttachment({
+      attachmentId: MOCK_ATTACHMENT_ID,
+      cookie: "sixesk_data_mode=%E0%A4%A"
+    });
+
+    expect(response.status).toBe(401);
+    expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(mocks.resolveMockAttachment).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+    expect(mocks.getObjectBuffer).not.toHaveBeenCalled();
+  });
+
   it("serves generated mock attachments only for demo-mode requests", async () => {
     mocks.getSessionUser.mockResolvedValue(null);
     mocks.resolveMockAttachment.mockReturnValue({

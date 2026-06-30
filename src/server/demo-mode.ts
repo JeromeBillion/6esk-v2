@@ -15,7 +15,11 @@ function readCookieValue(cookieHeader: string | null, name: string) {
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rawValue] = part.trim().split("=");
     if (rawKey !== name) continue;
-    return decodeURIComponent(rawValue.join("=") ?? "");
+    try {
+      return decodeURIComponent(rawValue.join("="));
+    } catch {
+      return null;
+    }
   }
   return null;
 }
