@@ -1,13 +1,11 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
 import {
   createPrivilegedAccessGrant,
   getPrivilegedAccessStats,
-  hasPrivilegedMfaSession,
   listPrivilegedAccessGrants
 } from "@/server/auth/privileged-access";
 import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
+import { requireBackofficeSensitiveAccess } from "@/server/backoffice/authz";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 const createGrantSchema = z.object({
@@ -32,25 +30,8 @@ function readLimit(request: Request) {
   return Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 100) : 25;
 }
 
-async function requirePrivilegedStaff() {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return {
-      ok: false as const,
-      response: Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 })
-    };
-  }
-  if (!hasPrivilegedMfaSession(user)) {
-    return {
-      ok: false as const,
-      response: Response.json({ error: "MFA is required for privileged access." }, { status: 403 })
-    };
-  }
-  return { ok: true as const, user: user! };
-}
-
 export async function GET(request: Request) {
-  const auth = await requirePrivilegedStaff();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   const tenantId = readTenantId(request);
@@ -68,7 +49,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requirePrivilegedStaff();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;

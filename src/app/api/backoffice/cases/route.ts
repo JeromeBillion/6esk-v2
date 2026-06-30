@@ -33,7 +33,7 @@ const createSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const auth = await requireBackofficeStaff();
+  const auth = await requireBackofficeStaff(request.headers);
   if (!auth.ok) return auth.response;
 
   const { searchParams } = new URL(request.url);
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireBackofficeSensitiveAccess();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;

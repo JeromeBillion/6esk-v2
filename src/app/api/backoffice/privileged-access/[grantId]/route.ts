@@ -1,13 +1,12 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { INTERNAL_ADMIN_ROLE, isInternalStaff } from "@/server/auth/roles";
+import { INTERNAL_ADMIN_ROLE } from "@/server/auth/roles";
 import {
   approvePrivilegedAccessGrant,
-  hasPrivilegedMfaSession,
   reviewPrivilegedAccessGrant,
   revokePrivilegedAccessGrant
 } from "@/server/auth/privileged-access";
 import { sendPrivilegedAccessAlert } from "@/server/auth/privileged-access-alerts";
+import { requireBackofficeSensitiveAccess } from "@/server/backoffice/authz";
 import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -32,25 +31,20 @@ function isInternalAdmin(user: { role_name?: string | null } | null) {
   return user?.role_name === INTERNAL_ADMIN_ROLE;
 }
 
-async function requireInternalAdminWithMfa() {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user) || !isInternalAdmin(user)) {
+async function requireInternalAdminWithMfa(requestHeaders: Headers) {
+  const auth = await requireBackofficeSensitiveAccess(requestHeaders);
+  if (!auth.ok) return auth;
+  if (!isInternalAdmin(auth.user)) {
     return {
       ok: false as const,
       response: Response.json({ error: "Forbidden. Internal admin only." }, { status: 403 })
     };
   }
-  if (!hasPrivilegedMfaSession(user)) {
-    return {
-      ok: false as const,
-      response: Response.json({ error: "MFA is required for privileged access." }, { status: 403 })
-    };
-  }
-  return { ok: true as const, user: user! };
+  return auth;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ grantId: string }> }) {
-  const auth = await requireInternalAdminWithMfa();
+  const auth = await requireInternalAdminWithMfa(request.headers);
   if (!auth.ok) return auth.response;
 
   const { grantId } = await params;

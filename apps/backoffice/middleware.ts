@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { checkCloudflareAccessHeaders } from "@6esk/auth/cloudflare-access";
+import {
+  BACKOFFICE_ACCESS_EMAIL_HEADER,
+  checkCloudflareAccessHeaders
+} from "@6esk/auth/cloudflare-access";
 
 export async function middleware(request: NextRequest) {
   const access = await checkCloudflareAccessHeaders(request.headers);
@@ -8,8 +11,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.json({ error: access.reason }, { status: access.status });
   }
 
-  const response = NextResponse.next();
-  response.headers.set("x-sixesk-work-access-email", access.email);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(BACKOFFICE_ACCESS_EMAIL_HEADER, access.email);
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders
+    }
+  });
+  response.headers.set(BACKOFFICE_ACCESS_EMAIL_HEADER, access.email);
   return response;
 }
 

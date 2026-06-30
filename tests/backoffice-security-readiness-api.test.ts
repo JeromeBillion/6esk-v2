@@ -29,7 +29,7 @@ describe("backoffice security readiness API", () => {
     mocks.getSessionUser.mockResolvedValue({ id: "u1" });
     mocks.isInternalStaff.mockReturnValue(false);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/backoffice/security/readiness"));
     expect(response.status).toBe(403);
   });
 
@@ -38,7 +38,7 @@ describe("backoffice security readiness API", () => {
     mocks.isInternalStaff.mockReturnValue(true);
     mocks.getSecurityReadinessSnapshot.mockResolvedValue({ healthy: true });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/backoffice/security/readiness"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

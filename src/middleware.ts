@@ -1,7 +1,10 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis/cloudflare";
 import { NextFetchEvent, NextRequest, NextResponse } from "next/server";
-import { checkCloudflareAccessHeaders } from "@6esk/auth/cloudflare-access";
+import {
+  BACKOFFICE_ACCESS_EMAIL_HEADER,
+  checkCloudflareAccessHeaders
+} from "@6esk/auth/cloudflare-access";
 import {
   buildRateLimitKey,
   rateLimitWindowSeconds,
@@ -191,7 +194,7 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(REQUEST_ID_HEADER, requestId);
   if (backofficeAccess?.ok) {
-    requestHeaders.set("x-sixesk-work-access-email", backofficeAccess.email);
+    requestHeaders.set(BACKOFFICE_ACCESS_EMAIL_HEADER, backofficeAccess.email);
   }
   return withRequestId(
     NextResponse.next({

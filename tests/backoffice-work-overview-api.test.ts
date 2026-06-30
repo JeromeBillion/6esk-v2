@@ -29,7 +29,7 @@ describe("backoffice work overview API", () => {
     mocks.getSessionUser.mockResolvedValue({ id: "u1", tenant_id: "t1" });
     mocks.isInternalStaff.mockReturnValue(false);
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/backoffice/work/overview"));
     expect(response.status).toBe(403);
   });
 
@@ -38,7 +38,7 @@ describe("backoffice work overview API", () => {
     mocks.isInternalStaff.mockReturnValue(true);
     mocks.getBackofficeOverview.mockResolvedValue({ tenantScope: "t1", tenants: { active: 3 } });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/backoffice/work/overview"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

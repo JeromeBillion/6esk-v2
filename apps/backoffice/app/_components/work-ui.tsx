@@ -11,35 +11,17 @@ import {
   Workflow
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { getSessionUser, isInternalStaff } from "@6esk/auth";
-import { listBackofficeAuditPreview, type BackofficeAuditPreview } from "@/server/backoffice/audit-preview";
-import { getBackofficeOverview } from "@/server/backoffice/overview";
 import {
-  listBackofficeCases,
-  listTenantBackofficeProfiles
-} from "@/server/backoffice/workflows";
-import { listTenants } from "@/server/tenant/lifecycle";
+  getAuthorizedBackofficePageData,
+  type BackofficePageData,
+  type Overview,
+  type TenantOption
+} from "./work-data";
+import type { BackofficeAuditPreview } from "@/server/backoffice/audit-preview";
 import type { BackofficeCase, TenantBackofficeProfile } from "@6esk/types/backoffice";
 import styles from "../page.module.css";
 
-export type Overview = Awaited<ReturnType<typeof getBackofficeOverview>>;
-
-export type TenantOption = {
-  id: string;
-  slug: string;
-  displayName: string;
-  status: string;
-  plan?: string;
-};
-
-export type BackofficePageData = {
-  user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
-  overview: Overview;
-  cases: BackofficeCase[];
-  profiles: TenantBackofficeProfile[];
-  tenants: TenantOption[];
-  auditLogs: BackofficeAuditPreview[];
-};
+export type { BackofficePageData, Overview, TenantOption } from "./work-data";
 
 const NAV_ITEMS = [
   { label: "Dashboards", href: "/dashboard", description: "Overview" },
@@ -109,74 +91,23 @@ export function profileTone(profile: TenantBackofficeProfile) {
   return "neutral";
 }
 
-export async function loadBackofficeData(userTenantId: string) {
-  const [overview, cases, profiles, tenants, auditLogs] = await Promise.all([
-    getBackofficeOverview({ tenantId: userTenantId }),
-    listBackofficeCases({ limit: 50 }),
-    listTenantBackofficeProfiles({ limit: 200 }),
-    listTenants({ limit: 500 }),
-    listBackofficeAuditPreview({ limit: 40 })
-  ]);
-  return {
-    overview,
-    cases,
-    profiles,
-    tenants: tenants.map<TenantOption>((tenant) => ({
-      id: tenant.id,
-      slug: tenant.slug,
-      displayName: tenant.displayName,
-      status: tenant.status,
-      plan: tenant.plan
-    })),
-    auditLogs
-  };
-}
-
 export async function getBackofficePageData(): Promise<
   | { ok: true; data: BackofficePageData }
   | { ok: false; node: ReactNode }
 > {
-  const user = await getSessionUser();
-  if (!user) {
+  const result = await getAuthorizedBackofficePageData();
+  if (!result.ok) {
     return {
       ok: false,
       node: (
         <AccessState
-          title="Internal session required"
-          message="6esk Work is only available after signing in with an internal 6esk staff account."
+          title={result.reason === "unauthorized" ? "Internal session required" : "Backoffice data unavailable"}
+          message={result.message}
         />
       )
     };
   }
-
-  if (!isInternalStaff(user)) {
-    return {
-      ok: false,
-      node: (
-        <AccessState
-          title="Internal staff only"
-          message="This workspace is isolated from tenant administration and is not available to customer users."
-        />
-      )
-    };
-  }
-
-  try {
-    const data = await loadBackofficeData(user.tenant_id);
-    return {
-      ok: true,
-      data: {
-        user,
-        ...data
-      }
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Backoffice data could not be loaded.";
-    return {
-      ok: false,
-      node: <AccessState title="Backoffice data unavailable" message={message} />
-    };
-  }
+  return result;
 }
 
 export function AccessState({

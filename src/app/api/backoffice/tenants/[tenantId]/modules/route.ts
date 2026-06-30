@@ -19,7 +19,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const auth = await requireBackofficeStaff();
+  const auth = await requireBackofficeStaff(request.headers);
   if (!auth.ok) return auth.response;
 
   const parsedParams = paramsSchema.safeParse(await params);
@@ -48,7 +48,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const auth = await requireBackofficeSensitiveAccess();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;

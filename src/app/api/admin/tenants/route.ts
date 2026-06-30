@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     });
   }
 
-  const auth = await requireBackofficeStaff();
+  const auth = await requireBackofficeStaff(request.headers);
   if (!auth.ok) return auth.response;
 
   const url = new URL(request.url);
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not available in demo mode" }, { status: 400 });
   }
 
-  const auth = await requireBackofficeSensitiveAccess();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let body: unknown;
@@ -113,7 +113,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Not available in demo mode" }, { status: 400 });
   }
 
-  const auth = await requireBackofficeSensitiveAccess();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let body: unknown;

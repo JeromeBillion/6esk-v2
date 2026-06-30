@@ -1,13 +1,10 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
 import { getOpsHealthSnapshot } from "@/server/ops/health";
+import { requireBackofficeStaff } from "@/server/backoffice/authz";
 
-export async function GET() {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+export async function GET(request: Request) {
+  const auth = await requireBackofficeStaff(request.headers);
+  if (!auth.ok) return auth.response;
 
-  const snapshot = await getOpsHealthSnapshot({ tenantId: user?.tenant_id ?? null });
+  const snapshot = await getOpsHealthSnapshot({ tenantId: auth.user.tenant_id ?? null });
   return Response.json(snapshot);
 }

@@ -13,6 +13,8 @@ export type CloudflareAccessCheck =
       reason: string;
     };
 
+export const BACKOFFICE_ACCESS_EMAIL_HEADER = "x-sixesk-work-access-email";
+
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 function isEnabled(value: string | undefined) {

@@ -1053,6 +1053,7 @@ Durable workflow data requirements:
 - tenant admins cannot access `6esk Work`.
 - internal staff auth is enforced on every page and API.
 - Cloudflare Access enforcement is production-gated and fails closed for `work.6esk.com` and backoffice API access when required headers/config are missing; this is only the 6esk Work/backoffice ingress boundary and must not put tenant/customer app space behind Cloudflare Access.
+- production 6esk Work pages and routes must bind the verified Cloudflare Access email to the authenticated app session email; mismatches fail closed before server-rendered dashboards, backoffice reads, mutations, login session creation, privileged access, impersonation, tenant lifecycle, module, or billing actions.
 - sensitive internal 6esk Work actions require an internal staff MFA session or an active privileged-access grant; read-only internal views may remain internal-staff-only.
 - all mutating backoffice actions write audit events atomically with the mutation or through a durable outbox/idempotency model.
 - workflow cases are tenant-linked, test-covered, and visible in the internal UI.
@@ -1061,7 +1062,7 @@ Durable workflow data requirements:
 - customer-facing AI reply generation cannot cite, paraphrase, or disclose internal comments; internal notes may only be used for internal staff workflows unless promoted to approved customer-visible facts.
 
 Agreed Gang launch findings to close before push/launch:
-- Backoffice control-plane boundary: `/api/backoffice/**` must not be reachable from the customer web app without the same 6esk Work ingress and internal-staff authorization boundary used by `apps/backoffice`.
+- Backoffice control-plane boundary: `/api/backoffice/**` must not be reachable from the customer web app without the same 6esk Work ingress and internal-staff authorization boundary used by `apps/backoffice`; the verified Cloudflare Access identity must also match the 6esk Work app session for production backoffice requests.
 - Internal staff MFA/privileged grant boundary: finance, security posture, evidence/legal links, impersonation, break-glass support, tenant suspension, and similar high-risk mutations require MFA and/or scoped privileged access.
 - Audit integrity: case, tenant-profile, artifact-link, billing/security, and privileged-access mutations must not commit without corresponding audit evidence.
 - AI privacy boundary: internal comments are not customer context. They must be structurally separated from customer-visible thread history, not merely hidden by prompt wording or regex output checks.
@@ -1178,6 +1179,7 @@ Retained and verified in the current recovery branch:
 - core CRM service writes now reject missing tenant scope before customer resolution, ticket creation, ticket event writes, or outbound email ticket creation; inbound message reference resolution returns no ticket instead of querying the legacy default tenant when tenant scope is absent
 - ticket reply sending now rejects missing tenant scope before ticket lookup, uses the supplied tenant for ticket reads, and keeps message body-key updates tenant-scoped after outbound send persistence
 - central API rate-limit/request-correlation middleware now backs the existing Upstash dependency: sensitive auth, admin, agent, ticket, email, WhatsApp, and outbound call routes resolve to per-minute profiles; production fails closed when Upstash credentials are absent; production env validation rejects disabled/invalid configured limits; dev/test uses an in-memory limiter; request ids are sanitized and propagated as `x-6esk-request-id`; rate-limit keys prefer Cloudflare connecting IP over spoofable forwarded headers and sanitize/bound tenant, workspace, and client identity parts before limiter lookup
+- 6esk Work Cloudflare Access/session binding is now core-code closed: the backoffice app middleware forwards the verified Access email into downstream request headers, shared backoffice authorization rejects production session/email mismatches, server-rendered backoffice page data loaders use the same guard, the backoffice login route rejects mismatched Access/login emails before session creation, and regression coverage spans middleware, authz, login, page data, privileged access, impersonation, workflows, billing, finance, audit, ops, and security readiness APIs
 - v2-native release gates recovered from the v1 wrong-folder work: `.github/workflows/ai-safety.yml`, `.github/workflows/tenant-isolation.yml`, `npm run test:ai-safety`, and `npm run test:tenant-isolation`
 
 Still outstanding before v2 main can be considered deploy-ready:

@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { db } from "@/server/db";
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
 import {
   getActivePrivilegedAccessGrantForSubject,
-  hasPrivilegedMfaSession
 } from "@/server/auth/privileged-access";
+import {
+  requireBackofficeSensitiveAccess,
+  requireBackofficeStaff
+} from "@/server/backoffice/authz";
 import { recordAuditLog, recordAuditLogWithClient } from "@/server/audit";
 import { cookies } from "next/headers";
 import crypto from "crypto";
@@ -32,13 +33,9 @@ function hashToken(token: string) {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
-  if (!hasPrivilegedMfaSession(user)) {
-    return Response.json({ error: "MFA is required for privileged access." }, { status: 403 });
-  }
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
 
   let payload: unknown;
   try {
@@ -67,13 +64,13 @@ export async function POST(request: Request) {
   const grant = await getActivePrivilegedAccessGrantForSubject({
     grantId,
     tenantId: targetTenantId,
-    subjectUserId: user!.id,
-    subjectEmail: user!.email
+    subjectUserId: user.id,
+    subjectEmail: user.email
   });
   if (!grant) {
     await recordAuditLog({
       tenantId: targetTenantId,
-      actorUserId: user!.id,
+      actorUserId: user.id,
       action: "support_impersonation_denied",
       entityType: "tenant",
       entityId: targetTenantId,
@@ -127,8 +124,8 @@ export async function POST(request: Request) {
         effectiveDurationMinutes,
         grant.id,
         tokenHash,
-        user!.id,
-        user!.real_tenant_id
+        user.id,
+        user.real_tenant_id
       ]
     );
     if ((updateResult.rowCount ?? 0) !== 1) {
@@ -137,7 +134,7 @@ export async function POST(request: Request) {
     }
     await recordAuditLogWithClient(client, {
       tenantId: targetTenantId,
-      actorUserId: user!.id,
+      actorUserId: user.id,
       action: "support_impersonation_started",
       entityType: "tenant",
       entityId: targetTenantId,
@@ -167,8 +164,10 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !user.is_impersonating) {
+  const auth = await requireBackofficeStaff(request.headers);
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+  if (!user.is_impersonating) {
     return Response.json({ status: "not_impersonating" });
   }
 

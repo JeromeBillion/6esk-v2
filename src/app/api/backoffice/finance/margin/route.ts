@@ -1,6 +1,5 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
 import { getMarginSnapshot, getTenantMarginSnapshot } from "@/server/billing/margin";
+import { requireBackofficeStaff } from "@/server/backoffice/authz";
 import { z } from "zod";
 
 const querySchema = z.object({
@@ -9,10 +8,9 @@ const querySchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
+  const auth = await requireBackofficeStaff(request.headers);
+  if (!auth.ok) return auth.response;
+
   const url = new URL(request.url);
   const parsed = querySchema.safeParse({
     tenantId: url.searchParams.get("tenantId") || undefined,

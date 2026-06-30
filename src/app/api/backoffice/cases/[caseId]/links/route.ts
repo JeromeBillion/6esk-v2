@@ -36,7 +36,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ caseId: string }> }
 ) {
-  const auth = await requireBackofficeSensitiveAccess();
+  const auth = await requireBackofficeSensitiveAccess(request.headers);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;

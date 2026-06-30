@@ -1,16 +1,13 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isInternalStaff } from "@/server/auth/roles";
 import { getBackofficeOverview } from "@/server/backoffice/overview";
+import { requireBackofficeStaff } from "@/server/backoffice/authz";
 
-export async function GET() {
-  const user = await getSessionUser();
-  if (!isInternalStaff(user)) {
-    return Response.json({ error: "Forbidden. 6esk Staff only." }, { status: 403 });
-  }
-  if (!user?.tenant_id) {
+export async function GET(request: Request) {
+  const auth = await requireBackofficeStaff(request.headers);
+  if (!auth.ok) return auth.response;
+  if (!auth.user.tenant_id) {
     return Response.json({ error: "Tenant context missing" }, { status: 400 });
   }
 
-  const overview = await getBackofficeOverview({ tenantId: user.tenant_id });
+  const overview = await getBackofficeOverview({ tenantId: auth.user.tenant_id });
   return Response.json(overview);
 }

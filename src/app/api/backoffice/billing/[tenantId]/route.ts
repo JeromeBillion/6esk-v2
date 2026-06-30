@@ -83,10 +83,10 @@ function responseKeyForAction(action: BillingAction["action"]) {
   return "invoice";
 }
 
-async function requireInternalTenant(tenantId: string, sensitive = false) {
+async function requireInternalTenant(tenantId: string, requestHeaders: Headers, sensitive = false) {
   const auth = sensitive
-    ? await requireBackofficeSensitiveAccess()
-    : await requireBackofficeStaff();
+    ? await requireBackofficeSensitiveAccess(requestHeaders)
+    : await requireBackofficeStaff(requestHeaders);
   if (!auth.ok) return auth;
 
   const tenant = await getTenantById(tenantId);
@@ -108,7 +108,7 @@ export async function GET(
     return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
   }
   const { tenantId } = parsedParams.data;
-  const auth = await requireInternalTenant(tenantId);
+  const auth = await requireInternalTenant(tenantId, request.headers);
   if (!auth.ok) return auth.response;
 
   const snapshot = await getTenantBillingLifecycleSnapshot({ tenantId });
@@ -124,7 +124,7 @@ export async function POST(
     return Response.json({ error: "Invalid route parameters", details: parsedParams.error.issues }, { status: 400 });
   }
   const { tenantId } = parsedParams.data;
-  const auth = await requireInternalTenant(tenantId, true);
+  const auth = await requireInternalTenant(tenantId, request.headers, true);
   if (!auth.ok) return auth.response;
 
   let payload: unknown;
