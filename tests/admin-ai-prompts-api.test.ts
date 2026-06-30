@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   createAgentPromptTemplateVersion: vi.fn(),
   activateAgentPromptTemplate: vi.fn(),
   rollbackAgentPromptTemplate: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -26,6 +27,10 @@ vi.mock("@/server/agents/prompt-templates", () => ({
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
 }));
 
 import { GET, POST as CREATE } from "@/app/api/admin/ai/prompts/route";
@@ -65,6 +70,7 @@ describe("admin AI prompt template API", () => {
     mocks.createAgentPromptTemplateVersion.mockResolvedValue(template({ status: "draft" }));
     mocks.activateAgentPromptTemplate.mockResolvedValue(template());
     mocks.rollbackAgentPromptTemplate.mockResolvedValue(template({ template_version: "2026-06-19.agent-sandbox.v1" }));
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -75,6 +81,22 @@ describe("admin AI prompt template API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.listAgentPromptTemplates).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 before listing prompt templates when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await GET(new Request("http://localhost/api/admin/ai/prompts"));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.listAgentPromptTemplates).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).toHaveBeenCalledWith("aiAutomation", TENANT_ID);
   });
 
   it("lists tenant-scoped prompt templates", async () => {
@@ -126,6 +148,40 @@ describe("admin AI prompt template API", () => {
     }));
   });
 
+  it("blocks prompt template creation when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await CREATE(
+      new Request("http://localhost/api/admin/ai/prompts", {
+        method: "POST",
+        body: JSON.stringify({
+          templateVersion: "2026-06-20.agent-sandbox.v2",
+          templateBody: { criticalConstraints: ["Use concise replies."] }
+        })
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.createAgentPromptTemplateVersion).not.toHaveBeenCalled();
+    expect(mocks.activateAgentPromptTemplate).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown top-level fields when creating prompt templates", async () => {
+    const response = await CREATE(
+      new Request("http://localhost/api/admin/ai/prompts", {
+        method: "POST",
+        body: JSON.stringify({
+          templateVersion: "2026-06-20.agent-sandbox.v2",
+          templateBody: { criticalConstraints: ["Use concise replies."] },
+          tenantId: "99999999-9999-4999-8999-999999999999"
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createAgentPromptTemplateVersion).not.toHaveBeenCalled();
+  });
+
   it("activates an existing template inside the tenant scope", async () => {
     const response = await ACTIVATE(
       new Request(`http://localhost/api/admin/ai/prompts/${TEMPLATE_ID}/activate`, {
@@ -151,6 +207,37 @@ describe("admin AI prompt template API", () => {
     }));
   });
 
+  it("blocks prompt template activation when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await ACTIVATE(
+      new Request(`http://localhost/api/admin/ai/prompts/${TEMPLATE_ID}/activate`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Promote after review" })
+      }),
+      { params: Promise.resolve({ templateId: TEMPLATE_ID }) }
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.activateAgentPromptTemplate).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown top-level fields when activating prompt templates", async () => {
+    const response = await ACTIVATE(
+      new Request(`http://localhost/api/admin/ai/prompts/${TEMPLATE_ID}/activate`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: "Promote after review",
+          templateId: "99999999-9999-4999-8999-999999999999"
+        })
+      }),
+      { params: Promise.resolve({ templateId: TEMPLATE_ID }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.activateAgentPromptTemplate).not.toHaveBeenCalled();
+  });
+
   it("rolls back to the most recent retired template", async () => {
     const response = await ROLLBACK(
       new Request("http://localhost/api/admin/ai/prompts/rollback", {
@@ -172,5 +259,34 @@ describe("admin AI prompt template API", () => {
       action: "ai_prompt_template_rolled_back",
       tenantId: TENANT_ID
     }));
+  });
+
+  it("blocks prompt template rollback when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await ROLLBACK(
+      new Request("http://localhost/api/admin/ai/prompts/rollback", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Regression found" })
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.rollbackAgentPromptTemplate).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown top-level fields when rolling back prompt templates", async () => {
+    const response = await ROLLBACK(
+      new Request("http://localhost/api/admin/ai/prompts/rollback", {
+        method: "POST",
+        body: JSON.stringify({
+          reason: "Regression found",
+          tenantId: "99999999-9999-4999-8999-999999999999"
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.rollbackAgentPromptTemplate).not.toHaveBeenCalled();
   });
 });

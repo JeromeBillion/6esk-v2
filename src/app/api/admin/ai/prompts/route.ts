@@ -5,9 +5,7 @@ import {
   listAgentPromptTemplates
 } from "@/server/agents/prompt-templates";
 import { recordAuditLog } from "@/server/audit";
-import { isLeadAdmin } from "@/server/auth/roles";
-import { getSessionUser } from "@/server/auth/session";
-import { sessionTenantId } from "@/server/auth/tenant-session";
+import { requireAiAutomationAdminAccess } from "../access";
 
 const templateBodySchema = z
   .object({
@@ -16,13 +14,15 @@ const templateBodySchema = z
   })
   .passthrough();
 
-const createTemplateSchema = z.object({
-  templateKey: z.string().trim().min(1).max(120).optional(),
-  templateVersion: z.string().trim().min(1).max(160),
-  templateBody: templateBodySchema,
-  activate: z.boolean().optional(),
-  reason: z.string().trim().max(500).optional().nullable()
-});
+const createTemplateSchema = z
+  .object({
+    templateKey: z.string().trim().min(1).max(120).optional(),
+    templateVersion: z.string().trim().min(1).max(160),
+    templateBody: templateBodySchema,
+    activate: z.boolean().optional(),
+    reason: z.string().trim().max(500).optional().nullable()
+  })
+  .strict();
 
 function readLimit(request: Request) {
   const url = new URL(request.url);
@@ -31,25 +31,14 @@ function readLimit(request: Request) {
   return Math.min(Math.max(parsed, 1), 200);
 }
 
-async function requireTenantLeadAdmin() {
-  const user = await getSessionUser();
-  if (!isLeadAdmin(user)) {
-    return { ok: false as const, response: Response.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  const tenantId = sessionTenantId(user);
-  if (!tenantId) {
-    return { ok: false as const, response: Response.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { ok: true as const, user, tenantId };
-}
-
 export async function GET(request: Request) {
-  const access = await requireTenantLeadAdmin();
+  const access = await requireAiAutomationAdminAccess();
   if (!access.ok) return access.response;
+  const { tenantId } = access.access;
 
   const url = new URL(request.url);
   const templates = await listAgentPromptTemplates({
-    tenantId: access.tenantId
+    tenantId
   }, {
     templateKey: url.searchParams.get("templateKey") ?? undefined,
     limit: readLimit(request)
@@ -59,8 +48,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const access = await requireTenantLeadAdmin();
+  const access = await requireAiAutomationAdminAccess();
   if (!access.ok) return access.response;
+  const { user, tenantId } = access.access;
 
   let payload: unknown;
   try {
@@ -75,31 +65,31 @@ export async function POST(request: Request) {
   }
 
   const created = await createAgentPromptTemplateVersion({
-    tenantId: access.tenantId,
+    tenantId,
     templateKey: parsed.data.templateKey,
     templateVersion: parsed.data.templateVersion,
     templateBody: parsed.data.templateBody,
-    actorUserId: access.user?.id ?? null,
+    actorUserId: user.id,
     reason: parsed.data.reason ?? null,
     metadata: {
       route: "/api/admin/ai/prompts",
-      createdByUserId: access.user?.id ?? null,
+      createdByUserId: user.id,
       reason: parsed.data.reason ?? null
     }
   });
 
   const template = parsed.data.activate
     ? await activateAgentPromptTemplate({
-        tenantId: access.tenantId,
+        tenantId,
         templateId: created.id,
-        actorUserId: access.user?.id ?? null,
+        actorUserId: user.id,
         reason: parsed.data.reason ?? "Created and activated from Admin"
       })
     : created;
 
   await recordAuditLog({
-    tenantId: access.tenantId,
-    actorUserId: access.user?.id ?? null,
+    tenantId,
+    actorUserId: user.id,
     action: parsed.data.activate ? "ai_prompt_template_created_activated" : "ai_prompt_template_created",
     entityType: "agent_prompt_template",
     entityId: created.id,
