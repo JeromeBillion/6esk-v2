@@ -8,7 +8,7 @@ Provider dashboards, Cloudflare Access policy enforcement, R2 bucket checks, OAu
 - `.github/workflows/ci.yml`
   - Runs on pull requests to `main`, pushes to `main`, pushes to `recovery/v2-retain-all-work`, and manual dispatch.
   - Executes `npm run typecheck`, `npm run lint`, `npm test`, `npm run audit:security`, `npm run build:web`, and `npm run build:backoffice`.
-  - Uses pinned GitHub Actions and safe placeholder CI environment variables so production env validation is exercised without real secrets.
+  - Uses pinned GitHub Actions and synthetic CI environment variables so production env validation is exercised without real secrets.
 - `.github/workflows/tenant-isolation.yml`
   - Runs the v2 tenant-isolation regression gate with `npm run test:tenant-isolation`.
 - `.github/workflows/ai-safety.yml`
@@ -49,7 +49,7 @@ git diff --check
 ```
 
 The local gate proves code, tests, and builds only. It does not prove deployed provider credentials, provider dashboards, Cloudflare Access policies, R2 bucket policy/versioning, production telemetry, or backup restore evidence.
-Production env validation does require a `SECURITY_ALERT_WEBHOOK` so security-sensitive events have a configured alert destination before launch. The CI workflow uses a placeholder URL only to validate the contract; real deploys must use the production alert sink.
+Production env validation does require a `SECURITY_ALERT_WEBHOOK` so security-sensitive events have a configured alert destination before launch. The CI workflow uses a synthetic URL only to validate the contract; real deploys must use the production alert sink.
 
 ## Rollback Stance
 

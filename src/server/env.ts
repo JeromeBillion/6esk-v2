@@ -5,6 +5,7 @@ const optionalUrl = z.union([z.string().url(), z.literal("")]).optional();
 const optionalNonEmptyString = z.string().optional();
 const optionalSecretString = z.union([z.string().min(16), z.literal("")]).optional();
 const optionalBooleanish = z.string().optional();
+const PLACEHOLDER_VALUE_PATTERN = /(?:replace-with|changeme|change-me|todo|tbd|dummy|placeholder)/i;
 
 const RATE_LIMIT_KEYS = [
   "RATE_LIMIT_ADMIN",
@@ -183,6 +184,17 @@ function requireCompleteGroup(source: EnvSource, keys: string[], issues: string[
   const hasAny = keys.some((key) => readString(source, key));
   if (!hasAny) return;
   requireKeys(source, keys, issues);
+}
+
+function addPlaceholderValueIssues(source: EnvSource, strictProduction: boolean, issues: string[]) {
+  if (!strictProduction) return;
+
+  for (const [key, value] of Object.entries(source)) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (trimmed && PLACEHOLDER_VALUE_PATTERN.test(trimmed)) {
+      issues.push(`${key} must not use a placeholder value in production`);
+    }
+  }
 }
 
 function addProductionIssues(source: EnvSource, issues: string[]) {
@@ -405,6 +417,7 @@ export function validateEnv(source: EnvSource = process.env, options: ValidateEn
   addKnowledgeIngestionIssues(source, strictProduction, issues);
   addRateLimitIssues(source, strictProduction, issues);
   addEntitlementIssues(source, strictProduction, issues);
+  addPlaceholderValueIssues(source, strictProduction, issues);
   if (strictProduction) {
     addProductionIssues(source, issues);
   }

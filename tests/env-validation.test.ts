@@ -11,7 +11,7 @@ function baseEnv() {
     CLOUDFLARE_ACCESS_AUD: "cloudflare-access-audience",
     CLOUDFLARE_ACCESS_TEAM_DOMAIN: "https://6esk.cloudflareaccess.com",
     DATABASE_URL: "postgres://user:pass@localhost:5432/6esk",
-    SESSION_SECRET: "replace-with-a-long-session-secret",
+    SESSION_SECRET: "prod-session-secret-for-validation-tests",
     RESEND_API_KEY: "resend-key",
     RESEND_WEBHOOK_SECRET: "resend-webhook-secret",
     RESEND_FROM_DOMAIN: "6ex.co.za",
@@ -90,6 +90,25 @@ describe("validateEnv", () => {
     expect(() => validateEnv(env)).toThrow(/CALLS_PROVIDER must not be mock/);
     expect(() => validateEnv(env)).toThrow(/CALLS_OUTBOX_TENANT_ID/);
     expect(() => validateEnv(env)).toThrow(/UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN/);
+  });
+
+  it("rejects copied placeholder values in production configuration", () => {
+    const env = {
+      ...baseEnv(),
+      SESSION_SECRET: "replace-with-long-random-string",
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: "https://replace-with-team-name.cloudflareaccess.com",
+      CALLS_STT_DEEPGRAM_API_KEY: "replace-with-deepgram-key"
+    };
+
+    expect(() => validateEnv(env)).toThrow(
+      /SESSION_SECRET must not use a placeholder value in production/
+    );
+    expect(() => validateEnv(env)).toThrow(
+      /CLOUDFLARE_ACCESS_TEAM_DOMAIN must not use a placeholder value in production/
+    );
+    expect(() => validateEnv(env)).toThrow(
+      /CALLS_STT_DEEPGRAM_API_KEY must not use a placeholder value in production/
+    );
   });
 
   it("fails production startup for partial OAuth provider configuration", () => {
