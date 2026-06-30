@@ -9,6 +9,7 @@ type RateLimitRule = RateLimitProfile & {
 };
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
+const RATE_LIMIT_KEY_PART_PATTERN = /^[a-zA-Z0-9._:-]{1,96}$/;
 
 const RULES: RateLimitRule[] = [
   {
@@ -120,16 +121,28 @@ export function readRateLimitValue(value: string | undefined, fallback: number) 
   return normalized > 0 ? normalized : 0;
 }
 
+function normalizeRateLimitKeyPart(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed || !RATE_LIMIT_KEY_PART_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+function forwardedClientIdentity(headers: Headers) {
+  return normalizeRateLimitKeyPart(headers.get("x-forwarded-for")?.split(",")[0]);
+}
+
 export function rateLimitIdentityFromHeaders(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = headers.get("x-real-ip")?.trim();
-  const cloudflareIp = headers.get("cf-connecting-ip")?.trim();
-  return forwarded || realIp || cloudflareIp || "unknown";
+  return (
+    normalizeRateLimitKeyPart(headers.get("cf-connecting-ip")) ||
+    normalizeRateLimitKeyPart(headers.get("x-real-ip")) ||
+    forwardedClientIdentity(headers) ||
+    "unknown"
+  );
 }
 
 export function rateLimitTenantKeyFromHeaders(headers: Headers) {
-  const tenant = headers.get("x-6esk-tenant")?.trim();
-  const workspace = headers.get("x-6esk-workspace")?.trim();
+  const tenant = normalizeRateLimitKeyPart(headers.get("x-6esk-tenant"));
+  const workspace = normalizeRateLimitKeyPart(headers.get("x-6esk-workspace"));
   return tenant && workspace ? `${tenant}:${workspace}` : "unscoped";
 }
 
