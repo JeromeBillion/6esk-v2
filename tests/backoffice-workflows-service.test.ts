@@ -22,6 +22,7 @@ vi.mock("@/server/audit", () => ({
 import {
   BackofficeWorkflowError,
   createBackofficeCase,
+  updateBackofficeCase,
   upsertTenantBackofficeProfile
 } from "@/server/backoffice/workflows";
 
@@ -140,5 +141,22 @@ describe("backoffice workflow service", () => {
 
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
     expect(mocks.clientQuery).not.toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("rejects direct workflow case mutations without tenant scope", async () => {
+    await expect(
+      updateBackofficeCase({
+        caseId: CASE_ID,
+        status: "closed",
+        actorUserId: USER_ID
+      })
+    ).rejects.toMatchObject({
+      code: "TENANT_SCOPE_REQUIRED",
+      status: 400
+    } satisfies Partial<BackofficeWorkflowError>);
+
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+    expect(mocks.recordAuditLogWithClient).not.toHaveBeenCalled();
   });
 });

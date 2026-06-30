@@ -16,7 +16,7 @@ import {
 } from "@6esk/types/backoffice";
 
 const updateSchema = z.object({
-  tenantId: z.string().uuid().optional(),
+  tenantId: z.string().uuid(),
   status: z.enum(BACKOFFICE_CASE_STATUSES).optional(),
   priority: z.enum(BACKOFFICE_CASE_PRIORITIES).optional(),
   title: z.string().min(3).max(200).optional(),

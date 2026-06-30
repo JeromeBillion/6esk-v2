@@ -7,7 +7,7 @@ import {
 import { BACKOFFICE_CASE_EVENT_TYPES } from "@6esk/types/backoffice";
 
 const eventSchema = z.object({
-  tenantId: z.string().uuid().optional(),
+  tenantId: z.string().uuid(),
   eventType: z.enum(BACKOFFICE_CASE_EVENT_TYPES).default("note_added"),
   note: z.string().max(2000).optional().nullable(),
   metadata: z.record(z.unknown()).optional()

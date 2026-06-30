@@ -151,6 +151,19 @@ describe("backoffice workflow APIs", () => {
     expect(mocks.createBackofficeCase).not.toHaveBeenCalled();
   });
 
+  it("rejects case updates that omit tenant scope", async () => {
+    const response = await updateCase(
+      request(`/api/backoffice/cases/${CASE_ID}`, {
+        status: "in_progress",
+        note: "Assigned to implementation owner"
+      }),
+      caseParams()
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.updateBackofficeCase).not.toHaveBeenCalled();
+  });
+
   it("updates cases without accepting unscoped case mutation", async () => {
     const response = await updateCase(
       request(`/api/backoffice/cases/${CASE_ID}`, {
@@ -195,6 +208,19 @@ describe("backoffice workflow APIs", () => {
     );
   });
 
+  it("rejects workflow timeline events that omit tenant scope", async () => {
+    const response = await addCaseEvent(
+      request(`/api/backoffice/cases/${CASE_ID}/events`, {
+        eventType: "note_added",
+        note: "Customer sent signed DPA"
+      }),
+      caseParams()
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.appendBackofficeCaseEvent).not.toHaveBeenCalled();
+  });
+
   it("links case artifacts with either URL or R2 evidence", async () => {
     const response = await addCaseLink(
       request(`/api/backoffice/cases/${CASE_ID}/links`, {
@@ -215,6 +241,20 @@ describe("backoffice workflow APIs", () => {
         actorUserId: USER_ID
       })
     );
+  });
+
+  it("rejects case artifact links that omit tenant scope", async () => {
+    const response = await addCaseLink(
+      request(`/api/backoffice/cases/${CASE_ID}/links`, {
+        linkType: "security_evidence",
+        label: "Security pack",
+        url: "https://docs.6esk.example/security"
+      }),
+      caseParams()
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.linkBackofficeCaseArtifact).not.toHaveBeenCalled();
   });
 
   it("rejects unsafe evidence links before artifact storage", async () => {

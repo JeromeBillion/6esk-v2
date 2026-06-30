@@ -90,7 +90,8 @@ export class BackofficeWorkflowError extends Error {
       | "TENANT_NOT_FOUND"
       | "INVALID_CASE_TRANSITION"
       | "INTERNAL_OWNER_NOT_FOUND"
-      | "PROFILE_NOT_FOUND",
+      | "PROFILE_NOT_FOUND"
+      | "TENANT_SCOPE_REQUIRED",
     public readonly status = 400
   ) {
     super(message);
@@ -122,6 +123,18 @@ async function requireInternalOwnerUser(userId: string | null | undefined) {
     );
   }
   return userId;
+}
+
+function requireMutationTenantId(tenantId: string | null | undefined) {
+  const normalized = tenantId?.trim();
+  if (!normalized) {
+    throw new BackofficeWorkflowError(
+      "Tenant scope is required for mutating backoffice workflow cases.",
+      "TENANT_SCOPE_REQUIRED",
+      400
+    );
+  }
+  return normalized;
 }
 
 function mapProfile(row: ProfileRow): TenantBackofficeProfile {
@@ -562,7 +575,8 @@ export async function updateBackofficeCase(input: {
   note?: string | null;
   actorUserId?: string | null;
 }) {
-  const current = await getBackofficeCase({ caseId: input.caseId, tenantId: input.tenantId });
+  const tenantId = requireMutationTenantId(input.tenantId);
+  const current = await getBackofficeCase({ caseId: input.caseId, tenantId });
   if (!current) {
     throw new BackofficeWorkflowError("Backoffice case not found", "CASE_NOT_FOUND", 404);
   }
@@ -722,7 +736,8 @@ export async function appendBackofficeCaseEvent(input: {
   metadata?: JsonRecord | null;
   actorUserId?: string | null;
 }) {
-  const current = await getBackofficeCase({ caseId: input.caseId, tenantId: input.tenantId });
+  const tenantId = requireMutationTenantId(input.tenantId);
+  const current = await getBackofficeCase({ caseId: input.caseId, tenantId });
   if (!current) {
     throw new BackofficeWorkflowError("Backoffice case not found", "CASE_NOT_FOUND", 404);
   }
@@ -822,7 +837,8 @@ export async function linkBackofficeCaseArtifact(input: {
   metadata?: JsonRecord | null;
   actorUserId?: string | null;
 }) {
-  const current = await getBackofficeCase({ caseId: input.caseId, tenantId: input.tenantId });
+  const tenantId = requireMutationTenantId(input.tenantId);
+  const current = await getBackofficeCase({ caseId: input.caseId, tenantId });
   if (!current) {
     throw new BackofficeWorkflowError("Backoffice case not found", "CASE_NOT_FOUND", 404);
   }

@@ -17,7 +17,7 @@ const r2KeySchema = z.string().trim().min(1).max(500).refine(
 );
 
 const linkSchema = z.object({
-  tenantId: z.string().uuid().optional(),
+  tenantId: z.string().uuid(),
   linkType: z.enum(BACKOFFICE_LINK_TYPES),
   label: z.string().min(1).max(160),
   url: safeUrlSchema.optional().nullable(),

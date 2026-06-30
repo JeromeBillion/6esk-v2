@@ -6,10 +6,40 @@ import {
 } from "@/server/backoffice/authz";
 import { getTenantById } from "@/server/tenant/lifecycle";
 import { recordAuditLogWithClient } from "@/server/audit";
+import {
+  DEFAULT_WORKSPACE_MODULES,
+  type WorkspaceModuleFlags,
+  type WorkspaceModuleKey
+} from "@/server/workspace-modules";
+
+const moduleFlagsSchema = z.object({
+  email: z.boolean().optional(),
+  whatsapp: z.boolean().optional(),
+  voice: z.boolean().optional(),
+  aiAutomation: z.boolean().optional(),
+  dexterOrchestration: z.boolean().optional(),
+  vanillaWebchat: z.boolean().optional()
+}).strict().refine((modules) => Object.keys(modules).length > 0, {
+  message: "At least one module flag is required"
+});
 
 const updateModulesSchema = z.object({
-  modules: z.record(z.boolean())
-});
+  modules: moduleFlagsSchema
+}).strict();
+
+const workspaceModuleKeys = Object.keys(DEFAULT_WORKSPACE_MODULES) as WorkspaceModuleKey[];
+
+function pickKnownModuleFlags(value: unknown): Partial<WorkspaceModuleFlags> {
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return Object.fromEntries(
+    workspaceModuleKeys.flatMap((moduleKey) =>
+      typeof source[moduleKey] === "boolean" ? [[moduleKey, source[moduleKey]]] : []
+    )
+  ) as Partial<WorkspaceModuleFlags>;
+}
 
 const paramsSchema = z.object({
   tenantId: z.string().uuid()
@@ -88,8 +118,8 @@ export async function PATCH(
       return Response.json({ error: "Workspace modules not found" }, { status: 404 });
     }
 
-    const merged = {
-      ...(current.rows[0].modules as Record<string, boolean>),
+    const merged: Partial<WorkspaceModuleFlags> = {
+      ...pickKnownModuleFlags(current.rows[0].modules),
       ...parsed.data.modules
     };
 
@@ -102,7 +132,9 @@ export async function PATCH(
     );
 
     // Sync tenant_entitlements
-    for (const [moduleKey, isEnabled] of Object.entries(merged)) {
+    for (const moduleKey of workspaceModuleKeys) {
+      const isEnabled = merged[moduleKey];
+      if (typeof isEnabled !== "boolean") continue;
       if (isEnabled) {
         await client.query(
           `INSERT INTO tenant_entitlements (tenant_id, module_key, is_enabled)
