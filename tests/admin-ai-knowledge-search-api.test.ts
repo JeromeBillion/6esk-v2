@@ -5,6 +5,7 @@ const USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   retrievePublishedKnowledge: vi.fn()
 }));
 
@@ -14,6 +15,10 @@ vi.mock("@/server/auth/session", () => ({
 
 vi.mock("@/server/ai/knowledge-retrieval", () => ({
   retrievePublishedKnowledge: mocks.retrievePublishedKnowledge
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
 }));
 
 import { POST } from "@/app/api/admin/ai/knowledge/search/route";
@@ -44,6 +49,7 @@ describe("admin AI knowledge search API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.retrievePublishedKnowledge.mockResolvedValue({
       query: "return policy",
       citations: [],
@@ -58,6 +64,21 @@ describe("admin AI knowledge search API", () => {
     const response = await POST(request({ query: "return policy" }));
 
     expect(response.status).toBe(403);
+    expect(mocks.retrievePublishedKnowledge).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await POST(request({ query: "return policy" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
     expect(mocks.retrievePublishedKnowledge).not.toHaveBeenCalled();
   });
 

@@ -226,6 +226,65 @@ function normalizeContentType(value: string | null | undefined) {
   return (value ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
 }
 
+function hasMagicPrefix(buffer: Buffer, signature: readonly number[]) {
+  if (buffer.length < signature.length) return false;
+  return signature.every((byte, index) => buffer[index] === byte);
+}
+
+function bufferIncludesAscii(buffer: Buffer, value: string) {
+  return buffer.includes(Buffer.from(value, "ascii"));
+}
+
+function looksLikeUtf8Text(buffer: Buffer) {
+  const sample = buffer.subarray(0, Math.min(buffer.length, 64 * 1024));
+  if (sample.includes(0)) return false;
+
+  const decoded = sample.toString("utf8");
+  if (!decoded || decoded.includes("\uFFFD")) return false;
+
+  let disallowedControls = 0;
+  for (let index = 0; index < decoded.length; index += 1) {
+    const code = decoded.charCodeAt(index);
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+      disallowedControls += 1;
+    }
+  }
+  return disallowedControls === 0;
+}
+
+function contentMatchesAllowedType(
+  normalizedContentType: string,
+  extension: string,
+  buffer: Buffer
+) {
+  if (normalizedContentType === "application/pdf") {
+    return hasMagicPrefix(buffer, [0x25, 0x50, 0x44, 0x46, 0x2d]);
+  }
+  if (normalizedContentType === "application/msword") {
+    return hasMagicPrefix(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  }
+  if (
+    normalizedContentType ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    return (
+      hasMagicPrefix(buffer, [0x50, 0x4b, 0x03, 0x04]) &&
+      bufferIncludesAscii(buffer, "[Content_Types].xml") &&
+      bufferIncludesAscii(buffer, "word/")
+    );
+  }
+  if (
+    normalizedContentType === "text/plain" ||
+    normalizedContentType === "text/markdown" ||
+    extension === ".txt" ||
+    extension === ".md" ||
+    extension === ".markdown"
+  ) {
+    return looksLikeUtf8Text(buffer);
+  }
+  return false;
+}
+
 function requiresKnowledgeMalwareScan() {
   const configured = process.env.AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN;
   if (configured === "true") return true;
@@ -291,7 +350,12 @@ function titleFromFileName(fileName: string) {
   return sanitized.replace(/\.[a-z0-9]+$/i, "").trim() || sanitized;
 }
 
-function resolveAllowedFile(fileName: string, contentType: string | null | undefined, sizeBytes: number) {
+function resolveAllowedFile(
+  fileName: string,
+  contentType: string | null | undefined,
+  buffer: Buffer
+) {
+  const sizeBytes = buffer.byteLength;
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     throw new KnowledgeBaseError("File is empty.", "INVALID_FILE");
   }
@@ -309,6 +373,9 @@ function resolveAllowedFile(fileName: string, contentType: string | null | undef
 
   if (!allowed) {
     throw new KnowledgeBaseError("Unsupported file type.", "INVALID_FILE");
+  }
+  if (!contentMatchesAllowedType(allowed.normalizedContentType, extension, buffer)) {
+    throw new KnowledgeBaseError("File content does not match the declared file type.", "INVALID_FILE");
   }
 
   return {
@@ -1272,7 +1339,7 @@ export async function uploadKnowledgeDocument({
   await assertFolderInTenant(folderId, tenantId);
 
   const safeFileName = sanitizeFileName(fileName);
-  const allowed = resolveAllowedFile(safeFileName, contentType, buffer.byteLength);
+  const allowed = resolveAllowedFile(safeFileName, contentType, buffer);
   const documentId = randomUUID();
   const versionId = randomUUID();
   const checksum = createHash("sha256").update(buffer).digest("hex");

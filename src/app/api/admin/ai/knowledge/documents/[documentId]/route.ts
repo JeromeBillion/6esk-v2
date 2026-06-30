@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import {
   archiveKnowledgeDocument,
   KnowledgeBaseError,
   publishKnowledgeDocument
 } from "@/server/ai/knowledge-base";
+import { requireKnowledgeBaseAdminAccess } from "../../access";
 
 const statusSchema = z
   .object({
@@ -18,10 +17,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireKnowledgeBaseAdminAccess();
+  if (!access.ok) return access.response;
+  const { user, tenantId } = access.access;
 
   let payload: unknown;
   try {
@@ -45,7 +43,7 @@ export async function PATCH(
 
     if (parsed.data.status === "published") {
       const published = await publishKnowledgeDocument({
-        tenantId: user.tenant_id,
+        tenantId,
         actorUserId: user.id,
         documentId
       });
@@ -53,14 +51,14 @@ export async function PATCH(
       documentVersionId = published.version.id;
     } else {
       result = await archiveKnowledgeDocument({
-        tenantId: user.tenant_id,
+        tenantId,
         actorUserId: user.id,
         documentId
       });
     }
 
     await recordAuditLog({
-      tenantId: user.tenant_id,
+      tenantId,
       actorUserId: user.id,
       action:
         parsed.data.status === "published"

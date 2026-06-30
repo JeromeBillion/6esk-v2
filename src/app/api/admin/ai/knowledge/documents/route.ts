@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import {
   KnowledgeBaseError,
   uploadKnowledgeDocument,
   type KnowledgeDocumentKind
 } from "@/server/ai/knowledge-base";
+import { requireKnowledgeBaseAdminAccess } from "../access";
 
 const documentKindSchema = z
   .enum([
@@ -29,10 +28,9 @@ function getOptionalString(formData: FormData, key: string) {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireKnowledgeBaseAdminAccess();
+  if (!access.ok) return access.response;
+  const { user, tenantId } = access.access;
 
   let formData: FormData;
   try {
@@ -58,7 +56,7 @@ export async function POST(request: Request) {
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await uploadKnowledgeDocument({
-      tenantId: user.tenant_id,
+      tenantId,
       actorUserId: user.id,
       folderId,
       title,
@@ -69,7 +67,7 @@ export async function POST(request: Request) {
     });
 
     await recordAuditLog({
-      tenantId: user.tenant_id,
+      tenantId,
       actorUserId: user.id,
       action: "knowledge_document_uploaded",
       entityType: "knowledge_document",

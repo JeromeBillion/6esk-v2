@@ -1,11 +1,10 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { recordAuditLog } from "@/server/audit";
 import {
   createKnowledgeFolder,
   KnowledgeBaseError
 } from "@/server/ai/knowledge-base";
+import { requireKnowledgeBaseAdminAccess } from "../access";
 
 const createFolderSchema = z
   .object({
@@ -17,10 +16,9 @@ const createFolderSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireKnowledgeBaseAdminAccess();
+  if (!access.ok) return access.response;
+  const { user, tenantId } = access.access;
 
   let payload: unknown;
   try {
@@ -36,7 +34,7 @@ export async function POST(request: Request) {
 
   try {
     const folder = await createKnowledgeFolder({
-      tenantId: user.tenant_id,
+      tenantId,
       actorUserId: user.id,
       name: parsed.data.name,
       parentFolderId: parsed.data.parentFolderId ?? null,
@@ -45,7 +43,7 @@ export async function POST(request: Request) {
     });
 
     await recordAuditLog({
-      tenantId: user.tenant_id,
+      tenantId,
       actorUserId: user.id,
       action: "knowledge_folder_created",
       entityType: "knowledge_folder",

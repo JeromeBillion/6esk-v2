@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   uploadKnowledgeDocument: vi.fn(),
   publishKnowledgeDocument: vi.fn(),
   archiveKnowledgeDocument: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -33,6 +34,10 @@ vi.mock("@/server/ai/knowledge-base", async () => {
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
 }));
 
 import { GET as getKnowledgeBase } from "@/app/api/admin/ai/knowledge/route";
@@ -93,6 +98,7 @@ describe("admin AI knowledge API", () => {
     mocks.archiveKnowledgeDocument.mockResolvedValue({
       document: { id: "doc-1", status: "archived" }
     });
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -103,6 +109,22 @@ describe("admin AI knowledge API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.listKnowledgeBase).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await getKnowledgeBase();
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.listKnowledgeBase).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).toHaveBeenCalledWith("aiAutomation", TENANT_ID);
   });
 
   it("lists the caller tenant knowledge base", async () => {

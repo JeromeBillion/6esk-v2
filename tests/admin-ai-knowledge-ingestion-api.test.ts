@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getKnowledgeIngestionReadiness: vi.fn(),
   listKnowledgeQuarantineEvents: vi.fn(),
   deliverPendingKnowledgeIngestionJobs: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -28,6 +29,10 @@ vi.mock("@/server/ai/knowledge-ingestion-worker", () => ({
 
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
 }));
 
 import {
@@ -87,6 +92,7 @@ describe("admin AI knowledge ingestion API", () => {
       poison: 0,
       total: 1
     });
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -121,6 +127,21 @@ describe("admin AI knowledge ingestion API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.getKnowledgeIngestionMetrics).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 for metrics when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.getKnowledgeIngestionMetrics).not.toHaveBeenCalled();
   });
 
   it("lists tenant-scoped quarantine events for admins", async () => {
@@ -151,6 +172,23 @@ describe("admin AI knowledge ingestion API", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(mocks.listKnowledgeQuarantineEvents).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 for quarantine diagnostics when the AI module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await GET_QUARANTINE_EVENTS(
+      new Request("http://localhost/api/admin/ai/knowledge/quarantine-events")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
     expect(mocks.listKnowledgeQuarantineEvents).not.toHaveBeenCalled();
   });
 
@@ -187,6 +225,24 @@ describe("admin AI knowledge ingestion API", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(mocks.deliverPendingKnowledgeIngestionJobs).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when module-disabled tenants trigger ingestion", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/ai/knowledge/ingestion?limit=7", {
+        method: "POST"
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
     expect(mocks.deliverPendingKnowledgeIngestionJobs).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,5 @@
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { listKnowledgeQuarantineEvents } from "@/server/ai/knowledge-base";
+import { requireKnowledgeBaseAdminAccess } from "../access";
 
 function readLimit(request: Request) {
   const url = new URL(request.url);
@@ -8,17 +7,15 @@ function readLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireKnowledgeBaseAdminAccess();
+  if (!access.ok) return access.response;
 
-  const events = await listKnowledgeQuarantineEvents(user.tenant_id, {
+  const events = await listKnowledgeQuarantineEvents(access.access.tenantId, {
     limit: readLimit(request)
   });
 
   return Response.json({
-    tenantId: user.tenant_id,
+    tenantId: access.access.tenantId,
     events
   });
 }

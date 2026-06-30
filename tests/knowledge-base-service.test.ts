@@ -224,6 +224,72 @@ describe("knowledge base service", () => {
     expect(mocks.putObject).not.toHaveBeenCalled();
   });
 
+  it("rejects declared PDFs whose bytes do not match the PDF signature", async () => {
+    await expect(
+      uploadKnowledgeDocument({
+        tenantId: TENANT_ID,
+        actorUserId: USER_ID,
+        fileName: "policy.pdf",
+        contentType: "application/pdf",
+        buffer: Buffer.from("not really a pdf")
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_FILE",
+      message: "File content does not match the declared file type."
+    });
+
+    expect(mocks.putObject).not.toHaveBeenCalled();
+    expect(mocks.db.connect).not.toHaveBeenCalled();
+  });
+
+  it("rejects binary files disguised as Markdown before object storage", async () => {
+    await expect(
+      uploadKnowledgeDocument({
+        tenantId: TENANT_ID,
+        actorUserId: USER_ID,
+        fileName: "sop.md",
+        contentType: "text/markdown",
+        buffer: Buffer.from([0x23, 0x20, 0x53, 0x4f, 0x50, 0x00, 0x01])
+      })
+    ).rejects.toMatchObject({ code: "INVALID_FILE" });
+
+    expect(mocks.putObject).not.toHaveBeenCalled();
+    expect(mocks.db.connect).not.toHaveBeenCalled();
+  });
+
+  it("accepts PDFs only after server-side byte sniffing passes", async () => {
+    mocks.client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "doc-1", title: "Policy", folder_id: null }]
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "version-1",
+          document_id: "doc-1",
+          original_filename: "policy.pdf",
+          content_type: "application/pdf",
+          size_bytes: 16
+        }]
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "job-1", status: "queued" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await uploadKnowledgeDocument({
+      tenantId: TENANT_ID,
+      actorUserId: USER_ID,
+      fileName: "policy.pdf",
+      contentType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7\n%test")
+    });
+
+    expect(mocks.putObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentType: "application/pdf"
+      })
+    );
+  });
+
   it("fails closed when Knowledge Base malware scanning is required but unconfigured", async () => {
     vi.stubEnv("AI_KNOWLEDGE_REQUIRE_MALWARE_SCAN", "true");
     vi.stubEnv("AI_KNOWLEDGE_MALWARE_SCAN_URL", "");

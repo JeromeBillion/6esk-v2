@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { getSessionUser } from "@/server/auth/session";
-import { isLeadAdmin } from "@/server/auth/roles";
 import { retrievePublishedKnowledge } from "@/server/ai/knowledge-retrieval";
+import { requireKnowledgeBaseAdminAccess } from "../access";
 
 const searchSchema = z
   .object({
@@ -14,10 +13,9 @@ const searchSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user || !isLeadAdmin(user)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const access = await requireKnowledgeBaseAdminAccess();
+  if (!access.ok) return access.response;
+  const { user, tenantId } = access.access;
 
   let payload: unknown;
   try {
@@ -32,7 +30,7 @@ export async function POST(request: Request) {
   }
 
   const result = await retrievePublishedKnowledge({
-    tenantId: user.tenant_id,
+    tenantId,
     actorUserId: user.id,
     query: parsed.data.query,
     folderIds: parsed.data.folderIds ?? [],

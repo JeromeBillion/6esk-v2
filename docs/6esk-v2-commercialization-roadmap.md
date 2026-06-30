@@ -696,6 +696,7 @@ RAG security rules:
 
 Current implementation status:
 - E-RAG-1 through E-RAG-4 are substantially closed for local launch code with tenant-scoped Admin KB APIs, direct uploads, text/Markdown ingestion, configured PDF/DOC/DOCX extractor handoff, malware-scanner fail-closed gates, quarantine diagnostics, publication/archive lifecycle, tenant object keys, and poison handling for terminal unsafe extraction.
+- E-RAG-3 upload hardening now enforces the tenant's `aiAutomation` entitlement across Admin KB listing, folder creation, upload, publish/archive, retrieval diagnostics, quarantine diagnostics, and ingestion triggers; upload validation also performs server-side byte sniffing before object storage so spoofed PDFs, Word files, DOCX packages, or binary text/Markdown files are rejected before R2 writes.
 - E-RAG-6 and the first E-RAG-7 runtime attachment are closed for keyword retrieval: Dexter receives bounded cited snippets only after tenant lane reservation, uploaded SOPs are marked as untrusted context rather than policy, retrieval events correlate to run/resource IDs, and failures degrade safely.
 - E-RAG-5, deployed scanner/extractor/R2 evidence, stronger E-RAG-8/E-RAG-11 eval/load coverage, deeper Admin diagnostics polish, quotas/billing drill-down, and external connectors remain outstanding or post-launch depending on deployment scope.
 
