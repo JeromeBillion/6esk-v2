@@ -5,20 +5,27 @@ import { db } from "@/server/db";
 import { getObjectBuffer } from "@/server/storage/r2";
 import { getTicketAssignment, hasMailboxAccess } from "@/server/messages";
 import { resolveMockAttachment } from "@/app/lib/mock-attachments";
+import { isRequestDemoModeEnabled } from "@/server/demo-mode";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ attachmentId: string }> }
 ) {
   const { attachmentId } = await params;
-  const mockAttachment = resolveMockAttachment(attachmentId);
-  if (mockAttachment) {
-    return new Response(mockAttachment.body, {
-      headers: {
-        "Content-Type": mockAttachment.contentType,
-        "Content-Disposition": `attachment; filename="${mockAttachment.filename}"`
-      }
-    });
+  const demoModeEnabled = isRequestDemoModeEnabled(request, {
+    defaultEnabled: process.env.NODE_ENV === "development"
+  });
+  if (demoModeEnabled) {
+    const mockAttachment = resolveMockAttachment(attachmentId);
+    if (mockAttachment) {
+      return new Response(mockAttachment.body, {
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Type": mockAttachment.contentType,
+          "Content-Disposition": `attachment; filename="${mockAttachment.filename}"`
+        }
+      });
+    }
   }
 
   const user = await getSessionUser();

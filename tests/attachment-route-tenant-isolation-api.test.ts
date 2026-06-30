@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ATTACHMENT_ID = "11111111-1111-4111-8111-111111111111";
+const MOCK_ATTACHMENT_ID = "att-1846-1";
 const TENANT_ID = "22222222-2222-4222-8222-222222222222";
 
 const mocks = vi.hoisted(() => ({
@@ -53,9 +54,12 @@ function buildUser(tenantId: string | null = TENANT_ID) {
   };
 }
 
-async function getAttachment() {
-  const response = await GET(new Request(`http://localhost/api/attachments/${ATTACHMENT_ID}`), {
-    params: Promise.resolve({ attachmentId: ATTACHMENT_ID })
+async function getAttachment(options: { attachmentId?: string; query?: string; cookie?: string } = {}) {
+  const attachmentId = options.attachmentId ?? ATTACHMENT_ID;
+  const response = await GET(new Request(`http://localhost/api/attachments/${attachmentId}${options.query ?? ""}`, {
+    headers: options.cookie ? { cookie: options.cookie } : undefined
+  }), {
+    params: Promise.resolve({ attachmentId })
   });
   const body = response.headers.get("content-type")?.includes("application/json")
     ? await response.json()
@@ -94,6 +98,45 @@ describe("GET /api/attachments/[attachmentId] tenant isolation", () => {
 
     expect(response.status).toBe(403);
     expect(body).toMatchObject({ error: "Forbidden" });
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+    expect(mocks.getObjectBuffer).not.toHaveBeenCalled();
+  });
+
+  it("does not serve generated mock attachments outside explicit demo mode", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+    mocks.resolveMockAttachment.mockReturnValue({
+      filename: "demo.txt",
+      contentType: "text/plain",
+      body: "demo"
+    });
+
+    const { response, body } = await getAttachment({ attachmentId: MOCK_ATTACHMENT_ID });
+
+    expect(response.status).toBe(401);
+    expect(body).toMatchObject({ error: "Unauthorized" });
+    expect(mocks.resolveMockAttachment).not.toHaveBeenCalled();
+    expect(mocks.dbQuery).not.toHaveBeenCalled();
+    expect(mocks.getObjectBuffer).not.toHaveBeenCalled();
+  });
+
+  it("serves generated mock attachments only for demo-mode requests", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+    mocks.resolveMockAttachment.mockReturnValue({
+      filename: "demo.txt",
+      contentType: "text/plain",
+      body: "demo"
+    });
+
+    const { response } = await getAttachment({
+      attachmentId: MOCK_ATTACHMENT_ID,
+      query: "?demo=1"
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("demo");
+    expect(mocks.resolveMockAttachment).toHaveBeenCalledWith(MOCK_ATTACHMENT_ID);
+    expect(mocks.getSessionUser).not.toHaveBeenCalled();
     expect(mocks.dbQuery).not.toHaveBeenCalled();
     expect(mocks.getObjectBuffer).not.toHaveBeenCalled();
   });

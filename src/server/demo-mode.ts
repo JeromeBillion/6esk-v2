@@ -10,6 +10,16 @@ function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function readCookieValue(cookieHeader: string | null, name: string) {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey !== name) continue;
+    return decodeURIComponent(rawValue.join("=") ?? "");
+  }
+  return null;
+}
+
 export async function isServerDemoModeEnabled(searchParams?: SearchParamsInput) {
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const queryMode = parseDemoQueryValue(firstValue(resolvedSearchParams?.demo));
@@ -19,4 +29,24 @@ export async function isServerDemoModeEnabled(searchParams?: SearchParamsInput) 
 
   const cookieStore = await cookies();
   return parseDemoModeValue(cookieStore.get(DEMO_MODE_COOKIE_NAME)?.value ?? null) ?? false;
+}
+
+export function isRequestDemoModeEnabled(
+  request: Request,
+  options: { defaultEnabled?: boolean } = {}
+) {
+  const requestUrl = new URL(request.url);
+  const queryMode = parseDemoQueryValue(requestUrl.searchParams.get("demo"));
+  if (typeof queryMode === "boolean") {
+    return queryMode;
+  }
+
+  const cookieMode = parseDemoModeValue(
+    readCookieValue(request.headers.get("cookie"), DEMO_MODE_COOKIE_NAME)
+  );
+  if (typeof cookieMode === "boolean") {
+    return cookieMode;
+  }
+
+  return options.defaultEnabled ?? false;
 }
