@@ -1,4 +1,5 @@
 import { redactSensitiveLogContext } from './utils/redaction';
+import { logger } from '@/server/logger';
 
 type GateSeverity = 'warning' | 'error';
 
@@ -240,13 +241,11 @@ export const runDexterStartupGates = (): void => {
 
   if (result.issues.length > 0) {
     const safeIssues = redactSensitiveLogContext(result.issues);
-    console.warn(
-      `[Dexter][startup-gates] warnings=${result.warningCount} errors=${result.errorCount}\n${JSON.stringify(
-        safeIssues,
-        null,
-        2
-      )}`
-    );
+    logger.warn('Dexter startup gate issues detected', {
+      warningCount: result.warningCount,
+      errorCount: result.errorCount,
+      issues: safeIssues
+    });
   }
 
   const shouldFail =

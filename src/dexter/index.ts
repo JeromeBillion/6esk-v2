@@ -20,6 +20,7 @@ import { pluginWhatsApp } from './plugins/plugin-whatsapp';
 import { routingTelemetryPlugin } from './plugins/plugin-routing-telemetry';
 import { pluginEscalation } from './plugins/plugin-escalation';
 import { runDexterStartupGates } from './startup-gates';
+import { logger } from '@/server/logger';
 
 // ---------------------------------------------------------------------------
 // Env normalization
@@ -116,9 +117,10 @@ if (isTwitterEnabled && !hasTwitterCredentials) {
             return !process.env[key]?.trim();
           });
 
-  console.warn(
-    `[Dexter] Twitter agent disabled: missing credentials for auth mode "${twitterAuthMode}": ${missingKeys.join(', ')}`
-  );
+  logger.warn('Dexter Twitter agent disabled because credentials are missing', {
+    authMode: twitterAuthMode,
+    missingKeys
+  });
 }
 
 if (isTwitterEnabled && hasTwitterCredentials) {

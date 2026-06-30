@@ -3,7 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 
 const CONSOLE_CALL_RE = /\bconsole\.(log|error|warn|debug|info)\s*\(/g;
-const SCANNED_DIRS = ["src/server", "src/app/api"] as const;
+const SCANNED_DIRS = ["src/server", "src/app/api", "src/dexter"] as const;
 const ALLOWED_CONSOLE_SINKS = new Set(["src/server/logger.ts"]);
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 
@@ -30,7 +30,7 @@ function walkFiles(dir: string): string[] {
 }
 
 describe("server logging boundary", () => {
-  it("routes server and API logs through the privacy-safe logger", () => {
+  it("routes server, API, and Dexter runtime logs through the privacy-safe logger", () => {
     const root = process.cwd();
     const violations: string[] = [];
 
