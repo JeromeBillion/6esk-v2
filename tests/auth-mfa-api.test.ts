@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cookieGet: vi.fn(),
+  cookieSet: vi.fn(),
   getSessionUser: vi.fn(),
   createSession: vi.fn(),
   completedMfaEnrollmentAuthProvider: vi.fn(),
@@ -10,6 +12,13 @@ const mocks = vi.hoisted(() => ({
   startTotpEnrollment: vi.fn(),
   verifyTotpEnrollment: vi.fn(),
   recordAuditLog: vi.fn()
+}));
+
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => ({
+    get: mocks.cookieGet,
+    set: mocks.cookieSet
+  }))
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -50,6 +59,7 @@ const user = {
 describe("MFA API routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.cookieGet.mockReturnValue(undefined);
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.createSession.mockResolvedValue(undefined);
     mocks.completedMfaEnrollmentAuthProvider.mockReturnValue(null);
@@ -85,6 +95,46 @@ describe("MFA API routes", () => {
         tenantId: TENANT_ID,
         actorUserId: user.id,
         action: "auth_mfa_challenge_verified"
+      })
+    );
+  });
+
+  it("verifies an OAuth MFA challenge from the http-only cookie without exposing the token in JSON", async () => {
+    mocks.cookieGet.mockReturnValue({ value: "oauth-cookie-mfa-token" });
+    mocks.verifyMfaChallenge.mockResolvedValue({
+      ok: true,
+      userId: user.id,
+      tenantId: TENANT_ID,
+      workspaceKey: "primary",
+      factorId: "factor-1",
+      challengeId: "challenge-1",
+      authProvider: "google_oauth_mfa"
+    });
+
+    const response = await POST_CHALLENGE(
+      new Request("http://localhost/api/auth/mfa/challenge", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: "123456" })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.verifyMfaChallenge).toHaveBeenCalledWith({
+      challengeToken: "oauth-cookie-mfa-token",
+      code: "123456"
+    });
+    expect(mocks.createSession).toHaveBeenCalledWith(user.id, {
+      authProvider: "google_oauth_mfa",
+      requestHeaders: expect.any(Headers)
+    });
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "sixesk_auth_oauth_mfa_challenge",
+      "",
+      expect.objectContaining({
+        httpOnly: true,
+        path: "/api/auth/mfa",
+        expires: expect.any(Date)
       })
     );
   });

@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [mfaChallengeToken, setMfaChallengeToken] = useState<string | null>(null);
+  const [mfaChallengeFromCookie, setMfaChallengeFromCookie] = useState(false);
   const [returnTo, setReturnTo] = useState("/tickets");
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -37,8 +38,9 @@ export default function LoginPage() {
     if (nextReturnTo?.startsWith("/") && !nextReturnTo.startsWith("//")) {
       setReturnTo(nextReturnTo);
     }
-    if (mfaRequired && challengeToken) {
+    if (mfaRequired) {
       setMfaChallengeToken(challengeToken);
+      setMfaChallengeFromCookie(!challengeToken);
       setFeedback({
         open: true,
         tone: "info",
@@ -93,6 +95,7 @@ export default function LoginPage() {
     const payload = await response.json().catch(() => ({}));
     if (payload.status === "mfa_required" && payload.challengeToken) {
       setMfaChallengeToken(payload.challengeToken);
+      setMfaChallengeFromCookie(false);
       setMfaCode("");
       setFeedback({
         open: true,
@@ -110,16 +113,18 @@ export default function LoginPage() {
 
   async function handleMfaSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!mfaChallengeToken) return;
+    if (!mfaChallengeToken && !mfaChallengeFromCookie) return;
     setLoading(true);
+
+    const body: { code: string; challengeToken?: string } = { code: mfaCode };
+    if (mfaChallengeToken) {
+      body.challengeToken = mfaChallengeToken;
+    }
 
     const response = await fetch("/api/auth/mfa/challenge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        challengeToken: mfaChallengeToken,
-        code: mfaCode
-      })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
@@ -137,6 +142,8 @@ export default function LoginPage() {
     setStoredDemoMode(false);
     router.push(returnTo);
   }
+
+  const mfaChallengeActive = Boolean(mfaChallengeToken || mfaChallengeFromCookie);
 
   return (
     <PublicPageFrame
@@ -156,7 +163,7 @@ export default function LoginPage() {
         <span>or</span>
         <span className="h-px flex-1 bg-neutral-200" />
       </div>
-      {mfaChallengeToken ? (
+      {mfaChallengeActive ? (
         <form onSubmit={handleMfaSubmit} className="grid gap-5">
           <div className="grid gap-2">
             <label htmlFor="mfa-code">Authenticator code</label>
@@ -172,7 +179,14 @@ export default function LoginPage() {
             />
           </div>
           <div className="flex items-center justify-between gap-3">
-            <Button type="button" variant="ghost" onClick={() => setMfaChallengeToken(null)}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setMfaChallengeToken(null);
+                setMfaChallengeFromCookie(false);
+              }}
+            >
               Back
             </Button>
             <Button type="submit" disabled={loading}>

@@ -12,6 +12,8 @@ import { recordAuditLog, recordPlatformAuditLog } from "@/server/audit";
 import { db } from "@/server/db";
 
 const AUTH_OAUTH_NONCE_COOKIE = "sixesk_auth_oauth_nonce";
+const AUTH_OAUTH_MFA_CHALLENGE_COOKIE = "sixesk_auth_oauth_mfa_challenge";
+const AUTH_OAUTH_MFA_COOKIE_TTL_SECONDS = 10 * 60;
 
 type AuthOAuthUserRow = {
   id: string;
@@ -45,6 +47,17 @@ async function clearNonceCookie() {
     secure: process.env.NODE_ENV === "production",
     path: "/api/auth/oauth",
     expires: new Date(0)
+  });
+}
+
+async function setOAuthMfaChallengeCookie(challengeToken: string) {
+  const cookieStore = await cookies();
+  cookieStore.set(AUTH_OAUTH_MFA_CHALLENGE_COOKIE, challengeToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/api/auth/mfa",
+    maxAge: AUTH_OAUTH_MFA_COOKIE_TTL_SECONDS
   });
 }
 
@@ -200,9 +213,9 @@ export async function GET(request: Request) {
         emailDomain: emailDomain(profile.email)
       }
     });
+    await setOAuthMfaChallengeCookie(challenge.challengeToken);
     return loginRedirect(request, {
       mfa: "required",
-      challengeToken: challenge.challengeToken,
       returnTo: state.returnTo
     });
   }

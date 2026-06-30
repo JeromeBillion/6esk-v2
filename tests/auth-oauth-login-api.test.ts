@@ -178,8 +178,16 @@ describe("/api/auth/oauth/callback", () => {
     const response = await GET(callbackRequest());
 
     expect(response.status).toBe(302);
-    expect(redirectedPath(response)).toBe(
-      "/login?mfa=required&challengeToken=mfa-token&returnTo=%2Ftickets"
+    expect(redirectedPath(response)).toBe("/login?mfa=required&returnTo=%2Ftickets");
+    expect(response.headers.get("location")).not.toContain("challengeToken");
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "sixesk_auth_oauth_mfa_challenge",
+      "mfa-token",
+      expect.objectContaining({
+        httpOnly: true,
+        path: "/api/auth/mfa",
+        maxAge: 600
+      })
     );
     expect(mocks.createMfaChallenge).toHaveBeenCalledWith(activeUser, {
       authProvider: "google_oauth_mfa"
