@@ -57,8 +57,19 @@ describe("POST /api/auth/password-reset", () => {
     });
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "reset-1",
+            user_id: "user-1",
+            tenant_id: "tenant-1",
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            used_at: null
+          }
+        ]
+      })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 2 })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -82,10 +93,11 @@ describe("POST /api/auth/password-reset", () => {
       "user-1",
       "tenant-1"
     ]);
-    expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE id = $1\n         AND tenant_id = $2"), [
-      "reset-1",
-      "tenant-1"
-    ]);
+    expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE"), ["reset-1", "tenant-1"]);
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
+      expect.stringContaining("AND used_at IS NULL"),
+      ["reset-1", "tenant-1"]
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: "tenant-1",
@@ -100,5 +112,52 @@ describe("POST /api/auth/password-reset", () => {
         data: { revokedSessionCount: 2 }
       })
     );
+  });
+
+  it("rejects reset token reuse when another request consumes the row first", async () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "reset-1",
+          user_id: "user-1",
+          tenant_id: "tenant-1",
+          expires_at: expiresAt,
+          used_at: null
+        }
+      ]
+    });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "reset-1",
+            user_id: "user-1",
+            tenant_id: "tenant-1",
+            expires_at: expiresAt,
+            used_at: new Date().toISOString()
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const { POST } = await import("@/app/api/auth/password-reset/route");
+    const response = await POST(
+      new Request("https://desk.example.com/api/auth/password-reset", {
+        method: "POST",
+        body: JSON.stringify({
+          token: "reset-token-123",
+          password: "new-password"
+        })
+      })
+    );
+
+    await expect(response.json()).resolves.toMatchObject({ error: "Token already used" });
+    expect(response.status).toBe(400);
+    expect(mocks.clientQuery).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE"), ["reset-1", "tenant-1"]);
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.clientQuery).not.toHaveBeenCalledWith(expect.stringContaining("UPDATE users"), expect.any(Array));
+    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
   });
 });
