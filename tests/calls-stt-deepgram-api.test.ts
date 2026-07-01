@@ -81,6 +81,56 @@ describe("POST /api/internal/calls/stt/deepgram", () => {
     expect(response.status).toBe(401);
   });
 
+  it("rejects oversized Deepgram jobs before parsing tenant or provider state", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/stt/deepgram", {
+        method: "POST",
+        headers: {
+          "content-length": String(50 * 1024 * 1024 + 1),
+          "x-6esk-secret": "internal-secret"
+        },
+        body: "not parsed"
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(413);
+    expect(body).toMatchObject({ error: "Deepgram transcript job payload is too large." });
+    expect(mocks.resolveCallSessionProviderScope).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized Deepgram audio before tenant secret lookup or provider spend", async () => {
+    process.env.CALLS_STT_DEEPGRAM_MAX_JOB_BYTES = "4";
+    const form = new FormData();
+    form.set(
+      "job",
+      JSON.stringify({
+        jobId: "11111111-1111-1111-1111-111111111111",
+        callSessionId: "22222222-2222-2222-2222-222222222222",
+        callbackUrl: "https://app.6esk.test/api/calls/transcript",
+        metadata: {}
+      })
+    );
+    form.set("audio", new File([Buffer.from("audio")], "call.mp3", { type: "audio/mpeg" }));
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/stt/deepgram", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "internal-secret"
+        },
+        body: form
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(413);
+    expect(body).toMatchObject({ error: "Deepgram transcript audio is too large." });
+    expect(mocks.resolveCallSessionProviderScope).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("submits audio to Deepgram with callback metadata and returns accepted", async () => {
     const form = new FormData();
     form.set(

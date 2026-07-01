@@ -637,3 +637,6 @@ Before this recovery branch can replace `main`, run:
   - tenant-scoped quarantine event ledger with optional R2 blob storage pointer
   - admin readiness/quarantine diagnostics
   - prompt-injection poisoning before unsafe uploaded knowledge can be chunked
+- Deepgram/STT provider-ingress hardening tests pass in the focused slice:
+  - `tests/calls-stt-deepgram-api.test.ts`
+  - the internal Deepgram bridge rejects oversized multipart requests by `content-length` before parsing form data, rejects oversized audio before tenant-secret lookup or Deepgram API calls, and remains covered by `npm run test:tenant-isolation`

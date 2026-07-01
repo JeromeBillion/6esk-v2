@@ -11,6 +11,8 @@ import {
 
 export const runtime = "nodejs";
 
+const DEFAULT_DEEPGRAM_JOB_MAX_BYTES = 50 * 1024 * 1024;
+
 const jobSchema = z.object({
   jobId: z.string().uuid(),
   callSessionId: z.string().uuid(),
@@ -23,6 +25,21 @@ function readString(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function getDeepgramJobMaxBytes() {
+  const parsed = Number(process.env.CALLS_STT_DEEPGRAM_MAX_JOB_BYTES ?? DEFAULT_DEEPGRAM_JOB_MAX_BYTES);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DEEPGRAM_JOB_MAX_BYTES;
+  }
+  return Math.floor(parsed);
+}
+
+function isContentLengthTooLarge(request: Request, maxBytes: number) {
+  const raw = request.headers.get("content-length");
+  if (!raw) return false;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > maxBytes;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -101,6 +118,10 @@ function buildDeepgramUrl(
 
 export async function POST(request: Request) {
   const providedSecret = request.headers.get("x-6esk-secret");
+  const maxJobBytes = getDeepgramJobMaxBytes();
+  if (isContentLengthTooLarge(request, maxJobBytes)) {
+    return Response.json({ error: "Deepgram transcript job payload is too large." }, { status: 413 });
+  }
 
   const formData = await request.formData();
   const rawJob = formData.get("job");
@@ -117,6 +138,9 @@ export async function POST(request: Request) {
 
   if (!(audio instanceof File)) {
     return Response.json({ error: "Audio file is required." }, { status: 400 });
+  }
+  if (audio.size > maxJobBytes) {
+    return Response.json({ error: "Deepgram transcript audio is too large." }, { status: 413 });
   }
 
   const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
