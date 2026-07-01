@@ -596,7 +596,8 @@ Before this recovery branch can replace `main`, run:
   - `tests/admin-users-roles-api.test.ts`
   - `tests/email-mailbox-tenant-scope.test.ts`
   - `tests/message-service-tenant-isolation.test.ts`
-  - mailbox membership rows are tenant-owned, ambiguous historical mailbox/user tenant mismatches fail migration instead of receiving a default tenant, list/access/admin/OAuth/user-creation writers include direct membership tenant evidence, and mailbox address conflict paths cannot update a mailbox owned by another tenant
+- mailbox membership rows are tenant-owned, ambiguous historical mailbox/user tenant mismatches fail migration instead of receiving a default tenant, list/access/admin/OAuth/user-creation writers include direct membership tenant evidence, and mailbox address conflict paths cannot update a mailbox owned by another tenant
+- admin bootstrap now follows the tenant-owned data model: `db:seed` verifies the target tenant, runs inside one transaction, writes tenant IDs for roles, tags, macros, SLA config, users, mailboxes, and mailbox memberships, refuses cross-tenant email/mailbox conflicts, and migration `0073` replaces global macro-title uniqueness with tenant-scoped macro-title uniqueness
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`
