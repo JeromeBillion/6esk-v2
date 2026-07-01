@@ -79,6 +79,18 @@ export async function findMailbox(address: string) {
   return result.rows[0] ?? null;
 }
 
+export async function findMailboxForOAuthConnection(connectionId: string, tenantId: string) {
+  const result = await db.query<MailboxRecord>(
+    `SELECT id, tenant_id, type, address, owner_user_id
+     FROM mailboxes
+     WHERE oauth_connection_id = $1
+       AND tenant_id = $2
+     LIMIT 1`,
+    [connectionId, tenantId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function resolveInboundMailbox(address: string, supportAddress: string) {
   if (address === supportAddress) {
     return findMailbox(address);

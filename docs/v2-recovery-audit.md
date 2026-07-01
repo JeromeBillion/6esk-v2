@@ -620,6 +620,11 @@ Before this recovery branch can replace `main`, run:
   - `tests/email-mailbox-tenant-scope.test.ts`
   - `src/server/email/mailbox.ts`
   - platform/support mailbox creation now requires an explicit tenant, personal mailbox creation derives tenant scope from the owner user, cross-tenant mailbox-address conflicts cannot update existing mailbox ownership, and inbound support-address resolution uses an existing mailbox-owned tenant instead of auto-creating a default-tenant mailbox
+- OAuth provider mailbox sync tenant-scope tests pass in the focused slice:
+  - `tests/google-oauth-webhook.test.ts`
+  - `tests/oauth-sync-engine.test.ts`
+  - `tests/oauth-callback-tenant-scope.test.ts`
+  - Google Pub/Sub wakeups now query active OAuth connections only through tenant-owned mailbox joins, ambiguous matches fail closed, OAuth callback rejects cross-tenant mailbox claims before provider-token persistence, outbound OAuth send lookup is tenant-scoped, and provider sync passes the connected mailbox into inbound storage instead of resolving tenant ownership from message headers
 - Knowledge Base scanner/extractor/quarantine recovery tests pass in the focused slice:
   - `tests/knowledge-base-service.test.ts`
   - `tests/knowledge-ingestion-worker.test.ts`

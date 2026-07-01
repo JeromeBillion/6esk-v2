@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { storeInboundEmail } from "@/server/email/inbound-store";
+import { findMailboxForOAuthConnection, type MailboxRecord } from "@/server/email/mailbox";
 import { getConnectionTokens, updateConnectionTokens } from "@/server/oauth/connections";
 import { decryptToken, encryptToken } from "@/server/oauth/crypto";
 import { refreshGoogleToken } from "@/server/oauth/providers/google";
@@ -55,6 +56,11 @@ export async function syncConnection(conn: OAuthSyncConnection) {
     tenantId: conn.tenant_id,
     provider: conn.provider
   });
+  const mailbox = await findMailboxForOAuthConnection(conn.id, conn.tenant_id);
+  if (!mailbox) {
+    throw new Error("OAuth connection is not attached to a tenant mailbox.");
+  }
+
   const tokensEnc = await getConnectionTokens(conn.id);
   if (!tokensEnc) throw new Error("Missing tokens");
 
@@ -116,11 +122,11 @@ export async function syncConnection(conn: OAuthSyncConnection) {
   let newCursor = conn.sync_cursor ?? null;
 
   if (conn.provider === "google") {
-    newCursor = await syncGoogleMail(conn, accessToken, newCursor);
+    newCursor = await syncGoogleMail(conn, accessToken, newCursor, mailbox);
   } else if (conn.provider === "microsoft") {
-    newCursor = await syncMicrosoftMail(conn, accessToken, newCursor);
+    newCursor = await syncMicrosoftMail(conn, accessToken, newCursor, mailbox);
   } else if (conn.provider === "zoho") {
-    newCursor = await syncZohoMail(conn, accessToken, newCursor);
+    newCursor = await syncZohoMail(conn, accessToken, newCursor, mailbox);
   }
 
   await db.query(
@@ -132,7 +138,12 @@ export async function syncConnection(conn: OAuthSyncConnection) {
   log.info("OAuth connection sync completed", { syncCursorUpdated: newCursor !== conn.sync_cursor });
 }
 
-async function syncGoogleMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncGoogleMail(
+  conn: OAuthSyncConnection,
+  accessToken: string,
+  cursor: string | null,
+  mailbox: MailboxRecord
+): Promise<string | null> {
   const log = logger.child({
     connectionId: conn.id,
     tenantId: conn.tenant_id,
@@ -186,7 +197,7 @@ async function syncGoogleMail(conn: OAuthSyncConnection, accessToken: string, cu
       };
 
       try {
-        await storeInboundEmail(inboundPayload);
+        await storeInboundEmail(inboundPayload, { mailbox });
 
         // Mark as read in Gmail
         await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}/modify`, {
@@ -215,7 +226,12 @@ async function syncGoogleMail(conn: OAuthSyncConnection, accessToken: string, cu
   return cursor;
 }
 
-async function syncMicrosoftMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncMicrosoftMail(
+  conn: OAuthSyncConnection,
+  accessToken: string,
+  cursor: string | null,
+  mailbox: MailboxRecord
+): Promise<string | null> {
   const log = logger.child({
     connectionId: conn.id,
     tenantId: conn.tenant_id,
@@ -242,7 +258,7 @@ async function syncMicrosoftMail(conn: OAuthSyncConnection, accessToken: string,
     };
 
     try {
-      await storeInboundEmail(inboundPayload);
+      await storeInboundEmail(inboundPayload, { mailbox });
 
       // Mark as read
       await fetch(`https://graph.microsoft.com/v1.0/me/messages/${msg.id}`, {
@@ -262,7 +278,12 @@ async function syncMicrosoftMail(conn: OAuthSyncConnection, accessToken: string,
   return Date.now().toString();
 }
 
-async function syncZohoMail(conn: OAuthSyncConnection, accessToken: string, cursor: string | null): Promise<string | null> {
+async function syncZohoMail(
+  conn: OAuthSyncConnection,
+  accessToken: string,
+  cursor: string | null,
+  mailbox: MailboxRecord
+): Promise<string | null> {
   const log = logger.child({
     connectionId: conn.id,
     tenantId: conn.tenant_id,
@@ -300,7 +321,7 @@ async function syncZohoMail(conn: OAuthSyncConnection, accessToken: string, curs
       };
 
       try {
-        await storeInboundEmail(inboundPayload);
+        await storeInboundEmail(inboundPayload, { mailbox });
 
         // Mark as read in Zoho
         await fetch(`https://mail.zoho.com/api/accounts/${accountId}/folders/${msg.folderId}/messages`, {

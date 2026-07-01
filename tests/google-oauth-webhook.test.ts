@@ -121,6 +121,38 @@ describe("Google OAuth webhook", () => {
     expect(mocks.dbQuery).toHaveBeenCalledWith(expect.stringContaining("FROM oauth_connections"), [
       "customer@example.com"
     ]);
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("JOIN mailboxes m");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("m.oauth_connection_id = c.id");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("m.tenant_id = c.tenant_id");
     expect(mocks.syncConnection).toHaveBeenCalledWith(connection);
+  });
+
+  it("does not pick an arbitrary tenant when active mailbox connections are ambiguous", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "conn-1",
+          tenant_id: "tenant-1",
+          provider: "google",
+          email_address: "customer@example.com",
+          token_expires_at: null,
+          sync_cursor: "cursor-1"
+        },
+        {
+          id: "conn-2",
+          tenant_id: "tenant-2",
+          provider: "google",
+          email_address: "customer@example.com",
+          token_expires_at: null,
+          sync_cursor: "cursor-2"
+        }
+      ]
+    });
+
+    const response = await POST(webhookRequest(pubSubBody()));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("Ambiguous connection");
+    expect(mocks.syncConnection).not.toHaveBeenCalled();
   });
 });

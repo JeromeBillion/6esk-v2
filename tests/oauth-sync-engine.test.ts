@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   encryptToken: vi.fn(),
   refreshGoogleToken: vi.fn(),
   refreshMicrosoftToken: vi.fn(),
-  storeInboundEmail: vi.fn()
+  storeInboundEmail: vi.fn(),
+  findMailboxForOAuthConnection: vi.fn()
 }));
 
 vi.mock("@/server/db", () => ({
@@ -39,11 +40,22 @@ vi.mock("@/server/email/inbound-store", () => ({
   storeInboundEmail: mocks.storeInboundEmail
 }));
 
+vi.mock("@/server/email/mailbox", () => ({
+  findMailboxForOAuthConnection: mocks.findMailboxForOAuthConnection
+}));
+
 import { syncConnection } from "@/server/oauth/sync-engine";
 
 const ACCESS_TOKEN_ENC = Buffer.from("combined-token-ciphertext-with-auth-tag");
 const REFRESH_TOKEN_ENC = Buffer.alloc(0);
 const TOKEN_IV = Buffer.from("1234567890abcdef");
+const MAILBOX = {
+  id: "mailbox-1",
+  tenant_id: "00000000-0000-0000-0000-000000000001",
+  type: "platform",
+  address: "inbox@example.com",
+  owner_user_id: null
+};
 
 function buildGoogleConnection(overrides: Record<string, unknown> = {}) {
   return {
@@ -86,6 +98,7 @@ describe("oauth sync engine", () => {
       ciphertext: Buffer.from("new-combined-token-ciphertext"),
       iv: Buffer.from("fedcba0987654321")
     });
+    mocks.findMailboxForOAuthConnection.mockResolvedValue(MAILBOX);
     mocks.dbQuery.mockResolvedValue({ rows: [] });
     mockGoogleFetchWithNoMessages();
   });
@@ -98,6 +111,10 @@ describe("oauth sync engine", () => {
     expect(mocks.dbQuery).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE oauth_connections"),
       ["history-123", "11111111-1111-1111-1111-111111111111"]
+    );
+    expect(mocks.findMailboxForOAuthConnection).toHaveBeenCalledWith(
+      "11111111-1111-1111-1111-111111111111",
+      "00000000-0000-0000-0000-000000000001"
     );
   });
 
@@ -124,5 +141,59 @@ describe("oauth sync engine", () => {
       Buffer.from("fedcba0987654321"),
       expect.any(Date)
     );
+  });
+
+  it("stores provider mail through the connected mailbox instead of resolving message headers globally", async () => {
+    global.fetch = vi.fn(async (url: string | URL | Request) => {
+      const value = String(url);
+      if (value.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: [{ id: "gmail-1", threadId: "thread-1" }] }), { status: 200 });
+      }
+      if (value.includes("/messages/gmail-1?")) {
+        return new Response(
+          JSON.stringify({
+            id: "gmail-1",
+            snippet: "Forwarded support request",
+            payload: {
+              headers: [
+                { name: "From", value: "customer@example.net" },
+                { name: "To", value: "alias-owned-by-other-tenant@example.com" },
+                { name: "Subject", value: "Need help" },
+                { name: "Message-ID", value: "<gmail-1@example.net>" }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (value.includes("/messages/gmail-1/modify")) {
+        return new Response("OK", { status: 200 });
+      }
+      if (value.includes("/profile")) {
+        return new Response(JSON.stringify({ historyId: "history-456" }), { status: 200 });
+      }
+      return new Response("unexpected request", { status: 500 });
+    }) as typeof fetch;
+
+    await syncConnection(buildGoogleConnection());
+
+    expect(mocks.storeInboundEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "alias-owned-by-other-tenant@example.com",
+        messageId: "<gmail-1@example.net>"
+      }),
+      { mailbox: MAILBOX }
+    );
+  });
+
+  it("fails closed when an OAuth connection is not attached to a tenant mailbox", async () => {
+    mocks.findMailboxForOAuthConnection.mockResolvedValueOnce(null);
+
+    await expect(syncConnection(buildGoogleConnection())).rejects.toThrow(
+      "OAuth connection is not attached to a tenant mailbox."
+    );
+
+    expect(mocks.getConnectionTokens).not.toHaveBeenCalled();
+    expect(mocks.storeInboundEmail).not.toHaveBeenCalled();
   });
 });

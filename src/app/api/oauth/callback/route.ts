@@ -146,6 +146,19 @@ export async function GET(request: NextRequest) {
   const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
   try {
+    const mailboxOwner = await db.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM mailboxes WHERE lower(address) = lower($1) LIMIT 1",
+      [emailAddress]
+    );
+    if (mailboxOwner.rows[0] && mailboxOwner.rows[0].tenant_id !== state.tenantId) {
+      log.warn("OAuth callback rejected mailbox address claimed by another tenant", {
+        provider: state.provider,
+        tenantId: state.tenantId,
+        mailboxTenantId: mailboxOwner.rows[0].tenant_id
+      });
+      return new Response("Mailbox address belongs to another tenant", { status: 409 });
+    }
+
     // 1. Create or update oauth connection
     const { id: connectionId } = await createOAuthConnection({
       tenantId: state.tenantId,

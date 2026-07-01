@@ -86,7 +86,8 @@ export async function getActiveConnection(
 }
 
 export async function getActiveConnectionForMailbox(
-  emailAddress: string
+  emailAddress: string,
+  tenantId: string
 ): Promise<OAuthConnection | null> {
   const result = await db.query(
     `SELECT
@@ -96,9 +97,12 @@ export async function getActiveConnectionForMailbox(
       c.connected_by, c.created_at, c.updated_at, c.revoked_at
     FROM mailboxes m
     JOIN oauth_connections c ON m.oauth_connection_id = c.id
-    WHERE m.address = $1 AND c.sync_status = 'active'
+    WHERE m.address = $1
+      AND m.tenant_id = $2
+      AND c.tenant_id = m.tenant_id
+      AND c.sync_status = 'active'
     LIMIT 1`,
-    [emailAddress.toLowerCase()]
+    [emailAddress.toLowerCase(), tenantId]
   );
   return result.rows[0] ?? null;
 }

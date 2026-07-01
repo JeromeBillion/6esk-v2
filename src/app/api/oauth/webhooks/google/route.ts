@@ -42,12 +42,17 @@ export async function POST(request: NextRequest) {
       return new Response("Missing emailAddress", { status: 400 });
     }
 
-    // Find the active connection
+    // Find the active connection that is actually bound to a tenant mailbox.
     const result = await db.query(
-      `SELECT id, tenant_id, provider, email_address, token_expires_at, sync_cursor
-       FROM oauth_connections
-       WHERE email_address = $1 AND provider = 'google' AND sync_status = 'active'
-       LIMIT 1`,
+      `SELECT c.id, c.tenant_id, c.provider, c.email_address, c.token_expires_at, c.sync_cursor
+       FROM oauth_connections c
+       JOIN mailboxes m
+         ON m.oauth_connection_id = c.id
+        AND m.tenant_id = c.tenant_id
+       WHERE lower(c.email_address) = lower($1)
+         AND c.provider = 'google'
+         AND c.sync_status = 'active'
+       LIMIT 2`,
       [payload.emailAddress]
     );
 
@@ -56,6 +61,12 @@ export async function POST(request: NextRequest) {
       // It's possible the connection was revoked or deleted. Just acknowledge to stop retries.
       log.info("Google OAuth webhook acknowledged unknown connection");
       return new Response("Connection not found", { status: 200 });
+    }
+    if (result.rows.length > 1) {
+      log.error("Google OAuth webhook found ambiguous active mailbox connections", {
+        connectionCount: result.rows.length
+      });
+      return new Response("Ambiguous connection", { status: 200 });
     }
 
     // Trigger sync asynchronously so we don't block the Pub/Sub response (timeout is typically 10s)

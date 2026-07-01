@@ -184,7 +184,9 @@ async function sendQueuedEmail(eventId: string, tenantId: string, payload: Recor
     throw new Error("Queued email payload is incomplete");
   }
 
-  const connection = await import("@/server/oauth/connections").then(m => m.getActiveConnectionForMailbox(from));
+  const connection = await import("@/server/oauth/connections").then(m =>
+    m.getActiveConnectionForMailbox(from, tenantId)
+  );
 
   let providerMessageId: string | null = null;
   let finalProvider = "resend";

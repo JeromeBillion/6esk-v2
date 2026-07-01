@@ -229,7 +229,9 @@ export async function sendTicketReply({
 
   const finalSubject = subject ?? (ticket.subject ? `Re: ${ticket.subject}` : "Re: Support request");
 
-  const connection = await import("@/server/oauth/connections").then(m => m.getActiveConnectionForMailbox(from));
+  const connection = await import("@/server/oauth/connections").then(m =>
+    m.getActiveConnectionForMailbox(from, effectiveTenantId)
+  );
 
   let providerMessageId: string | null = null;
 
