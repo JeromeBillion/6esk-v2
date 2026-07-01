@@ -20,6 +20,8 @@ const createGrantSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 
+const tenantIdQuerySchema = z.string().uuid();
+
 function readTenantId(request: Request) {
   return new URL(request.url).searchParams.get("tenantId")?.trim() ?? "";
 }
@@ -38,8 +40,12 @@ export async function GET(request: Request) {
   if (!tenantId) {
     return Response.json({ error: "tenantId is required" }, { status: 400 });
   }
+  const parsedTenantId = tenantIdQuerySchema.safeParse(tenantId);
+  if (!parsedTenantId.success) {
+    return Response.json({ error: "Invalid tenantId", details: parsedTenantId.error.issues }, { status: 400 });
+  }
 
-  const scope = { tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY };
+  const scope = { tenantId: parsedTenantId.data, workspaceKey: DEFAULT_WORKSPACE_KEY };
   const [grants, stats] = await Promise.all([
     listPrivilegedAccessGrants(scope, readLimit(request)),
     getPrivilegedAccessStats(scope)

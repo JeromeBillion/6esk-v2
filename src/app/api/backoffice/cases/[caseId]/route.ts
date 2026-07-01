@@ -32,6 +32,10 @@ const paramsSchema = z.object({
   caseId: z.string().uuid()
 });
 
+const getQuerySchema = z.object({
+  tenantId: z.string().uuid().optional()
+});
+
 function workflowErrorResponse(error: unknown) {
   if (error instanceof BackofficeWorkflowError) {
     return Response.json({ error: error.message, code: error.code }, { status: error.status });
@@ -52,7 +56,13 @@ export async function GET(
   }
   const { caseId } = parsedParams.data;
   const { searchParams } = new URL(request.url);
-  const tenantId = searchParams.get("tenantId") || undefined;
+  const parsedQuery = getQuerySchema.safeParse({
+    tenantId: searchParams.get("tenantId") || undefined
+  });
+  if (!parsedQuery.success) {
+    return Response.json({ error: "Invalid query parameters", details: parsedQuery.error.issues }, { status: 400 });
+  }
+  const { tenantId } = parsedQuery.data;
   try {
     const [backofficeCase, events, links] = await Promise.all([
       getBackofficeCase({ caseId, tenantId }),

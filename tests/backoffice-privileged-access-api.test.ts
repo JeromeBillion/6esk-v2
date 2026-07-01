@@ -114,6 +114,16 @@ describe("backoffice privileged access API", () => {
     );
   });
 
+  it("rejects invalid tenant ids before privileged access reads", async () => {
+    mocks.getSessionUser.mockResolvedValue(internalSupport);
+
+    const response = await GET(new Request("http://localhost/api/backoffice/privileged-access?tenantId=not-a-uuid"));
+
+    expect(response.status).toBe(400);
+    expect(mocks.listPrivilegedAccessGrants).not.toHaveBeenCalled();
+    expect(mocks.getPrivilegedAccessStats).not.toHaveBeenCalled();
+  });
+
   it("creates a self-requested grant for the current internal user", async () => {
     mocks.getSessionUser.mockResolvedValue(internalSupport);
     mocks.createPrivilegedAccessGrant.mockResolvedValue(grant);

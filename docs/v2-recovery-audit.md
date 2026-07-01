@@ -600,6 +600,7 @@ Before this recovery branch can replace `main`, run:
 - admin bootstrap now follows the tenant-owned data model: `db:seed` verifies the target tenant, runs inside one transaction, writes tenant IDs for roles, tags, macros, SLA config, users, mailboxes, and mailbox memberships, refuses cross-tenant email/mailbox conflicts, and migration `0073` replaces global macro-title uniqueness with tenant-scoped macro-title uniqueness
 - role authorization state now follows the tenant-owned data model: migration `0074` drops the inherited global `roles.name` uniqueness, adds tenant-scoped role-name and role-id indexes, enforces `users(tenant_id, role_id)` against `roles(tenant_id, id)`, updates seed role upserts to use `(tenant_id, name)`, and tenant-pins auth/session/OAuth/backoffice owner role joins
 - user email identity now follows the app's case-insensitive lookup contract: migration `0075` fails fast on historical `lower(email)` duplicates, lowercases stored user emails, and adds `uq_users_email_lower` so password login, OAuth callback, mailbox owner resolution, and tenant admin user provisioning cannot drift into ambiguous case-variant accounts
+- 6esk Work query-scope validation now rejects malformed tenant filters at the route boundary for privileged-access listing/stats and workflow case detail reads before backoffice grant, case, timeline, or artifact services run
 - Customer conversation-data route tenant-scope tests pass in the focused slice:
   - `tests/ticket-detail-tenant-isolation-api.test.ts`
   - `tests/messages-route-api.test.ts`

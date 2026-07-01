@@ -52,7 +52,7 @@ vi.mock("@/server/backoffice/workflows", () => ({
 }));
 
 import { GET as listCases, POST as createCase } from "@/app/api/backoffice/cases/route";
-import { PATCH as updateCase } from "@/app/api/backoffice/cases/[caseId]/route";
+import { GET as getCase, PATCH as updateCase } from "@/app/api/backoffice/cases/[caseId]/route";
 import { POST as addCaseEvent } from "@/app/api/backoffice/cases/[caseId]/events/route";
 import { POST as addCaseLink } from "@/app/api/backoffice/cases/[caseId]/links/route";
 import { PUT as upsertProfile } from "@/app/api/backoffice/tenants/[tenantId]/profile/route";
@@ -85,7 +85,10 @@ describe("backoffice workflow APIs", () => {
     mocks.hasPrivilegedMfaSession.mockReturnValue(true);
     mocks.listBackofficeCases.mockResolvedValue([]);
     mocks.createBackofficeCase.mockResolvedValue({ id: CASE_ID, tenantId: TENANT_ID });
+    mocks.getBackofficeCase.mockResolvedValue({ id: CASE_ID, tenantId: TENANT_ID });
     mocks.updateBackofficeCase.mockResolvedValue({ id: CASE_ID, tenantId: TENANT_ID, status: "in_progress" });
+    mocks.listBackofficeCaseEvents.mockResolvedValue([]);
+    mocks.listBackofficeCaseLinks.mockResolvedValue([]);
     mocks.appendBackofficeCaseEvent.mockResolvedValue({ id: "event-1", caseId: CASE_ID, tenantId: TENANT_ID });
     mocks.linkBackofficeCaseArtifact.mockResolvedValue({ id: "link-1", caseId: CASE_ID, tenantId: TENANT_ID });
     mocks.upsertTenantBackofficeProfile.mockResolvedValue({ tenantId: TENANT_ID });
@@ -134,6 +137,18 @@ describe("backoffice workflow APIs", () => {
         actorUserId: USER_ID
       })
     );
+  });
+
+  it("rejects invalid case detail tenant filters before workflow reads", async () => {
+    const response = await getCase(
+      new Request(`http://localhost/api/backoffice/cases/${CASE_ID}?tenantId=not-a-uuid`),
+      caseParams()
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.getBackofficeCase).not.toHaveBeenCalled();
+    expect(mocks.listBackofficeCaseEvents).not.toHaveBeenCalled();
+    expect(mocks.listBackofficeCaseLinks).not.toHaveBeenCalled();
   });
 
   it("requires MFA before mutating workflow cases", async () => {
