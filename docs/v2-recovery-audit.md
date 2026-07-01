@@ -508,12 +508,13 @@ Before this recovery branch can replace `main`, run:
 - WhatsApp send/outbox tenant-scope tests pass in the focused slice:
   - `tests/admin-whatsapp-config-api.test.ts`
   - `tests/admin-whatsapp-templates-api.test.ts`
+  - `tests/whatsapp-templates-api.test.ts`
   - `tests/admin-whatsapp-outbox-api.test.ts`
   - `tests/admin-whatsapp-retry-api.test.ts`
   - `tests/admin-whatsapp-failed-api.test.ts`
   - `tests/whatsapp-outbox-tenant-isolation.test.ts`
   - `tests/channel-module-guards-api.test.ts`
-  - WhatsApp provider settings, templates, direct sends, failed-event listing, retry, and outbox delivery now require explicit tenant scope; maintenance scripts send tenant headers and global metrics queries are explicitly marked as internal-only
+- WhatsApp provider settings, admin template mutations, support-side active-template reads, direct sends, failed-event listing, retry, and outbox delivery now require explicit tenant scope; active-template picker reads also require ticket permissions and the WhatsApp module entitlement before returning tenant-owned active templates; maintenance scripts send tenant headers and global metrics queries are explicitly marked as internal-only
 - Call outbox/transcript maintenance tenant-scope tests pass in the focused slice:
   - `tests/admin-calls-outbox-api.test.ts`
   - `tests/admin-calls-retry-api.test.ts`
