@@ -120,6 +120,7 @@ describe("/api/auth/oauth/callback", () => {
     expect(mocks.dbQuery.mock.calls[0][0]).toContain(
       "LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id"
     );
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain("WHERE lower(u.email) = $1");
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: TENANT_ID,

@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     `SELECT u.id, u.email, u.password_hash, u.is_active, u.tenant_id, r.name AS role_name
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
-     WHERE lower(email) = $1
+     WHERE lower(u.email) = $1
      LIMIT 1`,
     [email.toLowerCase()]
   );
