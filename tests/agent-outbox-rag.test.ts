@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   appendAgentRunEvent: vi.fn(),
   processInternalDexterMessage: vi.fn(),
   recordModuleUsageEvent: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   buildDexterRagContextForEvent: vi.fn(),
   buildDegradedDexterRagContext: vi.fn(),
   summarizeDexterRagContextForLedger: vi.fn(),
@@ -60,6 +61,10 @@ vi.mock("@/server/dexter-runtime", () => ({
 
 vi.mock("@/server/module-metering", () => ({
   recordModuleUsageEvent: mocks.recordModuleUsageEvent
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
 }));
 
 vi.mock("@/server/ai/dexter-rag-context", () => ({
@@ -154,6 +159,7 @@ describe("agent outbox Dexter RAG attachment", () => {
     mocks.completeAgentRunStep.mockResolvedValue(undefined);
     mocks.processInternalDexterMessage.mockResolvedValue(true);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.buildDexterRagContextForEvent.mockResolvedValue(attachedContext);
     mocks.buildDegradedDexterRagContext.mockReturnValue(degradedContext);
     mocks.summarizeDexterRagContextForLedger.mockReturnValue({

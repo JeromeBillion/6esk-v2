@@ -38,6 +38,7 @@ import { processInternalDexterMessage } from "@/server/dexter-runtime";
 import { logger } from "@/server/logger";
 
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 type EnqueueArgs = {
   eventType: string;
@@ -79,6 +80,16 @@ class AgentDeliveryPolicyBlockedError extends Error {
     super(`Runtime prompt safety blocked agent delivery: ${reasonCodes}`);
     this.name = "AgentDeliveryPolicyBlockedError";
     this.promptSafety = promptSafety;
+  }
+}
+
+export class AgentOutboxModuleDisabledError extends Error {
+  tenantId: string;
+
+  constructor(tenantId: string) {
+    super("AI Automation module is not enabled for this tenant.");
+    this.name = "AgentOutboxModuleDisabledError";
+    this.tenantId = tenantId;
   }
 }
 
@@ -676,6 +687,10 @@ async function completeDeliveryStepBestEffort({
 
 export async function deliverPendingAgentEvents({ integrationId, tenantId, limit = 5 }: DeliverArgs = {}) {
   const effectiveTenantId = requireTenantId(tenantId);
+  if (!(await checkModuleEntitlement("aiAutomation", effectiveTenantId))) {
+    throw new AgentOutboxModuleDisabledError(effectiveTenantId);
+  }
+
   const integration = integrationId
     ? await getAgentIntegrationById(integrationId, effectiveTenantId)
     : await getActiveAgentIntegration(effectiveTenantId);

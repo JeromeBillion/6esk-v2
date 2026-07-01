@@ -130,6 +130,41 @@ describe("POST /api/agent/v1/outbox/deliver", () => {
     );
   });
 
+  it("returns module_disabled when tenant AI Automation is disabled", async () => {
+    mocks.getSessionUser.mockResolvedValue(null);
+    const error = new Error("AI Automation module is not enabled for this tenant.");
+    error.name = "AgentOutboxModuleDisabledError";
+    mocks.deliverPendingAgentEvents.mockRejectedValueOnce(error);
+
+    const response = await POST(
+      new Request("http://localhost/api/agent/v1/outbox/deliver?limit=7", {
+        method: "POST",
+        headers: {
+          "x-6esk-secret": "jobs-maintenance-secret",
+          "x-6esk-tenant-id": TENANT_ID
+        }
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        action: "agent_outbox_delivery_blocked",
+        data: expect.objectContaining({
+          code: "module_disabled",
+          module: "aiAutomation"
+        })
+      })
+    );
+    expect(mocks.runInBackground).not.toHaveBeenCalled();
+  });
+
   it("returns 403 when a lead admin session has no tenant", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin", null));
 

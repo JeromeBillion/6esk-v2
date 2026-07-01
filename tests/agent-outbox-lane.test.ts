@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   appendAgentRunEvent: vi.fn(),
   processInternalDexterMessage: vi.fn(),
   recordModuleUsageEvent: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
   logger: {
     warn: vi.fn(),
     error: vi.fn()
@@ -58,11 +59,18 @@ vi.mock("@/server/module-metering", () => ({
   recordModuleUsageEvent: mocks.recordModuleUsageEvent
 }));
 
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
+}));
+
 vi.mock("@/server/logger", () => ({
   logger: mocks.logger
 }));
 
-import { deliverPendingAgentEvents } from "@/server/agents/outbox";
+import {
+  AgentOutboxModuleDisabledError,
+  deliverPendingAgentEvents
+} from "@/server/agents/outbox";
 
 function activeIntegration() {
   return {
@@ -89,6 +97,7 @@ describe("agent outbox lane reservation", () => {
     delete process.env.AGENT_OUTBOX_LANE_RETRY_SECONDS;
     mocks.db.connect.mockResolvedValue(mocks.client);
     mocks.db.query.mockResolvedValue({ rows: [] });
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
     mocks.client.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -154,6 +163,18 @@ describe("agent outbox lane reservation", () => {
       "Deliver agent outbox events requires tenantId"
     );
 
+    expect(mocks.getActiveAgentIntegration).not.toHaveBeenCalled();
+    expect(mocks.db.connect).not.toHaveBeenCalled();
+  });
+
+  it("rejects delivery before locking events when AI Automation is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+
+    await expect(
+      deliverPendingAgentEvents({ limit: 5, tenantId: TENANT_ID })
+    ).rejects.toBeInstanceOf(AgentOutboxModuleDisabledError);
+
+    expect(mocks.checkModuleEntitlement).toHaveBeenCalledWith("aiAutomation", TENANT_ID);
     expect(mocks.getActiveAgentIntegration).not.toHaveBeenCalled();
     expect(mocks.db.connect).not.toHaveBeenCalled();
   });

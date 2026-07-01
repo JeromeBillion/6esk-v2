@@ -97,6 +97,35 @@ describe("POST /api/admin/agents/[agentId]/outbox/deliver", () => {
     );
   });
 
+  it("returns module_disabled when tenant AI Automation is disabled", async () => {
+    mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
+    const error = new Error("AI Automation module is not enabled for this tenant.");
+    error.name = "AgentOutboxModuleDisabledError";
+    mocks.deliverPendingAgentEvents.mockRejectedValueOnce(error);
+
+    const response = await POST(
+      new Request("http://localhost/api/admin/agents/agent-1/outbox/deliver?limit=10", { method: "POST" }),
+      { params: Promise.resolve({ agentId: "agent-1" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.recordAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "agent_outbox_delivery_blocked",
+        entityId: "agent-1",
+        data: expect.objectContaining({
+          code: "module_disabled",
+          module: "aiAutomation"
+        })
+      })
+    );
+  });
+
   it("returns 500 and records failure audit when delivery throws", async () => {
     mocks.getSessionUser.mockResolvedValue(buildUser("lead_admin"));
     mocks.deliverPendingAgentEvents.mockRejectedValueOnce(new Error("hook down"));

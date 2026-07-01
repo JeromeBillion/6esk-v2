@@ -55,6 +55,29 @@ export async function POST(
     return Response.json({ status: "ok", ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Failed to deliver agent outbox";
+    if (error instanceof Error && error.name === "AgentOutboxModuleDisabledError") {
+      await recordAuditLog({
+        tenantId,
+        actorUserId: user?.id ?? null,
+        action: "agent_outbox_delivery_blocked",
+        entityType: "agent_integration",
+        entityId: agentId,
+        data: {
+          requestedLimit: limit ?? null,
+          code: "module_disabled",
+          module: "aiAutomation"
+        }
+      });
+      return Response.json(
+        {
+          error: detail,
+          code: "module_disabled",
+          module: "aiAutomation"
+        },
+        { status: 409 }
+      );
+    }
+
     runInBackground(recordAuditLog({
       tenantId,
       actorUserId: user?.id ?? null,
