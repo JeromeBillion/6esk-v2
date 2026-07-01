@@ -22,6 +22,7 @@ env:
   WEB_BASE_URL: https://app.ci.6esk.example
   BACKOFFICE_BASE_URL: https://work.ci.6esk.example
   BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: "true"
+  INTERNAL_STAFF_TENANT_ID: 00000000-0000-0000-0000-000000000001
   CLOUDFLARE_ACCESS_AUD: ci-cloudflare-access-audience
   CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://6esk.cloudflareaccess.com
   DATABASE_URL: postgres://ci:ci@localhost:5432/6esk_ci

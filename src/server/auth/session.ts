@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes } from "crypto";
 import { cookies } from "next/headers";
+import { isInternalStaff } from "@/server/auth/roles";
 import { db } from "@/server/db";
 
 export type SessionUser = {
@@ -177,10 +178,6 @@ export async function clearSession() {
   });
 }
 
-function isInternalSupportRole(roleName: string | null) {
-  return roleName === "internal_admin" || roleName === "internal_support";
-}
-
 function isImpersonationActive(expiresAt: Date | string | null) {
   if (!expiresAt) return false;
   const parsed =
@@ -222,8 +219,20 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!row) return null;
   if (!row.real_tenant_id || !row.home_tenant_slug) return null;
 
+  const homeUser: SessionUser = {
+    id: row.id,
+    email: row.email,
+    display_name: row.display_name,
+    role_id: row.role_id,
+    role_name: row.role_name,
+    real_tenant_id: row.real_tenant_id,
+    tenant_id: row.real_tenant_id,
+    tenant_slug: row.home_tenant_slug,
+    is_impersonating: false,
+    session_auth_provider: row.session_auth_provider
+  };
   const impersonatedTenantId =
-    isInternalSupportRole(row.role_name) && isImpersonationActive(row.impersonation_expires_at)
+    isInternalStaff(homeUser) && isImpersonationActive(row.impersonation_expires_at)
       ? row.impersonated_tenant_id
       : null;
   const isImpersonating = impersonatedTenantId !== null;

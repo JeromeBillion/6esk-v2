@@ -25,6 +25,7 @@ import {
   updateBackofficeCase,
   upsertTenantBackofficeProfile
 } from "@/server/backoffice/workflows";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 const TENANT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CASE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -99,8 +100,8 @@ describe("backoffice workflow service", () => {
     expect(backofficeCase.ownerUserId).toBe(USER_ID);
     expect(backofficeCase.ownerEmail).toBe("ops@6esk.com");
     expect(mocks.dbQuery).toHaveBeenCalledWith(
-      expect.stringContaining("r.tenant_id = u.tenant_id"),
-      [USER_ID, ["internal_admin", "internal_support"]]
+      expect.stringContaining("u.tenant_id = $3"),
+      [USER_ID, ["internal_admin", "internal_support"], DEFAULT_TENANT_ID]
     );
     expect(mocks.clientQuery).toHaveBeenNthCalledWith(
       2,

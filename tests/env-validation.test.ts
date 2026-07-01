@@ -8,6 +8,7 @@ function baseEnv() {
     WEB_BASE_URL: "https://app.6esk.example",
     BACKOFFICE_BASE_URL: "https://work.6esk.example",
     BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: "true",
+    INTERNAL_STAFF_TENANT_ID: "00000000-0000-0000-0000-000000000001",
     CLOUDFLARE_ACCESS_AUD: "cloudflare-access-audience",
     CLOUDFLARE_ACCESS_TEAM_DOMAIN: "https://6esk.cloudflareaccess.com",
     DATABASE_URL: "postgres://user:pass@localhost:5432/6esk",
@@ -70,6 +71,7 @@ describe("validateEnv", () => {
     const env = {
       ...baseEnv(),
       CALLS_PROVIDER: "mock",
+      INTERNAL_STAFF_TENANT_ID: "",
       CALLS_OUTBOX_TENANT_ID: "",
       CRON_SECRET: "",
       SECURITY_ALERT_WEBHOOK: "",
@@ -82,6 +84,7 @@ describe("validateEnv", () => {
     };
 
     expect(() => validateEnv(env)).toThrow(/CRON_SECRET/);
+    expect(() => validateEnv(env)).toThrow(/INTERNAL_STAFF_TENANT_ID/);
     expect(() => validateEnv(env)).toThrow(/SECURITY_ALERT_WEBHOOK/);
     expect(() => validateEnv(env)).toThrow(/AUTH_MFA_SECRET_ENCRYPTION_KEY/);
     expect(() => validateEnv(env)).toThrow(/TENANT_INGRESS_SECRET_ENCRYPTION_KEY/);

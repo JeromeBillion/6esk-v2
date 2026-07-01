@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { recordAuditLogWithClient } from "@/server/audit";
+import { internalStaffTenantId } from "@/server/auth/roles";
 import type {
   BackofficeCase,
   BackofficeCaseEvent,
@@ -110,10 +111,11 @@ async function requireInternalOwnerUser(userId: string | null | undefined) {
      FROM users u
      JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
      WHERE u.id = $1
+       AND u.tenant_id = $3
        AND u.is_active = true
        AND r.name = ANY($2::text[])
      LIMIT 1`,
-    [userId, internalRoles]
+    [userId, internalRoles, internalStaffTenantId()]
   );
   if (!result.rows[0]) {
     throw new BackofficeWorkflowError(

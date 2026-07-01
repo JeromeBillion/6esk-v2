@@ -8,6 +8,7 @@ import {
   isTenantAdmin
 } from "@/server/auth/roles";
 import type { SessionUser } from "@/server/auth/session";
+import { DEFAULT_TENANT_ID } from "@/server/tenant/types";
 
 function buildUser(overrides: Partial<SessionUser> = {}): SessionUser {
   return {
@@ -16,9 +17,9 @@ function buildUser(overrides: Partial<SessionUser> = {}): SessionUser {
     display_name: "Admin",
     role_id: "role-1",
     role_name: "tenant_admin",
-    tenant_id: "tenant-1",
+    tenant_id: DEFAULT_TENANT_ID,
     tenant_slug: "acme",
-    real_tenant_id: "tenant-1",
+    real_tenant_id: DEFAULT_TENANT_ID,
     is_impersonating: false,
     ...overrides
   };
@@ -53,5 +54,27 @@ describe("auth role capability helpers", () => {
     });
 
     expect(isInternalStaff(user)).toBe(false);
+  });
+
+  it("grants internal staff capabilities only from the internal staff tenant", () => {
+    const user = buildUser({
+      role_name: "internal_admin",
+      session_auth_provider: "google_oauth_mfa"
+    });
+
+    expect(isInternalStaff(user)).toBe(true);
+    expect(hasTenantAdminAccess(user)).toBe(true);
+  });
+
+  it("denies tenant-owned internal role names", () => {
+    const user = buildUser({
+      role_name: "internal_admin",
+      tenant_id: "tenant-customer",
+      real_tenant_id: "tenant-customer",
+      session_auth_provider: "google_oauth_mfa"
+    });
+
+    expect(isInternalStaff(user)).toBe(false);
+    expect(hasTenantAdminAccess(user)).toBe(false);
   });
 });

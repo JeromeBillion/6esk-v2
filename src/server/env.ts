@@ -28,6 +28,7 @@ const envSchema = z.object({
   WEB_BASE_URL: optionalUrl,
   BACKOFFICE_BASE_URL: optionalUrl,
   BACKOFFICE_REQUIRE_CLOUDFLARE_ACCESS: optionalBooleanish,
+  INTERNAL_STAFF_TENANT_ID: optionalNonEmptyString,
   CLOUDFLARE_ACCESS_AUD: optionalNonEmptyString,
   CLOUDFLARE_ACCESS_TEAM_DOMAIN: optionalUrl,
   DATABASE_URL: nonEmptyString,
@@ -200,6 +201,7 @@ function addPlaceholderValueIssues(source: EnvSource, strictProduction: boolean,
 function addProductionIssues(source: EnvSource, issues: string[]) {
   requireKeys(source, [
     "BACKOFFICE_BASE_URL",
+    "INTERNAL_STAFF_TENANT_ID",
     "INBOUND_SHARED_SECRET",
     "AGENT_SECRET_KEY",
     "SECURITY_ALERT_WEBHOOK",

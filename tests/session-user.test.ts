@@ -19,6 +19,7 @@ vi.mock("@/server/db", () => ({
 }));
 
 import { getSessionUser } from "@/server/auth/session";
+import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG } from "@/server/tenant/types";
 
 function sessionRow(overrides: Partial<Record<string, string | null>> = {}) {
   return {
@@ -32,6 +33,7 @@ function sessionRow(overrides: Partial<Record<string, string | null>> = {}) {
     impersonated_tenant_id: null,
     impersonated_tenant_slug: null,
     impersonation_expires_at: null,
+    session_auth_provider: null,
     ...overrides
   };
 }
@@ -76,6 +78,9 @@ describe("getSessionUser", () => {
       rows: [
         sessionRow({
           role_name: "internal_support",
+          real_tenant_id: DEFAULT_TENANT_ID,
+          home_tenant_slug: DEFAULT_TENANT_SLUG,
+          session_auth_provider: "google_oauth_mfa",
           impersonated_tenant_id: "tenant-target",
           impersonated_tenant_slug: "target",
           impersonation_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
@@ -88,8 +93,30 @@ describe("getSessionUser", () => {
     expect(user).toMatchObject({
       tenant_id: "tenant-target",
       tenant_slug: "target",
-      real_tenant_id: "tenant-home",
+      real_tenant_id: DEFAULT_TENANT_ID,
       is_impersonating: true
+    });
+  });
+
+  it("ignores impersonation state for tenant-owned internal role names", async () => {
+    mocks.dbQuery.mockResolvedValue({
+      rows: [
+        sessionRow({
+          role_name: "internal_support",
+          session_auth_provider: "google_oauth_mfa",
+          impersonated_tenant_id: "tenant-target",
+          impersonated_tenant_slug: "target",
+          impersonation_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+        })
+      ]
+    });
+
+    const user = await getSessionUser();
+
+    expect(user).toMatchObject({
+      tenant_id: "tenant-home",
+      tenant_slug: "home",
+      is_impersonating: false
     });
   });
 
@@ -119,6 +146,9 @@ describe("getSessionUser", () => {
       rows: [
         sessionRow({
           role_name: "internal_support",
+          real_tenant_id: DEFAULT_TENANT_ID,
+          home_tenant_slug: DEFAULT_TENANT_SLUG,
+          session_auth_provider: "google_oauth_mfa",
           impersonated_tenant_id: "tenant-target",
           impersonated_tenant_slug: "target",
           impersonation_expires_at: new Date(Date.now() - 60 * 1000).toISOString()
@@ -129,8 +159,8 @@ describe("getSessionUser", () => {
     const user = await getSessionUser();
 
     expect(user).toMatchObject({
-      tenant_id: "tenant-home",
-      tenant_slug: "home",
+      tenant_id: DEFAULT_TENANT_ID,
+      tenant_slug: DEFAULT_TENANT_SLUG,
       is_impersonating: false
     });
   });
