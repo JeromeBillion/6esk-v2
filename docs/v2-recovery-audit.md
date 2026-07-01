@@ -296,7 +296,7 @@ Date: 2026-06-06
 - Semantically ported the v1 central rate-limit/request-correlation middleware into v2-native API routing:
   - `src/server/rate-limit.ts`
   - `src/middleware.ts`
-  - rate-limit keys are scoped by profile, tenant/workspace headers, and client IP
+  - rate-limit keys are scoped by profile and client IP by default; caller-supplied tenant/workspace headers are not trusted by pre-auth middleware unless a future caller explicitly opts into trusted tenant-header scope after authentication or verified-secret handling
   - production fails closed for rate-limited API routes when Upstash Redis credentials are missing, while local/dev uses an in-memory limiter
   - production env validation rejects zero, negative, or non-numeric configured rate limits instead of silently disabling a profile
   - `x-6esk-request-id` is normalized, propagated to route handlers, and returned on middleware responses

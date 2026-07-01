@@ -47,7 +47,7 @@ describe("central rate limit routing", () => {
     expect(resolveRateLimitProfile("/api/health")).toBeNull();
   });
 
-  it("builds tenant and client scoped keys", () => {
+  it("defaults to client scoped keys so spoofed tenant headers cannot bypass limits", () => {
     const headers = new Headers({
       "x-forwarded-for": "203.0.113.10, 198.51.100.20",
       "x-6esk-tenant": "tenant-a",
@@ -58,6 +58,20 @@ describe("central rate limit routing", () => {
     expect(profile).toMatchObject({ id: "agent" });
     expect(rateLimitIdentityFromHeaders(headers)).toBe("203.0.113.10");
     expect(buildRateLimitKey({ profile: profile!, headers })).toBe(
+      "rate-limit:agent:unscoped:203.0.113.10"
+    );
+  });
+
+  it("can build tenant scoped keys only when tenant headers are explicitly trusted", () => {
+    const headers = new Headers({
+      "x-forwarded-for": "203.0.113.10, 198.51.100.20",
+      "x-6esk-tenant": "tenant-a",
+      "x-6esk-workspace": "workspace-a"
+    });
+    const profile = resolveRateLimitProfile("/api/agent/v1/actions");
+
+    expect(profile).toMatchObject({ id: "agent" });
+    expect(buildRateLimitKey({ profile: profile!, headers, trustTenantHeaders: true })).toBe(
       "rate-limit:agent:tenant-a:workspace-a:203.0.113.10"
     );
   });
@@ -83,7 +97,7 @@ describe("central rate limit routing", () => {
 
     expect(profile).toMatchObject({ id: "agent" });
     expect(rateLimitIdentityFromHeaders(headers)).toBe("unknown");
-    expect(buildRateLimitKey({ profile: profile!, headers })).toBe(
+    expect(buildRateLimitKey({ profile: profile!, headers, trustTenantHeaders: true })).toBe(
       "rate-limit:agent:unscoped:unknown"
     );
   });

@@ -148,15 +148,17 @@ export function rateLimitTenantKeyFromHeaders(headers: Headers) {
 
 export function buildRateLimitKey({
   profile,
-  headers
+  headers,
+  trustTenantHeaders = false
 }: {
   profile: RateLimitProfile;
   headers: Headers;
+  trustTenantHeaders?: boolean;
 }) {
   return [
     "rate-limit",
     profile.id,
-    rateLimitTenantKeyFromHeaders(headers),
+    trustTenantHeaders ? rateLimitTenantKeyFromHeaders(headers) : "unscoped",
     rateLimitIdentityFromHeaders(headers)
   ].join(":");
 }
