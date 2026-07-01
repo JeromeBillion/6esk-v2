@@ -99,7 +99,7 @@ describe("backoffice workflow service", () => {
     expect(backofficeCase.ownerUserId).toBe(USER_ID);
     expect(backofficeCase.ownerEmail).toBe("ops@6esk.com");
     expect(mocks.dbQuery).toHaveBeenCalledWith(
-      expect.stringContaining("r.name = ANY"),
+      expect.stringContaining("r.tenant_id = u.tenant_id"),
       [USER_ID, ["internal_admin", "internal_support"]]
     );
     expect(mocks.clientQuery).toHaveBeenNthCalledWith(

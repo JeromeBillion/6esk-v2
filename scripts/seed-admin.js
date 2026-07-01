@@ -108,15 +108,12 @@ async function upsertRoles(client, tenantId) {
     const result = await client.query(
       `INSERT INTO roles (tenant_id, name, description)
        VALUES ($1, $2, $3)
-       ON CONFLICT (name) DO UPDATE SET
+       ON CONFLICT (tenant_id, name) DO UPDATE SET
          description = EXCLUDED.description
-       WHERE roles.tenant_id = EXCLUDED.tenant_id
        RETURNING id`,
       [tenantId, role.name, role.description]
     );
-    if (result.rows.length === 0) {
-      throw new Error(`Role ${role.name} already exists outside seed tenant ${tenantId}`);
-    }
+    if (result.rows.length === 0) throw new Error(`Role ${role.name} was not seeded`);
   }
 }
 

@@ -8,6 +8,10 @@ const macroTenantMigration = readFileSync(
   join(repoRoot, "db", "migrations", "0073_macros_tenant_unique.sql"),
   "utf8"
 );
+const roleTenantMigration = readFileSync(
+  join(repoRoot, "db", "migrations", "0074_roles_tenant_unique.sql"),
+  "utf8"
+);
 
 describe("admin seed bootstrap tenant scope", () => {
   it("pins bootstrap data to an explicit tenant and transaction", () => {
@@ -19,12 +23,17 @@ describe("admin seed bootstrap tenant scope", () => {
   });
 
   it("uses tenant-owned support catalog conflict targets", () => {
+    expect(seedScript).toContain("INSERT INTO roles (tenant_id, name, description)");
+    expect(seedScript).toContain("ON CONFLICT (tenant_id, name)");
     expect(seedScript).toContain("INSERT INTO tags (tenant_id, name, description)");
     expect(seedScript).toContain("ON CONFLICT (tenant_id, name)");
     expect(seedScript).toContain("INSERT INTO macros (tenant_id, title, category, body)");
     expect(seedScript).toContain("ON CONFLICT (tenant_id, title)");
     expect(macroTenantMigration).toContain("DROP CONSTRAINT IF EXISTS macros_title_key");
     expect(macroTenantMigration).toContain("ON macros(tenant_id, title)");
+    expect(roleTenantMigration).toContain("DROP CONSTRAINT IF EXISTS roles_name_key");
+    expect(roleTenantMigration).toContain("ON roles(tenant_id, name)");
+    expect(roleTenantMigration).toContain("users_tenant_role_fkey");
   });
 
   it("creates tenant-owned users, mailboxes, memberships, and SLA config", () => {

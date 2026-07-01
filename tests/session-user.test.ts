@@ -56,6 +56,9 @@ describe("getSessionUser", () => {
       is_impersonating: false
     });
     expect(mocks.dbQuery.mock.calls[0][0]).toContain("JOIN tenants t ON t.id = u.tenant_id");
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain(
+      "LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id"
+    );
   });
 
   it("fails closed when the session user has no home tenant", async () => {

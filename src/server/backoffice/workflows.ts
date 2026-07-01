@@ -108,7 +108,7 @@ async function requireInternalOwnerUser(userId: string | null | undefined) {
   const result = await db.query<{ id: string }>(
     `SELECT u.id
      FROM users u
-     JOIN roles r ON r.id = u.role_id
+     JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
      WHERE u.id = $1
        AND u.is_active = true
        AND r.name = ANY($2::text[])

@@ -207,7 +207,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
             s.auth_provider AS session_auth_provider
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
-     LEFT JOIN roles r ON r.id = u.role_id
+     LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
      JOIN tenants t ON t.id = u.tenant_id
      LEFT JOIN tenants it ON it.id = s.impersonated_tenant_id
      WHERE s.token_hash = $1

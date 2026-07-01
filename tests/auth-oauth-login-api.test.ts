@@ -117,6 +117,9 @@ describe("/api/auth/oauth/callback", () => {
       authProvider: "google_oauth",
       requestHeaders: expect.any(Headers)
     });
+    expect(mocks.dbQuery.mock.calls[0][0]).toContain(
+      "LEFT JOIN roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id"
+    );
     expect(mocks.recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: TENANT_ID,
