@@ -1,6 +1,11 @@
 import { getObjectBuffer } from "@/server/storage/r2";
 import { recordAuditLog } from "@/server/audit";
 import { getTranscriptAiProvider, submitTranscriptAiJob } from "@/server/calls/transcript-ai-provider";
+import {
+  listActiveProviderWebhookSecrets,
+  shouldRequireTenantProviderWebhookSecrets
+} from "@/server/provider-webhook-secrets";
+import { DEFAULT_WORKSPACE_KEY } from "@/server/workspace-modules";
 import { logger } from "@/server/logger";
 import {
   getProcessingRecoverySeconds,
@@ -8,6 +13,32 @@ import {
   markTranscriptAiJobCompleted,
   markTranscriptAiJobFailed
 } from "@/server/calls/transcript-ai-jobs";
+
+function readEnvTranscriptAiHttpSecret() {
+  return (
+    process.env.CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET?.trim() ||
+    process.env.CALLS_STT_PROVIDER_HTTP_SECRET?.trim() ||
+    null
+  );
+}
+
+async function getScopedTranscriptAiHttpSecret(tenantId: string) {
+  const scope = { tenantId, workspaceKey: DEFAULT_WORKSPACE_KEY };
+  const secrets = await listActiveProviderWebhookSecrets({
+    scope,
+    provider: "managed_ai",
+    secretType: "http_secret"
+  });
+  if (secrets[0]) {
+    return secrets[0].secret;
+  }
+
+  if (!shouldRequireTenantProviderWebhookSecrets()) {
+    return readEnvTranscriptAiHttpSecret();
+  }
+
+  throw new Error("Provider webhook secret missing for managed_ai/http_secret.");
+}
 
 export async function deliverPendingTranscriptAiJobs({
   limit = 5,
@@ -41,6 +72,10 @@ export async function deliverPendingTranscriptAiJobs({
         callSessionId: job.call_session_id,
         transcriptR2Key: job.transcript_r2_key,
         transcriptText,
+        providerHttpSecret:
+          provider === "managed_http"
+            ? await getScopedTranscriptAiHttpSecret(job.tenant_id)
+            : null,
         metadata: {
           ...(job.metadata ?? {}),
           tenantId: job.tenant_id

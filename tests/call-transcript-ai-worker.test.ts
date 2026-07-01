@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   lockPendingTranscriptAiJobs: vi.fn(),
   markTranscriptAiJobCompleted: vi.fn(),
   markTranscriptAiJobFailed: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  shouldRequireTenantProviderWebhookSecrets: vi.fn(),
   recordAuditLog: vi.fn()
 }));
 
@@ -27,6 +29,11 @@ vi.mock("@/server/calls/transcript-ai-jobs", () => ({
   markTranscriptAiJobFailed: mocks.markTranscriptAiJobFailed
 }));
 
+vi.mock("@/server/provider-webhook-secrets", () => ({
+  listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+  shouldRequireTenantProviderWebhookSecrets: mocks.shouldRequireTenantProviderWebhookSecrets
+}));
+
 vi.mock("@/server/audit", () => ({
   recordAuditLog: mocks.recordAuditLog
 }));
@@ -41,6 +48,8 @@ describe("deliverPendingTranscriptAiJobs", () => {
     mocks.getTranscriptAiProvider.mockReturnValue("managed_http");
     mocks.getProcessingRecoverySeconds.mockReturnValue(300);
     mocks.lockPendingTranscriptAiJobs.mockResolvedValue([]);
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(false);
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
 
@@ -157,6 +166,57 @@ describe("deliverPendingTranscriptAiJobs", () => {
         tenantId: TENANT_ID,
         action: "call_transcript_ai_job_failed",
         entityId: "job-2"
+      })
+    );
+  });
+
+  it("passes tenant-scoped AI provider secrets to managed HTTP jobs", async () => {
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(true);
+    mocks.lockPendingTranscriptAiJobs.mockResolvedValue([
+      {
+        id: "job-3",
+        tenant_id: TENANT_ID,
+        call_session_id: "33333333-3333-3333-3333-333333333333",
+        provider: "managed_http",
+        transcript_r2_key: "messages/msg/transcript.txt",
+        metadata: { ticketId: "ticket-3" },
+        attempt_count: 0
+      }
+    ]);
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
+      { id: "secret-ai", secret: "tenant-ai-secret", source: "db" }
+    ]);
+    mocks.getObjectBuffer.mockResolvedValue({
+      buffer: Buffer.from("Customer asked for a supervisor follow-up.", "utf8"),
+      contentType: "text/plain"
+    });
+    mocks.submitTranscriptAiJob.mockResolvedValue({
+      status: "completed",
+      providerJobId: "provider-job-3",
+      qaStatus: "watch",
+      summary: "Customer asked for a supervisor follow-up.",
+      resolutionNote: "Supervisor should review the callback request.",
+      qaFlags: [],
+      actionItems: [],
+      rawResponse: { provider: "openai" }
+    });
+
+    const result = await deliverPendingTranscriptAiJobs({ limit: 1, tenantId: TENANT_ID });
+
+    expect(result).toMatchObject({ delivered: 1, skipped: 0, provider: "managed_http" });
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      provider: "managed_ai",
+      secretType: "http_secret"
+    });
+    expect(mocks.submitTranscriptAiJob).toHaveBeenCalledWith(
+      "managed_http",
+      expect.objectContaining({
+        providerHttpSecret: "tenant-ai-secret",
+        metadata: expect.objectContaining({
+          tenantId: TENANT_ID,
+          ticketId: "ticket-3"
+        })
       })
     );
   });

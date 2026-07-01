@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 
 import {
@@ -6,9 +7,21 @@ import {
   resolveTenantAiProviderPlan
 } from "@/server/ai/provider-gateway";
 import { validateAgentOutput } from "@/server/agents/output-validator";
+import { resolveCallSessionProviderScope } from "@/server/calls/service";
 import { recordModuleUsageEvent } from "@/server/module-metering";
+import {
+  listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed,
+  ProviderWebhookSecretConfigurationError,
+  shouldRequireTenantProviderWebhookSecrets,
+  type ActiveProviderWebhookSecret
+} from "@/server/provider-webhook-secrets";
+import { checkModuleEntitlement } from "@/server/tenant/module-guard";
 
 export const runtime = "nodejs";
+
+const MAX_TRANSCRIPT_AI_JOB_BYTES = 2 * 1024 * 1024;
+const MAX_TRANSCRIPT_TEXT_CHARS = 250_000;
 
 const qaFlagSchema = z.object({
   code: z.string().min(1),
@@ -36,7 +49,7 @@ const jobSchema = z.object({
   jobId: z.string().uuid(),
   callSessionId: z.string().uuid(),
   transcriptR2Key: z.string().min(1),
-  transcriptText: z.string().min(1),
+  transcriptText: z.string().min(1).max(MAX_TRANSCRIPT_TEXT_CHARS),
   metadata: z.record(z.unknown()).optional().nullable()
 });
 
@@ -59,6 +72,54 @@ function getInternalSecret() {
     readString(process.env.CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET) ??
     readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET)
   );
+}
+
+function constantTimeEquals(left: string | null | undefined, right: string) {
+  const leftValue = readString(left);
+  if (!leftValue) return false;
+  const leftBuffer = Buffer.from(leftValue, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isContentLengthTooLarge(request: Request) {
+  const raw = request.headers.get("content-length");
+  if (!raw) return false;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > MAX_TRANSCRIPT_AI_JOB_BYTES;
+}
+
+async function parseJobPayload(request: Request) {
+  const bodyText = await request.text();
+  if (Buffer.byteLength(bodyText, "utf8") > MAX_TRANSCRIPT_AI_JOB_BYTES) {
+    throw new Error("payload_too_large");
+  }
+  return jobSchema.parse(JSON.parse(bodyText));
+}
+
+async function listTenantAiHttpSecrets(scope: { tenantId: string; workspaceKey: string }) {
+  try {
+    return await listActiveProviderWebhookSecrets({
+      scope,
+      provider: "managed_ai",
+      secretType: "http_secret"
+    });
+  } catch (error) {
+    if (error instanceof ProviderWebhookSecretConfigurationError) {
+      throw error;
+    }
+    throw error;
+  }
+}
+
+function findMatchingSecret(
+  providedSecret: string | null,
+  providerSecrets: ActiveProviderWebhookSecret[]
+) {
+  return providerSecrets.find((secret) => constantTimeEquals(providedSecret, secret.secret)) ?? null;
 }
 
 function buildPrompt(parsedJob: z.infer<typeof jobSchema>) {
@@ -118,16 +179,26 @@ function extractResponseText(body: Record<string, unknown> | null) {
 }
 
 export async function POST(request: Request) {
-  const expectedSecret = getInternalSecret();
   const providedSecret = request.headers.get("x-6esk-secret");
-  if (!expectedSecret || providedSecret !== expectedSecret) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const requireTenantSecrets = shouldRequireTenantProviderWebhookSecrets();
+  if (isContentLengthTooLarge(request)) {
+    return Response.json({ error: "Transcript AI job payload is too large." }, { status: 413 });
+  }
+
+  if (!requireTenantSecrets) {
+    const expectedSecret = getInternalSecret();
+    if (!expectedSecret || !constantTimeEquals(providedSecret, expectedSecret)) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   let parsedJob: z.infer<typeof jobSchema>;
   try {
-    parsedJob = jobSchema.parse(await request.json());
-  } catch {
+    parsedJob = await parseJobPayload(request);
+  } catch (error) {
+    if (error instanceof Error && error.message === "payload_too_large") {
+      return Response.json({ error: "Transcript AI job payload is too large." }, { status: 413 });
+    }
     return Response.json({ error: "Invalid transcript AI job payload." }, { status: 400 });
   }
 
@@ -136,6 +207,64 @@ export async function POST(request: Request) {
     return Response.json(
       { error: "Transcript AI job metadata must include a valid tenantId." },
       { status: 400 }
+    );
+  }
+
+  if (requireTenantSecrets) {
+    const scope = await resolveCallSessionProviderScope({
+      callSessionId: parsedJob.callSessionId
+    });
+    if (!scope) {
+      return Response.json(
+        { error: "Call session not found", code: "unresolved_call_provider_route" },
+        { status: 404 }
+      );
+    }
+    if (scope.tenantId !== tenantId) {
+      return Response.json(
+        { error: "Transcript AI job tenant does not match the call session.", code: "tenant_mismatch" },
+        { status: 403 }
+      );
+    }
+
+    let providerSecrets: ActiveProviderWebhookSecret[];
+    try {
+      providerSecrets = await listTenantAiHttpSecrets(scope);
+    } catch (error) {
+      if (error instanceof ProviderWebhookSecretConfigurationError) {
+        return Response.json(
+          { error: error.message, code: "provider_webhook_secret_configuration_missing" },
+          { status: 503 }
+        );
+      }
+      throw error;
+    }
+
+    if (!providerSecrets.length) {
+      return Response.json(
+        {
+          error: "Provider webhook secret is not configured for this tenant.",
+          code: "provider_webhook_secret_missing"
+        },
+        { status: 503 }
+      );
+    }
+
+    const matchedSecret = findMatchingSecret(providedSecret, providerSecrets);
+    if (!matchedSecret) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    await markProviderWebhookSecretUsed(matchedSecret.id, scope).catch(() => {});
+  }
+
+  if (!(await checkModuleEntitlement("aiAutomation", tenantId))) {
+    return Response.json(
+      {
+        error: "AI Automation module is not enabled for this tenant.",
+        code: "module_disabled",
+        module: "aiAutomation"
+      },
+      { status: 409 }
     );
   }
 

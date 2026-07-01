@@ -19,6 +19,7 @@ export type SubmitTranscriptAiJobArgs = {
   callSessionId: string;
   transcriptR2Key: string;
   transcriptText: string;
+  providerHttpSecret?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -154,6 +155,7 @@ async function submitViaManagedHttp({
   callSessionId,
   transcriptR2Key,
   transcriptText,
+  providerHttpSecret,
   metadata
 }: SubmitTranscriptAiJobArgs): Promise<SubmitTranscriptAiJobResult> {
   const providerUrl = getTranscriptAiProviderUrl();
@@ -163,15 +165,17 @@ async function submitViaManagedHttp({
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getTranscriptAiProviderTimeoutMs());
+  const httpSecret =
+    readString(providerHttpSecret) ??
+    readString(process.env.CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET) ??
+    readString(process.env.CALLS_STT_PROVIDER_HTTP_SECRET);
 
   try {
     const response = await fetch(providerUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(readString(process.env.CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET)
-          ? { "x-6esk-secret": readString(process.env.CALLS_TRANSCRIPT_AI_PROVIDER_HTTP_SECRET)! }
-          : {})
+        ...(httpSecret ? { "x-6esk-secret": httpSecret } : {})
       },
       body: JSON.stringify({
         jobId,

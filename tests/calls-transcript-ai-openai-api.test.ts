@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getTenantAiProviderConfig: vi.fn(),
+  checkModuleEntitlement: vi.fn(),
+  resolveCallSessionProviderScope: vi.fn(),
+  listActiveProviderWebhookSecrets: vi.fn(),
+  markProviderWebhookSecretUsed: vi.fn(),
+  shouldRequireTenantProviderWebhookSecrets: vi.fn(),
   recordModuleUsageEvent: vi.fn(),
   recordAuditLog: vi.fn()
 }));
@@ -12,6 +17,21 @@ vi.mock("@/server/tenant/ai-provider", () => ({
 
 vi.mock("@/server/module-metering", () => ({
   recordModuleUsageEvent: mocks.recordModuleUsageEvent
+}));
+
+vi.mock("@/server/tenant/module-guard", () => ({
+  checkModuleEntitlement: mocks.checkModuleEntitlement
+}));
+
+vi.mock("@/server/calls/service", () => ({
+  resolveCallSessionProviderScope: mocks.resolveCallSessionProviderScope
+}));
+
+vi.mock("@/server/provider-webhook-secrets", () => ({
+  listActiveProviderWebhookSecrets: mocks.listActiveProviderWebhookSecrets,
+  markProviderWebhookSecretUsed: mocks.markProviderWebhookSecretUsed,
+  shouldRequireTenantProviderWebhookSecrets: mocks.shouldRequireTenantProviderWebhookSecrets,
+  ProviderWebhookSecretConfigurationError: class ProviderWebhookSecretConfigurationError extends Error {}
 }));
 
 vi.mock("@/server/audit", () => ({
@@ -44,6 +64,11 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
       baseUrl: "https://api.openai.com/v1",
       providerMode: "managed"
     });
+    mocks.checkModuleEntitlement.mockResolvedValue(true);
+    mocks.resolveCallSessionProviderScope.mockResolvedValue(null);
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    mocks.markProviderWebhookSecretUsed.mockResolvedValue(undefined);
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(false);
     mocks.recordModuleUsageEvent.mockResolvedValue(undefined);
     mocks.recordAuditLog.mockResolvedValue(undefined);
   });
@@ -317,6 +342,193 @@ describe("POST /api/internal/calls/transcript-ai/provider", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.getTenantAiProviderConfig).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized transcript AI job payloads before provider work", async () => {
+    global.fetch = vi.fn() as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(2 * 1024 * 1024 + 1),
+          "x-6esk-secret": "qa-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(413);
+    expect(body).toMatchObject({ error: "Transcript AI job payload is too large." });
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+    expect(mocks.getTenantAiProviderConfig).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not call an AI provider when the AI Automation module is disabled", async () => {
+    mocks.checkModuleEntitlement.mockResolvedValue(false);
+    global.fetch = vi.fn() as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "qa-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "module_disabled",
+      module: "aiAutomation"
+    });
+    expect(mocks.checkModuleEntitlement).toHaveBeenCalledWith("aiAutomation", TENANT_ID);
+    expect(mocks.getTenantAiProviderConfig).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses tenant-scoped internal AI provider secrets in strict mode", async () => {
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(true);
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantId: TENANT_ID,
+      workspaceKey: "primary"
+    });
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([
+      { id: "secret-ai", secret: "tenant-ai-secret", source: "db" }
+    ]);
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_strict",
+          output_text: JSON.stringify({
+            summary: "Call resolved with no operator escalation.",
+            resolutionNote: "No follow-up required.",
+            qaStatus: "pass",
+            qaFlags: [],
+            actionItems: []
+          }),
+          usage: { input_tokens: 50, output_tokens: 10 }
+        }),
+        { status: 200 }
+      )
+    ) as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "tenant-ai-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveCallSessionProviderScope).toHaveBeenCalledWith({
+      callSessionId: "22222222-2222-2222-2222-222222222222"
+    });
+    expect(mocks.listActiveProviderWebhookSecrets).toHaveBeenCalledWith({
+      scope: { tenantId: TENANT_ID, workspaceKey: "primary" },
+      provider: "managed_ai",
+      secretType: "http_secret"
+    });
+    expect(mocks.markProviderWebhookSecretUsed).toHaveBeenCalledWith("secret-ai", {
+      tenantId: TENANT_ID,
+      workspaceKey: "primary"
+    });
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it("fails closed in strict mode when the tenant AI provider secret is missing", async () => {
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(true);
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantId: TENANT_ID,
+      workspaceKey: "primary"
+    });
+    mocks.listActiveProviderWebhookSecrets.mockResolvedValue([]);
+    global.fetch = vi.fn() as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "tenant-ai-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({ code: "provider_webhook_secret_missing" });
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
+    expect(mocks.getTenantAiProviderConfig).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects strict-mode transcript AI jobs whose call session belongs to another tenant", async () => {
+    mocks.shouldRequireTenantProviderWebhookSecrets.mockReturnValue(true);
+    mocks.resolveCallSessionProviderScope.mockResolvedValue({
+      tenantId: "44444444-4444-4444-4444-444444444444",
+      workspaceKey: "primary"
+    });
+    global.fetch = vi.fn() as typeof fetch;
+
+    const response = await POST(
+      new Request("http://localhost/api/internal/calls/transcript-ai/provider", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-6esk-secret": "tenant-ai-secret"
+        },
+        body: JSON.stringify({
+          jobId: "11111111-1111-1111-1111-111111111111",
+          callSessionId: "22222222-2222-2222-2222-222222222222",
+          transcriptR2Key: "messages/msg/transcript.txt",
+          transcriptText: "Resolved call transcript.",
+          metadata: { tenantId: TENANT_ID }
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({ code: "tenant_mismatch" });
+    expect(mocks.listActiveProviderWebhookSecrets).not.toHaveBeenCalled();
+    expect(mocks.checkModuleEntitlement).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
