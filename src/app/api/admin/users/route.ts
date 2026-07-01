@@ -75,60 +75,77 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid role" }, { status: 400 });
   }
 
-  const existingMailbox = await db.query<{ tenant_id: string }>(
-    "SELECT tenant_id FROM mailboxes WHERE address = $1 LIMIT 1",
-    [emailLower]
-  );
-  if (existingMailbox.rows[0] && existingMailbox.rows[0].tenant_id !== tenantId) {
-    return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
-  }
-
-  const existing = await db.query(
-    "SELECT id, role_id FROM users WHERE email = $1 AND tenant_id = $2 LIMIT 1",
-    [emailLower, tenantId]
-  );
-  const existingUser = existing.rows[0] ?? null;
   const passwordHash = await hashPassword(password);
+  const client = await db.connect();
+  let created: { id: string; email: string; display_name: string; role_id: string };
+  let existingUser: { id: string; role_id: string | null } | null = null;
+  try {
+    await client.query("BEGIN");
 
-  const result = await db.query(
-    `INSERT INTO users (email, display_name, password_hash, role_id, tenant_id)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (email) DO UPDATE SET
-       display_name = EXCLUDED.display_name,
-       password_hash = EXCLUDED.password_hash,
-       role_id = EXCLUDED.role_id
-     WHERE users.tenant_id = EXCLUDED.tenant_id
-     RETURNING id, email, display_name, role_id`,
-    [emailLower, displayName, passwordHash, roleId, tenantId]
-  );
+    const existingMailbox = await client.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM mailboxes WHERE address = $1 LIMIT 1",
+      [emailLower]
+    );
+    if (existingMailbox.rows[0] && existingMailbox.rows[0].tenant_id !== tenantId) {
+      await client.query("ROLLBACK");
+      return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
+    }
 
-  const created = result.rows[0];
-  if (!created) {
-    return Response.json({ error: "Email belongs to another tenant" }, { status: 409 });
+    const existing = await client.query(
+      "SELECT id, role_id FROM users WHERE email = $1 AND tenant_id = $2 LIMIT 1",
+      [emailLower, tenantId]
+    );
+    existingUser = existing.rows[0] ?? null;
+
+    const result = await client.query(
+      `INSERT INTO users (email, display_name, password_hash, role_id, tenant_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (email) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         password_hash = EXCLUDED.password_hash,
+         role_id = EXCLUDED.role_id
+       WHERE users.tenant_id = EXCLUDED.tenant_id
+       RETURNING id, email, display_name, role_id`,
+      [emailLower, displayName, passwordHash, roleId, tenantId]
+    );
+
+    const createdRow = result.rows[0];
+    if (!createdRow) {
+      await client.query("ROLLBACK");
+      return Response.json({ error: "Email belongs to another tenant" }, { status: 409 });
+    }
+    created = createdRow;
+
+    const mailboxResult = await client.query<{ id: string }>(
+      `INSERT INTO mailboxes (type, address, owner_user_id, tenant_id)
+       VALUES ('personal', $1, $2, $3)
+       ON CONFLICT (address) DO UPDATE SET
+         owner_user_id = EXCLUDED.owner_user_id
+       WHERE mailboxes.tenant_id = EXCLUDED.tenant_id
+       RETURNING id`,
+      [created.email, created.id, tenantId]
+    );
+    const mailbox = mailboxResult.rows[0];
+    if (!mailbox) {
+      await client.query("ROLLBACK");
+      return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
+    }
+
+    await client.query(
+      `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
+       VALUES ($3, $2, $1, 'owner')
+       ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         access_level = EXCLUDED.access_level`,
+      [created.id, mailbox.id, tenantId]
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-
-  const mailboxResult = await db.query<{ id: string }>(
-    `INSERT INTO mailboxes (type, address, owner_user_id, tenant_id)
-     VALUES ('personal', $1, $2, $3)
-     ON CONFLICT (address) DO UPDATE SET
-       owner_user_id = EXCLUDED.owner_user_id
-     WHERE mailboxes.tenant_id = EXCLUDED.tenant_id
-     RETURNING id`,
-    [created.email, created.id, tenantId]
-  );
-  const mailbox = mailboxResult.rows[0];
-  if (!mailbox) {
-    return Response.json({ error: "Mailbox address belongs to another tenant" }, { status: 409 });
-  }
-
-  await db.query(
-    `INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)
-     VALUES ($3, $2, $1, 'owner')
-     ON CONFLICT (mailbox_id, user_id) DO UPDATE SET
-       tenant_id = EXCLUDED.tenant_id,
-       access_level = EXCLUDED.access_level`,
-    [created.id, mailbox.id, tenantId]
-  );
 
   if (existingUser) {
     const roleChanged = existingUser.role_id !== created.role_id;

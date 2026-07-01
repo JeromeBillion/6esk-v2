@@ -4,6 +4,9 @@ const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   isLeadAdmin: vi.fn(),
   dbQuery: vi.fn(),
+  dbConnect: vi.fn(),
+  clientQuery: vi.fn(),
+  clientRelease: vi.fn(),
   hashPassword: vi.fn(),
   recordAuditLog: vi.fn(),
   getEnv: vi.fn()
@@ -19,7 +22,8 @@ vi.mock("@/server/auth/roles", () => ({
 
 vi.mock("@/server/db", () => ({
   db: {
-    query: mocks.dbQuery
+    query: mocks.dbQuery,
+    connect: mocks.dbConnect
   }
 }));
 
@@ -65,6 +69,11 @@ describe("admin users and roles tenant scope", () => {
     mocks.hashPassword.mockResolvedValue("hashed-password");
     mocks.recordAuditLog.mockResolvedValue(undefined);
     mocks.getEnv.mockReturnValue({ APP_URL: "https://desk.example.com" });
+    mocks.dbConnect.mockResolvedValue({
+      query: mocks.clientQuery,
+      release: mocks.clientRelease
+    });
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
   });
 
   it("lists only tenant-scoped roles", async () => {
@@ -106,8 +115,9 @@ describe("admin users and roles tenant scope", () => {
   });
 
   it("creates users, personal mailboxes, and mailbox membership through tenant scope", async () => {
-    mocks.dbQuery
-      .mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] })
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -121,6 +131,7 @@ describe("admin users and roles tenant scope", () => {
         ]
       })
       .mockResolvedValueOnce({ rows: [{ id: "mailbox-1" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const response = await postUser(
@@ -136,18 +147,61 @@ describe("admin users and roles tenant scope", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(1, "BEGIN");
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(
       5,
       expect.stringContaining("INSERT INTO mailboxes"),
       ["new@example.com", "44444444-4444-4444-4444-444444444444", TENANT_ID]
     );
-    expect(mocks.dbQuery).toHaveBeenNthCalledWith(
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(
       6,
       expect.stringContaining("INSERT INTO mailbox_memberships (tenant_id, mailbox_id, user_id, access_level)"),
       ["44444444-4444-4444-4444-444444444444", "mailbox-1", TENANT_ID]
     );
-    expect(mocks.dbQuery.mock.calls[4][0]).toContain("WHERE mailboxes.tenant_id = EXCLUDED.tenant_id");
-    expect(mocks.dbQuery.mock.calls[5][0]).toContain("VALUES ($3, $2, $1, 'owner')");
+    expect(mocks.clientQuery.mock.calls[4][0]).toContain("WHERE mailboxes.tenant_id = EXCLUDED.tenant_id");
+    expect(mocks.clientQuery.mock.calls[5][0]).toContain("VALUES ($3, $2, $1, 'owner')");
+    expect(mocks.clientQuery).toHaveBeenNthCalledWith(7, "COMMIT");
+    expect(mocks.clientRelease).toHaveBeenCalled();
+  });
+
+  it("rolls back user provisioning when mailbox membership creation fails", async () => {
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "44444444-4444-4444-4444-444444444444",
+            email: "new@example.com",
+            display_name: "New User",
+            role_id: ROLE_ID
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "mailbox-1" }] })
+      .mockRejectedValueOnce(new Error("membership insert failed"))
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      postUser(
+        new Request("https://desk.example.com/api/admin/users", {
+          method: "POST",
+          body: JSON.stringify({
+            email: "New@Example.com",
+            displayName: "New User",
+            password: "password-123",
+            roleId: ROLE_ID
+          })
+        })
+      )
+    ).rejects.toThrow("membership insert failed");
+
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.clientQuery).not.toHaveBeenCalledWith("COMMIT");
+    expect(mocks.clientRelease).toHaveBeenCalled();
+    expect(mocks.recordAuditLog).not.toHaveBeenCalled();
   });
 
   it("rejects user creation when the role is outside the tenant", async () => {
@@ -172,8 +226,9 @@ describe("admin users and roles tenant scope", () => {
   });
 
   it("rejects cross-tenant email conflicts instead of updating another tenant", async () => {
-    mocks.dbQuery
-      .mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] })
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -193,12 +248,17 @@ describe("admin users and roles tenant scope", () => {
 
     expect(response.status).toBe(409);
     expect(body).toMatchObject({ error: "Email belongs to another tenant" });
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.clientQuery).not.toHaveBeenCalledWith(expect.stringContaining("INSERT INTO mailboxes"), expect.any(Array));
+    expect(mocks.clientRelease).toHaveBeenCalled();
   });
 
   it("rejects personal mailbox creation when the address belongs to another tenant", async () => {
-    mocks.dbQuery
-      .mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] })
-      .mockResolvedValueOnce({ rows: [{ tenant_id: "99999999-9999-9999-9999-999999999999" }] });
+    mocks.dbQuery.mockResolvedValueOnce({ rows: [{ id: ROLE_ID }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: "99999999-9999-9999-9999-999999999999" }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const response = await postUser(
       new Request("https://desk.example.com/api/admin/users", {
@@ -215,7 +275,10 @@ describe("admin users and roles tenant scope", () => {
 
     expect(response.status).toBe(409);
     expect(body).toMatchObject({ error: "Mailbox address belongs to another tenant" });
-    expect(mocks.hashPassword).not.toHaveBeenCalled();
+    expect(mocks.hashPassword).toHaveBeenCalled();
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.clientQuery).not.toHaveBeenCalledWith(expect.stringContaining("INSERT INTO users"), expect.any(Array));
+    expect(mocks.clientRelease).toHaveBeenCalled();
   });
 
   it("rejects user role updates when the new role is outside the tenant", async () => {
